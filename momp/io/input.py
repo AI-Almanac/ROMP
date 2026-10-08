@@ -132,7 +132,7 @@ def get_forecast_deterministic_twice_weekly(year, *, model_dir, model_var, date_
     # Load data using xarray
     ds = xr.open_dataset(file_path)
 
-    ds = dim_fmt_model(ds)
+    ds = dim_fmt_model(ds, kwargs.get("model_dims"))
 
     #print("filtered_dates_yr = ", filtered_dates_yr )
     #print("init_time  = ", ds.init_time.values)
@@ -191,7 +191,7 @@ def get_forecast_probabilistic_twice_weekly(year, *, model_dir, model_var, date_
 
 #    print("\n\nYYYYY ds raw ", ds.tp[1,1,1,...].values)
 #    print("XXXX", ds)
-    ds = dim_fmt_model_ensemble(ds)
+    ds = dim_fmt_model_ensemble(ds, kwargs.get("model_dims"))
 
 #    print("\n\nYYYYY ds raw ", ds.tp[1,1,1,...].values)
 #    print("\n\nYYYYY ds raw ", ds.tp[0,0,0,...].values)

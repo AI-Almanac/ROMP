@@ -31,8 +31,36 @@ def dim_fmt(ds):
     return ds
 
 
-def dim_fmt_model(ds):
+def rename_model_dims(ds, model_dims=None):
+    """Rename coordinates the caller named explicitly to ROMP's canonical names.
+
+    `model_dims` maps canonical names ("init_time", "step", "member", "lat",
+    "lon") to the names used in the file, e.g. {"init_time": "time"}.
+    """
+    if not model_dims:
+        return ds
+    rename = {source: canonical for canonical, source in model_dims.items() if source != canonical}
+    missing = sorted(source for source in rename if source not in ds.variables)
+    if missing:
+        raise ValueError(
+            f"model_dims names {missing} that are not in the dataset; "
+            f"available: {sorted(map(str, ds.variables))}"
+        )
+    return ds.rename(rename)
+
+
+def _init_time_coord(ds, coord_list):
+    """Prefer a datetime coordinate: lead-time names like "prediction_timedelta" also contain "time"."""
+    time_coords = [variable for variable in coord_list if "time" in variable.lower()]
+    datetime_coords = [
+        variable for variable in time_coords if pd.api.types.is_datetime64_any_dtype(ds[variable])
+    ]
+    return (datetime_coords or time_coords)[0]
+
+
+def dim_fmt_model(ds, model_dims=None):
     """Standardize dimension names for deterministic reforecast model data"""
+    ds = rename_model_dims(ds, model_dims)
     coord_list = list(ds.coords.keys())
 
     if "lon" not in coord_list:
@@ -41,11 +69,12 @@ def dim_fmt_model(ds):
         lon_coords = [variable for variable in coord_list if "lon" in variable.lower()][0]
 
         ds = ds.rename({lat_coords: "lat", lon_coords: "lon"})
+        coord_list = list(ds.coords.keys())
 
     if "init_time" not in coord_list:
         #print("init_time NOT in coords --> ")  # , model_name)
-        time_coords = [variable for variable in coord_list if "time" in variable.lower()][0]
-        ds = ds.rename({time_coords: "init_time"})
+        ds = ds.rename({_init_time_coord(ds, coord_list): "init_time"})
+        coord_list = list(ds.coords.keys())
 
     if "step" not in coord_list:
         keywords = ["day", "prediction_timedelta"]
@@ -63,10 +92,10 @@ def dim_fmt_model(ds):
     return ds
 
 
-def dim_fmt_model_ensemble(ds):
+def dim_fmt_model_ensemble(ds, model_dims=None):
     """Standardize dimension names for probabilistic reforecast model data"""
 
-    ds = dim_fmt_model(ds)
+    ds = dim_fmt_model(ds, model_dims)
 
     coord_list = list(ds.coords.keys())
 

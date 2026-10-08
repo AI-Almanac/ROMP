@@ -56,6 +56,8 @@ class Case:
 
     file_pattern: str = field(default=None)
     unit_cvt: Optional[float] = field(default=None)
+    # Canonical name -> name in the model files, e.g. {"init_time": "time"}.
+    model_dims: Optional[dict] = field(default=None)
 
 
     def update(self, updates):
