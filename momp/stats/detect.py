@@ -845,6 +845,58 @@ def _valid_vectorized_member_inputs(p_model, members):
     return True
 
 
+# How many values (init dates x members x grid points x lead days) onset
+# detection works on at once. Enough to keep the array work efficient, small
+# enough that a year of a large ensemble never needs several full-size copies.
+_ONSET_BLOCK_ELEMENTS = 16_000_000
+
+
+def _first_onset_steps(rain, thresh_slice, valid_step, *, wet_init, wet_spell, max_forecast_day):
+    """The first lead day a wet spell starts on, per init date, member and grid point.
+
+    NaN where none starts within max_forecast_day. A spell starts on day k when
+    days k .. k + wet_spell - 1 are all at least wet_init and their total
+    exceeds the threshold. This gives the same answer as the rolling-window
+    formulation it replaces, a block of init dates at a time: wet days are
+    counted with a running sum rather than by materializing every window, and
+    the spell total is added day by day in the order numpy's rolling sum adds it.
+
+    rain: (init_time, member, lat, lon, step), in memory.
+    valid_step: (init_time, step) mask of lead days allowed, or None.
+    """
+    values = rain.values
+    steps = rain.step.values.astype(float)
+    n_windows = values.shape[-1] - wet_spell + 1
+    onset_days = np.full(values.shape[:-1], np.nan)
+    if n_windows <= 0:
+        return onset_days
+    usable = steps[:n_windows] <= max_forecast_day
+    if isinstance(thresh_slice, xr.DataArray):
+        grid = rain.isel(init_time=0, member=0, step=0, drop=True)
+        thresh = thresh_slice.broadcast_like(grid).transpose("lat", "lon").values[..., None]
+    else:
+        thresh = np.asarray(thresh_slice)
+
+    per_init = max(1, int(np.prod(values.shape[1:])))
+    block = max(1, _ONSET_BLOCK_ELEMENTS // per_init)
+    for start in range(0, values.shape[0], block):
+        chunk = values[start : start + block]
+        counts = np.cumsum(chunk >= wet_init, axis=-1, dtype=np.int32)
+        counts = np.concatenate(
+            [np.zeros(counts.shape[:-1] + (1,), dtype=np.int32), counts], axis=-1
+        )
+        all_wet = (counts[..., wet_spell:] - counts[..., :n_windows]) == wet_spell
+        total = chunk[..., :n_windows].copy()
+        for offset in range(1, wet_spell):
+            total += chunk[..., offset : offset + n_windows]
+        onset = all_wet & (total > thresh) & usable
+        if valid_step is not None:
+            onset &= valid_step[start : start + block, None, None, None, :n_windows]
+        first = onset.argmax(axis=-1)
+        onset_days[start : start + block] = np.where(onset.any(axis=-1), steps[first], np.nan)
+    return onset_days
+
+
 def compute_onset_for_all_members_vectorized(
     p_model,
     thresh_slice,
@@ -880,73 +932,57 @@ def compute_onset_for_all_members_vectorized(
             f"< min steps required {max_steps_needed}, consider decrese dry_extent value"
         )
 
-    p_model = p_model.sel(member=list(members), step=slice(1, max_steps_needed))
+    # Selecting every member, in order, is a no-op that would still copy the cube.
+    if list(p_model.member.values) != list(members):
+        p_model = p_model.sel(member=list(members))
+    p_model = p_model.sel(step=slice(1, max_steps_needed))
     rain = p_model.transpose("init_time", "member", "lat", "lon", "step")
+    if isinstance(thresh_slice, xr.DataArray):
+        # The inner join the element-wise comparison with the threshold made.
+        rain, thresh_slice = xr.align(rain, thresh_slice, join="inner")
 
-    wet_spell_ok = (
-        (rain >= wet_init)
-        .rolling(step=wet_spell, min_periods=wet_spell, center=False)
-        .reduce(np.all)
-        .shift(step=-(wet_spell - 1))
-        .fillna(False)
-        .astype(bool)
-    )
-    rolling_sum = (
-        rain.rolling(step=wet_spell, min_periods=wet_spell, center=False)
-        .sum()
-        .shift(step=-(wet_spell - 1))
-    )
-    sum_ok = rolling_sum > thresh_slice
-    onset_condition = wet_spell_ok & sum_ok
-    onset_condition = onset_condition.where(onset_condition.step <= max_forecast_day, False)
-
+    valid_step = None
     if mok:
-        init_times = pd.to_datetime(onset_condition.init_time.values)
-        step_values = onset_condition.step.values.astype(int)
+        init_times = pd.to_datetime(rain.init_time.values)
+        step_values = rain.step.values.astype(int)
         valid_step = np.zeros((len(init_times), len(step_values)), dtype=bool)
         for t_idx, init_date in enumerate(init_times):
             mok_date = pd.Timestamp(datetime(init_date.year, *mok))
             forecast_dates = init_date + pd.to_timedelta(step_values, unit="D")
             valid_step[t_idx, :] = forecast_dates.date >= mok_date.date()
-        valid_step_da = xr.DataArray(
-            valid_step,
-            dims=("init_time", "step"),
-            coords={
-                "init_time": onset_condition.init_time,
-                "step": onset_condition.step,
-            },
-        )
-        onset_condition = onset_condition & valid_step_da
 
     obs_onset = onset_da.transpose("lat", "lon")
     obs_values = obs_onset.values.astype("datetime64[ns]")
     obs_valid = ~np.isnat(obs_values)
-    init_values = onset_condition.init_time.values.astype("datetime64[ns]")
+    init_values = rain.init_time.values.astype("datetime64[ns]")
     valid_case_values = obs_valid[None, :, :] & (init_values[:, None, None] < obs_values[None, :, :])
     valid_case = xr.DataArray(
         valid_case_values,
         dims=("init_time", "lat", "lon"),
         coords={
-            "init_time": onset_condition.init_time,
-            "lat": onset_condition.lat,
-            "lon": onset_condition.lon,
+            "init_time": rain.init_time,
+            "lat": rain.lat,
+            "lon": rain.lon,
         },
     )
 
-    cond = onset_condition.fillna(False).values.astype(bool)
-    has_onset = cond.any(axis=-1)
-    first_idx = cond.argmax(axis=-1)
-    step_values = onset_condition.step.values.astype(float)
-    onset_day_values = np.where(has_onset, step_values[first_idx], np.nan)
+    onset_day_values = _first_onset_steps(
+        rain,
+        thresh_slice,
+        valid_step,
+        wet_init=wet_init,
+        wet_spell=wet_spell,
+        max_forecast_day=max_forecast_day,
+    )
 
     onset_da_members = xr.DataArray(
         onset_day_values,
         dims=("init_time", "member", "lat", "lon"),
         coords={
-            "init_time": onset_condition.init_time,
-            "member": onset_condition.member,
-            "lat": onset_condition.lat,
-            "lon": onset_condition.lon,
+            "init_time": rain.init_time,
+            "member": rain.member,
+            "lat": rain.lat,
+            "lon": rain.lon,
         },
         name="onset_day",
     ).where(valid_case)

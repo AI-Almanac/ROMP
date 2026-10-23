@@ -19,6 +19,18 @@ from momp.utils.practical import restore_args
 #    return target_dir
 
 
+def onset_steps_needed(*, max_forecast_day=None, wet_spell=None, dry_extent=None, **kwargs):
+    """The last lead day ensemble onset detection reads, or None if it can't be told.
+
+    Both paths in momp.stats.detect stop here: the vectorized one at
+    max_forecast_day + wet_spell - 1, the per-member loop at that or at
+    max_forecast_day + dry_extent when the dry check reaches further.
+    """
+    if not all(isinstance(value, int) for value in (max_forecast_day, wet_spell, dry_extent)):
+        return None
+    return max_forecast_day + max(wet_spell - 1, dry_extent)
+
+
 def load_thresh_file(*, thresh_file, thresh_var, wet_threshold, region, **kwargs):
     if thresh_file:
         thresh_ds = xr.open_dataset(thresh_file)
@@ -217,6 +229,11 @@ def get_forecast_probabilistic_twice_weekly(year, *, model_dir, model_var, date_
         # Check if the first value of 'step' is 0, then slice to exclude it
         if ds['step'][0].values == 0:
             ds = ds.sel(step=slice(1, None))
+        # Onset detection reads no further than this lead day, so loading the
+        # rest of a year's ensemble only costs memory (and masking time).
+        steps_needed = onset_steps_needed(**kwargs)
+        if steps_needed is not None:
+            ds = ds.sel(step=slice(None, steps_needed))
     else:
         raise KeyError("'step' dimension not found in dataset")
 
