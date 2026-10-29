@@ -80,8 +80,31 @@ def _source(dic: dict, key: str) -> str:
     return f"[{(dic.get('config_sources') or {}).get(key, 'resolved')}]"
 
 
+def _open(path):
+    """The lazy Dataset of a NetCDF file or zarr store (a context manager that closes it)."""
+    from momp.io.input import is_zarr
+
+    return xr.open_zarr(str(path), chunks=None) if is_zarr(path) else xr.open_dataset(path)
+
+
+def _store_has_year(store, year) -> bool:
+    """True if the zarr store has a datetime coordinate value in the year."""
+    ds = xr.open_zarr(str(store), chunks=None)
+    for coord in ds.coords.values():
+        if coord.ndim == 1 and np.issubdtype(coord.dtype, np.datetime64):
+            return bool((coord.dt.year == year).any())
+    return True
+
+
 def _find(folder, patterns, year):
-    """The path of the yearly file in folder matching one of the patterns, or None."""
+    """The path of the yearly file in folder matching one of the patterns, or None.
+
+    A folder that is a zarr store holds all years: the store is returned if it has times in the year.
+    """
+    from momp.io.input import is_zarr
+
+    if is_zarr(folder):
+        return Path(str(folder)) if _store_has_year(folder, year) else None
     for pattern in patterns:
         path = Path(str(folder)) / pattern.format(year)
         if path.exists():
@@ -172,7 +195,7 @@ def _grid(path, dims=None, forecast=False):
     """(lat, lon, variable-lat-order) of the first file: the coordinate arrays after the usual renames."""
     from momp.utils.standard import dim_fmt, dim_fmt_model
 
-    with xr.open_dataset(path) as ds:
+    with _open(path) as ds:
         ds = dim_fmt_model(ds, dims) if forecast else dim_fmt(ds)
         return np.asarray(ds["lat"].values, float), np.asarray(ds["lon"].values, float)
 
@@ -260,7 +283,7 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
 
     mask_mod.reset()
     try:
-        with xr.open_dataset(path) as ds:
+        with _open(path) as ds:
             ds = dim_fmt(ds).isel(time=slice(0, 1))
             region_select(ds, region=dic["region"], mask=mask, nc_mask=dic.get("nc_mask"), dataset_name="obs",
                           dir_fig=None)
@@ -287,7 +310,7 @@ def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
         if path is None:
             continue
         try:
-            with xr.open_dataset(path) as ds:
+            with _open(path) as ds:
                 names = [d for d in ds.dims if str(d).lower() in ("step", "lead", "prediction_timedelta", "day",
                                                                   "prediction_timedelta_daily")]
                 lead = (dic.get("model_dims_list") or [None] * 99)[i]

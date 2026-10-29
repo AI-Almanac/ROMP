@@ -178,7 +178,7 @@ def test_alignment_check_warns_when_forecasts_look_shifted(caplog, monkeypatch):
     """Lead k holding the observed day init + k labelled "end" (one day late) is reported as shifted, once per model."""
     monkeypatch.setattr(detect, "_alignment_done", set())
     obs, forecast = _alignment_data(0)
-    kwargs = {**DEFINITION, "model": "toy", "obs_dir": "x", "model_lead_label": "end"}
+    kwargs = {**DEFINITION, "model": "toy", "obs_dir": "x", "model_lead_label": "end", "check_alignment": True}
     caplog.set_level(logging.INFO)
     with pytest.warns(UserWarning, match="look shifted"):
         check_alignment_once(obs, forecast, **kwargs)
@@ -193,9 +193,9 @@ def test_alignment_check_is_quiet_when_aligned_and_skipped_without_a_boundary(ca
     monkeypatch.setattr(detect, "_alignment_done", set())
     obs, forecast = _alignment_data(0)
     caplog.set_level(logging.INFO)
-    check_alignment_once(obs, forecast, **{**DEFINITION, "model": "toy", "obs_dir": "x"})
+    check_alignment_once(obs, forecast, **{**DEFINITION, "model": "toy", "obs_dir": "x", "check_alignment": True})
     assert "aligned" in caplog.text
     caplog.clear()
-    flat = dict(FLAT, model="toy2", obs_dir="y", region="atlantis")
+    flat = dict(FLAT, model="toy2", obs_dir="y", region="atlantis", check_alignment=True)
     check_alignment_once(obs, forecast, **flat)
     assert "skipped" in caplog.text

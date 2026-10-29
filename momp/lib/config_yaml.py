@@ -178,13 +178,15 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
         if "name" not in entry:
             errors.append(f"'{written}.name': missing. Fix: give the model a name (used in output file names, "
                           "no spaces)")
-        res = detect.resolve_entry(entry, "forecast", sources=entry_sources, obs=obs_values)
+        align = bool(config.get("check_alignment", False))
+        res = detect.resolve_entry(entry, "forecast", sources=entry_sources, obs=obs_values,
+                                   detect_lead_label=align, lead_label_default=not align)
         _problems(res, written, errors)
         detect.warn_all(res)
         report.append(f"{written} {entry.get('name', '')}:")
         report.extend("  " + t for t in res.report())
         values = detect.finalize_units(res.values)
-        values["_accumulation_detected"] = any(l.key == "accumulation" and l.how == "detected" for l in res.lines)
+        values["_accumulation_detected"] = any(l.key == "accumulation" and l.how.startswith("detected") for l in res.lines)
         for key in ("name", "path", "variable"):
             if key not in values:
                 values[key] = None

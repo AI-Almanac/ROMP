@@ -102,10 +102,19 @@ def test_the_report_names_every_detected_value(data):
     """Left-out dataset keys are detected and the dataset_report says so."""
     raw = _raw(data)
     del raw["models"][0]["lead_label"]
+    raw["onset"] = {**raw.get("onset", {}), "check_alignment": True}
     cfg = build_config(raw)
     assert cfg["model_lead_label"] in (None, "start")
     text = "\n".join(cfg["dataset_report"])
     assert "[detected:" in text and "lead_label: start" in text
+
+
+def test_lead_label_is_derived_without_the_alignment_check(data):
+    """With check_alignment off (the default) an unset lead_label is derived from the day boundary, not detected."""
+    raw = _raw(data)
+    del raw["models"][0]["lead_label"]
+    text = "\n".join(build_config(raw)["dataset_report"])
+    assert "lead_label: None  [default: derived from the observation day boundary" in text
 
 
 def test_config_objects_round_trip_through_yaml_and_flatten(data, tmp_path):

@@ -86,7 +86,7 @@ class Setting:
     thresholds: Optional[dict] = field(default=None)
     obs_day_boundary: Optional[str] = field(default=None)
     model_lead_label: Optional[str] = field(default=None)
-    check_alignment: bool = field(default=True)
+    check_alignment: bool = field(default=False)
     dry_spell_check: bool = field(default=True)
     forecast_history: Optional[str] = field(default=None)
     threshold_source: Optional[str] = field(default=None)

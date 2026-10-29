@@ -239,7 +239,8 @@ def test_datasets_command_reports_detections_and_problems(synthetic):
     """momp-run datasets -p lists what the config's datasets resolve to; a problem gives exit code 1."""
     run = {"region": "ethiopia", "observations": {"path": str(synthetic / "obs"), "day_boundary": "00 UTC, labelled by start"},
            "models": [{"name": "M", "path": str(synthetic / "fc")}],
-           "evaluation": {"start_date": [2020, 5, 1], "end_date": [2020, 7, 31]}}
+           "evaluation": {"start_date": [2020, 5, 1], "end_date": [2020, 7, 31]},
+           "onset": {"check_alignment": True}}
     (synthetic / "run.yaml").write_text(yaml.safe_dump(run))
     done = _run(synthetic, "datasets", "-p", "run.yaml")
     assert done.returncode == 0, done.stdout

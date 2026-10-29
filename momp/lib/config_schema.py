@@ -512,7 +512,7 @@ def _fields() -> tuple[Field, ...]:
         Field("model_lead_label", "str", "date of lead k: 'start' = init + k - 1, 'end' = init + k "
               "(null: from the day boundary)", None, "onset", "lead_label", choices=("start", "end"),
               nullable=True),
-        Field("check_alignment", "bool", "warn if observations and forecasts look shifted", True, "onset"),
+        Field("check_alignment", "bool", "check that observations and forecasts are not shifted (an analysis: reads a year of data, so off by default; `--check --alignment` runs it once)", False, "onset"),
         Field("dry_spell_check", "bool", "false drops the definition's dry-spell condition", True, "onset"),
         Field("forecast_history", "str", "'observed' stitches observed rain before each forecast, 'none' "
               "(null: observed)", None, "onset", choices=("observed", "none"), nullable=True, fill=False),

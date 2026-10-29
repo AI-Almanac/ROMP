@@ -295,7 +295,7 @@ def _legacy_setup(cfg, thresh_slice) -> OnsetSetup:
                "lead_label": "legacy convention: lead k is init + k",
                "backend": note or "config onset_backend"}
     return OnsetSetup(True, definition, legacy.LEGACY_SEASON, None, (), boundary, "end", backend,
-                      bool(cfg.get("check_alignment", True)), dry_check, (), history, source, sources)
+                      bool(cfg.get("check_alignment", False)), dry_check, (), history, source, sources)
 
 
 def _changed_keys(changes: dict) -> list[str]:
@@ -430,7 +430,7 @@ def _definition_setup(cfg) -> OnsetSetup:
     backend, note = _backend(cfg.get("onset_backend") or "numba")
     sources["backend"] = note or "config onset_backend"
     return OnsetSetup(False, definition, season, years, files, boundary, label, backend,
-                      bool(cfg.get("check_alignment", True)), dry_check, tuple(overrides), history, source, sources)
+                      bool(cfg.get("check_alignment", False)), dry_check, tuple(overrides), history, source, sources)
 
 
 def check_config(dic: dict) -> None:

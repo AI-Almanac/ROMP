@@ -24,7 +24,9 @@ What is detected, and how:
 from __future__ import annotations
 
 import glob
+import hashlib
 import os
+import pickle
 import re
 import warnings
 from collections import Counter
@@ -124,8 +126,77 @@ def _roles(da: xr.DataArray, kind: str, problems: dict) -> dict:
     return found
 
 
+_SAMPLE_BLOCKS = 3
+"""Contiguous blocks read from a dataset's file: its start, middle and end along the time-like dim."""
+_SAMPLE_BLOCK_LEN = 2
+"""Most consecutive time-like indices in one block."""
+_SAMPLE_BUDGET = 3_000_000
+"""Most values read for the detection sample of one variable (a few MB)."""
+_SAMPLE_CELLS = 96
+"""Longest lat or lon stretch read: a centred block of this many cells when the grid is larger."""
+_SAMPLES: dict = {}
+"""Loaded detection samples, per (file, modification time, variable), for the life of the process."""
+
+
+def open_data(path: str) -> xr.Dataset:
+    """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) with xr.open_zarr."""
+    if str(path).rstrip("/").endswith(".zarr") or os.path.isdir(path):
+        return xr.open_zarr(path)
+    return xr.open_dataset(path)
+
+
+def _block_indices(n: int, per_index: int) -> list[np.ndarray]:
+    """Index blocks (start, middle, end of a length-n dim), each a run of consecutive positions.
+
+    The run length is at most _SAMPLE_BLOCK_LEN and shrinks so the blocks stay within _SAMPLE_BUDGET values
+    (per_index values per position), but is never below 1.
+    """
+    length = int(max(1, min(_SAMPLE_BLOCK_LEN, _SAMPLE_BUDGET // max(1, _SAMPLE_BLOCKS * per_index))))
+    if n <= _SAMPLE_BLOCKS * length:
+        return [np.arange(n)]
+    starts = sorted({0, (n - length) // 2, n - length})
+    return [np.arange(s0, s0 + length) for s0 in starts]
+
+
+def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
+    """A tiny in-memory copy of da, read once: a few whole consecutive time steps from its start, middle and end.
+
+    The time-like dim is the init_time (forecasts) or time (observations) role, else the first dim. Lead is read
+    in full (accumulation needs the whole lead series); the member dim is cut to its first member and a grid
+    larger than _SAMPLE_CELLS is cut to a centred block, so the read stays within _SAMPLE_BUDGET values (a few MB)
+    and decodes each file chunk once. key (e.g. (path, variable)) caches the result in this process.
+    """
+    if key is not None and key in _SAMPLES:
+        return _SAMPLES[key]
+    dim = next((roles[r] for r in ("init_time", "time") if roles.get(r) in da.dims), None) or da.dims[0]
+    cut = {}
+    for role in ("lat", "lon"):
+        name = roles.get(role)
+        if name in da.dims and da.sizes[name] > _SAMPLE_CELLS:
+            start = (da.sizes[name] - _SAMPLE_CELLS) // 2
+            cut[name] = slice(start, start + _SAMPLE_CELLS)
+    if roles.get("member") in da.dims:
+        cut[roles["member"]] = slice(0, 1)
+    small = da.isel(cut)
+    per_index = int(np.prod([small.sizes[d] for d in small.dims if d != dim], dtype=np.int64))
+    blocks = [small.isel({dim: idx}).load() for idx in _block_indices(small.sizes[dim], per_index)]
+    out = blocks[0] if len(blocks) == 1 else xr.concat(blocks, dim=dim)
+    out.attrs = dict(da.attrs)
+    if key is not None:
+        _SAMPLES[key] = out
+    return out
+
+
+def clear_samples() -> None:
+    """Forget the cached detection samples (for tests, or after the files changed)."""
+    _SAMPLES.clear()
+
+
 def _sample(da: xr.DataArray, roles: dict) -> np.ndarray:
-    """A small spread-out sample of the data values as a flat array, with fill values removed."""
+    """A small spread-out sample of the data values as a flat array, with fill values removed.
+
+    Cheap on an in-memory DataArray (see load_sample); on lazy data it would decode chunks repeatedly.
+    """
     index = {}
     for dim in da.dims:
         n = da.sizes[dim]
@@ -195,9 +266,9 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
         return None, f"no observation file for year {year.group(1) if year else '?'} in {obs_dir}"
     obs_units, fc_units = obs.get("units"), values.get("units")
     try:
-        with xr.open_dataset(files[0]) as ods:
+        with open_data(files[0]) as ods:
             obs_rain = ingest.ingest(ods[obs["variable"]].load(), day_boundary=obs["day_boundary"], units=obs_units)
-        with xr.open_dataset(sample) as fds:
+        with open_data(sample) as fds:
             da = fds[values["variable"]]
             pick = {roles["init_time"]: slice(0, _ALIGN_INITS), roles["step"]: slice(0, 3)}
             if "member" in roles:
@@ -218,10 +289,92 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
     return None, f"the alignment check is not conclusive ({detail})"
 
 
+_CACHE_VERSION = 1
+"""Bump when detection changes what it reports, to drop old cache entries."""
+
+
+def cache_dir() -> Path:
+    """The folder of the on-disk detection cache: $MOMP_CACHE_DIR/detect, else ~/.cache/momp/detect."""
+    base = os.environ.get("MOMP_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "momp")
+    return Path(base) / "detect"
+
+
+def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> str | None:
+    """A hash of what detection depends on: the user's keys, and the paths, sizes and mtimes of the dataset's files.
+
+    None when the folder cannot be listed (nothing to cache against).
+    """
+    try:
+        folder = Path(expand_path(entry["path"]))
+        files = sorted(p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
+    except (KeyError, DatasetError, OSError):
+        return None
+    stats = []
+    for path in files:
+        try:
+            st = path.stat()
+            stats.append((str(path), st.st_size, st.st_mtime_ns))
+        except OSError:
+            return None
+    text = repr((_CACHE_VERSION, kind, lead_label_default, sorted((k, repr(v)) for k, v in entry.items()),
+                 sorted((k, repr(v)) for k, v in (sources or {}).items()), stats))
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _cache_load(key: str) -> Resolution | None:
+    """The cached Resolution for a fingerprint, or None (also when the cache file is unreadable)."""
+    try:
+        with open(cache_dir() / f"{key}.pkl", "rb") as fh:
+            res = pickle.load(fh)
+    except Exception:  # noqa: BLE001 - a missing or corrupt cache entry is just a miss
+        return None
+    return res if isinstance(res, Resolution) else None
+
+
+def _cache_store(key: str, res: Resolution) -> None:
+    """Write a Resolution to the cache; failures (read-only home, full disk) are ignored."""
+    try:
+        folder = cache_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / f"{key}.{os.getpid()}.tmp"
+        with open(tmp, "wb") as fh:
+            pickle.dump(res, fh)
+        os.replace(tmp, folder / f"{key}.pkl")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: dict | None = None,
-                  detect_lead_label: bool = True) -> Resolution:
+                  detect_lead_label: bool = True, lead_label_default: bool = False, use_cache: bool = True) -> Resolution:
+    """Resolve one dataset, from the on-disk cache when the dataset's files and keys are unchanged.
+
+    The cache key is a fingerprint of the user's keys and the file paths, sizes and mtimes; a hit reads no data and
+    marks every detected line "detected (cached)" with the same evidence. A resolution that ran the lead-label
+    alignment (it depends on the observations) is not cached. See resolve_entry_uncached for the keys.
+    """
+    runs_alignment = kind == "forecast" and detect_lead_label and "lead_label" not in entry
+    key = _fingerprint(entry, kind, lead_label_default, sources) if use_cache and not runs_alignment else None
+    if key:
+        hit = _cache_load(key)
+        if hit is not None:
+            for line in hit.lines:
+                if line.how == "detected":
+                    line.how = "detected (cached)"
+            hit.values = {**hit.values}
+            return hit
+    res = resolve_entry_uncached(entry, kind, sources=sources, obs=obs, detect_lead_label=detect_lead_label,
+                                 lead_label_default=lead_label_default)
+    if key and res.checked:
+        _cache_store(key, res)
+    return res
+
+
+def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = None, obs: dict | None = None,
+                           detect_lead_label: bool = True, lead_label_default: bool = False) -> Resolution:
     """Resolve one dataset: validate what is given, detect what is missing, report every key.
 
+    lead_label_default: when the lead_label is not given and not detected (detect_lead_label False), leave it unset
+    ("derived from the day boundary") instead of making it a problem.
     entry holds the keys the user gave (raw, as in a dataset file); kind is 'observations' or 'forecast';
     sources says where a key came from if not the user ("dataset 'x'"); obs is the resolved observations
     entry, needed to detect a forecast's lead_label. Never raises for problems with the data: see Resolution.
@@ -249,7 +402,8 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
         problems["path"] = str(exc)
         return res
     specified("path")
-    names = sorted(p.name for p in folder.glob("*.nc*")) if folder.is_dir() else []
+    names = sorted(p.name for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr")) \
+        if folder.is_dir() else []
     needed = [k for k in ("file_pattern", "variable", "day_boundary", "lead_label", "units") if k not in values]
     if kind == "forecast" and "day_boundary" in needed:
         needed.remove("day_boundary")
@@ -282,16 +436,18 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
     res.sample_file, res.checked = sample, True
     name = os.path.basename(sample)
     try:
-        ds = xr.open_dataset(sample)
+        ds = open_data(sample)
     except Exception as exc:  # noqa: BLE001 - any reader error is reported against the path
         problems["path"] = f"cannot open {sample}: {exc}"
         return res
     with ds:
-        _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, detect_lead_label)
+        _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, detect_lead_label,
+                           lead_label_default)
     return res
 
 
-def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, detect_lead_label):
+def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, detect_lead_label,
+                       lead_label_default=False):
     """The detections that need the opened sample file (variable, kind, dims, units, members, labels)."""
     values, problems = res.values, res.problems
     gridded = [v for v in ds.data_vars if ds[v].ndim >= 3]
@@ -359,8 +515,9 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
     elif kind == "forecast" and "members" not in values:
         res.lines.append(Line("members", 1, "detected", f"no member dimension in {name}: deterministic"))
 
-    guess = _forecast_accumulation(da, values, res, specified, detected, roles) if kind == "forecast" else None
-    _units(da, name, values, res, specified, detected, roles, guess)
+    probe_da = load_sample(da, roles, key=(sample, _mtime(sample), str(values["variable"])))
+    guess = _forecast_accumulation(probe_da, values, res, specified, detected, roles) if kind == "forecast" else None
+    _units(da, name, values, res, specified, detected, roles, guess, probe_da)
 
     if kind == "observations":
         if "day_boundary" in values:
@@ -378,6 +535,9 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
             specified("daily_boundary")
         if "lead_label" in values:
             specified("lead_label")
+        elif lead_label_default and not detect_lead_label and not problems:
+            res.lines.append(Line("lead_label", None, "default", "derived from the observation day boundary; set "
+                                  "onset.check_alignment: true to check it against the observations"))
         elif not detect_lead_label or problems:
             problems["lead_label"] = ("not set. Fix: set lead_label to 'start' (lead k is dated init + k - 1) "
                                       "or 'end' (init + k)")
@@ -423,15 +583,25 @@ def _forecast_accumulation(da, values, res, specified, detected, roles):
         return None
 
 
-def _units(da, name, values, res, specified, detected, roles, guess=None):
+def _mtime(path) -> int:
+    """Modification time of a file (or zarr directory) in ns, 0 if it cannot be read; part of a sample's cache key."""
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _units(da, name, values, res, specified, detected, roles, guess=None, loaded=None):
     """Units (mm or m): given or read from the attribute; contradictions and unknowns are problems naming units.
 
     guess is ingest.detect_units' (units, evidence) for forecasts: it names the likely units when none can be read,
-    and a given or attribute unit that disagrees with it is a warning.
+    and a given or attribute unit that disagrees with it is a warning. loaded is the in-memory sample of da
+    (load_sample); the magnitudes are read from it once, whichever checks need them.
     """
     attr = da.attrs.get("units")
     from_attr = _units_from_attr(attr) if attr is not None else None
-    peak = _sample(da, roles)
+    sampled = _sample(da if loaded is None else loaded, roles)
+    peak = sampled
     hint = ""
     if guess:
         hint = f" Daily totals look like {guess[0]} ({guess[1]})."
@@ -455,7 +625,7 @@ def _units(da, name, values, res, specified, detected, roles, guess=None):
         why = f"unrecognised units attribute {attr!r}" if attr is not None else "the file has no units attribute"
         res.problems["units"] = f"cannot be detected: {why}.{hint} Fix: set units to mm or m"
         return
-    message = _check_magnitude(_sample(da, roles), implied)
+    message = _check_magnitude(sampled, implied)
     if message:
         res.problems["units"] = message + ". Fix: set the right units"
     elif guess and guess[0] != implied:

@@ -148,6 +148,8 @@ def create_parser(config, cli_args=None):
     parser.add_argument("--check", action="store_true",
                         help="validate and resolve the config, print the plan (settings, datasets, files, leads, "
                              "hints, run folder, cache) and run nothing; exit 1 on errors")
+    parser.add_argument("--alignment", action="store_true",
+                        help="with --check: also run the observation/forecast alignment check (off by default)")
     parser.add_argument("--overwrite", action="store_true",
                         help="re-run a config whose run folder already exists (clears that folder first)")
     parser.add_argument("--quiet", action="store_true", help="show only warnings and errors")

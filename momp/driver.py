@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 def _flags(argv):
     """The run-control flags (--check, --overwrite, --quiet, --verbose) of the command line."""
     parser = argparse.ArgumentParser(add_help=False)
-    for name in ("check", "overwrite", "quiet", "verbose"):
+    for name in ("check", "overwrite", "quiet", "verbose", "alignment"):
         parser.add_argument(f"--{name}", action="store_true")
     return parser.parse_known_args(argv)[0]
 
@@ -49,6 +49,8 @@ def _check(flags) -> int:
     except (ROMPConfigError, FileNotFoundError) as exc:
         print(f"Error: {exc}\n\ncheck: the config cannot be resolved; nothing was run")
         return 1
+    if flags.alignment:
+        dic["check_alignment"] = True
     with logs.session(logs.QUIET):
         report = build_report(dic, overwrite=flags.overwrite)
     print(report.text())

@@ -1,4 +1,5 @@
 """Masking helpers: polygon, land-sea, country-shapefile and NetCDF masks, plus polygon/outline plotting."""
+import hashlib
 import numpy as np
 from matplotlib.path import Path
 from typing import Union
@@ -152,6 +153,59 @@ def get_india_outline(shpfile_path):
 
 
 
+def _grid_key(lat, lon) -> str:
+    """A hash of the lat and lon values (as float64), the cache key of a grid."""
+    lat = np.ascontiguousarray(np.asarray(lat, dtype="float64"))
+    lon = np.ascontiguousarray(np.asarray(lon, dtype="float64"))
+    return hashlib.sha256(str(lat.shape).encode() + lat.tobytes() + str(lon.shape).encode() + lon.tobytes()).hexdigest()
+
+
+_RAW_MASKS: dict = {}
+"""Raw land masks by grid key (insertion-ordered, at most _MAX_GRIDS)."""
+_MAX_GRIDS = 16
+
+
+def _raw_land_mask(key: str, lat: xr.DataArray, lon: xr.DataArray) -> xr.DataArray:
+    """regionmask's land mask (0 on land, NaN at sea) on the grid of lat and lon, rasterised once per grid key."""
+    if key not in _RAW_MASKS:
+        if len(_RAW_MASKS) >= _MAX_GRIDS:
+            _RAW_MASKS.pop(next(iter(_RAW_MASKS)))
+        land_mask = regionmask.defined_regions.natural_earth_v5_0_0.land_110
+        _RAW_MASKS[key] = land_mask.mask(lon, lat=lat)
+    return _RAW_MASKS[key]
+
+
+def clear_land_masks() -> None:
+    """Forget every cached land mask (for tests)."""
+    _RAW_MASKS.clear()
+    _LAND_BOOL.clear()
+
+
+_LAND_BOOL: dict = {}
+"""Read-only boolean land masks by grid key."""
+
+
+def land_mask_for(lat, lon) -> np.ndarray:
+    """Boolean land mask of shape (nlat, nlon) for 1-D lat and lon values, True on land.
+
+    Built once per grid in this process (cached by a hash of the coordinates) and returned read-only, so callers
+    can apply it in place on numpy arrays, e.g. ``arr[..., ~land_mask_for(lat, lon)] = np.nan``. It selects the
+    same cells as ``mask_land``.
+    """
+    lat = np.asarray(lat, dtype="float64")
+    lon = np.asarray(lon, dtype="float64")
+    key = _grid_key(lat, lon)
+    if key not in _LAND_BOOL:
+        if len(_LAND_BOOL) >= _MAX_GRIDS:
+            _LAND_BOOL.pop(next(iter(_LAND_BOOL)))
+        raw = _raw_land_mask(key, xr.DataArray(lat, dims="lat", coords={"lat": lat}, name="lat"),
+                             xr.DataArray(lon, dims="lon", coords={"lon": lon}, name="lon"))
+        out = np.array(~np.isnan(raw.transpose("lat", "lon").values))
+        out.setflags(write=False)
+        _LAND_BOOL[key] = out
+    return _LAND_BOOL[key]
+
+
 def create_land_sea_mask(
     obj: Union[xr.Dataset, xr.DataArray],
     as_boolean: bool = False,
@@ -177,14 +231,11 @@ def create_land_sea_mask(
     >>> mask = create_land_sea_mask(ds, as_boolean=True)  # Generate land-sea mask (land: True, sea: False)
     """
 
-    # Use regionmask
-    land_mask = regionmask.defined_regions.natural_earth_v5_0_0.land_110
-
     lon = obj["lon"]
     lat = obj["lat"]
 
-    # Mask the land-sea mask to match the dataset's coordinates
-    land_sea_mask = land_mask.mask(lon, lat=lat)
+    # Mask the land-sea mask to match the dataset's coordinates (rasterised once per grid, then copied)
+    land_sea_mask = _raw_land_mask(_grid_key(lat.values, lon.values), lat, lon).copy()
 
     if as_boolean:
         # Convert the 0 (land) & nan (ocean) land-sea mask to a boolean mask
