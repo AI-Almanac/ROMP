@@ -48,7 +48,7 @@ def _draw_map(fig: Figure, ax, cax, pal: style.Palette, result: xr.Dataset, a: A
     onset = onset.reshape(sel["onset_date"].shape)
     has = (status.values == int(Status.ONSET)) & np.isfinite(onset)
     lat, lon = sel["lat"].values, sel["lon"].values
-    grey = style.status_style(Status.NOT_FOUND)[0]
+    grey = style.status_style(Status.NOT_FOUND, pal.mode)[0]
     ax.set_facecolor(pal.surface)
     ax.grid(False)
     ax.pcolormesh(lon, lat, np.where(has, np.nan, 1.0), cmap=LinearSegmentedColormap.from_list("grey", [grey, grey]),
@@ -74,7 +74,7 @@ def _draw_map(fig: Figure, ax, cax, pal: style.Palette, result: xr.Dataset, a: A
     for s in (Status.NOT_FOUND, Status.CENSORED, Status.INSUFFICIENT_DATA, Status.PRIOR):
         n = int((status == int(s)).sum())
         if n:
-            colour, icon, label = style.status_style(s)
+            colour, icon, label = style.status_style(s, pal.mode)
             handles.append(Patch(facecolor=grey, alpha=0.45, label=f"{icon} {label}: {n} cells"))
     ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.0, -2.35 / map_h), ncol=1, handletextpad=0.5,
               labelcolor=pal.ink_secondary, borderaxespad=0)

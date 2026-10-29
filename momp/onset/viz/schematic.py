@@ -423,7 +423,7 @@ def _curve_body(pal, meas, defn, body_width: float):
         ax.set_ylim(lo - pad, hi + (hi - lo) * 0.1)
         ax.set_xlim(-0.01, 1.01)
         ax.plot([t[k]], [curve[k]], "o", color=pal.ink, markersize=style.MARKER_SIZE * 0.7, zorder=4)
-        colour, icon, _ = style.status_style(Status.ONSET)
+        colour, icon, _ = style.status_style(Status.ONSET, pal.mode)
         ax.plot([t[onset]], [curve[onset]], "o", color=colour, markersize=style.MARKER_SIZE * 0.7, zorder=5)
         ytext = curve[k] - (hi - lo) * 0.3
         arrow = {"arrowstyle": "-", "color": pal.ink_muted, "linewidth": style.HAIRLINE, "shrinkA": 2, "shrinkB": 4}

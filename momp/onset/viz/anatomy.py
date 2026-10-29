@@ -79,9 +79,9 @@ def _first_total(a: Anatomy):
     return None
 
 
-def _status_label(status: Status, is_forecast: bool) -> tuple[str, str, str]:
+def _status_label(status: Status, is_forecast: bool, mode: str = "light") -> tuple[str, str, str]:
     """(colour, icon, label) of a status, with the label saying "data" instead of "forecast" for observations."""
-    colour, icon, label = style.status_style(status)
+    colour, icon, label = style.status_style(status, mode)
     return colour, icon, label if is_forecast else label.replace("forecast", "data")
 
 
@@ -195,12 +195,12 @@ def _candidate_panel(ax, a: Anatomy, p: style.Palette, x0: int, handles: dict) -
             colour = p.dry_spell if role == "veto" else p.ink_muted
             ax.plot([x], [rows[role]], marker="|", ms=style.MARKER_SIZE, mew=1.5, color=colour, ls="none", zorder=3)
         elif c.state == "T":
-            colour, icon, label = _status_label(Status.ONSET, a.is_forecast)
+            colour, icon, label = _status_label(Status.ONSET, a.is_forecast, p.mode)
             ax.plot([x], [2], marker="o", ms=style.MARKER_SIZE + 1, color=colour, ls="none", zorder=4)
             handles[f"{icon} {label}"] = Line2D([], [], marker="o", ms=style.MARKER_SIZE, color=colour, ls="none")
         else:
             status = Status.CENSORED if c.flags == ("horizon",) else Status.INSUFFICIENT_DATA
-            colour, icon, label = _status_label(status, a.is_forecast)
+            colour, icon, label = _status_label(status, a.is_forecast, p.mode)
             ax.plot([x], [2], marker="D", ms=style.MARKER_SIZE, color=colour, ls="none", zorder=4)
             handles[f"{icon} {label}"] = Line2D([], [], marker="D", ms=style.MARKER_SIZE, color=colour, ls="none")
     ax.set_ylim(-0.6, 2.6)
@@ -263,7 +263,7 @@ def _curve_panel(ax, a: Anatomy, p: style.Palette, x0: int) -> None:
 
 def _subtitle(fig: Figure, a: Anatomy, left: float, y: float, p: style.Palette) -> None:
     """The result line: the status icon in its colour, then its label and detail in ink."""
-    colour, icon, label = _status_label(a.result.status, a.is_forecast)
+    colour, icon, label = _status_label(a.result.status, a.is_forecast, p.mode)
     icon_text = fig.text(left, y, icon, size=10, weight="bold", color=colour, va="center")
     fig.canvas.draw()
     box = icon_text.get_window_extent().transformed(fig.transFigure.inverted())

@@ -185,7 +185,7 @@ def _draw_dots(fig: Figure, ax, pal: style.Palette, results, labels: list[str], 
         missing = []
         for name, status, date in per_season:
             if date is None:
-                colour, icon, label = style.status_style(status)
+                colour, icon, label = style.status_style(status, pal.mode)
                 missing.append((colour, f"{icon} {name + ': ' if several else ''}{label}"))
                 continue
             ax.plot([date], [i], "o", color=pal.ink, markersize=style.MARKER_SIZE, zorder=3)

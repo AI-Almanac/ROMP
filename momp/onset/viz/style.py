@@ -29,12 +29,13 @@ class Palette:
     observed: str
     dry_spell: str
     forecast: str
+    mode: str = "light"
 
 
 LIGHT = Palette(surface="#fcfcfb", ink="#0b0b0b", ink_secondary="#52514e", ink_muted="#898781", grid="#e1e0d9",
                 axis="#c3c2b7", wash="#f0efec", observed="#2a78d6", dry_spell="#eb6834", forecast="#1baf7a")
 DARK = Palette(surface="#1a1a19", ink="#f0efec", ink_secondary="#c3c2b7", ink_muted="#898781", grid="#2c2c2a",
-               axis="#383835", wash="#383835", observed="#3987e5", dry_spell="#d95926", forecast="#199e70")
+               axis="#383835", wash="#383835", observed="#3987e5", dry_spell="#d95926", forecast="#199e70", mode="dark")
 
 #: Status colours are reserved for statuses and always travel with an icon and a label.
 STATUS_STYLE = {
@@ -44,6 +45,9 @@ STATUS_STYLE = {
     Status.PRIOR: ("#52514e", "◂", "onset before the forecast"),
     Status.INSUFFICIENT_DATA: ("#d03b3b", "!", "missing data"),
 }
+
+#: Per-mode colours where the shared one is below 3:1 on that mode's surface (amber on light, PRIOR ink on dark).
+MODE_STATUS_COLOUR = {("light", Status.CENSORED): "#b87a00"}
 
 #: Area fills are washes: the role colour at about 10 % opacity.
 WASH_ALPHA = 0.10
@@ -60,9 +64,20 @@ def palette(mode: str = "light") -> Palette:
     return LIGHT if mode == "light" else DARK
 
 
-def status_style(status) -> tuple[str, str, str]:
-    """(colour, icon, label) for a Status; the icon and label must be shown with the colour."""
-    return STATUS_STYLE[Status(int(status))]
+def status_style(status, mode: str = "light") -> tuple[str, str, str]:
+    """(colour, icon, label) for a Status in "light" or "dark" mode; the icon and label must be shown with the colour.
+
+    Every status colour clears 3:1 on its mode's surface. Two differ by mode: PRIOR, whose light ink is nearly
+    invisible on the dark surface, takes the palette's secondary ink in dark mode, and CENSORED amber is
+    darkened in light mode.
+    """
+    p = palette(mode)
+    status = Status(int(status))
+    colour, icon, label = STATUS_STYLE[status]
+    if status == Status.PRIOR and mode == "dark":
+        colour = p.ink_secondary
+    colour = MODE_STATUS_COLOUR.get((mode, status), colour)
+    return colour, icon, label
 
 
 @contextmanager
