@@ -471,3 +471,94 @@ notes: ...
   `check_definition_region(defn, name)` returns a warning when neither the
   area nor any area containing it is listed, and None otherwise or when the
   definition lists no regions.
+
+## 13. Forecast layer: observed history, members and censoring
+
+**Stitched series.** For a forecast init, the series searched is the
+observed history up to the day before lead 1, followed by the forecast.
+Stitched day t is history day t for t < split, and forecast lead t - split + 1
+for t >= split. `split` is the history index of lead 1's date label, so it
+depends on `lead_label`. History on or after `split` is never read, so
+nothing observed after the init leaks in. Every member of an init shares the
+same history.
+
+**Search window.** Candidates run from the season start (usually in the
+history) to the earlier of the season end and the last usable lead, the one
+whose whole rule still fits in the forecast. The data end is `split` plus the
+number of leads.
+
+**Statuses**, decided in this order:
+
+1. `PRIOR`: the history alone already gives `ONSET`. This means a search
+   with `data_end = split` finds it, with every earlier candidate ruled out
+   and the onset day's own spans fully observed. The result is the same for
+   every member. The onset day is reported, and it lies before lead 1.
+2. Otherwise the stitched search gives `ONSET`, `NOT_FOUND`, `CENSORED` or
+   `INSUFFICIENT_DATA` exactly as in section 4. An `ONSET` day may lie
+   *before* lead 1 (a back-dated onset). For example, a wet spell that
+   started in the history and is completed by the forecast, or a dry-spell
+   check that needs forecast days. `onset_lead = day - split + 1` is then
+   0 or negative.
+
+Decided values never change when more data arrives, so step 1 and step 2
+agree wherever both decide. `PRIOR` is exactly the case where the forecast
+adds nothing.
+
+**Thresholds.** A named threshold comes either from the observed climatology
+(section 7) or from the model's own climatology, chosen explicitly by the
+caller. The model climatology pools each cell's forecast days over the leads
+in the lead window, the inits of the reference years, and the valid dates
+within `during`. Only the mean-based kinds (`mean_total`, `mean_daily`)
+support it. One amount applies per job, whether a window lies in the history,
+in the forecast, or across both.
+
+**Backend contract.**
+
+```python
+detect_stitched(plan, hist_tenths: (C, T) int32, hist_missing: (C, T) bool,
+                fc_tenths: (S, H) int32, fc_missing: (S, H) bool,
+                amounts: dict[str, (S,) int64], jobs: model.StitchedJobs,
+                *, trace=False) -> model.Detection
+```
+
+* The result must equal `detect` run on the explicitly concatenated series
+  (history row `cell` cut at `split`, then forecast row `series`), with the
+  same start, end and data end.
+* `numba` and `gpu` must not copy history into each forecast row.
+  * Prefix tables are joined at the split by adding: for t >= split,
+    P(t) = P_hist(split) + P_fc(t - split).
+  * Spells crossing the split are handled by a small per-job seam table
+    holding the spell-start indicator for starts in
+    [split - L + 1, split - 1].
+* `reference` may build the concatenation.
+* Only the history columns needed (the earliest candidate minus the longest
+  look-back, up to `split`) have to be read.
+
+**Ensemble summary.** For forecasts with members, the engine also returns,
+per init and cell:
+
+* the number of members in each status;
+* `onset_probability` by lead: the share of members whose onset falls on or
+  before that lead, with PRIOR members counting at lead 0.
+
+**Decisions recorded from the first implementation** (`engine`, `reference`, `climatology`).
+
+* `onset_lead` is float64 with NaN for no onset, in both modes, because stitched
+  onsets can have lead 0 or below. `PRIOR` days are reported the same way (negative
+  lead). `forecast_history` is `"observed"` or `"none"`.
+* The `PRIOR` search is run for first-passage rules only. A curve onset is the
+  minimum over the whole window, so a longer window can move it and the history-only
+  result would not equal the stitched one.
+* `members_by_status` uses the dim name `status_code` (coordinates: the code, and
+  `status_name`), because a dim named `status` clashes with the `status` variable.
+* `onset_probability` leaves `CENSORED` and `NOT_FOUND` members in the denominator
+  (they never count as reached); it is NaN when every member is `INSUFFICIENT_DATA`.
+* Season year, stitched mode: the first of the init's year minus 1, the year and the
+  year after whose season window contains a lead of the lead window. If the season
+  start is not in the history the job is `INSUFFICIENT_DATA`; if the season starts
+  after lead 1, candidates start at the first lead inside it. With
+  `restrict_to_season=False` the single season "window" runs from lead 1 to the end of the
+  lead window and has no `PRIOR`.
+* Model climatology: a forecast day counts when its own date label (not the init) lies in
+  the `during` window of a year in `years` (a window crossing the year end belongs to the
+  year of its start). The expected day count is members x such (init, lead) pairs.

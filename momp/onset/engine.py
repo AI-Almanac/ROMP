@@ -11,7 +11,7 @@ import xarray as xr
 
 from momp.onset import calendar as cal
 from momp.onset import plan as plan_mod
-from momp.onset.model import DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status
+from momp.onset.model import DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, StitchedJobs
 
 NO_PRESET = -1
 MAX_TABLE_CELLS = 20_000_000
@@ -35,6 +35,19 @@ class JobLayout:
     preset: np.ndarray
     season_names: list[str]
     n_series: int
+
+
+@dataclass
+class StitchedLayout(JobLayout):
+    """JobLayout of stitched jobs, which are ordered (season, init, [member], cell).
+
+    n_init, n_member (1 without members) and n_cell give the sizes of those axes;
+    n_series = n_init * n_member * n_cell.
+    """
+
+    n_init: int = 0
+    n_member: int = 1
+    n_cell: int = 0
 
 
 def _load_backend(name: str):
@@ -383,42 +396,290 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
     return jobs, JobLayout((k,), expand(preset), names, n_series)
 
 
+def _check_same_grid(history: DailyRain, forecast: ForecastRain, spatial_dims: tuple[str, ...]) -> None:
+    """Raise ValueError unless history and forecast share dims, calendar and cell coordinates (tolerance 1e-6)."""
+    if tuple(history.dims[:-1]) != tuple(spatial_dims):
+        raise ValueError(f"history dims {history.dims[:-1]} differ from the forecast's spatial dims {tuple(spatial_dims)}")
+    if history.calendar != forecast.calendar:
+        raise ValueError(f"history calendar {history.calendar!r} differs from the forecast's {forecast.calendar!r}")
+    for i, dim in enumerate(spatial_dims):
+        h, f = history.tenths.shape[i], forecast.tenths.shape[forecast.dims.index(dim)]
+        if h != f:
+            raise ValueError(f"history and forecast grids differ along {dim}: {h} vs {f} cells")
+        if dim in history.coords and dim in forecast.coords:
+            if not np.allclose(np.asarray(history.coords[dim], dtype=float), np.asarray(forecast.coords[dim], dtype=float),
+                               rtol=0, atol=1e-6):
+                raise ValueError(f"history and forecast grids differ along {dim}: coordinates do not match to 1e-6")
+
+
+def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: ForecastRain,
+                        lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True
+                        ) -> tuple[StitchedJobs, StitchedLayout]:
+    """One stitched job per (season, init, [member], cell) over observed history followed by the forecast (spec section 13).
+
+    The forecast row of a job is the flat (init, [member], cell) series index and
+    its history row the cell. split is the history index of lead 1's date label
+    (init for lead_label "start", init + 1 for "end"); the history must contain
+    that label. The season year is chosen as in build_forecast_jobs, with the
+    window needing one lead of lead_window inside it; candidates then run from the
+    season start (in the history, or lead 1's day onward when the season starts
+    later) to the earlier of the season end and the last lead of lead_window.
+    A season start before the history gives INSUFFICIENT_DATA, a season missing
+    from the init's years NOT_FOUND. With restrict_to_season=False there is one
+    season, "window", whose candidates are the leads of lead_window. lead_window
+    must start at 1. data_end is split plus the number of leads.
+    """
+    if lead_window[0] != 1:
+        raise ValueError(f"stitched detection needs lead_window to start at 1, got {lead_window}")
+    n_leads = forecast.tenths.shape[-1]
+    n_init = forecast.tenths.shape[0]
+    series_dims = forecast.dims[:-1]
+    n_lead_dims = 2 if "member" in series_dims else 1
+    spatial_dims = series_dims[n_lead_dims:]
+    _check_same_grid(history, forecast, spatial_dims)
+    n_cell = int(np.prod(forecast.tenths.shape[n_lead_dims:-1], dtype=np.int64))
+    n_member = forecast.tenths.shape[1] if n_lead_dims == 2 else 1
+    n_series = n_init * n_member * n_cell
+    hist_keys = cal.label_keys(history.year, history.month, history.day)
+    if np.any(np.diff(hist_keys) <= 0):
+        raise ValueError("history date labels must be strictly increasing")
+    label_y, label_m, label_d = _label_table(forecast, n_leads)
+    keys = cal.label_keys(label_y, label_m, label_d)
+    pos = np.searchsorted(hist_keys, keys[:, 0])
+    reached = (pos < len(hist_keys)) & (hist_keys[np.minimum(pos, len(hist_keys) - 1)] == keys[:, 0])
+    if not reached.all():
+        bad = int(np.argmax(~reached))
+        raise ValueError(f"history does not reach {int(keys[bad, 0])}, the date label of lead 1 of init {bad}")
+    split = pos.astype(np.int64)
+    hi = min(lead_window[1], n_leads)
+    allowed = np.zeros(n_leads, dtype=bool)
+    allowed[:hi] = True
+    if not restrict_to_season:
+        names = ["window"]
+        first = np.zeros((1, n_init), dtype=np.int64)
+        last = np.full((1, n_init), hi - 1, dtype=np.int64)
+        has = np.ones((1, n_init), dtype=bool)
+        start_hist = np.full((1, n_init), -1, dtype=np.int64)
+    else:
+        if isinstance(definition.seasons, DerivedSeasons):
+            raise NotImplementedError("derived seasons are not supported for forecasts with restrict_to_season=True")
+        names = [season.name for season in definition.seasons]
+        k = len(names)
+        first = np.zeros((k, n_init), dtype=np.int64)
+        last = np.full((k, n_init), -1, dtype=np.int64)
+        has = np.zeros((k, n_init), dtype=bool)
+        start_hist = np.full((k, n_init), -1, dtype=np.int64)
+        for i, season in enumerate(definition.seasons):
+            wraps = (season.end.month, season.end.day) < (season.start.month, season.start.day)
+            done = np.zeros(n_init, dtype=bool)
+            for shift in (-1, 0, 1):
+                year = np.asarray(forecast.init_year, dtype=np.int64) + shift
+                low = _bound_key(forecast.calendar, year, season.start)
+                high = _bound_key(forecast.calendar, year + wraps, season.end)
+                inside = (keys >= low) & (keys <= high) & allowed[None, :]
+                take = inside.any(axis=1) & ~done
+                first[i, take] = np.argmax(inside, axis=1)[take]
+                last[i, take] = (n_leads - 1 - np.argmax(inside[:, ::-1], axis=1))[take]
+                has[i, take] = True
+                before = take & (low[:, 0] <= keys[:, 0])
+                at = np.searchsorted(hist_keys, low[:, 0])
+                found = (at < len(hist_keys)) & (hist_keys[np.minimum(at, len(hist_keys) - 1)] == low[:, 0])
+                start_hist[i, before] = np.where(found, at, -2)[before]
+                done |= take
+    k = len(names)
+    in_history = start_hist != -1
+    start = np.where(in_history, start_hist, split[None, :] + first)
+    end = split[None, :] + last
+    preset = np.full((k, n_init), NO_PRESET, dtype=np.int8)
+    preset[~has] = Status.NOT_FOUND
+    preset[has & (start_hist == -2)] = Status.INSUFFICIENT_DATA
+    skip = preset >= 0
+    start = np.where(skip, 0, start)
+    end = np.where(skip, -1, end)
+    rest = n_series // max(n_init, 1)
+
+    def expand(a: np.ndarray) -> np.ndarray:
+        """Repeat per-init values over the member and cell rows of each init."""
+        return np.repeat(a, rest, axis=1).ravel()
+
+    series = np.broadcast_to(np.arange(n_series, dtype=np.int64), (k, n_series)).ravel().copy()
+    jobs = StitchedJobs(cell=series % n_cell, series=series, split=expand(np.broadcast_to(split, (k, n_init))),
+                        start=expand(start), end=expand(end),
+                        data_end=expand(np.broadcast_to(split + n_leads, (k, n_init))))
+    layout = StitchedLayout((k,), expand(preset), names, n_series, n_init, n_member, n_cell)
+    return jobs, layout
+
+
+def _prior_search(plan: plan_mod.Plan, history: DailyRain, jobs: StitchedJobs, layout: StitchedLayout,
+                  per_cell: dict[str, np.ndarray], backend: str) -> tuple[np.ndarray, np.ndarray]:
+    """History-only search per (season, init, cell): the onset day (-1 none) and whether it is ONSET.
+
+    Candidates run to min(season end, split - 1) with data_end = split. Returns
+    arrays shaped (n_season, n_init, n_cell).
+    """
+    k, n_init, n_cell = len(layout.season_names), layout.n_init, layout.n_cell
+    rest = layout.n_series // max(n_init, 1)
+
+    def per_init_cell(a: np.ndarray) -> np.ndarray:
+        """Pick the first member's row of every (season, init) and flatten."""
+        return a.reshape(k, n_init, rest)[:, :, :n_cell].ravel()
+
+    split = per_init_cell(jobs.split)
+    start, end = per_init_cell(jobs.start), np.minimum(per_init_cell(jobs.end), split - 1)
+    preset = per_init_cell(layout.preset).copy()
+    preset[(preset < 0) & (end < start)] = Status.NOT_FOUND
+    pjobs = Jobs(per_init_cell(jobs.cell), start, end, split)
+    n_time = history.tenths.shape[-1]
+    day, status = _run(plan, history.tenths.reshape(n_cell, n_time), history.missing.reshape(n_cell, n_time),
+                       per_cell, pjobs, preset, backend)
+    return day.reshape(k, n_init, n_cell), (status == Status.ONSET).reshape(k, n_init, n_cell)
+
+
+def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRain, thresholds: dict[str, np.ndarray],
+                  per_cell: dict[str, np.ndarray], jobs: StitchedJobs, layout: StitchedLayout,
+                  backend: str) -> tuple[np.ndarray, np.ndarray]:
+    """Decide PRIOR from the history alone, then run the stitched search for the other jobs; return (day, status) per job.
+
+    The PRIOR search is skipped for curve rules, whose onset is a minimum over the whole
+    window and so can move when the window grows (spec section 13).
+    """
+    module = _load_backend(backend)
+    n_cell, n_time = layout.n_cell, history.tenths.shape[-1]
+    n_leads = forecast.tenths.shape[-1]
+    n_series = layout.n_series
+    flat_h = history.tenths.reshape(n_cell, n_time), history.missing.reshape(n_cell, n_time)
+    flat_f = forecast.tenths.reshape(-1, n_leads), forecast.missing.reshape(-1, n_leads)
+    amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=flat_f[0].shape[0])
+    n_jobs = len(jobs.series)
+    day = np.full(n_jobs, -1, dtype=np.int64)
+    status = np.where(layout.preset >= 0, layout.preset, Status.NOT_FOUND).astype(np.int8)
+    active = layout.preset < 0
+    bad = active & invalid[jobs.series]
+    status[bad] = Status.INSUFFICIENT_DATA
+    active &= ~bad
+    if plan.family == plan_mod.FIRST_PASSAGE and active.any():
+        k, n_init, n_member = len(layout.season_names), layout.n_init, layout.n_member
+        prior_day, prior_hit = _prior_search(plan, history, jobs, layout, per_cell, backend)
+        shape = (k, n_init, n_member, n_cell)
+        hit = np.broadcast_to(prior_hit[:, :, None, :], shape).ravel() & active
+        day[hit] = np.broadcast_to(prior_day[:, :, None, :], shape).ravel()[hit]
+        status[hit] = Status.PRIOR
+        active &= ~hit
+    idx = np.nonzero(active)[0]
+    if len(idx) == 0:
+        return day, status
+    idx = idx[np.argsort(jobs.series[idx], kind="stable")]
+    sorted_series = jobs.series[idx]
+    per_chunk = max(1, MAX_TABLE_CELLS // max(n_leads, 1))
+    edges = np.arange(0, flat_f[0].shape[0] + per_chunk, per_chunk)
+    bounds = np.searchsorted(sorted_series, edges)
+    for c in range(len(edges) - 1):
+        sel = idx[bounds[c]:bounds[c + 1]]
+        if len(sel) == 0:
+            continue
+        s0, s1 = edges[c], min(edges[c + 1], flat_f[0].shape[0])
+        sub = StitchedJobs(jobs.cell[sel], jobs.series[sel] - s0, jobs.split[sel], jobs.start[sel], jobs.end[sel],
+                           jobs.data_end[sel])
+        sub_amounts = {key: value[s0:s1] for key, value in amounts.items()}
+        out = module.detect_stitched(plan, flat_h[0], flat_h[1], flat_f[0][s0:s1], flat_f[1][s0:s1], sub_amounts, sub)
+        day[sel] = out.day
+        status[sel] = out.status
+    return day, status
+
+
+def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...], coords: dict,
+                      max_lead: int) -> dict[str, xr.DataArray]:
+    """members_by_status and onset_probability from (init, member, season, *spatial) lead and status arrays."""
+    codes = np.array([s.value for s in Status], dtype=np.int8)
+    counts = np.stack([(status == c).sum(axis=1) for c in codes]).astype(np.int64)
+    out_dims = ("init_time", *dims[2:])
+    by_status = xr.DataArray(
+        counts, dims=("status_code", *out_dims),
+        coords={"status_code": codes, "status_name": ("status_code", [s.name for s in Status]), **{
+            d: v for d, v in coords.items() if d in out_dims}},
+        attrs={"long_name": "number of members in each onset status"})
+    leads = np.arange(max_lead + 1)
+    reached = (lead[..., None] <= leads).sum(axis=1)
+    usable = (status != Status.INSUFFICIENT_DATA).sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        share = np.where(usable[..., None] > 0, reached / usable[..., None], np.nan)
+    share = np.moveaxis(share, -1, 2)
+    probability = xr.DataArray(
+        share, dims=("init_time", "season", "lead", *dims[3:]),
+        coords={"lead": leads, **{d: v for d, v in coords.items() if d in out_dims}},
+        attrs={"long_name": "share of members whose onset is on or before this lead",
+               "comment": "PRIOR and back-dated onsets (onset_lead <= 0) count at lead 0; members with "
+                          "INSUFFICIENT_DATA are excluded from the denominator; CENSORED and NOT_FOUND members "
+                          "stay in it and never count as reached"})
+    return {"members_by_status": by_status, "onset_probability": probability}
+
+
 def detect_forecast(definition: Definition, forecast: ForecastRain, *, thresholds=None,
                     lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True,
-                    backend: str = "numba", attrs: dict | None = None) -> xr.Dataset:
+                    backend: str = "numba", attrs: dict | None = None,
+                    history: DailyRain | None = None) -> xr.Dataset:
     """Detect onset in every (init, [member], season, cell) of a forecast.
 
-    Returns dims (init_time, [member], season, *spatial) with onset_lead
-    (1-based lead of the onset, -1 if none), onset_date (the date label of that
-    lead in the forecast's calendar) and status. See build_forecast_jobs for how
-    candidates are chosen; thresholds are per cell and broadcast over inits and
-    members.
+    Returns dims (init_time, [member], season, *spatial) with onset_lead (float64:
+    the 1-based lead of the onset, NaN if none), onset_date (the date label of
+    that day in the forecast's calendar) and status. See build_forecast_jobs for
+    how candidates are chosen; thresholds are per cell and broadcast over inits
+    and members.
+
+    With `history` (observed rainfall on the forecast grid) the searched series
+    is the history up to the day before lead 1 followed by the forecast, as in
+    spec section 13: build_stitched_jobs chooses the candidates, onsets decided
+    in the history are PRIOR, and onset_lead is 0 or negative for onsets before
+    lead 1. Without it the forecast is searched alone and onset_lead is at least
+    1. attrs["forecast_history"] is "observed" or "none". When the forecast has
+    members, members_by_status and onset_probability summarise them per init.
     """
     plan = plan_mod.compile(definition)
-    jobs, layout = build_forecast_jobs(definition, forecast, lead_window, restrict_to_season)
     n_leads = forecast.tenths.shape[-1]
     series_dims = forecast.dims[:-1]
     series_shape = forecast.tenths.shape[:-1]
     n_lead_dims = 2 if "member" in series_dims else 1
     spatial_dims, spatial_shape = series_dims[n_lead_dims:], series_shape[n_lead_dims:]
     per_series = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, series_shape)
-    day, status = _run(plan, forecast.tenths.reshape(layout.n_series, n_leads),
-                       forecast.missing.reshape(layout.n_series, n_leads), per_series, jobs, layout.preset, backend)
+    if history is None:
+        jobs, layout = build_forecast_jobs(definition, forecast, lead_window, restrict_to_season)
+        day, status = _run(plan, forecast.tenths.reshape(layout.n_series, n_leads),
+                           forecast.missing.reshape(layout.n_series, n_leads), per_series, jobs, layout.preset, backend)
+        split = np.zeros(len(day), dtype=np.int64)
+        hist_labels = None
+    else:
+        jobs, layout = build_stitched_jobs(definition, history, forecast, lead_window, restrict_to_season)
+        per_cell = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape)
+        day, status = _run_stitched(plan, history, forecast, per_series, per_cell, jobs, layout, backend)
+        split = jobs.split
+        hist_labels = (history.year, history.month, history.day)
     k = len(layout.season_names)
-    day = np.moveaxis(day.reshape((k, *series_shape)), 0, n_lead_dims)
-    status = np.moveaxis(status.reshape((k, *series_shape)), 0, n_lead_dims)
-    lead = np.where(day >= 0, day + 1, -1)
+    full = (k, *series_shape)
+    day = np.moveaxis(day.reshape(full), 0, n_lead_dims)
+    status = np.moveaxis(status.reshape(full), 0, n_lead_dims)
+    split = np.moveaxis(split.reshape(full), 0, n_lead_dims)
+    found = day >= 0
+    lead = np.where(found, day - split + 1, np.nan).astype(np.float64)
     label_y, label_m, label_d = _label_table(forecast, n_leads)
     init_index = np.arange(series_shape[0]).reshape((-1,) + (1,) * (day.ndim - 1))
-    safe = np.where(day >= 0, day, 0)
-    dates = _dates_from_labels(forecast.calendar, label_y[init_index, safe], label_m[init_index, safe],
-                               label_d[init_index, safe], day >= 0)
+    col = np.clip(np.where(found, day - split, 0), 0, n_leads - 1)
+    year, month, dayn = label_y[init_index, col], label_m[init_index, col], label_d[init_index, col]
+    if hist_labels is not None:
+        in_hist = found & (day < split)
+        h = np.where(in_hist, day, 0)
+        year, month, dayn = (np.where(in_hist, labels[h], fc) for labels, fc in zip(hist_labels, (year, month, dayn)))
+    dates = _dates_from_labels(forecast.calendar, year, month, dayn, found)
     dims = (*series_dims[:n_lead_dims], "season", *spatial_dims)
     coords = {"season": layout.season_names, **_spatial_coords(dims, forecast.coords)}
-    ds = xr.Dataset({"onset_lead": (dims, lead.astype(np.int64)), "onset_date": (dims, dates),
-                     "status": _status_var(status, dims)}, coords=coords)
+    variables = {"onset_lead": (dims, lead), "onset_date": (dims, dates), "status": _status_var(status, dims)}
+    ds = xr.Dataset(variables, coords=coords)
+    if "member" in series_dims:
+        summary = _ensemble_summary(lead, status, dims, coords, lead_window[1])
+        for name, var in summary.items():
+            ds[name] = var
     ds.attrs.update({"definition_id": definition.id, "definition_version": definition.version, "backend": backend,
-                     "lead_label": forecast.lead_label})
+                     "lead_label": forecast.lead_label,
+                     "forecast_history": "none" if history is None else "observed"})
     ds.attrs.update(attrs or {})
     return ds
 

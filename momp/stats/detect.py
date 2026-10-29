@@ -127,7 +127,7 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None):
     found = status == Status.ONSET
     return {"setup": setup, "init": init, "lat": np.asarray(lat), "lon": np.asarray(lon),
             "member": np.asarray(forecast.coords["member"]) if "member" in forecast.dims else None,
-            "day": np.where(found, lead - offset, -1), "date": dates, "status": status,
+            "day": np.where(found, np.nan_to_num(lead, nan=-1) - offset, -1).astype(np.int64), "date": dates, "status": status,
             "valid": valid, "obs": obs_values, "totals": (int(obs.size * len(init)), int((~np.isnat(obs_values)).sum()))}
 
 

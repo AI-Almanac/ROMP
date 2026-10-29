@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from momp.onset import plan as P
-from momp.onset.model import Detection, Jobs, Status
+from momp.onset.model import Detection, Jobs, Status, StitchedJobs
 
 TRUE, FALSE, UNKNOWN = 1, 0, -1
 MISSING_FLAG, HORIZON_FLAG = 1, 2
@@ -54,6 +54,81 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
         day[sl], status[sl] = out["day"], out["status"]
         if tr is not None:
             _store_trace(tr, sl, w, out["trace"])
+    return Detection(day, status, tr)
+
+
+def _lookback(plan: P.Plan) -> int:
+    """How many days before a candidate any span of the plan can start (0 when none reaches back)."""
+    firsts = [0]
+    firsts += [c.first for c in plan.conditions if not c.since_start]
+    firsts += [v.first for v in plan.vetoes]
+    if plan.report_span is not None and not plan.report_span[2]:
+        firsts.append(plan.report_span[0])
+    return -min(firsts)
+
+
+def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndarray, fc_tenths: np.ndarray,
+                    fc_missing: np.ndarray, amounts: dict[str, np.ndarray], jobs: StitchedJobs, *,
+                    trace: bool = False) -> Detection:
+    """Run stitched jobs (observed history, then forecast) and return day indices in stitched days.
+
+    Equivalent to detect() on the explicit concatenation. Each job gets its own
+    row holding only the stitched columns it can read, from its first candidate
+    minus the plan's look-back (clipped at day 0) to its data end; history at or
+    after the job's split is never copied. Trace arrays are as in detect(), with
+    candidate days in stitched days.
+    """
+    cell = np.asarray(jobs.cell, dtype=np.int64)
+    series = np.asarray(jobs.series, dtype=np.int64)
+    split = np.asarray(jobs.split, dtype=np.int64)
+    start = np.asarray(jobs.start, dtype=np.int64)
+    end = np.asarray(jobs.end, dtype=np.int64)
+    data_end = np.asarray(jobs.data_end, dtype=np.int64)
+    n_jobs = len(series)
+    n_hist, n_fc = hist_tenths.shape[1], fc_tenths.shape[1]
+    if n_jobs and (split.max() > n_hist or (data_end - split).max() > n_fc):
+        raise ValueError("a stitched job's split lies beyond the history or its data end beyond the forecast")
+    day = np.full(n_jobs, -1, dtype=np.int64)
+    status = np.full(n_jobs, Status.NOT_FOUND, dtype=np.int8)
+    n_cand = np.maximum(end - start + 1, 0)
+    width = int(n_cand.max()) if n_jobs else 0
+    tr = _empty_trace(plan, n_jobs, width) if trace else None
+    active = np.nonzero(n_cand > 0)[0]
+    if len(active) == 0:
+        return Detection(day, status, tr)
+    low = np.maximum(start - _lookback(plan), 0)
+    row_width = int(np.maximum(data_end[active] - low[active], 1).max())
+    per_block = max(1, 4 * BLOCK_CELLS // row_width)
+    for lo in range(0, len(active), per_block):
+        idx = active[lo:lo + per_block]
+        cols = low[idx, None] + np.arange(row_width, dtype=np.int64)[None, :]
+        in_hist = cols < split[idx, None]
+        in_data = cols < data_end[idx, None]
+        h = np.clip(cols, 0, n_hist - 1)
+        f = np.clip(cols - split[idx, None], 0, n_fc - 1)
+        x = np.where(in_hist, hist_tenths[cell[idx, None], h], fc_tenths[series[idx, None], f])
+        miss = np.where(in_hist, hist_missing[cell[idx, None], h], fc_missing[series[idx, None], f])
+        miss = miss | ~in_data
+        x = np.where(miss, 0, x).astype(np.int32)
+        rows = np.arange(len(idx), dtype=np.int64)
+        sub_amounts = {key: value[series[idx]] for key, value in amounts.items()}
+        sub = Jobs(rows, start[idx] - low[idx], end[idx] - low[idx], data_end[idx] - low[idx])
+        out = detect(plan, x, miss, sub_amounts, sub, trace=trace)
+        found = out.day >= 0
+        day[idx] = np.where(found, out.day + low[idx], -1)
+        status[idx] = out.status
+        if tr is not None:
+            w = out.trace["day"].shape[1]
+            for name in ("day", "valid", "state", "flags", "cumulative"):
+                if name in tr:
+                    part = out.trace[name]
+                    if name == "day":
+                        part = np.where(part >= 0, part + low[idx, None], -1)
+                    tr[name][idx, :w] = part
+            for name in ("requirements", "vetoes"):
+                if name in tr:
+                    for i, codes in enumerate(out.trace[name]):
+                        tr[name][i, idx, :w] = codes
     return Detection(day, status, tr)
 
 

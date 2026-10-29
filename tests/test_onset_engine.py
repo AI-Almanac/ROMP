@@ -248,7 +248,7 @@ def test_forecast_lead_labels_and_season_window(lead_label, date):
     ds = engine.detect_forecast(definition(ANY_WET, JJAS), fc)
     assert ds["status"].dims == ("init_time", "season", "lat", "lon")
     assert ds["status"].values[:, 0, 0, 0].tolist() == [ONSET, NOT_FOUND]
-    assert ds["onset_lead"].values[:, 0, 0, 0].tolist() == [10, -1]
+    np.testing.assert_array_equal(ds["onset_lead"].values[:, 0, 0, 0], [10.0, np.nan])
     assert ds["onset_date"].values[0, 0, 0, 0] == np.datetime64(date)
     assert np.isnat(ds["onset_date"].values[1, 0, 0, 0])
 

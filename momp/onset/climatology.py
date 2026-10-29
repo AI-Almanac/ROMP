@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -108,6 +109,95 @@ def compute_thresholds(definition: Definition, rain, years: tuple[int, int]) -> 
     """Every threshold the definition names, as DataArrays in mm (attrs: source, years, spec)."""
     return {name: _threshold_array(name, compute_threshold(spec, rain, years), spec, rain, years)
             for name, spec in definition.thresholds}
+
+
+def _during_mask(forecast, spec: ThresholdSpec, years: tuple[int, int], first_lead: int, last_lead: int) -> np.ndarray:
+    """Which (init, lead) cells of a forecast count towards a threshold: shape (n_init, n_leads).
+
+    A lead counts when its date label lies in the `during` window (the whole
+    year when None) of a year in `years`, and its lead number lies in
+    first_lead..last_lead. A window crossing the year end belongs to the year of
+    its start.
+    """
+    from momp.onset.engine import _bound_key, _label_table
+
+    n_leads = forecast.tenths.shape[-1]
+    label_y, label_m, label_d = _label_table(forecast, n_leads)
+    keys = label_keys(label_y, label_m, label_d)
+    leads = np.zeros(n_leads, dtype=bool)
+    leads[max(first_lead, 1) - 1:min(last_lead, n_leads)] = True
+    if spec.during is None:
+        hit = (label_y >= years[0]) & (label_y <= years[1])
+        return hit & leads[None, :]
+    start_ref, end_ref = spec.during
+    wraps = (end_ref.month, end_ref.day) < (start_ref.month, start_ref.day)
+    hit = np.zeros(keys.shape, dtype=bool)
+    for shift in (-1, 0, 1):
+        year = (label_y + shift).ravel()
+        low = _bound_key(forecast.calendar, year, start_ref).reshape(keys.shape)
+        high = _bound_key(forecast.calendar, year + wraps, end_ref).reshape(keys.shape)
+        year = year.reshape(keys.shape)
+        hit |= (year >= years[0]) & (year <= years[1]) & (keys >= low) & (keys <= high)
+    return hit & leads[None, :]
+
+
+def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterable, years: tuple[int, int],
+                                      lead_window: tuple[int, int] = (1, 30)) -> dict[str, xr.DataArray]:
+    """The model's own climatology: every threshold of the definition from forecast days, as DataArrays in mm.
+
+    Streams through the forecasts (ForecastRain objects on one grid), summing per
+    cell the valid forecast days whose date label (from lead_label) lies in the
+    threshold's `during` window of a year in `years` (inclusive), over the leads
+    of lead_window, with members pooled. mean_total is days x that mean and
+    mean_daily the mean; quantile_total is not supported. A cell is NaN when more
+    than 10 % of the expected days are missing. attrs record source
+    "model:<source of the first forecast>", years, lead_window and the spec.
+    """
+    specs = definition.thresholds
+    for name, spec in specs:
+        if spec.kind not in ("mean_total", "mean_daily"):
+            raise NotImplementedError(
+                f"threshold {name!r}: the model climatology supports only mean_total and mean_daily, not {spec.kind}")
+    sums = {name: None for name, _ in specs}
+    counts = {name: None for name, _ in specs}
+    expected = {name: 0 for name, _ in specs}
+    template = None
+    for forecast in forecasts:
+        if template is None:
+            template = forecast
+            shape = forecast.tenths.shape[2 if "member" in forecast.dims else 1:-1]
+            for name, _ in specs:
+                sums[name], counts[name] = np.zeros(shape, dtype=np.int64), np.zeros(shape, dtype=np.int64)
+        elif forecast.tenths.shape[1:-1] != template.tenths.shape[1:-1] or forecast.dims != template.dims:
+            raise ValueError("forecasts must share dims and their member and spatial shape")
+        for name, spec in specs:
+            mask = _during_mask(forecast, spec, years, lead_window[0], lead_window[1]).astype(np.int64)
+            valid = (~forecast.missing).astype(np.int64)
+            x = np.where(forecast.missing, 0, forecast.tenths).astype(np.int64)
+            letters = "abcdefgh"[:forecast.tenths.ndim - 2]
+            kept = letters[1:] if "member" in forecast.dims else letters
+            sums[name] += np.einsum(f"i{letters}l,il->{kept}", x, mask)
+            counts[name] += np.einsum(f"i{letters}l,il->{kept}", valid, mask)
+            n_member = forecast.tenths.shape[1] if "member" in forecast.dims else 1
+            expected[name] += int(mask.sum()) * n_member
+    if template is None:
+        raise ValueError("no forecasts given")
+    dims = tuple(d for d in template.dims if d not in ("init_time", "member", "lead"))
+    out = {}
+    for name, spec in specs:
+        n, valid_days = expected[name], counts[name]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mean = np.where(valid_days > 0, sums[name] / 10.0 / np.maximum(valid_days, 1), np.nan)
+        values = mean * spec.days if spec.kind == "mean_total" else mean
+        if n == 0:
+            values = np.full(values.shape, np.nan)
+        else:
+            values = np.where((n - valid_days) / n > MAX_MISSING_FRACTION, np.nan, values)
+        out[name] = xr.DataArray(
+            values, dims=dims, coords={d: template.coords[d] for d in dims if d in template.coords}, name=name,
+            attrs={"units": "mm", "source": f"model:{template.source}", "years": [int(years[0]), int(years[1])],
+                   "lead_window": [int(lead_window[0]), int(lead_window[1])], "spec": repr(spec)})
+    return out
 
 
 def _doy_index(month: np.ndarray, day: np.ndarray) -> np.ndarray:

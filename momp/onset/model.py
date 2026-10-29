@@ -298,6 +298,25 @@ class Jobs:
 
 
 @dataclass
+class StitchedJobs:
+    """One onset search per row over observed history followed by a forecast (spec section 13).
+
+    Stitched day t is history day t of row `cell` for t < split, and forecast
+    column t - split of row `series` (lead t - split + 1) for t >= split.
+    start and end are inclusive candidate days and data_end the exclusive end of
+    usable data, all in stitched days. History days at or after split are never
+    read, so nothing observed after the init leaks into the forecast.
+    """
+
+    cell: np.ndarray
+    series: np.ndarray
+    split: np.ndarray
+    start: np.ndarray
+    end: np.ndarray
+    data_end: np.ndarray
+
+
+@dataclass
 class Detection:
     """Backend output, one entry per job: the onset day index (-1 if none) and its Status."""
 
