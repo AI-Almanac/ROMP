@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import warnings
 from datetime import datetime
 from pathlib import Path
 import numpy as np
@@ -10,10 +11,13 @@ import xarray as xr
 from momp.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, is_legacy, onset_setup
 from momp.onset import definition as definition_mod
 from momp.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
-from momp.onset.ingest import ingest, ingest_forecast
+from momp.onset.ingest import IngestInfo, ingest, ingest_forecast_info
 from momp.utils.standard import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble
 from momp.utils.region import region_select
 from momp.utils.practical import restore_args
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def onset_steps_needed(*, max_forecast_day=None, wet_spell=None, dry_extent=None, **kwargs):
@@ -67,6 +71,36 @@ class _LazyRain:
         return getattr(self._full, name)
 
 
+_reported_ingest = set()
+
+
+def ingest_model_forecast(cube, setup, kwargs, source=None):
+    """Normalise a model's forecast cube (already in mm, dims init_time, [member], lat, lon, step) to ForecastRain.
+
+    Uses the model's own `accumulation` ("daily", "since_init" or "auto") and `daily_boundary` from kwargs
+    (the config's per-model values; "daily" when absent), so accumulated fields are differenced and sub-daily steps summed to days
+    exactly as momp.onset.ingest.ingest_forecast does. source labels the data (default: the model's name); how the
+    days were made is logged once per model.
+    """
+    source = source or str(kwargs.get("model") or "forecast")
+    accumulation = kwargs.get("accumulation") or "daily"
+    boundary = kwargs.get("daily_boundary") or None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", IngestInfo)
+        forecast, info = ingest_forecast_info(cube, day_boundary=setup.forecast_boundary, lead_label=setup.lead_label,
+                                              units="mm", source=source, accumulation=accumulation,
+                                              daily_boundary=boundary)
+    forecast.ingest_info = info
+    key = (str(kwargs.get("model")), info.accumulation, info.resolution, info.daily_boundary)
+    if key not in _reported_ingest:
+        _reported_ingest.add(key)
+        text = f"{kwargs.get('model') or source}: accumulation {info.accumulation} [{info.accumulation_evidence}]; steps {info.resolution}"
+        if info.daily_boundary:
+            text += f"; days cut at {info.daily_boundary}"
+        log.info(text + "".join(f"; {note}" for note in info.notes))
+    return forecast
+
+
 def _reference_rain(setup, years, kwargs):
     """The observations of years[0]..years[1] as ingested DailyRain, labelled with their source."""
     source = (f"{kwargs.get('obs')}:{kwargs.get('obs_dir')}:{kwargs.get('obs_file_pattern')}:"
@@ -102,12 +136,11 @@ def _model_forecasts(setup, years, kwargs):
         try:
             cube = loader(year, **kwargs)
         except FileNotFoundError as exc:
-            print(f"Model climatology: skipping year {year} ({exc})")
+            log.warning(f"Model climatology: skipping year {year} ({exc})")
             continue
         found = True
         order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
-        yield ingest_forecast(cube.transpose(*order), day_boundary=setup.forecast_boundary,
-                              lead_label=setup.lead_label, units="mm", accumulation="daily", source=str(kwargs.get("model")))
+        yield ingest_model_forecast(cube.transpose(*order), setup, kwargs, str(kwargs.get("model")))
     if not found:
         raise FileNotFoundError(f"no forecast file of {kwargs.get('model')} for the years {years[0]}-{years[1]}")
 
@@ -149,7 +182,8 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
     """The named thresholds of the definition, as {name: DataArray(lat, lon)} in mm.
 
     Files given in `thresholds` are used as they are; the others are computed from
-    the observations of threshold_years and cached under dir_out/.onset_cache.
+    the observations of threshold_years and cached under the run's cache_dir (shared by runs), or
+    dir_out/.onset_cache when none is set.
     The returned Thresholds also carries season_climatology for derived seasons.
     """
     thresholds = Thresholds()
@@ -162,15 +196,15 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
     if not pending and not setup.derived_seasons:
         return thresholds
     years = setup.threshold_years
+    cache_dir = Path(kwargs["cache_dir"]) if kwargs.get("cache_dir") else Path(dir_out) / ".onset_cache"
     if pending and setup.threshold_source == "model":
-        thresholds.update(_model_thresholds(setup, pending, years, Path(dir_out) / ".onset_cache",
+        thresholds.update(_model_thresholds(setup, pending, years, cache_dir,
                                             {"dir_out": dir_out, "region": region, **kwargs}))
         pending = []
         if not setup.derived_seasons:
             return thresholds
     probe = _reference_rain(setup, (years[0], years[0]), {"dir_out": dir_out, "region": region, **kwargs})
     full = _LazyRain(probe, lambda: _reference_rain(setup, years, {"region": region, **kwargs}))
-    cache_dir = Path(dir_out) / ".onset_cache"
     cache = ThresholdCache(cache_dir)
     for name, spec in pending:
         thresholds[name] = cache.get_or_compute(spec, full, years, name)

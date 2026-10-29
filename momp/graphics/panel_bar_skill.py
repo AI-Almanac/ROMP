@@ -4,6 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from momp.io.dict import extract_overall_dict
 from momp.utils.printing import tuple_to_str
+import logging
+from momp.lib.run_folder import file_name
+
+log = logging.getLogger(__name__)
 
 
 def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig, 
@@ -23,7 +27,7 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig,
     bss, model_list  = extract_overall_dict(result_overall, 'Fair_Brier_Skill_Score')
     rps, _  = extract_overall_dict(result_overall, 'Fair_RPS_Skill_Score')
     auc, _  = extract_overall_dict(result_overall, 'AUC')
-    print("/n/n result_overall = ", result_overall)
+    log.debug("%s %s", "/n/n result_overall = ", result_overall)
     auc_ref, _  = extract_overall_dict(result_overall, 'AUC_ref')
     auc_ref = auc_ref[0]
 
@@ -104,7 +108,7 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig,
     figure_filename = f"panel_bar_BSS_RPSS_AUC_{window_str}.png"
     figure_filename = os.path.join(dir_fig, figure_filename)
     fig.savefig(figure_filename, dpi=300, bbox_inches='tight')
-    print(f"Figure saved as '{figure_filename}'")
+    log.debug(f"Figure saved as '{figure_filename}'")
 
     return fig, (ax, ax2)
 
@@ -124,8 +128,7 @@ if __name__ == "__main__":
     window_str = tuple_to_str(verification_window)
 
     for model in model_list:
-        fout = os.path.join(cfg.dir_out,"overall_skill_scores_{}_{}.csv")
-        fout = fout.format(model, window_str)
+        fout = os.path.join(cfg.dir_out, file_name(vars(cfg), "overall", model, window_str))
         df = pd.read_csv(fout)
         dic_list = df.to_dict(orient='list') # this option return key values as list, cause error plotting
         dic = {k: v[0] for k, v in dic_list.items()} # convert list[np.float64] into np.float64

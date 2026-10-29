@@ -4,7 +4,7 @@
     paths = export_onsets(cfg, sources=["observed", "AIFS"], out="onsets")   # {source: Path}
 
 or ``momp-run export -p run.yaml [--sources observed,AIFS,climatology] [--out DIR]``, or ``output.save_onsets:
-true`` in the run file (files go to dir_out/onsets/ before scoring).
+true`` in the run file (files go to the run's onsets/ folder, dir_out/onsets/ with an explicit dir_out, before scoring).
 
 One file per source, each over all evaluated years: ``onsets_observed.nc``, ``onsets_<model>.nc`` for every
 model, ``onsets_climatology.nc`` and ``onsets_conditional_climatology.nc``. The values are not re-detected
@@ -39,6 +39,7 @@ from momp.io.input import (get_forecast_deterministic_twice_weekly, get_forecast
 from momp.lib.control import init_dataclass, iter_list, make_case
 from momp.lib.convention import Case, Setting
 from momp.lib.onset_config import onset_setup
+from momp.lib.run_folder import file_name
 from momp.lib.resolved import resolved_config_text
 from momp.onset import definition as definition_mod
 from momp.onset.describe import describe
@@ -50,11 +51,14 @@ from momp.stats.conditional_climatology import (CONDITIONAL_CLIMATOLOGY, climato
                                                 conditional_lead_probabilities)
 from momp.stats.detect import (_detect_forecast, detect_observed_onset, detect_observed_result, ensemble_onset,
                                _ensemble_status)
+import logging
+
+log = logging.getLogger(__name__)
 
 OBSERVED = "observed"
 CLIMATOLOGY = "climatology"
 SOURCE_FILE = "onsets_{}.nc"
-"""File name of a source's export; {} is the source name."""
+"""File name of a source's export with an explicit dir_out ({} is the source); see run_folder.file_name."""
 DATE_UNITS = "days since 1970-01-01"
 DATE_FILL = -2147483648
 _EPOCH = np.datetime64("1970-01-01")
@@ -122,6 +126,12 @@ def case_kwargs(dic: dict, model: str, *, reference: bool = False) -> dict:
                      "file_pattern": dic["ref_model_file_pattern"], "unit_cvt": dic["ref_model_unit_cvt"],
                      "model_dims": None})
     return {**asdict(init_dataclass(Setting, dic)), **asdict(case)}
+
+
+def onsets_folder(dic: dict) -> Path:
+    """The folder of the onset files: the run's ``onsets`` folder, or dir_out/onsets."""
+    paths = dic.get("run_paths")
+    return Path(paths.onsets) if paths is not None else Path(dic["dir_out"]) / "onsets"
 
 
 def default_sources(dic: dict) -> list[str]:
@@ -705,17 +715,18 @@ def export_onsets(cfg, sources=None, out=None) -> dict:
     cfg is a flat config dict (or SimpleNamespace, momp.config.Config, or the path of a run YAML).
     sources is a list or comma-separated text of "observed", model names, "climatology" and
     "conditional_climatology" (default: observed, every model, and the climatology reference the run uses).
-    out is the folder (default dir_out/onsets). Only the detection is run, with the scoring's own functions
-    and settings; nothing is scored.
+    out is the folder (default: the run's onsets folder, dir_out/onsets for an explicit dir_out). Files are named
+    onsets_<source>.nc, or <source>.nc inside a run folder. Only the detection is run, with the scoring's own
+    functions and settings; nothing is scored.
     """
     dic = _as_dict(cfg)
     names = _check_sources(dic, sources)
-    folder = Path(out) if out is not None else Path(dic["dir_out"]) / "onsets"
+    folder = Path(out) if out is not None else onsets_folder(dic)
     paths = {}
     for source in names:
-        print(f"Exporting onset dates of {source} ...")
+        log.info(f"Exporting onset dates of {source} ...")
         ds = _collect(dic, source)
-        path = write_netcdf(ds, folder / SOURCE_FILE.format(source.replace(" ", "_")))
-        print(f"  wrote {path}")
+        path = write_netcdf(ds, folder / file_name(dic, "onset", source.replace(" ", "_")))
+        log.info(f"  wrote {path}")
         paths[source] = path
     return paths

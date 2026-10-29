@@ -13,6 +13,9 @@ from momp.utils.visual import cbar_season, set_basemap
 from momp.utils.land_mask import shp_mask, add_polygon
 from momp.graphics.func_map import spatial_metrics_map
 from momp.utils.visual import box_boundary
+import logging
+
+log = logging.getLogger(__name__)
 
 def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, polygon, dir_fig, 
                                    region, figsize=(18, 6), cbar_ssn=False, domain_mask=False, 
@@ -30,7 +33,7 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
 
     # Detect resolution from latitude spacing
     lat_diff = abs(lats[1] - lats[0])
-    print(f"Detected resolution: {lat_diff:.1f} degrees")
+    log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Plot parameters
     map_lw = 0.75
@@ -146,7 +149,7 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         plot_filename = f"climatology_onset_{tuple_to_str_range(years_clim)}.png"
         plot_path = os.path.join(dir_fig, plot_filename)
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        print(f"Figure saved to: {plot_path}")
+        log.debug(f"Figure saved to: {plot_path}")
 
     if show_plot:
         plt.show()
@@ -186,7 +189,7 @@ if __name__ == "__main__":
 
     for combi in product(*layout_pool):
         case = make_case(Case, combi, vars(cfg_ref))
-        print(f"processing model onset evaluation for {case.case_name}")
+        log.debug(f"processing model onset evaluation for {case.case_name}")
 
         case_ref = {'model_dir': setting.ref_model_dir,
                     'model_var': case.ref_model_var,
@@ -199,16 +202,16 @@ if __name__ == "__main__":
         if case.model == 'climatology':
             case.years = case.years_clim
 
-        print("\n case.file_pattern = ", case.file_pattern)
-        print("\n setting.ref_model_file_pattern = ", setting.ref_model_file_pattern)
+        log.debug("%s %s", "\n case.file_pattern = ", case.file_pattern)
+        log.debug("%s %s", "\n setting.ref_model_file_pattern = ", setting.ref_model_file_pattern)
 
         case_cfg_ref = {**asdict(case), **asdict(setting)}
-        print("\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('file_pattern'))
+        log.debug("%s %s", "\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('file_pattern'))
 
         # model-obs onset benchmarking
-        print("\n ", case_cfg_ref)
+        log.debug("%s %s", "\n ", case_cfg_ref)
         metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
-        print("\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('years_clim'))
+        log.debug("%s %s", "\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('years_clim'))
         break
 
     da = next(iter(onset_da_dict.values()))

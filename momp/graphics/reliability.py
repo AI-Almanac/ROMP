@@ -5,6 +5,9 @@ import pandas as pd
 import os
 from momp.io.dict import extract_pd_bins
 from momp.utils.printing import tuple_to_str
+import logging
+
+log = logging.getLogger(__name__)
 
 def plot_reliability_diagram(combined_forecast_obs, *, model, verification_window, day_bins,
                              save_fig, dir_fig, extract_bins=True, show_plot=True, **kwargs):
@@ -22,9 +25,9 @@ def plot_reliability_diagram(combined_forecast_obs, *, model, verification_windo
     frequency = np.zeros(n_bins)
     n_forecasts_array = np.zeros(n_bins)
 
-    print("\nReliability Analysis:")
-    print("Bin Range\t\tN_Forecasts\tMean_Forecast_Prob\tReliability\tFrequency\tError_Bar")
-    print("-" * 90)
+    log.debug("\nReliability Analysis:")
+    log.debug("Bin Range\t\tN_Forecasts\tMean_Forecast_Prob\tReliability\tFrequency\tError_Bar")
+    log.debug("-" * 90)
 
     results_for_csv = []
 
@@ -52,7 +55,7 @@ def plot_reliability_diagram(combined_forecast_obs, *, model, verification_windo
 
         bin_range = f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}"
 
-        print(f"{bin_range}\t\t{n_forecasts}\t\t{mean_forecast_prob[i]:.3f}\t\t\t{reliability_y[i]:.3f}\t\t{frequency[i]:.3f}\t\t{error_bar:.3f}")
+        log.debug(f"{bin_range}\t\t{n_forecasts}\t\t{mean_forecast_prob[i]:.3f}\t\t\t{reliability_y[i]:.3f}\t\t{frequency[i]:.3f}\t\t{error_bar:.3f}")
 
         results_for_csv.append({
             'Bin_Range': bin_range,
@@ -98,7 +101,7 @@ def plot_reliability_diagram(combined_forecast_obs, *, model, verification_windo
         window_str = tuple_to_str(verification_window)
         fig_fn = os.path.join(dir_fig, f'reliability_{model}_{window_str}.png')
         fig.savefig(fig_fn, dpi=600, bbox_inches='tight')
-        print(f"Figure saved to: {fig_fn}")
+        log.debug(f"Figure saved to: {fig_fn}")
 
     plt.tight_layout()
     if show_plot:

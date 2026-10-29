@@ -1,4 +1,6 @@
 """Region masks: shapes, mask files and conditions are built on each dataset's own grid, with hand-computed answers."""
+
+import logging
 import json
 
 import numpy as np
@@ -247,15 +249,16 @@ def test_keep_value(tmp_path):
 
 # ---------------------------------------------------------------------------------------------- pipeline pieces
 
-def test_region_mask_prints_once_saves_the_png_and_records(tmp_path, capsys):
+def test_region_mask_prints_once_saves_the_png_and_records(tmp_path, caplog):
     """The first use of a grid prints and saves mask_<dataset>.png; the second is silent; records carry the hash."""
     spec = {"file": str(_geojson(tmp_path, SHAPE)), "cell_rule": "centre"}
+    caplog.set_level(logging.INFO)
     first = mask_mod.region_mask(LAT, LON, spec, "obs", tmp_path)
-    out = capsys.readouterr().out
+    out = caplog.text
     assert "Mask [obs]" in out and "kept cells: 4 of 16" in out
     assert (tmp_path / "mask_obs.png").stat().st_size > 1000
     again = mask_mod.region_mask(LAT, LON, spec, "obs", tmp_path)
-    assert capsys.readouterr().out == "" and (first == again).all()
+    assert caplog.text == out and (first == again).all()
     mask_mod.region_mask(np.array([0.5, 1.5]), np.array([0.5, 1.5, 2.5]), spec, "AIFS", tmp_path)
     assert (tmp_path / "mask_AIFS.png").exists()
     records = mask_mod.records()

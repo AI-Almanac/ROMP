@@ -3,6 +3,9 @@ import xarray as xr
 import numpy as np
 from momp.params.region_def import domain
 from momp.utils.land_mask import polygon_mask, mask_land, shp_mask, apply_nc_mask
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def swap_lon_axis(
@@ -86,7 +89,7 @@ def lon_swap(ds_tag, *, region, **kwargs):
     coord_list = list(ds_tag.coords.keys())
 
     if "lon" not in coord_list:
-        print("lon NOT in coords for model --> ")
+        log.debug("lon NOT in coords for model --> ")
         lat_coords = [variable for variable in coord_list if "lat" in variable][0]
         lon_coords = [variable for variable in coord_list if "lon" in variable][0]
 
@@ -106,7 +109,7 @@ def lon_swap(ds_tag, *, region, **kwargs):
             lonw = ((lonw + 180) % 360) - 180
             lone = ((lone + 180) % 360) - 180
 
-        print("swapped longitude range ", np.min(ds_tag.lon), " - ", np.max(ds_tag.lon))
+        log.debug("%s %s %s %s", "swapped longitude range ", np.min(ds_tag.lon), " - ", np.max(ds_tag.lon))
 
     return lats, latn, lonw, lone, ds_tag
 

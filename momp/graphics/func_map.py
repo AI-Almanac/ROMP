@@ -13,6 +13,9 @@ from matplotlib import colormaps
 from momp.utils.visual import cbar_season, set_basemap
 from momp.utils.land_mask import shp_mask, add_polygon
 from momp.utils.visual import box_boundary
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig, region, 
@@ -39,7 +42,7 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
 
     # Detect resolution from latitude spacing
     lat_diff = abs(lats[1] - lats[0])
-    print(f"Detected resolution: {lat_diff:.1f} degrees")
+    log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Plot parameters
     map_lw = 0.75
@@ -248,7 +251,7 @@ if __name__ == "__main__":
         case_ref, case_cfg_ref = ref_model_case(case, setting)
 
         # ---------------------- get the data via ROMP workflow -----------------------
-        print(f"processing model onset evaluation for {case_ref.case_name}")
+        log.debug(f"processing model onset evaluation for {case_ref.case_name}")
 
         # ----------------------- read the data from saved file ------------------------
         # ----- get spatial onset data -----

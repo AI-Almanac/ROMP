@@ -17,6 +17,9 @@ import numpy as np
 import pandas as pd
 
 from momp.onset.climatology_kde import conditional_probabilities
+import logging
+
+log = logging.getLogger(__name__)
 
 CONDITIONAL_CLIMATOLOGY = "conditional_climatology"
 CLIMATOLOGY_REFERENCES = ("climatology", CONDITIONAL_CLIMATOLOGY)
@@ -186,7 +189,7 @@ def multi_year_conditional_climatological_forecast_obs_pairs(clim_onset, *, year
 
     tables = []
     for year in years:
-        print(f"Conditional climatology pairs for target year {year}")
+        log.debug(f"Conditional climatology pairs for target year {year}")
         observed = None if year in clim_onset.year.values else _detect_observed_onset(year, kwargs)
         table = create_conditional_climatological_forecast_obs_pairs(
             clim_onset, year, get_initialization_dates(year, **kwargs), observed, day_bins=day_bins, **_cv(kwargs))

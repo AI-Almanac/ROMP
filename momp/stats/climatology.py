@@ -7,6 +7,9 @@ from momp.utils.practical import restore_args
 import numpy as np
 import xarray as xr
 import pandas as pd
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def compute_climatological_onset(*, years_clim,
@@ -26,7 +29,7 @@ def compute_climatological_onset(*, years_clim,
 
     thresh_da = load_thresholds(**kwargs)
 
-    print(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
+    log.debug(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
 
     all_onset_days = []
     rainfall_all_years = []
@@ -55,7 +58,7 @@ def compute_climatological_onset(*, years_clim,
             all_onset_days.append(onset_doy)
 
         except Exception as e:
-            print(f"Warning: Could not process year {year} when compute_climagoloical_onset: {e}")
+            log.warning(f"Could not process year {year} when compute_climagoloical_onset: {e}")
             raise
             continue
 
@@ -69,7 +72,7 @@ def compute_climatological_onset(*, years_clim,
     # Round to nearest integer day
     climatological_onset_doy = np.round(climatological_onset_doy)
 
-    print(f"Climatological onset computed from {len(all_onset_days)} valid years")
+    log.debug(f"Climatological onset computed from {len(all_onset_days)} valid years")
 
     if grid_point:
         rainfall_stack = xr.concat(rainfall_all_years, dim='year')
@@ -116,8 +119,8 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     lats = climatological_onset_doy.lat.values
     lons = climatological_onset_doy.lon.values
 
-    print(f"Processing climatology as forecast for {len(init_dates)} init times x {len(lats)} lats x {len(lons)} lons...")
-    print(f"Year: {year}")
+    log.debug(f"Processing climatology as forecast for {len(init_dates)} init times x {len(lats)} lats x {len(lons)} lons...")
+    log.debug(f"Year: {year}")
 
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
     init_ns = inits.values.astype("datetime64[ns]")
@@ -166,16 +169,16 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     else:
         climatology_forecast_df = pd.DataFrame([])
 
-    print(f"\nClimatology Forecast Summary:")
-    print(f"Total potential initializations: {total_potential_inits}")
-    print(f"Skipped (no observed onset): {skipped_no_obs}")
-    print(f"Skipped (initialized after observed onset): {skipped_late_init}")
-    print(f"Valid initializations processed: {valid_inits}")
-    print(f"Onsets forecasted: {onsets_forecasted}")
-    print(f"Forecast rate: {onsets_forecasted/valid_inits:.3f}" if valid_inits > 0 else "Forecast rate: 0.000")
+    log.debug(f"\nClimatology Forecast Summary:")
+    log.debug(f"Total potential initializations: {total_potential_inits}")
+    log.debug(f"Skipped (no observed onset): {skipped_no_obs}")
+    log.debug(f"Skipped (initialized after observed onset): {skipped_late_init}")
+    log.debug(f"Valid initializations processed: {valid_inits}")
+    log.debug(f"Onsets forecasted: {onsets_forecasted}")
+    log.debug(f"Forecast rate: {onsets_forecasted/valid_inits:.3f}" if valid_inits > 0 else "Forecast rate: 0.000")
 
     if earliest_onset_date:
-        print(f"Note: Only onsets on or after {earliest_onset_date[0]:02d}-{earliest_onset_date[1]:02d} (MM-DD) were counted due to earliest_onset_date")
+        log.debug(f"Note: Only onsets on or after {earliest_onset_date[0]:02d}-{earliest_onset_date[1]:02d} (MM-DD) were counted due to earliest_onset_date")
 
     return climatology_forecast_df
 
@@ -213,7 +216,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
 
     thresh_slice = load_thresholds(**kwargs)
 
-    print(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
+    log.debug(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
 
     # Initialize lists to store results
     onset_arrays = []
@@ -221,7 +224,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
 
     # Process each year
     for year in years_clim:
-        print(f"\nProcessing year {year}...")
+        log.debug(f"\nProcessing year {year}...")
 
         try:
             # Load rainfall data for this year
@@ -236,14 +239,14 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
             valid_onsets = (~pd.isna(onset_da.values)).sum()
             total_points = onset_da.size
 
-            print(f"Year {year}: Found onset in {valid_onsets}/{total_points} grid points ({valid_onsets/total_points:.1%})")
+            log.debug(f"Year {year}: Found onset in {valid_onsets}/{total_points} grid points ({valid_onsets/total_points:.1%})")
 
             # Store the onset array
             onset_arrays.append(onset_da.values)
             valid_years.append(year)
 
         except Exception as e:
-            print(f"Error processing year {year}: {e}")
+            log.error(f"Error processing year {year}: {e}")
             continue
 
     if not onset_arrays:
@@ -273,13 +276,13 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     total_possible = len(valid_years) * rainfall_ds[0].size
     total_valid = (~pd.isna(climatological_onset_da.values)).sum()
 
-    print(f"\n{'='*60}")
-    print(f"CLIMATOLOGICAL ONSET DATASET SUMMARY")
-    print(f"{'='*60}")
-    print(f"Years processed: {len(valid_years)} ({min(valid_years)}-{max(valid_years)})")
-    print(f"Spatial domain: {len(rainfall_ds.lat)} lats x {len(rainfall_ds.lon)} lons")
-    print(f"Total valid onsets: {total_valid:,}/{total_possible:,} ({total_valid/total_possible:.1%})")
-    print(f"Method: {climatological_onset_da.attrs['method']}")
+    log.debug(f"\n{'='*60}")
+    log.debug(f"CLIMATOLOGICAL ONSET DATASET SUMMARY")
+    log.debug(f"{'='*60}")
+    log.debug(f"Years processed: {len(valid_years)} ({min(valid_years)}-{max(valid_years)})")
+    log.debug(f"Spatial domain: {len(rainfall_ds.lat)} lats x {len(rainfall_ds.lon)} lons")
+    log.debug(f"Total valid onsets: {total_valid:,}/{total_possible:,} ({total_valid/total_possible:.1%})")
+    log.debug(f"Method: {climatological_onset_da.attrs['method']}")
 
     # Show onset statistics by year
 

@@ -144,6 +144,15 @@ def create_parser(config, cli_args=None):
         help="region as defined in params.region_def (default: {config['region']})"
     )
 
+    # run control (handled by the driver, not config values)
+    parser.add_argument("--check", action="store_true",
+                        help="validate and resolve the config, print the plan (settings, datasets, files, leads, "
+                             "hints, run folder, cache) and run nothing; exit 1 on errors")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="re-run a config whose run folder already exists (clears that folder first)")
+    parser.add_argument("--quiet", action="store_true", help="show only warnings and errors")
+    parser.add_argument("--verbose", action="store_true", help="show debug detail (run.log always has it)")
+
     # cli_args can be passed explicitly; if None, default to sys.argv
     if cli_args is None:
         args, unknown = parser.parse_known_args()

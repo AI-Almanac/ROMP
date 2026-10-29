@@ -5,6 +5,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
 import numpy as np
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def cbar_season():
@@ -368,7 +371,7 @@ def portrait_plot(
     if box_as_square:
         ax.set_aspect("equal")
 
-    print("im = ", im)
+    log.debug("%s %s", "im = ", im)
     if not colorbar_off:
         # Create colorbar
         cbar_pad = 0.14
@@ -430,8 +433,8 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
     # In case data was given as list of arrays, convert it to numpy (stacked) array
     if isinstance(data, list):
         if debug:
-            print("data type is list")
-            print("len(data):", len(data))
+            log.debug("data type is list")
+            log.debug("%s %s", "len(data):", len(data))
         if len(data) == 1:  # list has only 1 array as element
             if isinstance(data[0], np.ndarray) and (len(data[0].shape) == 2):
                 data = data[0]
@@ -444,7 +447,7 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
 
     # Now, data is expected to be be a numpy array (whether given or converted from list)
     if debug:
-        print("data.shape:", data.shape)
+        log.debug("%s %s", "data.shape:", data.shape)
 
     if data.shape[-1] != len(xaxis_labels) and len(xaxis_labels) > 0:
         sys.exit("Error: Number of elements in xaxis_label mismatchs to the data")
@@ -458,13 +461,13 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
         elif len(data.shape) == 3:
             num_divide = data.shape[0]
         else:
-            print("data.shape:", data.shape)
+            log.debug("%s %s", "data.shape:", data.shape)
             sys.exit("Error: data.shape is not right")
     else:
         sys.exit("Error: Converted or given data is not in np.ndarray type")
 
     if debug:
-        print("num_divide:", num_divide)
+        log.debug("%s %s", "num_divide:", num_divide)
 
     return data, num_divide
 

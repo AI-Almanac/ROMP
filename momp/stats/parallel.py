@@ -12,6 +12,9 @@ from momp.stats.climatology import compute_climatological_onset
 from momp.stats.benchmark import compute_metrics_multiple_years
 from momp.stats.benchmark import ens_compute_metrics_multiple_years
 import xarray as xr
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def func_wrapper(chunk_and_args, target_func=None):
@@ -59,9 +62,9 @@ def parallel_climatological_forecast_obs_pairs(clim_onset, **kwargs):
     task_count = len(all_years)
     n_workers = min(cpu_count, task_count)
 
-    print(f"\n\n\ncpu_count is {os.cpu_count()}")
-    print(f"task count is {task_count}")
-    print(f"Running on {n_workers} cores for {task_count} years...i\n\n\n")
+    log.debug(f"\n\n\ncpu_count is {os.cpu_count()}")
+    log.debug(f"task count is {task_count}")
+    log.debug(f"Running on {n_workers} cores for {task_count} years...i\n\n\n")
 
     # 3. Split list of years into chunks
     # creates a list of arrays, e.g., [ [2010, 2011], [2012, 2013] ]
@@ -72,7 +75,7 @@ def parallel_climatological_forecast_obs_pairs(clim_onset, **kwargs):
     tasks = [(chunk, clim_onset, kwargs) for chunk in year_chunks]
 
     # 5. Execute in parallel
-    print(f"Executing on {n_workers} cores...")
+    log.debug(f"Executing on {n_workers} cores...")
 
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         # executor.map passes one chunk from 'year_chunks' to each process
@@ -99,15 +102,15 @@ def parallel_forecast_obs_pairs(**kwargs):
     task_count = len(all_years)
     n_workers = min(cpu_count, task_count)
 
-    print(f"\n\n\ncpu_count is {os.cpu_count()}")
-    print(f"task count is {task_count}")
-    print(f"Running on {n_workers} cores for {task_count} years...i\n\n\n")
+    log.debug(f"\n\n\ncpu_count is {os.cpu_count()}")
+    log.debug(f"task count is {task_count}")
+    log.debug(f"Running on {n_workers} cores for {task_count} years...i\n\n\n")
 
     year_chunks = np.array_split(all_years, n_workers)
 
     tasks = [(chunk, kwargs) for chunk in year_chunks]
 
-    print(f"Executing on {n_workers} cores...")
+    log.debug(f"Executing on {n_workers} cores...")
 
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         func_wrapper_forecast = partial(func_wrapper, target_func='forecast')
@@ -148,13 +151,13 @@ def parallel_climatological_onset(**kwargs):
         n_workers = min(os.cpu_count() or 1, len(years_clim))
         year_chunks = np.array_split(years_clim, n_workers)
 
-        print(f"\n\n\ncpu_count is {os.cpu_count()}")
-        print(f"task count is {len(years_clim)}")
-        print(f"Running on {n_workers} cores for {len(years_clim)} years...i\n\n\n")
+        log.debug(f"\n\n\ncpu_count is {os.cpu_count()}")
+        log.debug(f"task count is {len(years_clim)}")
+        log.debug(f"Running on {n_workers} cores for {len(years_clim)} years...i\n\n\n")
 
         tasks = [(chunk, kwargs) for chunk in year_chunks]
 
-        print(f"Running in PARALLEL ({n_workers} cores) for non-grid-point task...")
+        log.debug(f"Running in PARALLEL ({n_workers} cores) for non-grid-point task...")
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             results = list(executor.map(func_wrapper_climatology, tasks))
 
@@ -165,7 +168,7 @@ def parallel_climatological_onset(**kwargs):
 
     else:
         # Single-process execution
-        print("Running in SINGLE-PROCESS mode (Grid Point = True or single year)...")
+        log.debug("Running in SINGLE-PROCESS mode (Grid Point = True or single year)...")
         return compute_climatological_onset(**kwargs)
 
 
@@ -178,9 +181,9 @@ def parallel_climatological_onset_dataset(**kwargs):
     n_workers = min(os.cpu_count() or 1, len(years_clim))
     year_chunks = np.array_split(years_clim, n_workers)
 
-    print(f"\n\n\ncpu_count is {os.cpu_count()}")
-    print(f"task count is {len(years_clim)}")
-    print(f"Running on {n_workers} cores for {len(years_clim)} years...i\n\n\n")
+    log.debug(f"\n\n\ncpu_count is {os.cpu_count()}")
+    log.debug(f"task count is {len(years_clim)}")
+    log.debug(f"Running on {n_workers} cores for {len(years_clim)} years...i\n\n\n")
 
     tasks = [(chunk, kwargs) for chunk in year_chunks]
 
@@ -225,15 +228,15 @@ def parallel_metrics_multiple_years(ens=False, **kwargs):
     task_count = len(all_years)
     n_workers = min(cpu_count, task_count)
 
-    print(f"\n\n\ncpu_count is {os.cpu_count()}")
-    print(f"task count is {task_count}")
-    print(f"Running on {n_workers} cores for {task_count} years...i\n\n\n")
+    log.debug(f"\n\n\ncpu_count is {os.cpu_count()}")
+    log.debug(f"task count is {task_count}")
+    log.debug(f"Running on {n_workers} cores for {task_count} years...i\n\n\n")
 
     year_chunks = np.array_split(all_years, n_workers)
 
     tasks = [(chunk, kwargs) for chunk in year_chunks]
 
-    print(f"Executing on {n_workers} cores...")
+    log.debug(f"Executing on {n_workers} cores...")
 
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         if ens:

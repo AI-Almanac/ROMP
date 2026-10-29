@@ -6,6 +6,9 @@ from matplotlib.patches import Polygon
 from momp.params.region_def import polygon_boundary
 from momp.utils.land_mask import get_india_outline, shp_outline
 from momp.utils.visual import box_boundary
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def calculate_cmz_averages(da, polygon_lon, polygon_lat):
@@ -52,7 +55,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
 
     # Detect resolution from latitude spacing
     lat_diff = abs(lats[1] - lats[0])
-    print(f"Detected resolution: {lat_diff:.1f} degrees")
+    log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Define Core Monsoon Zone bounding polygon coordinates based on resolution 
     polygon_defined = False
@@ -68,7 +71,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
         yearly_mae_keys = [key for key in spatial_metrics.keys() if key.startswith('mae_') and key != 'mae_combined']
 
         if not yearly_mae_keys:
-            print("Warning: No yearly MAE maps found")
+            log.warning("No yearly MAE maps found")
             return np.nan, np.nan, np.nan, np.nan
 
         cmz_yearly_averages = []
@@ -342,21 +345,21 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
         plot_filename = f"spatial_metrics_{case_name}.png"
         plot_path = os.path.join(dir_fig, plot_filename)
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        print(f"Figure saved to: {plot_path}")
+        log.debug(f"Figure saved to: {plot_path}")
 
     # Only print CMZ averages if polygon is defined
     if polygon_defined:
-        print(f"\n=== CORE MONSOON ZONE (CMZ) AVERAGES ===")
+        log.debug(f"\n=== CORE MONSOON ZONE (CMZ) AVERAGES ===")
 
         if not np.isnan(cmz_mae_mean):
-            print(f"CMZ Mean MAE (avg across years): {cmz_mae_mean:.2f} ± {cmz_mae_se:.2f} days")
+            log.debug(f"CMZ Mean MAE (avg across years): {cmz_mae_mean:.2f} ± {cmz_mae_se:.2f} days")
         else:
-            print(f"CMZ Mean MAE: N/A")
+            log.debug(f"CMZ Mean MAE: N/A")
 
-        print(f"CMZ False Alarm Rate: {cmz_far:.1f} %")
-        print(f"CMZ Miss Rate: {cmz_mr:.1f} %")
+        log.debug(f"CMZ False Alarm Rate: {cmz_far:.1f} %")
+        log.debug(f"CMZ Miss Rate: {cmz_mr:.1f} %")
     else:
-        print(f"\nNote: CMZ averages not calculated (resolution {lat_diff:.1f}° not supported)")
+        log.debug(f"\nNote: CMZ averages not calculated (resolution {lat_diff:.1f}° not supported)")
 
     if show_plot:
         plt.show()

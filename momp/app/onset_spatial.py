@@ -4,6 +4,9 @@ from momp.io.input import load_thresholds
 from momp.stats.detect import detect_observed_onset
 from momp.lib.loader import get_cfg, get_setting
 from momp.graphics.func_map import spatial_metrics_map
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def spatial_onset(year, **kwargs):
@@ -14,10 +17,10 @@ def spatial_onset(year, **kwargs):
     """
     thresh_slice = load_thresholds(**kwargs)
 
-    print("Loading observational rainfall data...")
+    log.debug("Loading observational rainfall data...")
     rainfall_ds = load_imd_rainfall(year, **kwargs)
 
-    print("Detecting observed onset...")
+    log.debug("Detecting observed onset...")
     onset_da = detect_observed_onset(rainfall_ds, thresh_slice, year, **kwargs)
 
     onset_doy = onset_da.dt.dayofyear.astype(float)

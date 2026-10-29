@@ -13,6 +13,10 @@ import cartopy.crs as ccrs
 from matplotlib.ticker import MaxNLocator
 from matplotlib.gridspec import GridSpec
 from matplotlib import colors as mcolors
+import logging
+from momp.lib.run_folder import file_name
+
+log = logging.getLogger(__name__)
 
 
 def panel_map_mae_far_mr(model_list, verification_window, var_name, cfg, setting, **kwargs):
@@ -42,8 +46,7 @@ def panel_map_mae_far_mr(model_list, verification_window, var_name, cfg, setting
     da_all = []
 
     for i, model in enumerate(model_list):
-        fi = os.path.join(cfg.dir_out,"spatial_metrics_{}_{}.nc")
-        fi = fi.format(model, window_str)
+        fi = os.path.join(cfg.dir_out, file_name(vars(cfg), "spatial", f"{model}_{window_str}"))
         ds = xr.open_dataset(fi)
         da = ds[var_name]
         unit = "days"
@@ -82,7 +85,7 @@ def panel_map_mae_far_mr(model_list, verification_window, var_name, cfg, setting
         else:
             show_ylabel, title, cmap = True, unit, 'YlOrRd'
 
-        print(i, show_ylabel, title, cmap)
+        log.debug("%s %s %s %s", i, show_ylabel, title, cmap)
 
         ax = fig.add_subplot(gs[0, i], projection=ccrs.PlateCarree())
         ax.set_anchor('N') # Pushes the map to the TOP of the GridSpec cell
@@ -143,7 +146,7 @@ def panel_map_mae_far_mr(model_list, verification_window, var_name, cfg, setting
     plot_filename = f"map_{var_name}_{window_str}.png"
     plot_path = os.path.join(cfg.dir_fig, plot_filename)
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    print(f"Figure saved to: {plot_path}")
+    log.debug(f"Figure saved to: {plot_path}")
 
     plt.show()
 
@@ -171,7 +174,7 @@ if __name__ == "__main__":
     model_list = cfg.model_list
     model_list = (cfg.ref_model,) + model_list
     verification_window = cfg.verification_window_list[0]
-    print(verification_window)
+    log.debug(verification_window)
     window_str = tuple_to_str(verification_window)
 
     var_name = "mean_mae"
@@ -191,8 +194,7 @@ if __name__ == "__main__":
     )
 
     for i, model in enumerate(model_list):
-        fi = os.path.join(cfg.dir_out,"spatial_metrics_{}_{}.nc")
-        fi = fi.format(model, window_str)
+        fi = os.path.join(cfg.dir_out, file_name(vars(cfg), "spatial", f"{model}_{window_str}"))
         ds = xr.open_dataset(fi)
         da = ds[var_name]
         ds.close()
@@ -211,7 +213,7 @@ if __name__ == "__main__":
         else:
             show_ylabel, title, cmap = True, f"{var_name} {window_str} day", 'YlOrRd'
 
-        print(i, show_ylabel, title, cmap)
+        log.debug("%s %s %s %s", i, show_ylabel, title, cmap)
 
         ax = fig.add_subplot(gs[0, i], projection=ccrs.PlateCarree())
 
@@ -269,4 +271,4 @@ if __name__ == "__main__":
     plot_filename = f"map_{var_name}_{model_name}_{window_str}.png"
     plot_path = os.path.join(cfg.dir_fig, plot_filename)
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    print(f"Figure saved to: {plot_path}")
+    log.debug(f"Figure saved to: {plot_path}")

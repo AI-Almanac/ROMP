@@ -1,6 +1,7 @@
 """The `momp-run` command line: run a config, start one (init), convert an old one, describe datasets.
 
     momp-run -p run.yaml            run (also `momp-run run -p run.yaml`; MOMP_CONFIG works instead of -p)
+    momp-run -p run.yaml --check    validate and print the plan, run nothing (exit 1 on errors)
     momp-run init [...]             write a starting run.yaml, detecting dataset values from your paths
     momp-run datasets -p run.yaml   show what the config's datasets resolve to, with checks
     momp-run convert old.in -o run.yaml   convert an old config.in to YAML
@@ -13,7 +14,7 @@ import argparse
 import os
 import sys
 
-HELP = """usage: momp-run [-p run.yaml] [overrides]      run the config
+HELP = """usage: momp-run [-p run.yaml] [--check] [--overwrite] [--quiet|--verbose] [overrides]      run the config
        momp-run init [options]                  write a starting run.yaml
        momp-run datasets -p run.yaml            show how the config's datasets resolve
        momp-run convert old.in -o run.yaml      convert an old config.in to YAML
@@ -24,7 +25,10 @@ One YAML run config describes a run; point momp-run at it with -p (or MOMP_CONFI
 
 commands:
   run        (default) run the config given with -p. With a config, `momp-run -p run.yaml -h` lists the
-             command-line overrides of config values.
+             command-line overrides of config values. --check validates and resolves everything and prints
+             the plan (settings with sources, datasets and detections, mask, leads, files, alignment, hints,
+             run folder, cache) without running; --overwrite re-runs a run folder that exists (clears it);
+             --quiet shows only warnings, --verbose adds debug lines (run.log always has them).
   init       write a short commented run.yaml. Use --obs PATH and --model PATH (repeatable) to detect the
              datasets' variable, units, dims, members, file pattern and lead label from your files, with the
              evidence written next to each value. Also: --region, --years Y0 Y1, --definition ID, -o FILE,
@@ -33,7 +37,7 @@ commands:
   convert    read an old config.in and write the equivalent YAML (-o FILE, --force).
   export     run only the onset detection of a config and write one NetCDF per source (observed, each model,
              climatology, conditional_climatology) with the dates exactly as ROMP scores them. Options:
-             --sources observed,AIFS,climatology (default: all the run uses), --out DIR (default dir_out/onsets).
+             --sources observed,AIFS,climatology (default: all the run uses), --out DIR (default: the run's onsets folder, dir_out/onsets with an explicit data_dir).
              `output.save_onsets: true` in the run file does the same before a normal run's scoring.
 """
 

@@ -16,3 +16,16 @@ definitions:
 notes: >
   The declared day boundary was confirmed empirically: AIFS_v2 2020 forecasts
   correlate best with IMD when lead k is dated init + k.
+  Day convention sources: IMD's operational pages define the day as the 24 h
+  "from 0830 hrs of D-1 to 0830 hrs of D" IST, labelled by the end date D
+  (https://mausam.imd.gov.in/responsive/rainfallinformation_swd.php, "Rainfall
+  Recorded from 0830 hrs of 28-10-2026 to 0830 hrs of 29-10-2026", labelled
+  "Daily (29-10-2026)"), i.e. 03 UTC to 03 UTC, which is the declared boundary.
+  The gridded product's own pages (Pai et al. 2014, MAUSAM; Rainfall_25_Bin.html)
+  only say the yearly files hold 365/366 daily records and do not state the
+  window or the label, and the NetCDF files are label-for-label conversions of
+  the .grd records (no shift), so the station convention is assumed to carry
+  over (about 85 % confidence). The same lead alignment was found empirically
+  (ATMOSYNC/WEAVR issue 106: IMD day D correlates best with forecasts covering
+  03 UTC D-1 to 03 UTC D). A 3 h offset remains against 00 UTC forecast days
+  unless the forecast's daily_boundary is set to 03 UTC.

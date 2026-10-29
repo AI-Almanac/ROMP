@@ -20,7 +20,8 @@ variable, units (mm or m; detected from the file when left out), dims (names of 
 file's dimensions: time/lat/lon for observations, init_time/step/member/lat/lon for
 forecasts), day_boundary (observations: when the day starts and which date labels it, e.g.
 "00 UTC, labelled by start") or lead_label (forecast: "start" = lead k is dated init + k - 1,
-"end" = init + k), accumulation (forecast: daily, since_init or auto), members (ensemble size), notes. ``path`` may use ``~`` and ``${ENV_VAR}``
+"end" = init + k), accumulation (forecast: daily, since_init or auto), daily_boundary (forecast: cut the
+days at this UTC clock time, e.g. "03 UTC", instead of 24 h from the init), members (ensemble size), notes. ``path`` may use ``~`` and ``${ENV_VAR}``
 or ``${ENV_VAR:-default}``. `momp-run init --dataset-template obs` prints a blank entry.
 """
 from __future__ import annotations
@@ -37,7 +38,7 @@ from momp.lib.assertion import ROMPConfigError
 
 KINDS = ("observations", "forecast")
 DATASET_KEYS = ("id", "title", "kind", "name", "path", "file_pattern", "variable", "units", "dims",
-                "day_boundary", "lead_label", "accumulation", "members", "notes")
+                "day_boundary", "lead_label", "accumulation", "daily_boundary", "members", "notes")
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 OBS_DIMS = ("time", "lat", "lon")
@@ -75,6 +76,7 @@ units: m                       # mm or m; detected from the file if left out
 dims: {init_time: time, step: step}      # add member: number for an ensemble
 lead_label: start              # start: lead k is dated init + k - 1; end: init + k
 accumulation: auto             # daily, since_init or auto (detected)
+# daily_boundary: 03 UTC       # cut days at this UTC time instead of 24 h from the init (sub-daily steps)
 members: 1                     # ensemble size, if an ensemble
 notes: free text
 """,
@@ -97,6 +99,7 @@ class Dataset:
     unit_cvt: float | None
     units: str | None = None
     accumulation: str = "auto"
+    daily_boundary: str | None = None
     id: str | None = None
     title: str = ""
     name: str | None = None
@@ -204,7 +207,7 @@ def parse_dataset(data, origin: str, kind: str | None = None, require_id: bool =
         for key in dims:
             if key not in allowed:
                 _fail(origin, f"dims.{key}: unknown name.{suggest(key, allowed)} For {kind} use: {', '.join(allowed)}")
-    boundary = label = members = None
+    boundary = label = members = daily_boundary = None
     accumulation = "auto"
     if kind == "observations":
         boundary = _text(data, "day_boundary", origin)
@@ -212,7 +215,7 @@ def parse_dataset(data, origin: str, kind: str | None = None, require_id: bool =
             parse_day_boundary(boundary)
         except ValueError as exc:
             _fail(origin, f"day_boundary: {exc}")
-        for key in ("lead_label", "members"):
+        for key in ("lead_label", "members", "daily_boundary"):
             if key in data:
                 _fail(origin, f"{key} is only for forecast datasets. Fix: remove it")
     else:
@@ -225,11 +228,20 @@ def parse_dataset(data, origin: str, kind: str | None = None, require_id: bool =
         accumulation = data.get("accumulation", "auto")
         if accumulation not in ("daily", "since_init", "auto"):
             _fail(origin, f"accumulation {accumulation!r} must be 'daily', 'since_init' or 'auto'")
+        daily_boundary = data.get("daily_boundary")
+        if daily_boundary is not None:
+            try:
+                from momp.onset.ingest import _parse_clock
+
+                _parse_clock(str(daily_boundary))
+            except ValueError as exc:
+                _fail(origin, f"daily_boundary: {exc}. Fix: write a UTC clock time such as '03 UTC'")
+            daily_boundary = str(daily_boundary)
         members = data.get("members")
         if members is not None and (isinstance(members, bool) or not isinstance(members, int) or members < 1):
             _fail(origin, f"members: expected a positive whole number but found {members!r}")
     return Dataset(kind=kind, path=path, file_pattern=pattern, variable=variable, unit_cvt=cvt, units=units, accumulation=accumulation,
-                   id=ident, title=str(data.get("title") or ""), name=_text(data, "name", origin, required=False),
+                   daily_boundary=daily_boundary, id=ident, title=str(data.get("title") or ""), name=_text(data, "name", origin, required=False),
                    dims=dims, day_boundary=boundary, lead_label=label, members=members,
                    notes=str(data.get("notes") or "").strip(), source=origin)
 

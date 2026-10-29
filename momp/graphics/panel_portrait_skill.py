@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 from momp.utils.visual import portrait_plot
 from momp.io.dict import extract_binned_dict
 from momp.utils.printing import tuple_to_str
+import logging
+from momp.lib.run_folder import file_name
+
+log = logging.getLogger(__name__)
 
 
 def panel_portrait_bss_auc(result_binned, verification_window, *, dir_fig, show_panel=True, **kwargs):
@@ -30,8 +34,8 @@ def panel_portrait_bss_auc(result_binned, verification_window, *, dir_fig, show_
     # load binned AUC, add climatology on top row
     arr, row_labels, col_labels = extract_binned_dict(result_binned, 'AUC')
     arr_clim, _, _ = extract_binned_dict(result_binned, 'AUC_ref')
-    print("arr = ", arr)
-    print("arr_clim = ", arr_clim)
+    log.debug("%s %s", "arr = ", arr)
+    log.debug("%s %s", "arr_clim = ", arr_clim)
     data = np.vstack([arr_clim[0], arr])
     row_labels = ["Climatology"] + row_labels
 
@@ -49,7 +53,7 @@ def panel_portrait_bss_auc(result_binned, verification_window, *, dir_fig, show_
     figure_filename = f"panel_portrait_BSS_AUC_{window_str}.png"
     figure_filename = os.path.join(dir_fig, figure_filename)
     fig.savefig(figure_filename, dpi=300, bbox_inches='tight')
-    print(f"Figure saved as '{figure_filename}'")
+    log.debug(f"Figure saved as '{figure_filename}'")
 
     return fig, (ax1, ax2)
 
@@ -68,8 +72,7 @@ if __name__ == "__main__":
     window_str = tuple_to_str(verification_window)
 
     for model in model_list:
-        fout = os.path.join(cfg.dir_out,"binned_skill_scores_{}_{}.csv")
-        fout = fout.format(model, window_str)
+        fout = os.path.join(cfg.dir_out, file_name(vars(cfg), "binned", model, window_str))
         df = pd.read_csv(fout)
         dic = df.to_dict(orient='list')
         results[model] = dic

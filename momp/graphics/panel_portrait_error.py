@@ -4,6 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from momp.io.output import nested_dict_to_array
 from momp.utils.visual import portrait_plot
+import logging
+from momp.lib.run_folder import file_name
+
+log = logging.getLogger(__name__)
 
 
 def panel_portrait_mae_far_mr(results, *, dir_fig, show_panel=True, **kwargs):
@@ -55,7 +59,7 @@ def panel_portrait_mae_far_mr(results, *, dir_fig, show_panel=True, **kwargs):
     figure_filename = f"panel_portrait_mae_far_mr_{first_model}_{kwargs['max_forecast_day']}day.png"
     figure_filename = os.path.join(dir_fig, figure_filename)
     fig.savefig(figure_filename, dpi=300, bbox_inches='tight')
-    print(f"Figure saved as '{figure_filename}'")
+    log.debug(f"Figure saved as '{figure_filename}'")
 
     return fig, (ax1, ax2, ax3)
 
@@ -83,8 +87,7 @@ if __name__ == "__main__":
 
         window_bin_str = tuple_to_str(case.verification_window) 
 
-        fi = os.path.join(cfg.dir_out,"spatial_metrics_{}_{}.nc")
-        fi = fi.format(case.model, window_bin_str)
+        fi = os.path.join(cfg.dir_out, file_name(vars(cfg), "spatial", f"{case.model}_{window_bin_str}"))
         ds = xr.open_dataset(fi)
 
         spatial_metrics_dict = {var: ds[var] for var in var_list}
@@ -102,8 +105,7 @@ if __name__ == "__main__":
 
         window_bin_str = tuple_to_str(case.verification_window) 
 
-        fi = os.path.join(cfg.dir_out,"spatial_metrics_{}_{}.nc")
-        fi = fi.format(case.ref_model, window_bin_str)
+        fi = os.path.join(cfg.dir_out, file_name(vars(cfg), "spatial", f"{case.ref_model}_{window_bin_str}"))
 
         if result.get(case.ref_model, {}).get(window_bin_str) is None:
             ds = xr.open_dataset(fi)

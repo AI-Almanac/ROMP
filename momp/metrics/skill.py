@@ -10,6 +10,9 @@ from momp.io.dict import extract_pd_bins
 from momp.stats.parallel import parallel_climatological_forecast_obs_pairs
 from momp.stats.parallel import parallel_forecast_obs_pairs
 from momp.stats.parallel import parallel_climatological_onset_dataset
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def reference_model_kwargs(kwargs):
@@ -104,7 +107,7 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
 
     results = {}
 
-    print("\n1. Processing forecast model...")
+    log.debug("\n1. Processing forecast model...")
 
     import time
     start = time.perf_counter()
@@ -119,7 +122,7 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
     forecast_obs_df = extract_pd_bins(forecast_obs_df_all, day_bins)
 
     end = time.perf_counter()
-    print(f"Execution time: {end - start:.4f} seconds")
+    log.debug(f"Execution time: {end - start:.4f} seconds")
 
     results["forecast_obs_df"] = forecast_obs_df
 
@@ -128,7 +131,7 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
     results["AUC"] = calculate_auc(forecast_obs_df) if AUC else None
 
 
-    print("\n2. Processing reference model...")
+    log.debug("\n2. Processing reference model...")
 
     results["BS_ref"], results["RPS_ref"], results["AUC_ref"] = None, None, None
     results['skill_score'] = None
@@ -151,7 +154,7 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
         climatology_obs_df = extract_pd_bins(climatology_obs_df_all, day_bins)
 
         end = time.perf_counter()
-        print(f"clim_forecast_obs_paris Execution time: {end - start:.4f} seconds")
+        log.debug(f"clim_forecast_obs_paris Execution time: {end - start:.4f} seconds")
 
         results["climatology_obs_df"] = climatology_obs_df
 
@@ -201,10 +204,10 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
             results["AUC_ref"] = None
 
 
-    print("results[BS]  =  ", results["BS"])
-    print("results[BS_ref]  =  ", results["BS_ref"])
-    print("results[RPS]  =  ", results["RPS"])
-    print("results[RPS_ref]  =  ", results["RPS_ref"])
+    log.debug("%s %s", "results[BS]  =  ", results["BS"])
+    log.debug("%s %s", "results[BS_ref]  =  ", results["BS_ref"])
+    log.debug("%s %s", "results[RPS]  =  ", results["RPS"])
+    log.debug("%s %s", "results[RPS_ref]  =  ", results["RPS_ref"])
     if skill_score:
 
         skill_results = calculate_skill_scores(

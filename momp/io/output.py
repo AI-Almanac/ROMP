@@ -5,11 +5,19 @@ import pandas as pd
 import xarray as xr
 import pickle
 from momp.stats.bins import get_target_bins
+from momp.lib.run_folder import file_name
 from momp.utils.printing import tuple_to_str
+import logging
+
+log = logging.getLogger(__name__)
 
 
-def save_score_results(score_results, *, model, verification_window, dir_out, **kwargs):
-    """Save overall and binned skill scores to CSV files; return (binned_data, overall_scores_nested)."""
+def score_tables(score_results, model, verification_window):
+    """The overall and binned skill-score tables of one case, without writing anything.
+
+    Returns (overall_df, binned_df, binned_data, overall_scores_nested): the two DataFrames that
+    save_score_results writes, the binned columns as a dict and the overall scores as {metric: value}.
+    """
 
     # Save overall scores
     overall_scores = {
@@ -36,13 +44,6 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
         # definition mode with forecast_history "observed" only; legacy CSVs keep their columns
         overall_df['back_dated_member_share'] = share
 
-    window_str = tuple_to_str(verification_window)
-    overall_filename = f'overall_skill_scores_{model}_{window_str}.csv'
-    overall_filename = os.path.join(dir_out, overall_filename)
-    overall_df.to_csv(overall_filename, index=False)
-    print(f"Saved overall scores to '{overall_filename}'")
-    print(overall_df)
-
     # Get target bins, remove bins with "Day Before" and "Day After"
     target_bins = get_target_bins(score_results['BS'], score_results['BS_ref'])
     clean_bins = [b.replace("Days ", "") for b in target_bins]
@@ -60,13 +61,22 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
 
     # create dataframe and save as .csv
     binned_df = pd.DataFrame(binned_data)
+    return overall_df, binned_df, binned_data, overall_scores_nested
 
-    binned_filename = f'binned_skill_scores_{model}_{window_str}.csv'
-    binned_filename = os.path.join(dir_out, binned_filename)
+
+def save_score_results(score_results, *, model, verification_window, dir_out, **kwargs):
+    """Save overall and binned skill scores to CSV files; return (binned_data, overall_scores_nested)."""
+    overall_df, binned_df, binned_data, overall_scores_nested = score_tables(score_results, model,
+                                                                             verification_window)
+    window_str = tuple_to_str(verification_window)
+    overall_filename = os.path.join(dir_out, file_name(kwargs, "overall", model, window_str))
+    overall_df.to_csv(overall_filename, index=False)
+    log.info(f"Saved overall scores to '{overall_filename}'")
+    log.info(overall_df)
+    binned_filename = os.path.join(dir_out, file_name(kwargs, "binned", model, window_str))
     binned_df.to_csv(binned_filename, index=False)
-    print(f"Saved binned scores to '{binned_filename}'")
-    print(binned_df)
-
+    log.info(f"Saved binned scores to '{binned_filename}'")
+    log.info(binned_df)
     return binned_data, overall_scores_nested
 
 
@@ -159,8 +169,11 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
 
     ds = xr.Dataset(spatial_metrics)
 
-    fout = os.path.join(attrs_dict['dir_out'], "{}_{}.nc")
-    fout = fout.format(fname, attrs_dict.get('case_name', 'missing_case_name'))
+    case_name = attrs_dict.get('case_name', 'missing_case_name')
+    if fname == 'spatial_metrics':
+        fout = os.path.join(attrs_dict['dir_out'], file_name(attrs_dict, "spatial", case_name))
+    else:
+        fout = os.path.join(attrs_dict['dir_out'], f"{fname}_{case_name}.nc")
 
     # Normalize attributes for NetCDF compatibility
     clean_attrs = {}
@@ -194,7 +207,7 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
 
     ds.to_netcdf(fout)
 
-    print(f"{fname} saved to: {fout}")
+    log.info(f"{fname} saved to: {fout}")
 
 
 def set_nested(result_dict, keys, value):

@@ -50,7 +50,7 @@ UNSET = _Unset()
 class Dataset:
     """An observation or forecast dataset: where it is and how to read it.
 
-    Set only what you know: path (required); file_pattern, variable, units (mm or m), dims, members, accumulation and
+    Set only what you know: path (required); file_pattern, variable, units (mm or m), dims, members, accumulation, daily_boundary and
     lead_label (forecasts) or day_boundary (observations) are detected from the files when left UNSET, with
     the evidence reported. ``dataset`` names an entry of a dataset file (dataset_files in the config).
     name is the model name used in output files (models only).
@@ -66,6 +66,7 @@ class Dataset:
     day_boundary: Any = UNSET
     lead_label: Any = UNSET
     accumulation: Any = UNSET
+    daily_boundary: Any = UNSET
     members: Any = UNSET
 
     def to_mapping(self) -> dict:

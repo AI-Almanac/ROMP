@@ -11,13 +11,17 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from momp.io.input import onset_steps_needed
+from momp.io.input import ingest_model_forecast, onset_steps_needed
 from momp.lib.onset_config import onset_setup
 from momp.onset import engine
+from momp.stats import observed_cache
 from momp.onset.alignment import check_forecast_alignment
-from momp.onset.ingest import ingest, ingest_forecast
+from momp.onset.ingest import ingest
 from momp.onset.legacy import LEGACY_THRESHOLD
 from momp.onset.model import Status
+import logging
+
+log = logging.getLogger(__name__)
 
 _GRID_TOLERANCE = 1e-3
 _ALIGNMENT_MAX_INITS = 40
@@ -86,16 +90,22 @@ def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):
     the threshold from momp.io.input.load_thresholds (a number of mm or a 2-D
     DataArray for the old flat keys, else the definition's named thresholds).
     Returns a (lat, lon) DataArray of datetime64 onset dates, NaT where the cell
-    has no onset.
+    has no onset. While a run has the observed-onset cache active (momp.stats.observed_cache) the dates of a
+    year already detected under the same fingerprint are returned without detecting again.
     """
+    cached = observed_cache.lookup(rain_slice, thresh_slice, year, kwargs)
+    if cached is not None:
+        return cached
     result, setup = detect_observed_result(rain_slice, thresh_slice, year, **kwargs)
     lat, lon = result["lat"].values, result["lon"].values
     onset = result["onset_date"].isel(year=0, season=0).transpose("lat", "lon")
     if not setup.legacy:
         status = result["status"].isel(year=0, season=0)
         counts = {s.name: int((status == s).sum()) for s in Status}
-        print(f"Observed onset {year}, cells by status: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v))
-    return xr.DataArray(onset.values.astype("datetime64[ns]"), coords=[("lat", lat), ("lon", lon)], name="onset_date")
+        log.debug(f"Observed onset {year}, cells by status: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v))
+    out = xr.DataArray(onset.values.astype("datetime64[ns]"), coords=[("lat", lat), ("lon", lon)], name="onset_date")
+    observed_cache.store(rain_slice, thresh_slice, year, kwargs, out)
+    return out
 
 
 def _check_steps(p_model, steps_needed):
@@ -130,8 +140,7 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     if "member" in cube.dims and members:
         cube = cube.sel(member=list(members))
     order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
-    forecast = ingest_forecast(cube.transpose(*order), day_boundary=setup.forecast_boundary,
-                               lead_label=setup.lead_label, units="mm", accumulation="daily", source="forecast")
+    forecast = ingest_model_forecast(cube.transpose(*order), setup, kwargs, "forecast")
     lat, lon = forecast.coords["lat"], forecast.coords["lon"]
     stitched = None
     if history is not None and not setup.legacy and setup.forecast_history == "observed":
@@ -174,7 +183,7 @@ def _print_back_dated(day, valid):
     mask = np.broadcast_to(valid[:, None] if day.ndim == 4 else valid, day.shape)
     count = int((day[mask] <= 0).sum())
     if count:
-        print(f"Back-dated forecast onsets (onset_day <= 0, scored as documented in docs/onset_in_romp.md): {count}")
+        log.debug(f"Back-dated forecast onsets (onset_day <= 0, scored as documented in docs/onset_in_romp.md): {count}")
 
 
 def _print_status_counts(setup, status, valid):
@@ -183,7 +192,7 @@ def _print_status_counts(setup, status, valid):
         return
     mask = np.broadcast_to(valid[:, None] if status.ndim == 4 else valid, status.shape)
     counts = np.bincount(status[mask].astype(np.int64), minlength=len(Status))
-    print("Forecast onset searches by status: "
+    log.debug("Forecast onset searches by status: "
           + ", ".join(f"{s.name} {int(counts[s])}" for s in Status if counts[s]))
     if counts[Status.PRIOR]:
         warnings.warn(f"{int(counts[Status.PRIOR])} forecast searches before the observed onset are PRIOR; the "
@@ -207,7 +216,7 @@ def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, histo
     """
     out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs, history=history)
     setup, valid = out["setup"], out["valid"]
-    print(f"Processing {len(out['init'])} init times x {len(out['lat'])} lats x {len(out['lon'])} lons...")
+    log.debug(f"Processing {len(out['init'])} init times x {len(out['lat'])} lats x {len(out['lon'])} lons...")
     i, j, k = np.nonzero(valid)
     day = out["day"][i, j, k]
     has = ~np.isnan(day)
@@ -222,13 +231,13 @@ def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, histo
         columns["onset_status"] = _names(out["status"][i, j, k]).tolist()
     onset_df = pd.DataFrame(columns) if len(i) else pd.DataFrame([])
     total, with_obs = out["totals"]
-    print(f"\nProcessing Summary:")
-    print(f"Total potential initializations: {total}")
-    print(f"Skipped (no observed onset): {total - with_obs * len(out['init'])}")
-    print(f"Skipped (initialized after observed onset): {with_obs * len(out['init']) - len(i)}")
-    print(f"Valid initializations processed: {len(i)}")
-    print(f"Onsets found: {int(has.sum())}")
-    print(f"Onset rate: {has.sum() / len(i):.3f}" if len(i) else "Onset rate: 0.000")
+    log.debug(f"\nProcessing Summary:")
+    log.debug(f"Total potential initializations: {total}")
+    log.debug(f"Skipped (no observed onset): {total - with_obs * len(out['init'])}")
+    log.debug(f"Skipped (initialized after observed onset): {with_obs * len(out['init']) - len(i)}")
+    log.debug(f"Valid initializations processed: {len(i)}")
+    log.debug(f"Onsets found: {int(has.sum())}")
+    log.debug(f"Onset rate: {has.sum() / len(i):.3f}" if len(i) else "Onset rate: 0.000")
     _print_status_counts(setup, out["status"], valid)
     _print_back_dated(out["day"], valid)
     return onset_df
@@ -276,7 +285,7 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None,
     out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs, members=members, history=history)
     setup, valid, day = out["setup"], out["valid"], out["day"]
     n_init, n_member = day.shape[0], day.shape[1]
-    print(f"Processing {n_init} init times x {len(out['lat']) * len(out['lon'])} unique locations x {n_member} members...")
+    log.debug(f"Processing {n_init} init times x {len(out['lat']) * len(out['lon'])} unique locations x {n_member} members...")
 
     member_day = day
     count, fraction, ensemble_day, ensemble_date = ensemble_onset(day, out["init"], threshold)
@@ -328,15 +337,37 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None,
         onset_df["onset_status"] = _names(out["status"][mi, mm, mj, mk])
         ensemble_df["onset_status"] = _ensemble_status(out["status"][ei, :, ej, ek], threshold, has_onset)
 
-    print(f"\nProcessing Summary:")
-    print(f"Generated {len(onset_df)} member-forecast combinations")
-    print(f"Found onset in {int(np.sum(~np.isnan(member_values)))} cases")
-    print(f"Onset rate: {np.mean(~np.isnan(member_values)):.3f}" if len(member_values) else "Onset rate: nan")
-    print(f"Ensemble onsets found (>= {threshold:.0%} of members): {int(has_onset.sum())}")
-    print(f"Ensemble onset rate: {has_onset.mean():.3f}" if len(has_onset) else "Ensemble onset rate: 0.000")
+    log.debug(f"\nProcessing Summary:")
+    log.debug(f"Generated {len(onset_df)} member-forecast combinations")
+    log.debug(f"Found onset in {int(np.sum(~np.isnan(member_values)))} cases")
+    log.debug(f"Onset rate: {np.mean(~np.isnan(member_values)):.3f}" if len(member_values) else "Onset rate: nan")
+    log.debug(f"Ensemble onsets found (>= {threshold:.0%} of members): {int(has_onset.sum())}")
+    log.debug(f"Ensemble onset rate: {has_onset.mean():.3f}" if len(has_onset) else "Ensemble onset rate: 0.000")
     _print_status_counts(setup, out["status"], valid)
     _print_back_dated(member_day, valid)
     return onset_df, ensemble_df
+
+
+def alignment_report(rain_slice, p_model, **kwargs):
+    """Compare observations with forecast leads 1-3; return (report, note).
+
+    report is the AlignmentReport (None when the check could not run) and note says why it did not.
+    Subsamples the inits and members (momp.onset.alignment is expensive on whole years).
+    """
+    setup = onset_setup(kwargs)
+    if setup.obs_day_boundary is None:
+        return None, "the observation day boundary is unknown (set obs_day_boundary to enable it)"
+    try:
+        cube = p_model.sel(step=slice(1, 3))
+        stride = max(1, -(-cube.sizes["init_time"] // _ALIGNMENT_MAX_INITS))
+        cube = cube.isel(init_time=slice(None, None, stride))
+        if "member" in cube.dims:
+            cube = cube.isel(member=slice(0, _ALIGNMENT_MAX_MEMBERS))
+        obs = ingest(rain_slice, day_boundary=setup.obs_day_boundary, units="mm", source="observations")
+        forecast = ingest_model_forecast(cube, setup, kwargs, str(kwargs.get("model", "forecast")))
+        return check_forecast_alignment(obs, forecast, leads=(1, 2, 3)), ""
+    except Exception as exc:  # noqa: BLE001 - a failed check is reported, not raised
+        return None, f"could not run: {exc}"
 
 
 def check_alignment_once(rain_slice, p_model, **kwargs):
@@ -350,25 +381,12 @@ def check_alignment_once(rain_slice, p_model, **kwargs):
     if key in _alignment_done or not setup.check_alignment:
         return
     _alignment_done.add(key)
-    if setup.obs_day_boundary is None:
-        print("Alignment check skipped: the observation day boundary is unknown "
-              "(set obs_day_boundary to enable it).")
+    report, note = alignment_report(rain_slice, p_model, **kwargs)
+    if report is None:
+        log.info(f"Alignment check skipped: {note}")
         return
-    try:
-        cube = p_model.sel(step=slice(1, 3))
-        stride = max(1, -(-cube.sizes["init_time"] // _ALIGNMENT_MAX_INITS))
-        cube = cube.isel(init_time=slice(None, None, stride))
-        if "member" in cube.dims:
-            cube = cube.isel(member=slice(0, _ALIGNMENT_MAX_MEMBERS))
-        obs = ingest(rain_slice, day_boundary=setup.obs_day_boundary, units="mm", source="observations")
-        forecast = ingest_forecast(cube, day_boundary=setup.forecast_boundary, lead_label=setup.lead_label,
-                                   units="mm", accumulation="daily", source=str(kwargs.get("model", "forecast")))
-        report = check_forecast_alignment(obs, forecast, leads=(1, 2, 3))
-    except Exception as exc:
-        print(f"Alignment check could not run: {exc}")
-        return
-    print(f"Alignment check, {kwargs.get('model')} against observations:")
-    print(report.summary())
+    log.info(f"Alignment check, {kwargs.get('model')} against observations:")
+    log.info(report.summary())
     if report.verdict.startswith("likely shifted"):
         warnings.warn(f"{kwargs.get('model')} forecasts look shifted against the observations "
                       f"({report.verdict}); check obs_day_boundary and model_lead_label.", UserWarning)

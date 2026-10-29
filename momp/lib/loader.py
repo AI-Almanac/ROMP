@@ -1,4 +1,5 @@
 """Load the YAML run config, apply command-line overrides and expose the config and Setting objects."""
+import contextlib
 import importlib.resources
 import os
 from pathlib import Path
@@ -13,6 +14,9 @@ from .parser import create_parser
 from types import SimpleNamespace
 from momp.lib.assertion import ROMPValidator, ROMPConfigError
 from momp.lib.parser import ensure_config_exists
+import logging
+
+log = logging.getLogger(__name__)
 
 package = "momp"
 
@@ -116,22 +120,54 @@ def _resolve_threshold_ref(ref):
 
 
 def build_cfg(cli_args=None):
-    """Read the YAML run config, resolve paths, create output dirs and apply CLI overrides; return the config dict."""
+    """Read the YAML run config, resolve paths, apply CLI overrides and plan the run folders; return the config dict.
+
+    Nothing is created on disk: dic["run_paths"] (momp.lib.run_folder.RunPaths) says where the run will write, and
+    dic["config_file"] is the config's path. The folders are made by run_folder.prepare when the run starts.
+    """
     config_path = ensure_config_exists(_get_config_path_pre_parse(cli_args))
     dic = _read_config(config_path)
     dic = _rename_deprecated_keys(dic)
     dic = _set_onset_mode(dic)
     dic = _resolve_paths(dic)
 
-    os.makedirs(dic["dir_fig"], exist_ok=True)
-    os.makedirs(dic["dir_out"], exist_ok=True)
-
     args = create_parser(dic, cli_args=cli_args)
     args_dict = vars(args)
     overrides = {k: v for k, v in args_dict.items() if k in dic and v is not None}
     dic.update(overrides)
+    dic["config_file"] = str(config_path)
+    return plan_run(dic, config_path)
 
+
+def plan_run(dic, config_file=None, write=True):
+    """Finish a flat config for a run: the lead window and the run folders planned from the final values."""
+    from momp.lib import run_folder
+
+    if "lead_window" not in dic:
+        from momp.lib.lead_window import apply_lead_window
+
+        apply_lead_window(dic)
+    return run_folder.apply(dic, run_folder.plan(dic, config_file, write))
+
+
+def load_run_config(cli_args=None):
+    """The validated flat config of a run (lead window applied, folders planned); raises ROMPConfigError if invalid."""
+    dic = build_cfg(cli_args)
+    ROMPValidator(dic).validate()
     return dic
+
+
+@contextlib.contextmanager
+def use_config(dic):
+    """Make dic the process-wide config (what get_cfg and get_setting return) for a with block, then restore."""
+    global _cfg, _setting
+    saved = (_cfg, _setting)
+    _cfg = dic
+    _setting = init_dataclass(Setting, dic)
+    try:
+        yield
+    finally:
+        _cfg, _setting = saved
 
 
 def get_cfg(cli_args=None):
@@ -147,7 +183,7 @@ def get_cfg(cli_args=None):
             from momp.lib.lead_window import apply_lead_window
             apply_lead_window(_cfg)
     except ROMPConfigError as e:
-        print(f"Error: Invalid Config!!! {e}")
+        log.info(f"Error: Invalid Config!!! {e}")
         if not _cfg.get('debug'):
             sys.exit(1)
 

@@ -8,6 +8,9 @@ from momp.io.input import load_imd_rainfall, load_thresholds
 from momp.lib.onset_config import onset_setup
 from momp.onset import explain
 from momp.onset.ingest import ingest
+import logging
+
+log = logging.getLogger(__name__)
 
 _GRID_TOLERANCE = 1e-3
 
@@ -41,7 +44,7 @@ def write_explain_cells(cfg) -> list[Path]:
     kwargs = vars(cfg)
     setup = onset_setup(kwargs)
     if setup.legacy:
-        print("explain_cells: skipped, it needs an onset definition (the old flat onset keys are in use)")
+        log.info("explain_cells: skipped, it needs an onset definition (the old flat onset keys are in use)")
         return []
     out_dir = Path(kwargs["dir_fig"]) / "explain"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -52,7 +55,7 @@ def write_explain_cells(cfg) -> list[Path]:
         try:
             da = load_imd_rainfall(year, **kwargs)
         except FileNotFoundError as exc:
-            print(f"explain_cells: skipping {year} ({exc})")
+            log.info(f"explain_cells: skipping {year} ({exc})")
             continue
         rain = ingest(da, day_boundary=setup.ingest_boundary, units="mm", source="observations")
         lat, lon = rain.coords["lat"], rain.coords["lon"]
@@ -63,12 +66,12 @@ def write_explain_cells(cfg) -> list[Path]:
                 a = explain.trace_observed(setup.definition, rain, lat=cell_lat, lon=cell_lon, year=year,
                                            season=setup.season, thresholds=thr, season_climatology=season_clim)
             except ValueError as exc:
-                print(f"explain_cells: skipping ({cell_lat:g}, {cell_lon:g}) {year}: {exc}")
+                log.info(f"explain_cells: skipping ({cell_lat:g}, {cell_lon:g}) {year}: {exc}")
                 continue
             stem = out_dir / f"{setup.definition.id}_{_tag(cell_lat, cell_lon)}_{year}"
             Path(f"{stem}.txt").write_text(explain.explain(a) + "\n")
             png = Path(f"{stem}.png")
             anatomy_plot(a).savefig(png, dpi=150)
             written.append(png)
-            print(f"explain_cells: wrote {png}")
+            log.info(f"explain_cells: wrote {png}")
     return written

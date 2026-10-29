@@ -5,6 +5,9 @@ import pandas as pd
 import warnings
 from scipy import stats
 from momp.stats.bins import extract_day_range
+import logging
+
+log = logging.getLogger(__name__)
 
 
 # Function to calculate Brier Score and Fair Brier Score for the model forecasts (both overall and bin-wise)
@@ -70,8 +73,8 @@ def calculate_brier_score(forecast_obs_df):
         'bin_fair_brier_scores': bin_fair_brier_scores.to_dict(),
     }
 
-    print(f"Brier Score: {brier_results['brier_score']:.4f}")
-    print(f"Fair Brier Score: {brier_results['fair_brier_score']:.4f}")
+    log.debug(f"Brier Score: {brier_results['brier_score']:.4f}")
+    log.debug(f"Fair Brier Score: {brier_results['fair_brier_score']:.4f}")
 
     return brier_results
 
@@ -108,7 +111,7 @@ def calculate_auc(forecast_obs_df):
     n_negative = np.sum(1 - y_ij)  # Σ (1-Y_{ij})
 
     if n_positive == 0 or n_negative == 0:
-        print("Warning: Cannot calculate AUC - all cases are either positive or negative")
+        log.warning("Cannot calculate AUC - all cases are either positive or negative")
         return {
             'auc': np.nan,
             'n_positive': n_positive,
@@ -249,9 +252,9 @@ def calculate_rps(forecast_obs_df):
 
     }
 
-    print(f"RPS: {rps_results['rps']:.4f}")
-    print(f"Fair RPS: {rps_results['fair_rps']:.4f}")
-    print(f"Number of forecasts: {rps_results['n_forecasts']}")
+    log.debug(f"RPS: {rps_results['rps']:.4f}")
+    log.debug(f"Fair RPS: {rps_results['fair_rps']:.4f}")
+    log.debug(f"Number of forecasts: {rps_results['n_forecasts']}")
 
     return rps_results
 
@@ -287,7 +290,7 @@ def calculate_brier_score_climatology(forecast_obs_df):
     filtered_df = forecast_obs_df[~forecast_obs_df['bin_label'].str.contains('Before', na=False)].copy()
 
     if len(filtered_df) == 0:
-        print("Warning: No data remaining after filtering out 'Before initialization' bin")
+        log.warning("No data remaining after filtering out 'Before initialization' bin")
         return {
             'brier_score': np.nan,
             'fair_brier_score': np.nan,
@@ -297,8 +300,8 @@ def calculate_brier_score_climatology(forecast_obs_df):
             'filtered_bins': []
         }
 
-    print(f"Calculating Brier Score excluding 'Before initialization' bin")
-    print(f"Original samples: {len(forecast_obs_df)}, After filtering: {len(filtered_df)}")
+    log.debug(f"Calculating Brier Score excluding 'Before initialization' bin")
+    log.debug(f"Original samples: {len(forecast_obs_df)}, After filtering: {len(filtered_df)}")
 
     # Calculate squared differences
     squared_diffs = (filtered_df['observed_onset'] - filtered_df['predicted_prob'])**2
@@ -332,9 +335,9 @@ def calculate_brier_score_climatology(forecast_obs_df):
         'excluded_bins': ['Before initialization']
     }
 
-    print(f"Brier Score (excluding 'Before initialization'): {brier_results['brier_score']:.4f}")
-    print(f"Fair Brier Score (excluding 'Before initialization'): {brier_results['fair_brier_score']:.4f}")
-    print(f"Bins included in calculation: {brier_results['filtered_bins']}")
+    log.debug(f"Brier Score (excluding 'Before initialization'): {brier_results['brier_score']:.4f}")
+    log.debug(f"Fair Brier Score (excluding 'Before initialization'): {brier_results['fair_brier_score']:.4f}")
+    log.debug(f"Bins included in calculation: {brier_results['filtered_bins']}")
 
     return brier_results
 
@@ -370,7 +373,7 @@ def calculate_auc_climatology(forecast_obs_df):
     n_negative = np.sum(1 - y_ij)  # Σ (1-Y_{ij})
 
     if n_positive == 0 or n_negative == 0:
-        print("Warning: Cannot calculate AUC - all cases are either positive or negative")
+        log.warning("Cannot calculate AUC - all cases are either positive or negative")
         return {
             'auc': np.nan,
             'n_positive': n_positive,
@@ -450,9 +453,9 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
 
     skill_scores = {}
 
-    print("="*60)
-    print("SKILL SCORE CALCULATIONS")
-    print("="*60)
+    log.debug("="*60)
+    log.debug("SKILL SCORE CALCULATIONS")
+    log.debug("="*60)
 
     # Fair Brier Skill Score (1-15 day overall)
     if brier_climatology == 0:
@@ -463,13 +466,13 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
 
     skill_scores['fair_brier_skill_score'] = fair_bss_overall
 
-    print(f"Fair Brier Skill Score (1-15 day): {fair_bss_overall:.4f}")
+    log.debug(f"Fair Brier Skill Score (1-15 day): {fair_bss_overall:.4f}")
 
     # Fair RPS Skill Score (1-15 day overall)
     fair_rpss_overall = 1 - (rps_forecast['fair_rps'] / rps_climatology['fair_rps'])
     skill_scores['fair_rps_skill_score'] = fair_rpss_overall
 
-    print(f"Fair RPS Skill Score (1-15 day): {fair_rpss_overall:.4f}")
+    log.debug(f"Fair RPS Skill Score (1-15 day): {fair_rpss_overall:.4f}")
 
     # Automatically extract target bins from the data, excluding unwanted bins
     all_forecast_bins = set(brier_forecast['bin_fair_brier_scores'].keys())
@@ -496,13 +499,13 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
 
     target_bins = sorted(target_bins, key=extract_day_range)
 
-    print(f"\nAutomatically detected target bins: {target_bins}")
-    print(f"Excluded bins: {excluded_bins}")
+    log.debug(f"\nAutomatically detected target bins: {target_bins}")
+    log.debug(f"Excluded bins: {excluded_bins}")
 
     # Bin-wise Fair Brier Skill Scores
     bin_fair_bss = {}
 
-    print(f"\nBin-wise Fair Brier Skill Scores:")
+    log.debug(f"\nBin-wise Fair Brier Skill Scores:")
     for bin_label in target_bins:
         if bin_label in brier_forecast['bin_fair_brier_scores'] and bin_label in brier_climatology['bin_fair_brier_scores']:
             forecast_fair_brier_bin = brier_forecast['bin_fair_brier_scores'][bin_label]
@@ -511,10 +514,10 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
             fair_bss_bin = 1 - (forecast_fair_brier_bin / clim_fair_brier_bin)
             bin_fair_bss[bin_label] = fair_bss_bin
 
-            print(f"  {bin_label}: Fair BSS = {fair_bss_bin:.4f}")
+            log.debug(f"  {bin_label}: Fair BSS = {fair_bss_bin:.4f}")
         else:
             bin_fair_bss[bin_label] = np.nan
-            print(f"  {bin_label}: Fair BSS = NaN (missing data)")
+            log.debug(f"  {bin_label}: Fair BSS = NaN (missing data)")
 
     skill_scores['bin_fair_brier_skill_scores'] = bin_fair_bss
 
@@ -529,11 +532,11 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
     table_width = 30 + 18 + 12 * len(target_bins)
 
     # Summary table
-    print(f"\n" + "="*table_width)
-    print("SKILL SCORE SUMMARY TABLE")
-    print("="*table_width)
-    print(header)
-    print("-"*table_width)
+    log.debug(f"\n" + "="*table_width)
+    log.debug("SKILL SCORE SUMMARY TABLE")
+    log.debug("="*table_width)
+    log.debug(header)
+    log.debug("-"*table_width)
 
     # Fair Brier Skill Score row
     fair_bss_row = f"{'Fair Brier Skill Score':<30} {fair_bss_overall:<18.4f}"
@@ -542,47 +545,47 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
             fair_bss_row += f" {bin_fair_bss[bin_name]:<12.4f}"
         else:
             fair_bss_row += f" {'N/A':<12}"
-    print(fair_bss_row)
+    log.debug(fair_bss_row)
 
     # Fair RPS Skill Score row
     fair_rpss_row = f"{'Fair RPS Skill Score':<30} {fair_rpss_overall:<18.4f}"
     for bin_name in target_bins:
         fair_rpss_row += f" {'N/A':<12}"  # RPS is overall only
-    print(fair_rpss_row)
+    log.debug(fair_rpss_row)
 
-    print("-"*table_width)
+    log.debug("-"*table_width)
 
     # Add interpretation guide
-    print(f"\nInterpretation Guide:")
-    print(f"• Positive skill scores indicate forecast is better than climatology")
-    print(f"• Negative skill scores indicate forecast is worse than climatology")
-    print(f"• Skill score = 0 means forecast equals climatology")
-    print(f"• Perfect score = 1.0")
+    log.debug(f"\nInterpretation Guide:")
+    log.debug(f"• Positive skill scores indicate forecast is better than climatology")
+    log.debug(f"• Negative skill scores indicate forecast is worse than climatology")
+    log.debug(f"• Skill score = 0 means forecast equals climatology")
+    log.debug(f"• Perfect score = 1.0")
 
     # Additional detailed results
-    print(f"\n" + "="*60)
-    print("DETAILED RESULTS")
-    print("="*60)
+    log.debug(f"\n" + "="*60)
+    log.debug("DETAILED RESULTS")
+    log.debug("="*60)
 
-    print(f"\nForecast Fair Brier Score : {brier_forecast['fair_brier_score']:.4f}")
-    print(f"Climatology Fair Brier Score : {brier_climatology['fair_brier_score']:.4f}")
-    print(f"Fair Brier Skill Score: {fair_bss_overall:.4f}")
+    log.debug(f"\nForecast Fair Brier Score : {brier_forecast['fair_brier_score']:.4f}")
+    log.debug(f"Climatology Fair Brier Score : {brier_climatology['fair_brier_score']:.4f}")
+    log.debug(f"Fair Brier Skill Score: {fair_bss_overall:.4f}")
 
-    print(f"\nForecast Fair RPS : {rps_forecast['fair_rps']:.4f}")
-    print(f"Climatology Fair RPS : {rps_climatology['fair_rps']:.4f}")
-    print(f"Fair RPS Skill Score: {fair_rpss_overall:.4f}")
+    log.debug(f"\nForecast Fair RPS : {rps_forecast['fair_rps']:.4f}")
+    log.debug(f"Climatology Fair RPS : {rps_climatology['fair_rps']:.4f}")
+    log.debug(f"Fair RPS Skill Score: {fair_rpss_overall:.4f}")
 
-    print(f"\nBin-wise Fair Brier Score Comparisons:")
+    log.debug(f"\nBin-wise Fair Brier Score Comparisons:")
     for bin_name in target_bins:
         if bin_name in brier_forecast['bin_fair_brier_scores'] and bin_name in brier_climatology['bin_fair_brier_scores']:
             forecast_val = brier_forecast['bin_fair_brier_scores'][bin_name]
             clim_val = brier_climatology['bin_fair_brier_scores'][bin_name]
             skill_val = bin_fair_bss[bin_name]
-            print(f"  {bin_name}:")
-            print(f"    Forecast: {forecast_val:.4f}")
-            print(f"    Climatology: {clim_val:.4f}")
-            print(f"    Skill Score: {skill_val:.4f}")
+            log.debug(f"  {bin_name}:")
+            log.debug(f"    Forecast: {forecast_val:.4f}")
+            log.debug(f"    Climatology: {clim_val:.4f}")
+            log.debug(f"    Skill Score: {skill_val:.4f}")
         else:
-            print(f"  {bin_name}: Missing data")
+            log.debug(f"  {bin_name}: Missing data")
 
     return skill_scores

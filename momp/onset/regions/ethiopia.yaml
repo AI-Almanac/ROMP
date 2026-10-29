@@ -19,3 +19,13 @@ notes: >
   yet). The declared day boundary was
   confirmed empirically: AIFS_v2 2020 forecasts correlate best with CHIRPS when
   lead k is dated init + k - 1.
+  Day convention sources: the CHIRPS v3 daily readme
+  (https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/readme.txt) states that
+  ERA5 and IMERG are used "according to their standard UTC calendar-day
+  convention, without shifting" and that a daily value labelled D "uses the
+  disaggregation information for approximately 00:00 UTC on D to 00:00 UTC on
+  D+1", the same in GeoTIFF and NetCDF, labelled by the start date as declared
+  above. This holds for the rnl (ERA5) and sat (IMERG) products alike. Caveat
+  from the same readme: the label is a UTC calendar-day label, not a uniform
+  24 h observation window for the contributing station data (some GTS stations
+  report about 06 UTC to 06 UTC), and no local-time shift is applied.

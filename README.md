@@ -33,20 +33,36 @@ momp-run init --obs /path/to/obs --model /path/to/aifs --years 2019 2024 -o run.
 Review `run.yaml` (look for `TODO`), then run it:
 
 ```bash
+momp-run -p run.yaml --check  # validate, resolve and print the plan; runs nothing (exit 1 on errors)
 momp-run -p run.yaml          # or set MOMP_CONFIG=run.yaml, e.g. in a notebook
 momp-run datasets -p run.yaml # what each dataset resolves to, with detections, warnings, problems
 momp-run -p run.yaml -h       # lists the command-line overrides of config values
 ```
 
+`--check` prints the settings with their sources, each dataset with what was detected and the evidence, the mask, lead windows, which files exist, the model-versus-observation alignment, hints (each names the key to set: units, latitude order, grid mismatch, leads that are not whole days, accumulation, a short climatology), the run folder and the cache. `--quiet` shows only warnings, `--verbose` adds debug lines (`run.log` always has them); progress shows as a tqdm bar if tqdm is installed, else as log lines.
+
 `momp-run -h` lists all commands. `examples/config.yaml` is a short commented example. `momp-run init` writes only what you must decide; the region supplies the onset definition, day boundary and climatology years, and schema defaults fill the rest. Defaults are resolved at run time and never copied into your file. The sections `observations`, `models`, `onset`, `evaluation`, `metrics` and `output` flatten to the flat keys the code uses; every key, type, default and help line is in `momp/lib/config_schema.py`. Unknown keys are errors with "did you mean" suggestions.
 
-Datasets are described inline (`path`, `variable`, `units: mm|m`, `dims`, `day_boundary` for observations, `lead_label` and `accumulation` for forecasts). Left-out keys are detected from the first file and reported; a key that cannot be detected reliably, or that the files contradict, is an error naming it. Paths may use `~` and `${ENV_VAR}`. `momp-run init --dataset-template obs|forecast` prints a blank entry; entries can also live in your own files listed under `dataset_files:` and be referenced with `dataset: <id>` (inline keys win).
+Datasets are described inline (`path`, `variable`, `units: mm|m`, `dims`, `day_boundary` for observations, `lead_label`, `accumulation` and `daily_boundary` for forecasts). Left-out keys are detected from the first file and reported; a key that cannot be detected reliably, or that the files contradict, is an error naming it. Paths may use `~` and `${ENV_VAR}`. `momp-run init --dataset-template obs|forecast` prints a blank entry; entries can also live in your own files listed under `dataset_files:` and be referenced with `dataset: <id>` (inline keys win).
 
-In a notebook use Python objects instead: `from momp.config import Config, Dataset, Onset`; `Config(...).to_flat()` gives the validated flat dict and `.to_yaml(path)` writes the file.
+In a notebook:
 
-Every run writes `resolved_config.yaml` (every value after defaults, region, detection and overrides, each with its source) and `resolved_definition.yaml` (with the hash) into `dir_out`; `momp-run -p resolved_config.yaml` reproduces the run. Old `config.in` files are no longer read: `momp-run convert old.in -o run.yaml` writes the equivalent YAML (same outputs).
+```python
+import momp
+result = momp.run("run.yaml", max_forecast_day=15)   # a path, a momp.config.Config or a mapping; flat-key overrides
+result.observed    # xarray.Dataset: observed onset dates (year, lat, lon)
+result.scores      # deterministic: {"spatial": {(model, window): Dataset}, "summary": DataFrame}; ensemble: {"overall", "binned"} DataFrames
+result.forecasts   # {source: Dataset} gridded onset dates of each model (computed on first use)
+plan = momp.check("run.yaml")                          # what --check prints
+```
 
-Each run loads the config, reads observations and forecasts, detects onset, scores the forecasts against the observed onset and a reference (climatology by default), then writes NetCDF/CSV results to `dir_out` and figures to `dir_fig`.
+`momp.run` writes no files unless `write=True` (then it behaves like `momp-run`; `overwrite=True` re-runs an existing run folder). `momp.config.Config(...).to_flat()` gives the validated flat dict and `.to_yaml(path)` writes the file.
+
+**Run folders.** Without `output.data_dir`, a run writes to `runs/<region>_<definition>[+mod]_<years>_<fingerprint>/` next to the config file (at most 40 characters; `+mod` marks an overridden definition; the 4-character fingerprint hashes everything that sets the results, not output switches). The same config is refused unless `--overwrite`, which clears that folder first; a changed config gets its own folder. Inside: `run.yaml` (every value after defaults, region, detection and overrides, each with its source) and `definition.yaml` (with the hash), `run.log`, and `onsets/`, `scores/`, `figures/` (a subfolder only when it would hold more than one file; short file names such as `scores/spatial_AIFS_1-15.nc`). `runs/.cache/` is shared by all runs. With an explicit `data_dir` (and `figure_dir`) the files and their names are the historical ones: `resolved_config.yaml`, `resolved_definition.yaml`, `spatial_metrics_<model>_<window>.nc`, ... in that folder, overwritten on a re-run. Old `config.in` files are no longer read: `momp-run convert old.in -o run.yaml` writes the equivalent YAML (same outputs).
+
+**Observed-onset cache.** Observed onsets are detected once per run and shared by all models, windows and references, and kept across runs in `runs/.cache/observed_onsets/` (`<data_dir>/.onset_cache/` with an explicit `data_dir`), keyed by a fingerprint of the observation files, ingest settings, evaluated cells and mask, definition, thresholds and season climatology, and years (not the backend, models, windows or reference). The run prints a hit or miss and, on a miss, which parts differ from the nearest cached entry.
+
+Each run loads the config, reads observations and forecasts, detects onset, scores the forecasts against the observed onset and a reference (climatology by default), then writes NetCDF/CSV results and figures.
 
 Export the gridded onset dates (observed, each model, the climatology references) as NetCDF with `momp-run export -p run.yaml` or `output.save_onsets: true`; see "Exporting onset dates" in `docs/onset_in_romp.md`.
 
@@ -106,7 +122,7 @@ The mask is built on each dataset's own grid (the observations and every model s
 
 ```
 momp/
-  driver.py     momp-run entry point
+  driver.py     momp-run entry point; api.py is momp.run / momp.check
   onset/        onset component: definitions, registry, regions, ingestion, backends, explain, viz
   app/          benchmarking workflow and diagnostics
   stats/        ROMP's onset adapter, ensembles, climatology
@@ -126,8 +142,8 @@ tests/
 
 ## Outputs
 
-* `dir_out`: spatial-metric NetCDFs, skill-score CSVs, `resolved_config.yaml`, `resolved_definition.yaml` and `.onset_cache/` (thresholds).
-* `dir_fig`: metric plots and maps; `explain/` holds anatomy plots for cells listed in `explain_cells`.
+* Run folder (or `dir_out`): spatial-metric NetCDFs, skill-score CSVs, the resolved config and definition, `run.log`, onsets; thresholds and observed onsets are cached in `runs/.cache/` (or `.onset_cache/`).
+* Figures: metric plots and maps; `explain/` holds anatomy plots for cells listed in `explain_cells`.
 
 ## Docs and demos
 

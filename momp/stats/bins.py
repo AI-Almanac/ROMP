@@ -9,6 +9,9 @@ from momp.lib.onset_config import is_legacy, onset_setup
 from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
 from momp.stats.conditional_climatology import CLIMATOLOGY_REFERENCES
 from momp.utils.practical import restore_args
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def counts_back_dated(cfg):
@@ -89,8 +92,8 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     # Add the "after max_forecast_day" bin
     extended_bins = ((-float('inf'), min_forecast_day - 1),) + day_bins + ((max_forecast_day + 1, float('inf')),)
 
-    print(f"Processing {len(forecast_groups)} forecast cases with day bins: {day_bins}")
-    print(f"Including 'after day {max_forecast_day}' bin for members without onset in forecast window")
+    log.debug(f"Processing {len(forecast_groups)} forecast cases with day bins: {day_bins}")
+    log.debug(f"Including 'after day {max_forecast_day}' bin for members without onset in forecast window")
 
     member_case = forecast_groups.ngroup().to_numpy()
     case_size = forecast_groups.size()
@@ -178,19 +181,19 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
         forecast_obs_df['back_dated_members'] = per_case(back_dated_members)
         forecast_obs_df['onset_members'] = per_case(onset_members)
 
-    print(f"Generated {len(forecast_obs_df)} forecast-observation pairs")
-    print(f"Total bins per forecast: {len(extended_bins)}")
-    print(f"Probability range: {forecast_obs_df['predicted_prob'].min():.3f} - {forecast_obs_df['predicted_prob'].max():.3f}")
-    print(f"Observed onset rate: {forecast_obs_df['observed_onset'].mean():.3f}")
-    print(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
+    log.debug(f"Generated {len(forecast_obs_df)} forecast-observation pairs")
+    log.debug(f"Total bins per forecast: {len(extended_bins)}")
+    log.debug(f"Probability range: {forecast_obs_df['predicted_prob'].min():.3f} - {forecast_obs_df['predicted_prob'].max():.3f}")
+    log.debug(f"Observed onset rate: {forecast_obs_df['observed_onset'].mean():.3f}")
+    log.debug(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
 
     # Show distribution across bins
-    print(f"\nDistribution across bins:")
+    log.debug(f"\nDistribution across bins:")
     bin_stats = forecast_obs_df.groupby('bin_label').agg({
         'predicted_prob': ['count', 'mean'],
         'observed_onset': 'mean'
     }).round(3)
-    print(bin_stats)
+    log.debug(bin_stats)
 
     return forecast_obs_df
 
@@ -237,18 +240,18 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     # Create extended bins including "before initialization" and "after max_forecast_day" bins
     extended_bins = ((-float('inf'), min_forecast_day - 1),) + day_bins + ((max_forecast_day + 1, float('inf')),)
 
-    print(f"Creating climatological forecasts for target year {target_year}")
-    print(f"Using {len(ensemble_years)} years as ensemble members: {ensemble_years}")
-    print(f"Processing {len(init_dates)} initialization dates")
-    print(f"Day bins: {day_bins}")
-    print(f"Extended bins include: 'Before day {min_forecast_day}' and 'After day {max_forecast_day}' ")
-    print(f"Using day-of-year method for onset comparison")
+    log.debug(f"Creating climatological forecasts for target year {target_year}")
+    log.debug(f"Using {len(ensemble_years)} years as ensemble members: {ensemble_years}")
+    log.debug(f"Processing {len(init_dates)} initialization dates")
+    log.debug(f"Day bins: {day_bins}")
+    log.debug(f"Extended bins include: 'Before day {min_forecast_day}' and 'After day {max_forecast_day}' ")
+    log.debug(f"Using day-of-year method for onset comparison")
 
     # Get the actual lat/lon coordinates from the data
     lats = obs_onset_da.lat.values
     lons = obs_onset_da.lon.values
 
-    print(f"Processing {len(lats) * len(lons)} unique lat-lon pairs")
+    log.debug(f"Processing {len(lats) * len(lons)} unique lat-lon pairs")
 
     lat_idx = _first_close(lats, lats)
     lon_idx = _first_close(lons, lons)
@@ -355,29 +358,29 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     })
 
     if len(forecast_obs_df) == 0:
-        print("Warning: No forecast-observation pairs generated")
+        log.warning("No forecast-observation pairs generated")
         return forecast_obs_df
 
-    print(f"Generated {len(forecast_obs_df)} climatological forecast-observation pairs")
-    print(f"Unique lat-lon pairs processed: {len(lats) * len(lons)}")
-    print(f"Total bins per forecast: {len(extended_bins)}")
-    print(f"Probability range: {forecast_obs_df['predicted_prob'].min():.3f} - {forecast_obs_df['predicted_prob'].max():.3f}")
-    print(f"Observed onset rate: {forecast_obs_df['observed_onset'].mean():.3f}")
-    print(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
+    log.debug(f"Generated {len(forecast_obs_df)} climatological forecast-observation pairs")
+    log.debug(f"Unique lat-lon pairs processed: {len(lats) * len(lons)}")
+    log.debug(f"Total bins per forecast: {len(extended_bins)}")
+    log.debug(f"Probability range: {forecast_obs_df['predicted_prob'].min():.3f} - {forecast_obs_df['predicted_prob'].max():.3f}")
+    log.debug(f"Observed onset rate: {forecast_obs_df['observed_onset'].mean():.3f}")
+    log.debug(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
 
     # Verify uniqueness
     unique_locations_in_output = len(forecast_obs_df[['lat', 'lon']].drop_duplicates())
-    print(f"Unique locations in output: {unique_locations_in_output}")
+    log.debug(f"Unique locations in output: {unique_locations_in_output}")
 
     # Show distribution across bins
-    print(f"\nDistribution across bins:")
+    log.debug(f"\nDistribution across bins:")
     bin_stats = forecast_obs_df.groupby('bin_label').agg({
         'predicted_prob': ['count', 'mean'],
         'observed_onset': 'mean',
         'n_contributing_years': 'mean',
         'total_members_with_onset': 'mean'
     }).round(3)
-    print(bin_stats)
+    log.debug(bin_stats)
 
     return forecast_obs_df
 
@@ -393,7 +396,7 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
 
     kwargs = restore_args(multi_year_forecast_obs_pairs, kwargs, locals())
 
-    print(f"Processing years: {years}")
+    log.debug(f"Processing years: {years}")
 
     thresh_slice = load_thresholds(**kwargs)
 
@@ -402,46 +405,46 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
 
     # Process each year
     for year in years:
-        print(f"\n{'-'*50}")
-        print(f"Processing year {year}")
+        log.debug(f"\n{'-'*50}")
+        log.debug(f"Processing year {year}")
 
         try:
             # Load model and observation data
-            print("Loading S2S model data...")
+            log.debug("Loading S2S model data...")
             p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
             p_model_slice = p_model # !!!!! region subset
 
-            print("Loading observational rainfall data...")
+            log.debug("Loading observational rainfall data...")
             rainfall_ds = load_imd_rainfall(year, **kwargs)
             rainfall_ds_slice = rainfall_ds #!!!!! region subset
             check_alignment_once(rainfall_ds_slice, p_model_slice, **kwargs)
 
-            print("Detecting observed onset...")
+            log.debug("Detecting observed onset...")
             onset_da = detect_observed_onset(rainfall_ds_slice, thresh_slice, year, **kwargs)
-            print(f"Found onset in {(~pd.isna(onset_da.values)).sum()} out of {onset_da.size} grid points")
+            log.debug(f"Found onset in {(~pd.isna(onset_da.values)).sum()} out of {onset_da.size} grid points")
 
-            print("Computing onset for all ensemble members...")
+            log.debug("Computing onset for all ensemble members...")
             onset_all_members, _ = compute_onset_for_all_members(p_model_slice, thresh_slice, onset_da,
                                                            history=load_history(year, rainfall_ds_slice, **kwargs), **kwargs)
-            print(f"Found onset in {onset_all_members['onset_day'].notna().sum()} member cases")
+            log.debug(f"Found onset in {onset_all_members['onset_day'].notna().sum()} member cases")
 
-            print("Creating forecast-observation pairs...")
+            log.debug("Creating forecast-observation pairs...")
             forecast_obs_pairs = create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, **kwargs)
 
             # Add to master list
             all_forecast_obs_pairs.append(forecast_obs_pairs)
 
-            print(f"Year {year} completed: {len(forecast_obs_pairs)} forecast-observation pairs")
+            log.debug(f"Year {year} completed: {len(forecast_obs_pairs)} forecast-observation pairs")
 
         except FileNotFoundError as e:
             # Reforecast archives commonly have year gaps; skip years whose
             # model or observation file is absent instead of aborting the run.
-            print(f"Skipping year {year} (missing input file): {e}")
+            log.debug(f"Skipping year {year} (missing input file): {e}")
             continue
 
     # Combine all years
-    print(f"\n{'-'*50}")
-    print("Combining all years")
+    log.debug(f"\n{'-'*50}")
+    log.debug("Combining all years")
 
     if not all_forecast_obs_pairs:
         raise ValueError("No data was successfully processed for any year")
@@ -449,8 +452,8 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
     combined_forecast_obs = pd.concat(all_forecast_obs_pairs, ignore_index=True)
 
     # Print final summary statistics
-    print(f"\nFinal Summary Statistics:")
-    print(f"Years processed: {years}")
+    log.debug(f"\nFinal Summary Statistics:")
+    log.debug(f"Years processed: {years}")
     return combined_forecast_obs
 
 
@@ -481,8 +484,8 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
     all_forecast_obs_pairs = []
 
     for target_year in years:
-        print(f"\n{'-'*50}")
-        print(f"Processing target year {target_year}")
+        log.debug(f"\n{'-'*50}")
+        log.debug(f"Processing target year {target_year}")
 
         try:
             # Get initialization dates for this year
@@ -498,12 +501,12 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
 
             if len(forecast_obs_pairs) > 0:
                 all_forecast_obs_pairs.append(forecast_obs_pairs)
-                print(f"Target year {target_year} completed: {len(forecast_obs_pairs)} pairs")
+                log.debug(f"Target year {target_year} completed: {len(forecast_obs_pairs)} pairs")
             else:
-                print(f"No pairs generated for target year {target_year}")
+                log.debug(f"No pairs generated for target year {target_year}")
 
         except Exception as e:
-            print(f"Error processing target year {target_year}: {e}")
+            log.error(f"Error processing target year {target_year}: {e}")
             continue
 
     # Combine all years
@@ -512,12 +515,12 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
 
     combined_forecast_obs = pd.concat(all_forecast_obs_pairs, ignore_index=True)
 
-    print(f"\n{'='*50}")
-    print("CLIMATOLOGICAL FORECAST SUMMARY")
-    print(f"{'='*50}")
-    print(f"Target years processed: {years}")
-    print(f"Total forecast-observation pairs: {len(combined_forecast_obs)}")
-    print(f"Probability range: {combined_forecast_obs['predicted_prob'].min():.3f} - {combined_forecast_obs['predicted_prob'].max():.3f}")
-    print(f"Overall observed onset rate: {combined_forecast_obs['observed_onset'].mean():.3f}")
+    log.debug(f"\n{'='*50}")
+    log.debug("CLIMATOLOGICAL FORECAST SUMMARY")
+    log.debug(f"{'='*50}")
+    log.debug(f"Target years processed: {years}")
+    log.debug(f"Total forecast-observation pairs: {len(combined_forecast_obs)}")
+    log.debug(f"Probability range: {combined_forecast_obs['predicted_prob'].min():.3f} - {combined_forecast_obs['predicted_prob'].max():.3f}")
+    log.debug(f"Overall observed onset rate: {combined_forecast_obs['observed_onset'].mean():.3f}")
 
     return combined_forecast_obs

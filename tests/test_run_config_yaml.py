@@ -155,7 +155,8 @@ def test_converted_flat_dict_matches_the_old_one(tmp_path):
     mapping, _ = convert.flat_to_mapping(old)
     new = build_config(mapping)
     extra = {"dataset_report", "config_sources", "model_dims_list", "accumulation_list", "catalog_dirs",
-             "dataset_files", "climatology_cv", "years", "years_clim", "fallback_date"}
+             "dataset_files", "climatology_cv", "years", "years_clim", "fallback_date", "daily_boundary_list",
+             "accumulation_detected"}
     for key, value in old.items():
         assert new[key] == value, key
     assert set(new) - set(old) <= extra | {"plot_portrait", "save_onsets"}

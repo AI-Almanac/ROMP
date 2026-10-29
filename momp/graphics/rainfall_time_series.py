@@ -2,6 +2,9 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import matplotlib.dates as mdates
+import logging
+
+log = logging.getLogger(__name__)
 
 def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, wetspell_date, lat_select, lon_select, year_select=None, save_path=None, incl_clim=None, pr_clim=None, onset_clim=None):
     """
@@ -85,6 +88,6 @@ def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, wetspell_da
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-        print(f"onset time series figure saved to {save_path}")
+        log.debug(f"onset time series figure saved to {save_path}")
 
     plt.show()

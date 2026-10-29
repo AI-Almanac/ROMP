@@ -6,7 +6,7 @@ config.in, e.g. ``obs_dir``) or sections that group them for readability::
     observations:  dataset, name, path, file_pattern, variable, units, dims, day_boundary
     reference:     dataset, model, path, file_pattern, variable, units, dims, climatology_cv
     models:        a list of {dataset, name, path, file_pattern, variable, units, dims,
-                   lead_label, accumulation, members}
+                   lead_label, accumulation, daily_boundary, members}
     onset:         definition, override, rule, season, threshold_years, thresholds, lead_label, check_alignment,
                    dry_spell_check, forecast_history, threshold_source, backend,
                    percentage_threshold, explain_cells
@@ -449,6 +449,7 @@ def _fields() -> tuple[Field, ...]:
         Field("model_var_list", "strs", "rainfall variable of each model", REQUIRED, internal=True),
         Field("unit_cvt_list", "numbers_or_null", "multiplier to mm of each model (derived from units)", REQUIRED, internal=True),
         Field("accumulation_list", "strs", "accumulation of each model (from models[].accumulation)", fill=False, internal=True),
+        Field("daily_boundary_list", "strs", "daily boundary of each model, or null (from models[].daily_boundary)", fill=False, internal=True),
         Field("file_pattern_list", "strs", "file pattern of each model", REQUIRED, internal=True),
         Field("model_dims_list", "dims_list", "dimension names of each model's files", None, fill=False, internal=True),
         # old flat onset keys (legacy mode; they cannot be combined with onset.definition)
@@ -563,7 +564,7 @@ BY_PATH = {(f.section, f.nested_name): f for f in FIELDS if f.section}
 SPECIAL_SUBKEYS = {"observations": ("dataset", "units", "dims"), "reference": ("dataset", "units")}
 """Section entries that are not config keys: the dataset file entry to take values from, units, dims."""
 MODEL_ENTRY_KEYS = ("dataset", "name", "path", "file_pattern", "variable", "units", "dims", "lead_label",
-                    "accumulation", "members")
+                    "accumulation", "daily_boundary", "members")
 """Keys of one entry of the `models:` list."""
 
 

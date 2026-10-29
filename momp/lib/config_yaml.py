@@ -54,6 +54,8 @@ def _entry_from_dataset(ds: Dataset) -> tuple[dict, dict]:
         entry["units"] = ds.units
     if ds.kind == "forecast":
         entry["accumulation"] = ds.accumulation
+        if ds.daily_boundary:
+            entry["daily_boundary"] = ds.daily_boundary
     entry = {k: v for k, v in entry.items() if v is not None}
     return entry, {k: f"dataset '{ds.id}'" for k in entry}
 
@@ -182,6 +184,7 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
         report.append(f"{written} {entry.get('name', '')}:")
         report.extend("  " + t for t in res.report())
         values = detect.finalize_units(res.values)
+        values["_accumulation_detected"] = any(l.key == "accumulation" and l.how == "detected" for l in res.lines)
         for key in ("name", "path", "variable"):
             if key not in values:
                 values[key] = None
@@ -199,9 +202,11 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
     config["unit_cvt_list"] = tuple(r.get("unit_cvt") for r in rows)
     config["file_pattern_list"] = tuple(r.get("file_pattern", "{}.nc") for r in rows)
     config["accumulation_list"] = tuple(r.get("accumulation", "auto") for r in rows)
+    config["daily_boundary_list"] = tuple(r.get("daily_boundary") for r in rows)
+    config["accumulation_detected"] = tuple(bool(r.get("_accumulation_detected")) for r in rows)
     if any(r.get("dims") for r in rows):
         config["model_dims_list"] = tuple(r.get("dims") for r in rows)
-    for key in _MODEL_LISTS + ("accumulation_list",):
+    for key in _MODEL_LISTS + ("accumulation_list", "daily_boundary_list", "accumulation_detected"):
         sources[key] = "models"
     if "model_lead_label" not in config:
         distinct = {label for _, label in labels}

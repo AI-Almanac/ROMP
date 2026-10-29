@@ -1,4 +1,6 @@
 """ROMP explain_cells: the files are written per cell and year, legacy mode is skipped, and bad values are rejected."""
+
+import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -49,11 +51,12 @@ def test_unset_writes_nothing(tmp_path, data):
     assert not (tmp_path / "explain").exists()
 
 
-def test_legacy_mode_is_skipped_with_a_note(tmp_path, data, monkeypatch, capsys):
+def test_legacy_mode_is_skipped_with_a_note(tmp_path, data, monkeypatch, caplog):
     """With the old flat keys it prints a note and writes nothing."""
+    caplog.set_level(logging.INFO)
     monkeypatch.setattr(explain_cells, "onset_setup", lambda kwargs: SimpleNamespace(legacy=True))
     assert explain_cells.write_explain_cells(config(tmp_path, [(9.0, 38.0)])) == []
-    assert "skipped" in capsys.readouterr().out
+    assert "skipped" in caplog.text
 
 
 @pytest.mark.parametrize("value", [(9.0, 38.0), [(9.0,)], [(9.0, "a")], [(9.0, 38.0, 1.0)], "x"])

@@ -19,7 +19,7 @@ onset:
   override: {wet_day: at least 2 mm}   # optional; merged like `extends`, same strict errors
 ```
 
-or a complete definition inline under `onset: {rule: {...}}`. The run prints the definition's description, `icpac v1, overridden: wet_day` and the hash, and writes `resolved_definition.yaml` and `resolved_config.yaml` to `dir_out`.
+or a complete definition inline under `onset: {rule: {...}}`. The run prints the definition's description, `icpac v1, overridden: wet_day` and the hash, and writes the resolved definition and config to the run folder (`definition.yaml`, `run.yaml`; `resolved_definition.yaml`, `resolved_config.yaml` in an explicit `dir_out`).
 
 Look definitions up with the CLI:
 
@@ -53,7 +53,7 @@ Every key can stay unset. Names below are the flat keys; in YAML write them insi
 | `onset_percentage_threshold` | `0.5` | Share of ensemble members that must have an onset for the ensemble to have one. |
 | `explain_cells` | `None` | List of `(lat, lon)`. For each cell and year, writes an anatomy PNG and a `.txt` explain log of the observed onset to `dir_fig/explain/`. |
 
-Thresholds (for example the local mean 5-day total) are computed from the observations of `threshold_years` and cached in `dir_out/.onset_cache`. Derived seasons (`dunning`) also compute a harmonic season analysis from those years.
+Thresholds (for example the local mean 5-day total) are computed from the observations of `threshold_years` and cached in `runs/.cache` (`dir_out/.onset_cache` with an explicit `dir_out`). Derived seasons (`dunning`) also compute a harmonic season analysis from those years.
 
 `onset_definition` together with any old flat key (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`) is an error. Put the change in a definition with `extends:`.
 
@@ -100,7 +100,11 @@ How many were back-dated is reported (definition mode with `"observed"` only):
 
 `threshold_source = "observations"` computes thresholds from the reference observations. `"model"` computes them from the model's own forecasts: the mean over leads 1 to `max_forecast_day`, over forecast days whose date lies in the threshold's `during` period in `threshold_years`, using ROMP's forecast loader (init days, unit conversion). Each verification window gets its own threshold, pooled from the forecast days at leads inside that window.
 
-Only mean-based thresholds (`mean total over`, `mean daily rain`) support `"model"`; others are an error naming them. Results are cached in `dir_out/.onset_cache` by model, years, lead window and definition hash. Legacy configs use observations only.
+Only mean-based thresholds (`mean total over`, `mean daily rain`) support `"model"`; others are an error naming them. Results are cached in the same cache folder by model, years, lead window and definition hash. Legacy configs use observations only.
+
+## Forecast accumulation, steps and day boundary
+
+Each model's `accumulation` (`daily`, `since_init` or `auto`) and `daily_boundary` (a UTC clock time such as `03 UTC`, to cut days where the observations' day starts) are passed to every `ingest_forecast` call of the scoring, so running totals are differenced and sub-daily steps summed to days as in `momp.onset.ingest`. Left out, `accumulation` is detected from the first file (`momp.onset.ingest.detect_accumulation`; an ambiguous series is an error naming the key) and the units are cross-checked with `detect_units`; both are reported with their evidence. ROMP's loaders still read lead steps as whole days, so aggregate sub-daily forecasts first (`--check` hints at it). `reference.climatology_cv` (`none` or `leave_one_year_out`) reaches the conditional climatology scoring.
 
 ## Alignment check
 
@@ -110,7 +114,7 @@ Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `"start
 
 ## Exporting onset dates
 
-`momp-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to `dir_out/onsets/` before a normal run scores (the detection runs twice). In Python: `momp.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}`; `momp.export.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
+`momp-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to the run's `onsets/` folder (`dir_out/onsets/` with an explicit `dir_out`) before a normal run scores (the detection runs twice). In Python: `momp.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}` (files `<source>.nc` in a run folder, `onsets_<source>.nc` with an explicit `dir_out`); `momp.export.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
 
 The values are the ones ROMP scores: the export calls the scoring's own functions with the keyword arguments the scoring builds (masks, shortened lead window, `forecast_history`, thresholds, definition). Unlike the scored tables, which keep only cases with an observed onset and an init before it, the files hold every init and cell; the flag `scored` (1 for those cases) marks what ROMP scores. Dates are CF times (int32 days since 1970-01-01, with the data's calendar; cftime for non-standard calendars); no onset is the fill value (NaT) and NaN in the float variables. Onset date, day of year and lead are set only where `status` is `ONSET`: a `PRIOR` search is reported as no onset, as scored. Files are zlib-compressed NetCDF4, CF-1.8, with global attributes holding the definition (id, version, hash, sentence, YAML, overrides), thresholds (source, years, files, values hash), mask summary, forecast history, lead label and window, day boundaries, dataset paths, ROMP version, creation time and the resolved run config (`resolved_config_yaml`).
 

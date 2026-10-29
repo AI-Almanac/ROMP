@@ -8,7 +8,7 @@ from momp.graphics.heatmap import create_heatmap
 from momp.graphics.reliability import plot_reliability_diagram
 from momp.graphics.panel_portrait_skill import panel_portrait_bss_auc
 from momp.graphics.panel_bar_skill import panel_bar_bss_rpss_auc
-from momp.io.output import save_score_results
+from momp.io.output import save_score_results, score_tables
 from momp.lib.control import iter_list, make_case
 from momp.lib.convention import Case
 from momp.lib.loader import get_cfg, get_setting
@@ -16,13 +16,18 @@ from momp.utils.printing import tuple_to_str
 from momp.io.dict import select_key_at_level
 from momp.lib.control import filter_bins_in_window
 from collections import defaultdict
+import logging
+from momp.utils.log import progress
+
+log = logging.getLogger(__name__)
 
 
 def skill_score_in_bins(cfg=None, setting=None):
     """Compute and plot binned and overall BSS, RPSS and AUC skill scores for each case of an ensemble forecast.
 
-    Does nothing unless the configuration is probabilistic. If cfg or setting is
-    None, the global configuration is loaded.
+    Does nothing (returns None) unless the configuration is probabilistic. If cfg or setting is None, the global
+    configuration is loaded. Returns {"overall": DataFrame, "binned": DataFrame}: the score tables of every
+    model and verification window (columns model and window first), whether or not CSV files are written.
     """
 
     if cfg is None:
@@ -36,15 +41,16 @@ def skill_score_in_bins(cfg=None, setting=None):
 
     result_overall = defaultdict(dict)
     result_binned = defaultdict(dict)
+    overall_frames, binned_frames = [], []
     score_input_cache = {}
 
     layout_pool = iter_list(vars(cfg))
 
-    for combi in product(*layout_pool):
+    for combi in progress(list(product(*layout_pool)), desc="cases"):
         case = make_case(Case, combi, vars(cfg))
 
-        print(f"{'='*50}")
-        print(f"processing {case.model} onset evaluation for verification window "
+        log.debug(f"{'='*50}")
+        log.info(f"processing {case.model} onset evaluation for verification window "
                 f"{case.verification_window}, case: {case.case_name}")
 
         full_day_bins = cfg.day_bins
@@ -104,13 +110,18 @@ def skill_score_in_bins(cfg=None, setting=None):
         score_results = create_score_results(**case_cfg)
 
         end = time.perf_counter()
-        print(f"\n\n\n skill score Execution time: {end - start:.4f} seconds\n\n\n")
+        log.debug(f"\n\n\n skill score Execution time: {end - start:.4f} seconds\n\n\n")
+
+        window_str = tuple_to_str(case.verification_window)
+        overall_df, binned_df, binned_data, overall_scores = score_tables(score_results, case.model,
+                                                                          case.verification_window)
+        overall_frames.append(overall_df.assign(model=case.model, window=window_str))
+        binned_frames.append(binned_df.assign(model=case.model, window=window_str))
 
         # save score results as csv file
         if case_cfg['save_csv_score']:
-            binned_data, overall_scores = save_score_results(score_results, **case_cfg)
+            save_score_results(score_results, **case_cfg)
 
-        window_str = tuple_to_str(case.verification_window)
         result_binned[case.model][window_str] = binned_data
         result_overall[case.model][window_str] = overall_scores
 
@@ -136,7 +147,7 @@ def skill_score_in_bins(cfg=None, setting=None):
         with open(fout, "wb") as f:
             pickle.dump(result_overall, f)
 
-    from pprint import pprint
+    import pprint
 
     # panel heatmap plot for binned BSS and AUC
     if case_cfg['plot_panel_heatmap_skill']:
@@ -144,8 +155,8 @@ def skill_score_in_bins(cfg=None, setting=None):
             window_str = tuple_to_str(verification_window)
             # extract dict for specific window only
             result_binned_window = select_key_at_level(result_binned, 2, window_str)
-            print("\n\n\n result_binned_window = ", result_binned_window)
-            pprint(result_binned_window)
+            log.debug("%s %s", "\n\n\n result_binned_window = ", result_binned_window)
+            log.debug("%s", pprint.pformat(result_binned_window))
             panel_portrait_bss_auc(result_binned_window, verification_window, **vars(cfg))
 
     # bar plot for BSS, RPSS, AUC in window
@@ -153,8 +164,17 @@ def skill_score_in_bins(cfg=None, setting=None):
         for verification_window in cfg.verification_window_list:
             window_str = tuple_to_str(verification_window)
             result_overall_window = select_key_at_level(result_overall, 2, window_str)
-            print("\n\n\n result_overall_window = ", result_overall_window)
+            log.debug("%s %s", "\n\n\n result_overall_window = ", result_overall_window)
             panel_bar_bss_rpss_auc(result_overall_window, verification_window, **vars(cfg))
+
+    import pandas as pd
+
+    def stacked(frames):
+        """The per-case tables as one DataFrame with the model and window columns first."""
+        table = pd.concat(frames, ignore_index=True)
+        return table[["model", "window"] + [c for c in table.columns if c not in ("model", "window")]]
+
+    return {"overall": stacked(overall_frames), "binned": stacked(binned_frames)}
 
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":

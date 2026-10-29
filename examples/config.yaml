@@ -2,7 +2,9 @@
 # Start your own with `momp-run init --obs /path/to/obs --model /path/to/model`, which fills in the dataset
 # values it detects from your files. Only what you must decide is here: the region supplies the onset
 # definition, day boundary and climatology years; unset keys take defaults (momp/lib/config_schema.py lists
-# every key). Each run writes resolved_config.yaml (all values and their sources) next to its outputs.
+# every key). Each run writes its resolved config (all values and their sources) next to its outputs. Check a
+# config first with `momp-run -p examples/config.yaml --check` (it runs nothing). Leave out output.data_dir to
+# get a run folder (runs/ next to this file, named from region, definition, years and a fingerprint).
 project_name: Demo run with the sample data
 
 region: India

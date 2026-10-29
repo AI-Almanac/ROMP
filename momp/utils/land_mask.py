@@ -6,6 +6,9 @@ import regionmask
 import xarray as xr
 from momp.params.region_def import polygon_boundary
 from momp.utils.standard import dim_fmt
+import logging
+
+log = logging.getLogger(__name__)
 
 
 # Function to find grid points inside a polygon (For core-monsoon zone analysis)
@@ -230,10 +233,21 @@ def get_shp(region='Ethiopia', resolution='10m', category='cultural', name='admi
 
     # Find Ethiopia geometry
     region_geom = None
+    names = {region, _registry_title(region)}
     for country in shpreader.Reader(ethiopia_shp).records():
-        if country.attributes['NAME'] == region:
+        if country.attributes['NAME'] in names:
             region_geom = country.geometry
             return region_geom
+
+
+def _registry_title(region):
+    """The registry title of a region name in any case ("ethiopia" -> "Ethiopia"), else the name itself."""
+    try:
+        from momp.onset import regions
+
+        return regions.load_region(str(region)).title
+    except Exception:  # noqa: BLE001 - not a registry region: the name is matched as written
+        return region
 
 
 def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name='admin_0_countries',
@@ -245,7 +259,7 @@ def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name=
     region_geom = get_shp(region=region, resolution=resolution, category=category, name=name)
 
     if region_geom is None:
-        print("    WARNING - specified region is not in cartopy.io.shapereader")
+        log.warning("specified region is not in cartopy.io.shapereader")
         return da
 
     # Create mask for Ethiopia
@@ -274,7 +288,7 @@ def shp_outline(ax, region='Ethiopia', resolution='10m', category='cultural', na
     region_geom = get_shp(region=region, resolution=resolution, category=category, name=name)
 
     if region_geom is None:
-        print("WARNING - specified region is not in cartopy.io.shapereader")
+        log.warning("specified region is not in cartopy.io.shapereader")
         return ax
 
     if hasattr(ax, "add_geometries"):

@@ -16,6 +16,7 @@ What is detected, and how:
   units         the file's ``units`` attribute (mm or m), sanity-checked against the values
   dims          known dimension names (as momp.onset.ingest), role by role
   members       the size of the member dimension
+  accumulation  daily or since_init, from how the values grow along the lead (momp.onset.ingest.detect_accumulation)
   lead_label    forecast against observations at day lags -3..+3 (momp.onset.alignment)
   day_boundary  only an explicit ``day_boundary`` attribute in the file
   region        the lat/lon extent against the domains in momp/onset/regions
@@ -47,7 +48,8 @@ _ROLE_ALIASES = {
     "lat": ("lat", "latitude", "y"),
     "lon": ("lon", "longitude", "x"),
 }
-_ORDER = ("path", "file_pattern", "variable", "units", "dims", "day_boundary", "lead_label", "accumulation", "members")
+_ORDER = ("path", "file_pattern", "variable", "units", "dims", "day_boundary", "lead_label", "accumulation",
+          "daily_boundary", "members")
 _ALIGN_INITS = 40
 _NULLABLE = ("day_boundary", "lead_label")
 """Keys where an explicit null is a choice (the region's boundary; derive the label)."""
@@ -357,7 +359,8 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
     elif kind == "forecast" and "members" not in values:
         res.lines.append(Line("members", 1, "detected", f"no member dimension in {name}: deterministic"))
 
-    _units(da, name, values, res, specified, detected, roles)
+    guess = _forecast_accumulation(da, values, res, specified, detected, roles) if kind == "forecast" else None
+    _units(da, name, values, res, specified, detected, roles, guess)
 
     if kind == "observations":
         if "day_boundary" in values:
@@ -371,11 +374,8 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
                                             "observation day starts and which date labels it, e.g. "
                                             "'00 UTC, labelled by start' (see the dataset's documentation)")
     else:
-        if "accumulation" in values:
-            specified("accumulation")
-        else:
-            values["accumulation"] = "auto"
-            res.lines.append(Line("accumulation", "auto", "default", "daily or since_init is worked out when the forecasts are loaded"))
+        if "daily_boundary" in values:
+            specified("daily_boundary")
         if "lead_label" in values:
             specified("lead_label")
         elif not detect_lead_label or problems:
@@ -390,15 +390,54 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
                                           "(lead k is dated init + k - 1) or 'end' (init + k)")
 
 
-def _units(da, name, values, res, specified, detected, roles):
-    """Units (mm or m): given or read from the attribute; contradictions and unknowns are problems naming units."""
+def _forecast_accumulation(da, values, res, specified, detected, roles):
+    """Resolve a forecast's accumulation (daily or since_init) and return the units guess (units, evidence) or None.
+
+    A given accumulation is kept; otherwise it is detected with ingest.detect_accumulation (an ambiguous series is a
+    problem naming the key). The units guess is ingest.detect_units on the daily totals of that accumulation.
+    """
+    lead = roles.get("step")
+    kind = values.get("accumulation")
+    if "accumulation" in values:
+        specified("accumulation")
+    elif lead is None:
+        values["accumulation"] = kind = "auto"
+        res.lines.append(Line("accumulation", "auto", "default", "no lead dimension to look at"))
+    else:
+        try:
+            kind, evidence = ingest.detect_accumulation(da, lead)
+            detected("accumulation", kind, evidence)
+        except ValueError as exc:
+            text = str(exc)
+            if text.startswith("Ambiguous"):
+                res.problems["accumulation"] = text.replace("; set accumulation='daily' or 'since_init'", "") + \
+                    ". Fix: set accumulation to 'daily' or 'since_init'"
+                return None
+            values["accumulation"] = kind = "auto"
+            res.lines.append(Line("accumulation", "auto", "default", f"could not be detected ({text}); worked out when loaded"))
+    if lead is None or kind not in ("daily", "since_init"):
+        return None
+    try:
+        return ingest.detect_units(da, kind, lead)
+    except (ValueError, KeyError):
+        return None
+
+
+def _units(da, name, values, res, specified, detected, roles, guess=None):
+    """Units (mm or m): given or read from the attribute; contradictions and unknowns are problems naming units.
+
+    guess is ingest.detect_units' (units, evidence) for forecasts: it names the likely units when none can be read,
+    and a given or attribute unit that disagrees with it is a warning.
+    """
     attr = da.attrs.get("units")
     from_attr = _units_from_attr(attr) if attr is not None else None
     peak = _sample(da, roles)
-    guess = ""
-    if peak.size:
-        guess = (f" The sampled values peak at {peak.max():.3g}, which looks like "
-                 f"{'metres (units: m)' if peak.max() < 0.5 else 'mm (units: mm)'}.")
+    hint = ""
+    if guess:
+        hint = f" Daily totals look like {guess[0]} ({guess[1]})."
+    elif peak.size:
+        hint = (f" The sampled values peak at {peak.max():.3g}, which looks like "
+                f"{'metres (units: m)' if peak.max() < 0.5 else 'mm (units: mm)'}.")
     if "units" in values:
         specified("units")
         if values["units"] not in ("mm", "m"):
@@ -414,11 +453,14 @@ def _units(da, name, values, res, specified, detected, roles):
         implied = from_attr
     else:
         why = f"unrecognised units attribute {attr!r}" if attr is not None else "the file has no units attribute"
-        res.problems["units"] = f"cannot be detected: {why}.{guess} Fix: set units to mm or m"
+        res.problems["units"] = f"cannot be detected: {why}.{hint} Fix: set units to mm or m"
         return
     message = _check_magnitude(_sample(da, roles), implied)
     if message:
         res.problems["units"] = message + ". Fix: set the right units"
+    elif guess and guess[0] != implied:
+        res.warnings.append(f"units are {implied} but the daily totals look like {guess[0]} ({guess[1]}); "
+                            "check units")
 
 
 def finalize_units(values: dict) -> dict:

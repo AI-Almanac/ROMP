@@ -6,6 +6,9 @@ import os
 
 from momp.stats.bins import get_target_bins
 from momp.utils.printing import tuple_to_str
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def create_heatmap(score_results, *, model, verification_window, day_bins, dir_fig, show_plot=True, **kwargs):
@@ -86,4 +89,4 @@ def create_heatmap(score_results, *, model, verification_window, day_bins, dir_f
 
     plt.close()
 
-    print(f"Figure saved as '{figure_filename}'")
+    log.debug(f"Figure saved as '{figure_filename}'")

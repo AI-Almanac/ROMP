@@ -18,6 +18,11 @@ from momp.utils.printing import tuple_to_str_range
 
 from momp.stats.benchmark import ens_compute_metrics_multiple_years
 from momp.stats.parallel import parallel_metrics_multiple_years
+import logging
+from momp.utils.log import progress
+
+log = logging.getLogger(__name__)
+from momp.lib.run_folder import file_name
 
 
 def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
@@ -40,11 +45,11 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
 
     layout_pool = iter_list(vars(cfg))
 
-    for combi in product(*layout_pool):
+    for combi in progress(list(product(*layout_pool)), desc="cases"):
         case = make_case(Case, combi, vars(cfg))
 
-        print(f"{'='*50}")
-        print(f"processing {case.model} onset evaluation for verification window \
+        log.debug(f"{'='*50}")
+        log.info(f"processing {case.model} onset evaluation for verification window \
                 {case.verification_window}{case.case_name}")
 
         case_cfg = {**asdict(case), **asdict(setting)}
@@ -89,9 +94,9 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
     cfg_ref.model_list = (cfg.ref_model,)
     layout_pool = iter_list(vars(cfg_ref))
 
-    for combi in product(*layout_pool):
+    for combi in progress(list(product(*layout_pool)), desc="cases"):
         case = make_case(Case, combi, vars(cfg_ref))
-        print(f"processing model onset evaluation for {case.case_name}")
+        log.info(f"processing model onset evaluation for {case.case_name}")
 
         # the reference model's own data location, variable, pattern, unit and dims
         # (read from setting/case, which exist even if the forecast loop never ran)
@@ -106,8 +111,8 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
 
         case_cfg_ref = {**asdict(case), **asdict(setting)}
 
-        from pprint import pprint
-        pprint(case_cfg_ref)
+        import pprint
+        log.debug("%s", pprint.pformat(case_cfg_ref))
 
         # model-obs onset benchmarking
         if setting.parallel:
@@ -139,8 +144,8 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
 
     # save climatological onset to netcdf
     if case.model == 'climatology' and case_cfg_ref['save_nc_climatology']:
-        fout = os.path.join(case_cfg_ref['dir_out'], "climatology_onset_doy_{}.nc")
-        fout = fout.format(tuple_to_str_range(case_cfg_ref['years_clim']))
+        fout = os.path.join(case_cfg_ref['dir_out'],
+                            file_name(case_cfg_ref, "climatology", tuple_to_str_range(case_cfg_ref['years_clim'])))
         climatological_onset_doy = next(iter(onset_da_dict.values()))
         climatological_onset_doy.attrs["years"] = case.years_clim
         climatological_onset_doy.attrs.update(mask_attrs())   # nothing unless a region mask is in use
@@ -165,4 +170,4 @@ if __name__ == "__main__":
     results = ens_spatial_far_mr_mae_map()
 
     end = time.perf_counter()
-    print(f"\n\n\n ens_spatial metrics Execution time: {end - start:.4f} seconds\n\n\n")
+    log.debug(f"\n\n\n ens_spatial metrics Execution time: {end - start:.4f} seconds\n\n\n")

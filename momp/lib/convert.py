@@ -18,13 +18,14 @@ from momp.lib.config_schema import ConfigSchemaError
 from momp.lib.dataset_schema import suggest
 
 SECTION_ORDER = ("observations", "reference", "models", "onset", "evaluation", "metrics", "output")
-INTERNAL_KEYS = ("dataset_report", "config_sources", "onset_legacy", "lead_window", "onset_lead_lines")
+INTERNAL_KEYS = ("dataset_report", "config_sources", "onset_legacy", "lead_window", "onset_lead_lines", "run_paths",
+                 "config_file", "cache_dir", "short_names", "run_overrides", "accumulation_detected")
 """Keys the loader adds; they are not part of a run config."""
 _MODEL_LISTS = ("model_list", "model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list",
                 "model_dims_list")
 _LEGACY_RENAMES = {"mok": "earliest_onset_date"}
 _UNIT_KEYS = ("obs_unit_cvt", "ref_model_unit_cvt")
-_MODEL_EXTRA = ("accumulation_list",)
+_MODEL_EXTRA = ("accumulation_list", "daily_boundary_list", "accumulation_detected")
 
 
 def units_from_cvt(cvt, where: str) -> str:
@@ -103,8 +104,12 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
                      "units": units_from_cvt(flat["unit_cvt_list"][i], f"unit_cvt_list[{i}]"),
                      "file_pattern": flat["file_pattern_list"][i]}
             accumulation = (flat.get("accumulation_list") or ["auto"] * (i + 1))[i]
-            if accumulation != "auto":
+            detected = (flat.get("accumulation_detected") or [False] * (i + 1))[i]
+            if accumulation != "auto" and not detected:   # a detected value is re-detected on the next run
                 entry["accumulation"] = accumulation
+            boundary = (flat.get("daily_boundary_list") or [None] * (i + 1))[i]
+            if boundary:
+                entry["daily_boundary"] = boundary
             dims = (flat.get("model_dims_list") or [None] * (i + 1))[i]
             if dims:
                 entry["dims"] = plain(dims)

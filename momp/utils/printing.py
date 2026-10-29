@@ -1,4 +1,5 @@
 """Helpers for formatting tuples as strings and printing banners, config values and data-file info."""
+import logging
 from importlib.metadata import version as pkg_version
 
 def combi_to_str(combi, sep="_", tuple_sep="-", suffix=""):
@@ -57,7 +58,7 @@ def print_momp_banner(cfg):
  Initializing analysis pipeline...
 ================================================================================
 """
-    print(banner)
+    logging.getLogger(__name__).info(banner)
 
 
 def print_cfg(cfg, key_patterns):

@@ -8,6 +8,9 @@ from momp.stats.climatology import compute_climatological_onset
 from momp.lib.control import years_tuple_clim
 import pandas as pd
 from momp.lib.onset_config import onset_setup
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def _season_window(kwargs):
@@ -29,8 +32,8 @@ def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwa
     # load onset precip threshold, 2-D or scalar
     thresh_da = load_thresholds(**kwargs)
 
-    print(f"\n{'-'*50}")
-    print(f"Processing year {year}")
+    log.debug(f"\n{'-'*50}")
+    log.debug(f"Processing year {year}")
 
     # obs onset
     da = load_imd_rainfall(year, **kwargs)

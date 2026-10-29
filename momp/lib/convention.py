@@ -49,6 +49,8 @@ class Case:
     file_pattern: str = field(default=None)
     unit_cvt: Optional[float] = field(default=None)
     accumulation: str = field(default="auto")
+    # UTC clock time ("03 UTC") at which the model's days are cut, or None for 24 h from the init.
+    daily_boundary: Optional[str] = field(default=None)
     # Canonical name -> name in the model files, e.g. {"init_time": "time"}.
     model_dims: Optional[dict] = field(default=None)
 
@@ -89,6 +91,11 @@ class Setting:
     forecast_history: Optional[str] = field(default=None)
     threshold_source: Optional[str] = field(default=None)
     onset_backend: str = field(default="numba")
+    # cross-validation of the conditional climatology reference: "none" or "leave_one_year_out"
+    climatology_cv: str = field(default="leave_one_year_out")
+    # Set by the run: the shared cache folder (None: next to dir_out) and whether output file names are short.
+    cache_dir: Optional[str] = field(default=None)
+    short_names: bool = field(default=False)
     # Set by the loader in definition mode: the (first, last) leads searched.
     lead_window: Optional[tuple[int, int]] = field(default=None)
     # Set by the loader: True when the config uses the old flat onset keys.

@@ -2,6 +2,9 @@
 import numpy as np
 import xarray as xr
 import pandas as pd
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
@@ -25,9 +28,9 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
     lats = onset_da_dict[first_year].lat.values
     lons = onset_da_dict[first_year].lon.values
 
-    print(f"Creating spatial FAR, Miss Rate, yearly MAE, and mean MAE maps...")
-    print(f"Grid dimensions: {len(lats)} lats x {len(lons)} lons")
-    print(f"Years: {list(metrics_df_dict.keys())}")
+    log.debug(f"Creating spatial FAR, Miss Rate, yearly MAE, and mean MAE maps...")
+    log.debug(f"Grid dimensions: {len(lats)} lats x {len(lons)} lons")
+    log.debug(f"Years: {list(metrics_df_dict.keys())}")
 
     spatial_metrics = {}
 

@@ -36,6 +36,9 @@ import numpy as np
 import xarray as xr
 
 from momp.lib.assertion import ROMPConfigError
+import logging
+
+log = logging.getLogger(__name__)
 
 CELL_RULES = ("centre", "overlap_fraction")
 """How a shape decides whether a data cell is kept."""
@@ -631,11 +634,11 @@ def region_mask(lat, lon, mask, dataset="data", dir_fig=None) -> np.ndarray:
     key = (spec.key(), str(dataset), hashlib.sha256(lat.tobytes() + lon.tobytes()).hexdigest())
     if key not in _BUILT:
         result = build_mask(spec, lat, lon, label=str(dataset))
-        print("\n".join(result.lines))
+        log.info("\n".join(result.lines))
         if dir_fig:
             png = save_mask_png(result, Path(dir_fig) / f"mask_{dataset}.png", title=str(dataset))
             result.record["figure"] = str(png)
-            print(f"  mask figure: {png}")
+            log.info(f"  mask figure: {png}")
         _BUILT[key] = result
         _RECORDS[str(dataset)] = result.record
     return _BUILT[key].keep
