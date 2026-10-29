@@ -24,17 +24,20 @@ Optional env vars (with defaults matching the demo config):
                           (default: None, infer from names)
   ROMP_REGION           - target region (default: Ethiopia)
   ROMP_NC_MASK          - path to land/region mask NetCDF (default: None)
-  ROMP_THRESH_FILE      - path to spatial threshold NetCDF (default: None)
-  ROMP_WET_THRESHOLD    - scalar rainfall threshold mm (default: 20)
-  ROMP_WET_INIT         - minimum wet day threshold mm (default: 1)
-  ROMP_WET_SPELL        - wet spell length days (default: 3)
-  ROMP_DRY_SPELL        - dry spell length days (default: 7)
-  ROMP_DRY_EXTENT       - dry spell search window days (default: 0)
+  (variables marked [legacy] apply only when no definition-mode variable is set)
+  ROMP_THRESH_FILE      - path to spatial threshold NetCDF (default: None) [legacy]
+  ROMP_WET_THRESHOLD    - scalar rainfall threshold mm (default: 20) [legacy]
+  ROMP_WET_INIT         - minimum wet day threshold mm (default: 1) [legacy]
+  ROMP_WET_SPELL        - wet spell length days (default: 3) [legacy]
+  ROMP_DRY_SPELL        - dry spell length days (default: 7) [legacy]
+  ROMP_DRY_EXTENT       - dry spell search window days (default: 0) [legacy]
   ROMP_ONSET_DEFINITION - onset definition id or YAML path (default: unset, flat keys below).
-                          Setting this, or any of the ROMP_ONSET_* / ROMP_THRESHOLD_YEARS /
-                          ROMP_THRESHOLDS / ROMP_OBS_DAY_BOUNDARY / ROMP_MODEL_LEAD_LABEL /
-                          ROMP_CHECK_ALIGNMENT variables, selects definition mode; the flat
-                          ROMP_WET_* / ROMP_DRY_* / ROMP_THRESH_FILE variables must then be unset
+                          Setting this, or any other variable of the onset group (ROMP_ONSET_SEASON,
+                          ROMP_THRESHOLD_YEARS, ROMP_THRESHOLDS, ROMP_OBS_DAY_BOUNDARY, ROMP_MODEL_LEAD_LABEL,
+                          ROMP_CHECK_ALIGNMENT, ROMP_ONSET_BACKEND, ROMP_FORECAST_HISTORY, ROMP_THRESHOLD_SOURCE),
+                          selects definition mode; the flat ROMP_WET_* / ROMP_DRY_* (except ROMP_DRY_SPELL_CHECK) /
+                          ROMP_THRESH_FILE variables must then be unset. With none of the group set, a legacy
+                          flat-key config is written
   ROMP_ONSET_SEASON     - season name for definitions with several seasons (default: None)
   ROMP_THRESHOLD_YEARS  - first-last years for climatological thresholds, e.g. 1998-2024 (default: region)
   ROMP_THRESHOLDS       - JSON object {"name": "path.nc:variable"} of precomputed thresholds (default: None)
@@ -57,6 +60,7 @@ Optional env vars (with defaults matching the demo config):
   ROMP_REF_MODEL_DIR    - reference model data dir (default: same as obs dir)
   ROMP_INIT_DAYS        - forecast init weekdays as comma-sep ints (0=Mon, default: 0,3)
   ROMP_DATE_FILTER_YEAR - reference year for init-day calendar alignment (default: start_date year)
+  ROMP_CONFIG_PATH      - where to write the config (default: /tmp/romp_job.in); run it with momp-run -p
 """
 
 import json

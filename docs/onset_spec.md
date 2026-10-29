@@ -319,7 +319,8 @@ only fixed amounts.
 
 ```python
 detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
-       amounts: dict[str, (S,) int64], jobs: model.Jobs, *, trace=False)
+       amounts: dict[str, (S,) int64], jobs: model.Jobs, *, trace=False,
+       amount_windows=None)
     -> model.Detection
 ```
 
@@ -339,14 +340,17 @@ detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
 
 **High level.**
 
-* `detect_observed(definition, rain: DailyRain, *, thresholds, seasons=None,
-  years=None, backend="numba")` returns an `xr.Dataset` with dims
-  (`year`, `season`, *spatial*).
-* `detect_forecast(definition, forecast: ForecastRain, *, thresholds,
-  lead_window=(1, 30), restrict_to_season=True, backend=...)` returns an
+* `detect_observed(definition, rain: DailyRain, *, thresholds=None, years=None,
+  season_climatology=None, backend="numba", attrs=None)` returns an
+  `xr.Dataset` with dims (`year`, `season`, *spatial*).
+* `detect_forecast(definition, forecast: ForecastRain, *, thresholds=None,
+  lead_window=(1, 30), restrict_to_season=True, backend="numba", attrs=None,
+  history: DailyRain | None = None, threshold_windows=None)` returns an
   `xr.Dataset` with dims (`init_time`, [`member`], `season`, *spatial*).
   Candidates are the leads in `lead_window` whose date label falls in a
-  season window. The data end is the last lead.
+  season window. The data end is the last lead. `history` stitches observed
+  rain before lead 1 (section 13); `threshold_windows` gives the start leads of
+  per-window thresholds.
 * `regional(rain, mask, weights="cos_lat"|"equal")` area-averages the cells
   in `mask` into one series before detection.
 
@@ -363,8 +367,12 @@ detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
   checked against Dunning et al. 2016.
 * `ThresholdCache(directory)` stores computed fields keyed by
   `sha256(source, years, spec, grid)`, so each threshold is computed once.
-* `climatological_onset(definition, rain, years, ...)` gives the median
-  onset day of year per cell and season, from the observed detection.
+* `compute_thresholds_from_forecasts(definition, forecasts, years,
+  lead_window=(1, 30), windows=None)` does the same from the model's own
+  forecasts (section 13).
+* `engine.climatological_onset(definition, rain, *, thresholds=None, years, ...)`
+  gives the median onset day of year per cell and season, from the observed
+  detection.
 
 ## 8. Temporal alignment (`momp.onset.alignment`)
 
@@ -432,8 +440,14 @@ momp/onset/
   alignment.py    temporal misalignment checks
   climatology.py  thresholds, harmonic seasons, cache, climatological onset
   plan.py         compile + resolve_amounts
-  backends/reference.py, numba_cpu.py, gpu.py
+  backends/       reference.py, numba_cpu.py, gpu.py, windowed.py (per-window amounts)
   engine.py       jobs from seasons and leads, detect_observed / detect_forecast, output, save
+  calendar.py     date keys and season bounds
+  regions.py      region registry (section 12); regions/*.yaml
+  legacy.py       old flat ROMP keys -> a Definition
+  explain.py      trace_observed / trace_forecast and explain(): why a cell got its onset
+  viz/            anatomy_plot, schematic, compare_definitions, forecast_vs_truth, drill_down
+  __main__.py     python -m momp.onset: list, describe, regions, check-alignment, explain, schematic
 ```
 
 ## 12. Regions and countries

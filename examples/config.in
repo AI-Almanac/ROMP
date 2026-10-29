@@ -11,7 +11,7 @@
 # ------------------------------------------------------------------------------
 project_name = "test ROMP run with sample data"
 work_dir = "~/Code/benchmarking/test_romp_project/"
-pkg_dir = "~/Code/benchmarking/momp/" # package dir where the momp/ folder is
+pkg_dir = "~/Code/benchmarking/ROMP/" # your ROMP checkout (informational; the config is found with -p or MOMP_CONFIG)
 
 # Internal data layout (e.g., dimensions in the processed case).
 # Frozen with major ROMP version
@@ -157,7 +157,9 @@ explain_cells = None
 # ------------------------------------------------------------------------------
 # 7. TEMPORAL SETTINGS (Dates & Years)
 # ------------------------------------------------------------------------------
-# Date range for the evaluation period.
+# Evaluation period. The years are the years evaluated; the month and day of each date
+# bound the forecast init dates. With an onset definition the onset season comes from
+# the definition, not from these dates.
 start_date = (2019, 5, 1)
 end_date = (2024, 7, 31)
 
