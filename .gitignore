@@ -5,6 +5,7 @@ book/
 bk_docs/
 bk*
 test_*.py
+!tests/test_*.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
