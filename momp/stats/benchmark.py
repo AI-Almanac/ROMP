@@ -3,7 +3,7 @@
 import hashlib
 from momp.io.input import load_thresholds, load_history, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly, get_forecast_deterministic_twice_weekly
-from momp.io.input import load_imd_rainfall
+from momp.io.input import load_imd_rainfall, prewarm
 from momp.stats.detect import detect_observed_onset, compute_onset_for_deterministic_model, compute_onset_for_all_members
 from momp.stats.detect import check_alignment_once
 from momp.stats.climatology import compute_climatological_onset, compute_climatology_as_forecast
@@ -241,7 +241,7 @@ def onset_tables(*, years, ens=False, **kwargs):
         elif kwargs["model"] == CONDITIONAL_CLIMATOLOGY:
             log.debug("Computing observed onsets of the climatology years for the conditional climatology")
             extra["clim_onset"] = compute_climatological_onset_dataset(**kwargs)
-        chunks = map_years(_onset_tables_of_years, years, {**kwargs, "ens": ens, **extra}, skip=None)
+        chunks = map_years(_onset_tables_of_years, years, {**kwargs, "ens": ens, **extra}, skip=None, prewarm=prewarm)
         tables = {}
         for chunk in chunks:
             tables.update(chunk)

@@ -342,6 +342,7 @@ def test_climatology_cv_reaches_the_conditional_scoring(world, tmp_path, monkeyp
     if configured:
         reference["climatology_cv"] = configured
     raw = raw_config(world, reference=reference)
+    raw["parallel"] = False   # the spy sees only what runs in this process
     result = momp.run(raw, quiet=True)
     assert set(seen) == {expected} and seen
     assert "conditional_climatology" in set(result.scores["summary"]["model"])

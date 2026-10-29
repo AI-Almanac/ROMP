@@ -198,6 +198,40 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     return forecast_obs_df
 
 
+_YEAR_TEXT_BITS = 10
+"""Bits of a year-set code looked up at once when writing its years as text (one table of 2**10 texts per group)."""
+_YEAR_TEXT: dict = {}
+"""Texts of year sets already written, {sorted years: {"groups": {(group, value): text}, "codes": {code: text}}}."""
+
+
+def _year_set_texts(sorted_years, codes) -> np.ndarray:
+    """Comma-separated text of the years of each code (bit n set = sorted_years[n] is in), as an object array.
+
+    Equal to joining the years of the set bits in order, but a set is written from small per-group tables instead of
+    looping over every year, and a code already written (by an earlier bin or call with these years) is reused.
+    """
+    memo = _YEAR_TEXT.setdefault(tuple(int(y) for y in sorted_years), {"groups": {}, "codes": {}})
+    texts, mask = memo["codes"], (1 << _YEAR_TEXT_BITS) - 1
+    n_groups = -(-len(sorted_years) // _YEAR_TEXT_BITS)
+
+    def group_text(group, value):
+        """The years of the set bits of `value` within one group of the codes."""
+        key = (group, value)
+        if key not in memo["groups"]:
+            base = group * _YEAR_TEXT_BITS
+            memo["groups"][key] = ",".join(str(sorted_years[base + n]) for n in range(_YEAR_TEXT_BITS)
+                                           if (value >> n) & 1 and base + n < len(sorted_years))
+        return memo["groups"][key]
+
+    out = np.empty(len(codes), dtype=object)
+    for n, code in enumerate(codes.tolist()):
+        if code not in texts:
+            parts = (group_text(g, (code >> (g * _YEAR_TEXT_BITS)) & mask) for g in range(n_groups))
+            texts[code] = ",".join(part for part in parts if part)
+        out[n] = texts[code]
+    return out
+
+
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
 def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, *,
                                              day_bins, max_forecast_day, **kwargs):
@@ -306,19 +340,16 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     kept = np.flatnonzero(total_members_with_onset > 0)
     n_bins = len(extended_bins)
 
-    # The years of each bin's members as comma-separated text, built once per distinct set of years
+    # The years of each bin's members as comma-separated text, built once per distinct set of years over all bins
     year_order = np.argsort(np.array(ensemble_years), kind="stable")
     sorted_years = [ensemble_years[n] for n in year_order]
     place_value = 1 << np.arange(len(ensemble_years), dtype=np.int64)
-    contributing_years = np.empty((len(kept), n_bins), dtype=object)
-    n_contributing_years = np.empty((len(kept), n_bins), dtype=np.int64)
-    for b, in_bin in enumerate(contributing):
-        in_bin = in_bin[kept][:, year_order]
-        sets, which = np.unique(in_bin.astype(np.int64) @ place_value, return_inverse=True)
-        names = np.array([','.join(str(sorted_years[n]) for n in range(len(sorted_years)) if (code >> n) & 1)
-                          for code in sets], dtype=object)
-        contributing_years[:, b] = names[which]
-        n_contributing_years[:, b] = in_bin.sum(axis=1)
+    in_bins = [in_bin[kept][:, year_order] for in_bin in contributing]
+    sets, which = np.unique(np.stack([in_bin.astype(np.int64) @ place_value for in_bin in in_bins], axis=1),
+                            return_inverse=True)
+    names = _year_set_texts(sorted_years, sets)
+    contributing_years = names[which.reshape(len(kept), n_bins)]
+    n_contributing_years = np.stack([in_bin.sum(axis=1) for in_bin in in_bins], axis=1).astype(np.int64)
 
     def per_case(values):
         """Repeat each per-case value once for every bin."""

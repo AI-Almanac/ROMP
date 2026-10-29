@@ -137,14 +137,14 @@ def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, qu
     logfile = tmp_path / "run.log"
     with logs.session(logs.QUIET if quiet else logs.NORMAL, logfile):
         parallel.concat_years(noisy_years, {"years": [2001, 2002, 2003], "parallel": True, "parallel_workers": 3})
+        parallel.shutdown()   # the workers outlive the call (the run's pool); stopping them flushes their records
     text = logfile.read_text()
     out = capsys.readouterr().out
-    for year in (2002, 2003):   # the first year runs in this process and warns through the same handlers
+    for year in (2001, 2002, 2003):   # every year runs in a worker and warns through the forwarded handlers
         assert text.count(f"[year {year}] odd data {year}") == 1 and "[WARNING] momp.warnings" in text
         assert text.count(f"[year {year}] hello from {year}") == 1 and "momp.test_worker" in text
         assert out.count(f"warning: [year {year}] odd data {year}") == 1
         assert (f"[year {year}] hello from {year}" in out) == (not quiet)
-    assert text.count("odd data 2001") == 1
 
 
 def test_legacy_threshold_reloaded_each_window_detects_once(monkeypatch):
@@ -166,3 +166,80 @@ def test_legacy_threshold_reloaded_each_window_detects_once(monkeypatch):
     benchmark.onset_tables(verification_window=5, **common)
     assert len(calls) == 2
     benchmark.reset_onset_tables()
+
+
+def pid_years(*, years, **kwargs):
+    """A picklable stand-in that reports which process computed each year."""
+    import os
+
+    return pd.DataFrame({"year": list(years), "pid": os.getpid()})
+
+
+def test_every_year_runs_in_a_worker_and_the_pool_is_reused():
+    """No year runs in this process; a second stage gets the same booted workers; shutdown ends the pool."""
+    import os
+
+    years = [2001, 2002, 2003]
+    config = {"years": years, "parallel": True, "parallel_workers": 3}
+    try:
+        first = parallel.concat_years(pid_years, config)
+        pool = parallel._pool["executor"]
+        second = parallel.concat_years(pid_years, config)
+        assert parallel._pool["executor"] is pool
+        assert os.getpid() not in set(first["pid"]) | set(second["pid"])
+        assert set(second["pid"]) <= set(pool._processes)   # the workers booted for the first stage
+    finally:
+        parallel.shutdown()
+    assert parallel._pool["executor"] is None
+
+
+def test_prewarm_runs_here_once_before_the_years_and_start_returns_before_they_finish():
+    """prewarm(kwargs) is called once, in this process, with all the years; start_years hands back a Pending."""
+    import os
+
+    calls = []
+    config = {"parallel": True, "parallel_workers": 2, "offset": 5}
+    try:
+        pending = parallel.start_years(square_years, [2001, 2002, 3003], config,
+                                       prewarm=lambda kw: calls.append((os.getpid(), kw["years"], kw["offset"])))
+        assert calls == [(os.getpid(), [2001, 2002, 3003], 5)]
+        tables = pending.result()
+        assert pending.result() is tables
+        assert [list(t["year"]) for t in tables] == [[2001], [2002], [3003]]
+        assert [int(t["square"][0]) for t in tables] == [2001 ** 2 + 5, 2002 ** 2 + 5, 3003 ** 2 + 5]
+    finally:
+        parallel.shutdown()
+
+
+def test_serial_start_runs_at_once_and_prewarm_is_skipped():
+    """With parallel off the work is done before start_years returns (as before), in order, and nothing is pre-warmed."""
+    order = []
+
+    def func(*, years, **kwargs):
+        """Note the year, return it."""
+        order.append(years[0])
+        return years[0]
+
+    pending = parallel.start_years(func, [3, 1, 2], {"parallel": False}, prewarm=lambda kw: order.append("warm"))
+    assert order == [3, 1, 2]
+    assert pending.result() == [3, 1, 2]
+
+
+def failing_year(*, years, **kwargs):
+    """A picklable stand-in that fails for one year."""
+    if years[0] == 2002:
+        raise KeyError("boom 2002")
+    return pd.DataFrame({"year": list(years)})
+
+
+def test_worker_error_is_raised_by_result_and_the_pool_stays_usable():
+    """An error in a worker surfaces from result(); the pool then still serves the next stage."""
+    config = {"years": [2001, 2002, 2003], "parallel": True, "parallel_workers": 3}
+    try:
+        pending = parallel.start_concat(failing_year, config)
+        with pytest.raises(KeyError, match="boom 2002"):
+            pending.result()
+        again = parallel.concat_years(square_years, config)
+        assert list(again["year"]) == [2001, 2002, 2003]
+    finally:
+        parallel.shutdown()

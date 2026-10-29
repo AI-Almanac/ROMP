@@ -203,7 +203,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
     from momp.lib.loader import use_config
     from momp.lib.onset_config import onset_setup
     from momp.lib.resolved import definition_lines, write_resolved
-    from momp.stats import benchmark, climatology, detect, observed_cache
+    from momp.stats import benchmark, climatology, detect, observed_cache, parallel
     from momp.io import input as io_input
     from momp.utils import mask as mask_mod
     from momp.utils.printing import print_momp_banner
@@ -263,6 +263,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
                 log.info("ROMP Workflow completed successfully!")
             observed = _observed_dataset()
         finally:
+            parallel.shutdown()
             observed_cache.reset()
             benchmark.reset_onset_tables()
             climatology.reset_memo()

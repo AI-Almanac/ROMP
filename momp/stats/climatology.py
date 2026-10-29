@@ -1,7 +1,8 @@
 """Climatological onset dates from observed rainfall, and climatology used as a baseline forecast."""
 
-from momp.io.input import load_thresholds, obs_years
+from momp.io.input import load_thresholds, obs_years, reference_held, reference_year, release_reference
 from momp.stats.detect import detect_observed_onset
+from momp.lib.onset_config import onset_setup
 from momp.utils.practical import restore_args
 
 import numpy as np
@@ -25,9 +26,28 @@ def reset_memo() -> None:
     _MEMO.clear()
 
 
-def _read_years(years, kwargs):
-    """Yield (rain, None), or (None, error), for each year's observations (momp.io.input.obs_years: read in blocks or ahead)."""
-    return obs_years(years, kwargs)
+def _read_years(years, kwargs, shared=True):
+    """Yield (rain, None), or (None, error), for each year's observations (momp.io.input.obs_years: read in blocks or ahead).
+
+    A year the thresholds were just computed from comes as the DailyRain of that already read and ingested reference
+    rainfall (momp.io.input.reference_year) instead of being read and converted again; only the other years are read.
+    shared=False reads every year as rainfall.
+    """
+    years = list(years)
+    if not shared or not reference_held():
+        yield from obs_years(years, kwargs)
+        return
+    boundary = onset_setup(kwargs).ingest_boundary
+    held = {year: reference_year(year, kwargs, boundary) for year in years}
+    rest = obs_years([year for year in years if held[year] is None], kwargs)
+    for year in years:
+        yield (held[year], None) if held[year] is not None else next(rest)
+
+
+def _axes(rain):
+    """The (lat, lon) values of a year's rainfall, a DataArray or an ingested DailyRain."""
+    return tuple(np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
+                 for name in ("lat", "lon"))
 
 
 def compute_climatological_onset(*, years_clim,
@@ -52,7 +72,7 @@ def compute_climatological_onset(*, years_clim,
     all_onset_days = []
     rainfall_all_years = []
 
-    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, kwargs)):
+    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, kwargs, shared=not grid_point)):
         try:
             # Load rainfall data using the existing function that handles both patterns
             if read_error is not None:
@@ -81,6 +101,8 @@ def compute_climatological_onset(*, years_clim,
 
     if not all_onset_days:
         raise ValueError("No valid years found for climatology computation")
+
+    release_reference()   # the thresholds' reference rainfall has served; free its memory
 
     # Stack all years and compute mean day of year
     onset_stack = xr.concat(all_onset_days, dim='year')
@@ -254,10 +276,9 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
             rainfall_ds = rain
             del rain
 
-            # Select the same spatial domain as thresh_slice
-            rainfall_slice = rainfall_ds
             # Detect onset for this year
-            onset_da = detect_observed_onset(rainfall_slice, thresh_slice, year, **kwargs)
+            onset_da = detect_observed_onset(rainfall_ds, thresh_slice, year, **kwargs)
+            lats, lons = _axes(rainfall_ds)
 
             # Count valid onsets
             valid_onsets = (~pd.isna(onset_da.values)).sum()
@@ -284,8 +305,8 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
         onset_3d,
         coords=[
             ('year', valid_years),
-            ('lat', rainfall_ds.lat.values),
-            ('lon', rainfall_ds.lon.values)
+            ('lat', lats),
+            ('lon', lons)
         ],
         name='climatological_onset_dates',
         attrs={
@@ -297,16 +318,17 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     )
 
     # Print summary statistics
-    total_possible = len(valid_years) * rainfall_ds[0].size
+    total_possible = len(valid_years) * len(lats) * len(lons)
     total_valid = (~pd.isna(climatological_onset_da.values)).sum()
 
     log.debug(f"\n{'='*60}")
     log.debug(f"CLIMATOLOGICAL ONSET DATASET SUMMARY")
     log.debug(f"{'='*60}")
     log.debug(f"Years processed: {len(valid_years)} ({min(valid_years)}-{max(valid_years)})")
-    log.debug(f"Spatial domain: {len(rainfall_ds.lat)} lats x {len(rainfall_ds.lon)} lons")
+    log.debug(f"Spatial domain: {len(lats)} lats x {len(lons)} lons")
     log.debug(f"Total valid onsets: {total_valid:,}/{total_possible:,} ({total_valid/total_possible:.1%})")
     log.debug(f"Method: {climatological_onset_da.attrs['method']}")
 
+    release_reference()   # the thresholds' reference rainfall has served; free its memory
     _MEMO[key] = (thresh_slice, climatological_onset_da)
     return climatological_onset_da.copy(deep=True)

@@ -150,7 +150,8 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
 
     setup = onset_setup(kwargs, thresh)
     years = _years(kwargs)
-    lat, lon = np.asarray(rain["lat"].values), np.asarray(rain["lon"].values)
+    lat, lon = (np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
+                for name in ("lat", "lon"))   # rain is a DataArray, or an ingested DailyRain
     return {
         "obs_files": _obs_files_hash(kwargs, years),
         "obs_ingest": _digest(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.ingest_boundary,

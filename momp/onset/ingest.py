@@ -143,13 +143,9 @@ def _coords(da: xr.DataArray, dims: tuple[str, ...]) -> dict[str, np.ndarray]:
     return out
 
 
-def _to_tenths(values: np.ndarray, to_tenths: float,
-               clip_negative: bool) -> tuple[np.ndarray, np.ndarray, int, float]:
-    """Convert one block of rainfall to (int32 tenths, missing flags, count of negatives handled, lowest value in tenths).
-
-    Observations: values below -0.05 mm become missing (they signal bad data).
-    Forecasts (clip_negative): every negative value becomes 0, as model rain can dip below zero numerically.
-    """
+def _to_tenths_numpy(values: np.ndarray, to_tenths: float,
+                     clip_negative: bool) -> tuple[np.ndarray, np.ndarray, int, float]:
+    """The numpy reference of _to_tenths (several passes, float64 temporaries); used without numba and by the tests."""
     x = np.asarray(values, dtype=np.float64) * to_tenths
     finite = np.isfinite(x)
     bad = finite & (x < 0) if clip_negative else finite & (x < -0.5)
@@ -161,6 +157,81 @@ def _to_tenths(values: np.ndarray, to_tenths: float,
         missing = ~finite | bad | (np.abs(np.where(finite, x, 0.0)) > _INT32_MAX)
     tenths = np.rint(np.where(missing, 0.0, x)).astype(np.int32)
     return tenths, missing, int(bad.sum()), lowest
+
+
+try:
+    import numba
+    from numba import njit, prange
+except ImportError:  # pragma: no cover - exercised only without numba
+    numba = None
+
+_CHUNKS = 256
+"""How many pieces a block is cut into for the parallel kernel (each keeps its own count and lowest value)."""
+
+if numba is not None:
+
+    @njit(parallel=True, cache=True)
+    def _tenths_kernel(flat, to_tenths, clip_negative, out_tenths, out_missing, n_bad, lowest):
+        """Scale, clean and round the flat values to int32 tenths and missing flags in one pass, in parallel over pieces.
+
+        Each element goes through exactly the float64 steps of _to_tenths_numpy (multiply in float64, non-finite is
+        missing, values below the limit are missing or, when clipping, zero, beyond int32 is missing, round half to
+        even); n_bad[c] and lowest[c] are the count and the lowest scaled value of the bad elements of piece c.
+        """
+        n = flat.shape[0]
+        pieces = n_bad.shape[0]
+        size = (n + pieces - 1) // pieces
+        limit = 2147483647.0
+        for c in prange(pieces):
+            count = 0
+            low = 0.0
+            for i in range(c * size, min(n, (c + 1) * size)):
+                x = np.float64(flat[i]) * to_tenths
+                if not np.isfinite(x):
+                    out_tenths[i] = 0
+                    out_missing[i] = True
+                    continue
+                bad = x < 0.0 if clip_negative else x < -0.5
+                if bad:
+                    count += 1
+                    if x < low:
+                        low = x
+                    if clip_negative:
+                        x = 0.0
+                if (not clip_negative and bad) or abs(x) > limit:
+                    out_tenths[i] = 0
+                    out_missing[i] = True
+                else:
+                    out_tenths[i] = np.int32(np.rint(x))
+                    out_missing[i] = False
+            n_bad[c] = count
+            lowest[c] = low
+
+
+def _to_tenths(values: np.ndarray, to_tenths: float, clip_negative: bool,
+               out: tuple[np.ndarray, np.ndarray] | None = None) -> tuple[np.ndarray, np.ndarray, int, float]:
+    """Convert one block of rainfall to (int32 tenths, missing flags, count of negatives handled, lowest value in tenths).
+
+    Observations: values below -0.05 mm become missing (they signal bad data).
+    Forecasts (clip_negative): every negative value becomes 0, as model rain can dip below zero numerically.
+    One parallel numba pass gives exactly what _to_tenths_numpy gives. `out` is an optional pair of C-contiguous
+    arrays (int32, bool) of the block's shape to fill instead of allocating new ones.
+    """
+    if numba is None:
+        tenths, missing, n_bad, low = _to_tenths_numpy(values, to_tenths, clip_negative)
+        if out is not None:
+            out[0][...], out[1][...] = tenths, missing
+            tenths, missing = out
+        return tenths, missing, n_bad, low
+    values = np.asarray(values)
+    if values.dtype not in (np.float32, np.float64):
+        values = values.astype(np.float64)
+    flat = np.ascontiguousarray(values).reshape(-1)
+    tenths, missing = out if out is not None else (np.empty(values.shape, np.int32), np.empty(values.shape, bool))
+    n_bad = np.zeros(_CHUNKS, dtype=np.int64)
+    lowest = np.zeros(_CHUNKS, dtype=np.float64)
+    _tenths_kernel(flat, float(to_tenths), bool(clip_negative), tenths.reshape(-1), missing.reshape(-1), n_bad, lowest)
+    return tenths, missing, int(n_bad.sum()), float(lowest.min())
 
 
 def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
@@ -181,14 +252,16 @@ def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
                   for a in range(0, da.shape[0], step))
     n_negative, lowest = 0, 0.0
     for rows, block in blocks:
-        t, m, neg, low = _to_tenths(block, scale * 10.0, clip_negative)
+        direct = da.ndim > 1 and positions is None   # the block's rows are contiguous in the output: fill them in place
+        t, m, neg, low = _to_tenths(block, scale * 10.0, clip_negative,
+                                    out=(tenths[rows], missing[rows]) if direct else None)
         n_negative += neg
         lowest = min(lowest, low)
-        if da.ndim == 1:
+        if direct:
+            pass
+        elif da.ndim == 1:
             index = slice(None) if positions is None else positions
             tenths[index], missing[index] = t, m
-        elif positions is None:
-            tenths[rows], missing[rows] = t, m
         else:
             tenths[rows, ..., positions] = t
             missing[rows, ..., positions] = m

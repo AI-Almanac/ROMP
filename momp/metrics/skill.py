@@ -6,7 +6,8 @@ from momp.stats.conditional_climatology import multi_year_conditional_climatolog
 from momp.stats.score import calculate_brier_score, calculate_auc, calculate_rps, calculate_brier_score_climatology, calculate_auc_climatology, calculate_skill_scores
 from momp.utils.practical import restore_args
 from momp.io.dict import extract_pd_bins
-from momp.stats.parallel import concat_years
+from momp.io import input as io_input
+from momp.stats.parallel import concat_years, start_concat
 import logging
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,16 @@ def _climatology_pairs(clim_onset, **kwargs):
 
 def _pairs(**kwargs):
     """Forecast-observation pairs for all years, in worker processes unless parallel is off."""
-    return concat_years(multi_year_forecast_obs_pairs, kwargs)
+    return _start_pairs(**kwargs).result()
+
+
+def _start_pairs(**kwargs):
+    """Start the forecast-observation pairs for all years; the Pending's result() waits for them.
+
+    The thresholds and masks every year needs are read here first (io_input.prewarm); with workers, the years run
+    in them while this process goes on.
+    """
+    return start_concat(multi_year_forecast_obs_pairs, kwargs, prewarm=io_input.prewarm)
 
 
 def prepare_score_cache(**kwargs):
@@ -46,20 +56,30 @@ def prepare_score_cache(**kwargs):
     model pairs, built from the reference model's own data; None for
     climatology and conditional_climatology), _clim_onset and _climatology_obs_df_all, which
     create_score_results reuses instead of recomputing.
+
+    With worker processes the model's years are sent off first and the climatological onsets are computed here
+    while they run; the climatology pairs then go to the same workers.
     """
     ref_model = kwargs["ref_model"]
 
-    forecast_obs_df_all = _pairs(**kwargs)
+    pending = _start_pairs(**kwargs)
 
     clim_onset = None
     climatology_obs_df_all = None
-    ref_obs_df_all = None
+    ref_pending = None
 
     if ref_model not in CLIMATOLOGY_REFERENCES:
-        ref_obs_df_all = _pairs(**reference_model_kwargs(kwargs))
+        ref_pending = _start_pairs(**reference_model_kwargs(kwargs))
+        io_input.release_reference()
 
     if ref_model in CLIMATOLOGY_REFERENCES:
         clim_onset = compute_climatological_onset_dataset(**kwargs)
+        io_input.release_reference()
+
+    forecast_obs_df_all = pending.result()
+    ref_obs_df_all = ref_pending.result() if ref_pending is not None else None
+
+    if ref_model in CLIMATOLOGY_REFERENCES:
         climatology_obs_df_all = _climatology_pairs(clim_onset, **kwargs)
 
     return {

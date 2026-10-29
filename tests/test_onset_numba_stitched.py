@@ -188,3 +188,28 @@ def test_numba_stitched_timing_india_ensemble(capsys):
               f"  numba detect on concat  {t_concat:7.2f} s  (+ {t_build:.2f} s to build the concatenation)\n"
               f"  concatenation avoided   {avoided / 2**30:.2f} GiB of rain and flags, "
               f"{tables / 2**30:.2f} GiB of its prefix tables")
+
+
+def _variants_by_rows(cell, amount):
+    """The pairs the slow way (np.unique over rows), as the numba backend gave them before the int64 key."""
+    unique, inverse = np.unique(np.stack([cell, amount], axis=1), axis=0, return_inverse=True)
+    return unique[:, 0], unique[:, 1], inverse.reshape(-1).astype(np.int64)
+
+
+def test_variants_int64_key_equals_unique_rows():
+    """_variants gives the same cells, amounts and inverse (and dtypes) as np.unique over rows, key or fallback route."""
+    from momp.onset.backends import numba_cpu
+
+    rng = np.random.default_rng(5)
+    cases = [(rng.integers(0, 50, 5000), rng.integers(-30, 400, 5000)),         # many repeats
+             (rng.integers(0, 10**6, 3000), rng.integers(0, 10, 3000)),
+             (rng.integers(-5, 5, 400), rng.integers(-10**9, 10**9, 400)),       # negatives, wide amounts
+             (np.array([3]), np.array([-7])),
+             (rng.integers(0, 2**31, 200), rng.integers(-2**40, 2**40, 200)),    # too wide for one key: fallback
+             (np.zeros(0, np.int64), np.zeros(0, np.int64))]
+    for cell, amount in cases:
+        cell, amount = cell.astype(np.int64), amount.astype(np.int64)
+        got, want = numba_cpu._variants(cell, amount), _variants_by_rows(cell, amount)
+        for a, b in zip(got, want):
+            assert a.dtype == b.dtype and a.flags["C_CONTIGUOUS"]
+            np.testing.assert_array_equal(a, b)

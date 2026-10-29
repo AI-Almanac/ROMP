@@ -71,9 +71,55 @@ _obs_lock = threading.Lock()
 
 
 def clear_obs_cache():
-    """Forget the observation years held for the current run (called when a run starts and ends)."""
+    """Forget the observation years held for the current run, and the shared reference rainfall (called when a run starts and ends)."""
     with _obs_lock:
         _obs_years.clear()
+    release_reference()
+
+
+_reference = {"key": None, "rain": None, "first": None, "last": None}
+"""The reference (threshold and climatology) years as one ingested DailyRain, kept from the thresholds to the climatology."""
+
+
+def _reference_key(kwargs, boundary):
+    """What the shared reference rain depends on: the observations as read and cut, and the day boundary they are ingested with."""
+    return (str(kwargs.get("obs_dir")), str(kwargs.get("obs_file_pattern")), str(kwargs.get("obs_var")),
+            str(kwargs.get("obs_unit_cvt")), str(kwargs.get("region")), kwargs.get("land_only", True),
+            kwargs.get("shp_only", True), str(kwargs.get("nc_mask")), str(kwargs.get("obs") or "obs"),
+            json.dumps(kwargs.get("mask"), sort_keys=True, default=str), bool(kwargs.get("grid_point")),
+            str(kwargs.get("lat_select")), str(kwargs.get("lon_select")), str(boundary))
+
+
+def release_reference():
+    """Drop the shared reference rainfall (its memory is the size of the reference years' tenths and flags)."""
+    _reference.update(key=None, rain=None, first=None, last=None)
+
+
+def reference_held() -> bool:
+    """Whether the thresholds left their reference rainfall for the climatology to use (see reference_year)."""
+    return _reference["rain"] is not None
+
+
+def reference_year(year, kwargs, boundary):
+    """One year of the shared reference rain as a DailyRain (views of it, nothing copied), or None when it is not held.
+
+    The thresholds read and ingest the reference years once (see _stream_reference); the climatological onsets of
+    those years use that same ingested rain instead of reading and converting every year again. The year's rain is
+    exactly what ingest gives for the year read on its own.
+    """
+    held = _reference
+    if held["rain"] is None or not held["first"] <= year <= held["last"] \
+            or held["key"] != _reference_key(kwargs, boundary):
+        return None
+    from momp.onset.model import DailyRain
+
+    rain = held["rain"]
+    start = (date(year, 1, 1) - date(held["first"], 1, 1)).days
+    days = slice(start, start + (date(year, 12, 31) - date(year, 1, 1)).days + 1)
+    return DailyRain(tenths=rain.tenths[..., days], missing=rain.missing[..., days], dims=rain.dims,
+                     coords={**rain.coords, "time": rain.coords["time"][days]}, year=rain.year[days],
+                     month=rain.month[days], day=rain.day[days], calendar=rain.calendar,
+                     day_boundary=rain.day_boundary, source="observations")
 
 
 def _in_memory(da):
@@ -226,9 +272,13 @@ def _reference_rain(setup, years, kwargs):
     source = _obs_source_label(kwargs)
     if years[0] != years[1]:
         try:
-            return _stream_reference(setup, years, kwargs, source)
+            rain = _stream_reference(setup, years, kwargs, source)
         except _NotContiguous:
             pass
+        else:
+            _reference.update(key=_reference_key(kwargs, setup.ingest_boundary), rain=rain, first=years[0],
+                              last=years[1])
+            return rain
     return ingest(
         xr.concat([_reference_year(year, kwargs) for year in range(years[0], years[1] + 1)], dim="time"),
         day_boundary=setup.obs_day_boundary, units="mm", source=source)
@@ -350,6 +400,62 @@ def load_thresholds(**kwargs):
     if key not in _loaded_thresholds:
         _loaded_thresholds[key] = load_onset_thresholds(setup, **kwargs)
     return _loaded_thresholds[key]
+
+
+def _warm_masks(lazy, var, dataset_name, kwargs):
+    """Build the cell masks of a lazily opened dataset's grid (what its first read would build), without reading data.
+
+    `lazy` is the (dim-standardised) Dataset; a zero field on its region box is masked in place with the run's
+    settings, which fills the same mask caches (and logs the same mask text) as the real read.
+    """
+    from momp.utils.region import mask_region_loaded, region_box
+
+    box = region_box(lazy[[var]], region=kwargs["region"])
+    lat, lon = np.asarray(box["lat"].values), np.asarray(box["lon"].values)
+    field = xr.DataArray(np.zeros((len(lat), len(lon)), dtype="float32"), dims=("lat", "lon"),
+                         coords={"lat": lat, "lon": lon})
+    mask_region_loaded(xr.Dataset({var: field}), **{**kwargs, "dataset_name": dataset_name})
+
+
+def prewarm(kwargs):
+    """Read or build in this process what every year of a run shares: the thresholds and the cell masks of both grids.
+
+    Done once before the years go to worker processes, which then get these (see momp.stats.parallel.snapshot)
+    instead of each building them, and whose messages are logged once. The first of kwargs["years"] picks the NetCDF
+    files whose grids are looked at. Thresholds are loaded as the years would load them; the masks are best effort
+    (a grid that cannot be looked at is left to the workers, which raise the real error if there is one).
+    """
+    load_thresholds(**kwargs)
+    years = kwargs.get("years")
+    if not years or isinstance(years, str):
+        return
+    year = int(list(years)[0])
+    try:
+        store, path = _obs_source(year, kwargs["obs_dir"], kwargs["obs_file_pattern"])
+        lazy = dim_fmt(open_store(store) if store is not None else xr.open_dataset(path))
+        try:
+            _warm_masks(lazy, kwargs["obs_var"], str(kwargs.get("obs") or "obs"), kwargs)
+        finally:
+            if path is not None:
+                lazy.close()
+    except Exception as exc:  # noqa: BLE001 - only a warm-up
+        log.debug(f"obs mask pre-warm skipped: {exc}")
+    try:
+        ensemble = bool(kwargs.get("probabilistic"))
+        fix = dim_fmt_model_ensemble if ensemble else dim_fmt_model
+        if is_zarr(kwargs["model_dir"]):
+            lazy = fix(open_store(kwargs["model_dir"]), kwargs.get("model_dims"))
+            path = None
+        else:
+            path = os.path.join(kwargs["model_dir"], kwargs["file_pattern"].format(year))
+            lazy = fix(xr.open_dataset(path), kwargs.get("model_dims"))
+        try:
+            _warm_masks(lazy, kwargs["model_var"], str(kwargs.get("model") or "model"), kwargs)
+        finally:
+            if path is not None:
+                lazy.close()
+    except Exception as exc:  # noqa: BLE001 - only a warm-up (a climatology source has no forecast files)
+        log.debug(f"model mask pre-warm skipped: {exc}")
 
 
 def get_initialization_dates(year, *, date_filter_year, init_days, start_date, end_date, **kwargs):

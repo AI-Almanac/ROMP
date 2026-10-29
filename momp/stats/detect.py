@@ -18,7 +18,7 @@ from momp.stats import observed_cache
 from momp.onset.alignment import check_forecast_alignment
 from momp.onset.ingest import ingest
 from momp.onset.legacy import LEGACY_THRESHOLD
-from momp.onset.model import Status
+from momp.onset.model import DailyRain, Status
 import logging
 
 log = logging.getLogger(__name__)
@@ -73,7 +73,8 @@ def detect_observed_result(rain_slice, thresh_slice, year, **kwargs):
     (momp.export) both read their values from here, so they cannot disagree.
     """
     setup = onset_setup(kwargs, thresh_slice)
-    rain = ingest(rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations")
+    rain = rain_slice if isinstance(rain_slice, DailyRain) else ingest(
+        rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations")
     lat, lon = rain.coords["lat"], rain.coords["lon"]
     result = engine.detect_observed(
         setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, lat, lon, per_window=False), years=[year],
@@ -86,7 +87,8 @@ def detect_observed_result(rain_slice, thresh_slice, year, **kwargs):
 def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):
     """Detect observed onset dates for a given year.
 
-    rain_slice is daily rainfall in mm with dims (time, lat, lon); thresh_slice is
+    rain_slice is daily rainfall in mm with dims (time, lat, lon), or that rainfall already ingested as a DailyRain
+    (the climatology years the thresholds were computed from); thresh_slice is
     the threshold from momp.io.input.load_thresholds (a number of mm or a 2-D
     DataArray for the old flat keys, else the definition's named thresholds).
     Returns a (lat, lon) DataArray of datetime64 onset dates, NaT where the cell

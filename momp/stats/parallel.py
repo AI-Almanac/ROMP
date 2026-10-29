@@ -4,13 +4,16 @@
 onset tables, climatology pairs) are spread over `worker_count` processes (``parallel: {workers: N}``; default the
 cores available, never more than the years):
 
-* The first year runs in this process while the workers start up, so everything read once (thresholds, masks, the
-  observed-onset cache) is warm and logged here before the workers get a copy of it. Workers are started with the
-  "spawn" method (a fork after numba's threads ran is unsafe) and each gets cores // workers numba threads.
-* Workers receive file paths and settings, never data cubes: each reads its own year. The read-once inputs
-  (loaded thresholds, built masks, observed onsets already detected) travel as one small snapshot with each task;
-  what a worker detects or builds is sent back and absorbed here in year order, so the observed-onset cache on
-  disk is written once, by this process.
+* Every year goes to a worker. While the workers boot (they are started first, with the "spawn" method: a fork
+  after numba's threads ran is unsafe; each gets cores // workers numba threads) this process pre-warms what all the
+  years share (thresholds, masks; see the `prewarm` argument), so each is read, built and logged once, here, and
+  then travels to the workers as one small snapshot. The pool is kept for the run (see `shutdown`), so the next
+  stage (the climatology pairs after the model pairs) reuses the booted workers, and this process is free to do
+  work of its own (the climatological onsets) while the workers run: `start_years` returns at once with a
+  `Pending` whose `results()` waits.
+* Workers receive file paths and settings, never data cubes: each reads its own year. What a worker detects or
+  builds is sent back and absorbed here in year order, so the observed-onset cache on disk is written once, by this
+  process.
 * Log records and warnings raised in a worker are forwarded to this process's handlers (run.log, console) with
   the year in the message; see momp.utils.log.forwarding.
 * The results are collected in year order whatever order the workers finish in, so a parallel run gives exactly
@@ -18,11 +21,14 @@ cores available, never more than the years):
 """
 from __future__ import annotations
 
+import atexit
+import contextlib
 import itertools
 import logging
 import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
+from typing import Any, Callable
 from concurrent.futures.process import BrokenProcessPool
 
 import pandas as pd
@@ -92,7 +98,7 @@ def absorb(found: dict) -> None:
 
 
 def _warm() -> int:
-    """Import everything a task uses (so a worker boots while this process does the first year)."""
+    """Import everything a task uses (so a worker boots while this process pre-warms the shared inputs)."""
     import momp.stats.benchmark  # noqa: F401
     import momp.stats.bins  # noqa: F401
     import momp.stats.conditional_climatology  # noqa: F401
@@ -123,58 +129,151 @@ def _run_here(func, args, kwargs, years, skip):
         return None
 
 
-def map_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA) -> list:
-    """func(*args, **kwargs with years=[year]) for each year, results in year order (None for a skipped year).
+_pool: dict = {"executor": None, "key": None, "stack": None}
+"""The run's worker pool: the executor, what it was made for (size, numba threads, log handlers) and what to close."""
 
-    Runs in worker processes when kwargs["parallel"] is on and there is more than one year; see the module text.
-    `skip` is the start of the ValueError message that means "this year had no data" (a missing file): that year's
-    result is None rather than an error, as the multi-year functions skip such years.
+
+def shutdown() -> None:
+    """Stop the run's worker pool (if any) and the log forwarding that served it; safe to call at any time."""
+    executor, stack = _pool["executor"], _pool["stack"]
+    _pool.update(executor=None, key=None, stack=None)
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
+    if stack is not None:
+        stack.close()
+
+
+atexit.register(shutdown)
+
+
+def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
+    """The run's pool of `size` booted workers with `threads` numba threads each, started now if there is none like it.
+
+    A pool is reused while the size, thread count and log handlers are the same; otherwise the old one is stopped.
+    New workers begin importing the task modules at once.
     """
-    years = list(years)
-    workers = worker_count(kwargs, len(years))
-    if workers <= 1:
-        return [_run_here(func, args, kwargs, [year], skip) for year in years]
-    kwargs = {k: v for k, v in kwargs.items() if k != "years"}
-    pool_size = workers - 1
+    key = (size, threads, tuple(id(h) for h in logging.getLogger(logs.ROOT).handlers))
+    if _pool["executor"] is not None and _pool["key"] == key:
+        return _pool["executor"]
+    shutdown()
     saved = os.environ.get("NUMBA_NUM_THREADS")
-    os.environ["NUMBA_NUM_THREADS"] = str(max(1, cores() // workers))
+    os.environ["NUMBA_NUM_THREADS"] = str(threads)
+    stack = contextlib.ExitStack()
     try:
-        with logs.forwarding() as queue, ProcessPoolExecutor(
-                max_workers=pool_size, mp_context=multiprocessing.get_context("spawn"),
-                initializer=None if queue is None else logs.worker_logging,
-                initargs=() if queue is None else (queue,)) as pool:
-            booting = [pool.submit(_warm) for _ in range(pool_size)]
-            first = _run_here(func, args, kwargs, years[:1], skip)
-            for job in booting:
-                job.result()
-            state, token = snapshot(), next(_tokens)
-            jobs = [pool.submit(_run_chunk, func, args, kwargs, [year], state, token, skip) for year in years[1:]]
-            results = [first]
-            for job in jobs:
-                result, found = job.result()
-                absorb(found)
-                results.append(result)
-    except BrokenProcessPool as exc:
-        raise RuntimeError(f"a worker process died ({exc}); run with parallel: false to see the error in this "
-                           "process") from exc
+        queue = stack.enter_context(logs.forwarding())
+        executor = ProcessPoolExecutor(
+            max_workers=size, mp_context=multiprocessing.get_context("spawn"),
+            initializer=None if queue is None else logs.worker_logging,
+            initargs=() if queue is None else (queue,))
+        for _ in range(size):
+            executor.submit(_warm)   # starts a worker process each, while the environment above is in force
+    except BaseException:
+        stack.close()
+        raise
     finally:
         if saved is None:
             os.environ.pop("NUMBA_NUM_THREADS", None)
         else:
             os.environ["NUMBA_NUM_THREADS"] = saved
-    return results
+    _pool.update(executor=executor, key=key, stack=stack)
+    return executor
 
 
-def concat_years(func, kwargs: dict, args: tuple = ()):
-    """The pair tables of func(*args, **kwargs) over kwargs["years"], concatenated in year order.
+class Pending:
+    """Work started by start_years / start_concat: `result()` waits for it (once) and gives the value."""
 
-    With one worker func runs once on all the years, as it always did. Otherwise each year is computed by map_years
-    and the tables joined; a year without data is left out, and ValueError("No data ...") is raised when none has any.
+    def __init__(self, collect: Callable[[], Any], jobs=()):
+        """`collect` produces the value when called; `jobs` are the futures to cancel if it fails."""
+        self._collect, self._jobs, self._done, self._value = collect, list(jobs), False, None
+
+    @classmethod
+    def finished(cls, value) -> "Pending":
+        """A Pending whose value is already known (work done in this process)."""
+        pending = cls(lambda: value)
+        pending._done, pending._value = True, value
+        return pending
+
+    def result(self):
+        """Wait for the work and return its value; a failure cancels the jobs still queued and is raised."""
+        if not self._done:
+            try:
+                self._value = self._collect()
+            except BrokenProcessPool as exc:
+                shutdown()
+                raise RuntimeError(f"a worker process died ({exc}); run with parallel: false to see the error in "
+                                   "this process") from exc
+            except BaseException:
+                for job in self._jobs:
+                    job.cancel()
+                raise
+            self._done = True
+        return self._value
+
+
+def start_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA,
+                prewarm: Callable[[dict], None] | None = None) -> Pending:
+    """Start func(*args, **kwargs with years=[year]) for each year; the Pending gives the results in year order.
+
+    Runs in worker processes when kwargs["parallel"] is on and there is more than one year, all of them in workers
+    (see the module text); `prewarm(kwargs)`, if given, is called here once before the jobs are sent, to read or
+    build what every year needs. Otherwise the years run here, one after the other, before this returns. `skip` is
+    the start of the ValueError message that means "this year had no data" (a missing file): that year's result is
+    None rather than an error, as the multi-year functions skip such years.
+    """
+    years = list(years)
+    workers = worker_count(kwargs, len(years))
+    if workers <= 1:
+        return Pending.finished([_run_here(func, args, kwargs, [year], skip) for year in years])
+    kwargs = {k: v for k, v in kwargs.items() if k != "years"}
+    executor = _pool_for(workers, max(1, cores() // workers))
+    if prewarm is not None:
+        prewarm({**kwargs, "years": years})
+    state, token = snapshot(), next(_tokens)
+    jobs = [executor.submit(_run_chunk, func, args, kwargs, [year], state, token, skip) for year in years]
+
+    def collect():
+        """Wait for the jobs in year order, absorbing what each found."""
+        results = []
+        for job in jobs:
+            result, found = job.result()
+            absorb(found)
+            results.append(result)
+        return results
+
+    return Pending(collect, jobs)
+
+
+def map_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA,
+              prewarm: Callable[[dict], None] | None = None) -> list:
+    """func(*args, **kwargs with years=[year]) for each year, results in year order (None for a skipped year).
+
+    start_years, waited for at once; see there for the arguments.
+    """
+    return start_years(func, years, kwargs, args, skip, prewarm).result()
+
+
+def start_concat(func, kwargs: dict, args: tuple = (), prewarm: Callable[[dict], None] | None = None) -> Pending:
+    """Start the pair tables of func(*args, **kwargs) over kwargs["years"]; the Pending gives them concatenated.
+
+    With one worker func runs once on all the years, as it always did, before this returns. Otherwise each year is
+    computed by start_years and the tables joined in year order; a year without data is left out, and
+    ValueError("No data ...") is raised when none has any.
     """
     years = kwargs["years"]
     if worker_count(kwargs, len(years)) <= 1:
-        return func(*args, **kwargs)
-    parts = [part for part in map_years(func, years, kwargs, args) if part is not None]
-    if not parts:
-        raise ValueError(f"{NO_DATA} for any year")
-    return pd.concat(parts, ignore_index=True)
+        return Pending.finished(func(*args, **kwargs))
+    pending = start_years(func, years, kwargs, args, prewarm=prewarm)
+
+    def join():
+        """The year tables, concatenated."""
+        parts = [part for part in pending.result() if part is not None]
+        if not parts:
+            raise ValueError(f"{NO_DATA} for any year")
+        return pd.concat(parts, ignore_index=True)
+
+    return Pending(join)
+
+
+def concat_years(func, kwargs: dict, args: tuple = (), prewarm: Callable[[dict], None] | None = None):
+    """The pair tables of func(*args, **kwargs) over kwargs["years"], concatenated in year order (start_concat, waited for)."""
+    return start_concat(func, kwargs, args, prewarm).result()

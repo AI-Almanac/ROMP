@@ -520,7 +520,20 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
 
 
 def _variants(cell: np.ndarray, amount: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Unique (cell, amount) pairs as (cells, amounts) and each job's index into them."""
+    """Unique (cell, amount) pairs as (cells, amounts), sorted by cell then amount, and each job's index into them.
+
+    Integer pairs are packed into one int64 key (cell and amount offset to start at 0, amount in the low digits),
+    which sorts exactly as the pairs do and is far cheaper to unique than np.unique(axis=0); pairs whose key would
+    not fit in an int64 take that slower route. The result is the same either way.
+    """
+    if cell.size and cell.dtype == np.int64 and amount.dtype == np.int64:
+        c0, a0 = int(cell.min()), int(amount.min())
+        span = int(amount.max()) - a0 + 1
+        if (int(cell.max()) - c0 + 1) * span < (1 << 62):
+            key = (cell - c0) * span + (amount - a0)
+            unique, inverse = np.unique(key, return_inverse=True)
+            return (np.ascontiguousarray(unique // span + c0), np.ascontiguousarray(unique % span + a0),
+                    np.ascontiguousarray(inverse.reshape(-1), dtype=np.int64))
     pairs = np.stack([cell, amount], axis=1)
     unique, inverse = np.unique(pairs, axis=0, return_inverse=True)
     return (np.ascontiguousarray(unique[:, 0]), np.ascontiguousarray(unique[:, 1]),
