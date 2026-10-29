@@ -1,4 +1,5 @@
 """Tests for momp.onset.ingest: units, rounding, gaps, calendars, day boundaries and forecast leads."""
+import os
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +10,8 @@ import xarray as xr
 from momp.onset.ingest import ingest, ingest_forecast, parse_day_boundary
 
 BOUNDARY = "00 UTC, labelled by start"
-DATA = Path("/home/hcwf/code/ai-almanac/datasets")
+# Optional real-data checks: point ROMP_TEST_DATA at a folder with ethiopia/ and india/ obs and models.
+DATA = Path(os.environ.get("ROMP_TEST_DATA", "/nonexistent"))
 
 
 def make(values, units="mm", times=None, dims=("time", "lat", "lon")):
@@ -223,7 +225,7 @@ def test_forecast_negative_rain_is_clipped_to_zero_not_missing():
     assert not fc.missing[0, 0, 0, 0] and not fc.missing[0, 0, 0, 1] and fc.missing[0, 1, 1, 0]
 
 
-needs_data = pytest.mark.skipif(not DATA.exists(), reason="ai-almanac datasets not available")
+needs_data = pytest.mark.skipif(not DATA.exists(), reason="set ROMP_TEST_DATA to run real-data checks")
 
 
 @needs_data

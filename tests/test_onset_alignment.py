@@ -1,4 +1,5 @@
 """Tests for momp.onset.alignment on synthetic rainfall with known shifts."""
+import os
 from pathlib import Path
 
 import numpy as np
@@ -141,10 +142,11 @@ def test_forecast_unknown_lead_and_no_cells():
     assert report.verdict == "inconclusive"
 
 
-DATA = Path("/home/hcwf/code/ai-almanac/datasets")
+# Optional real-data checks: point ROMP_TEST_DATA at a folder with ethiopia/ and india/ obs and models.
+DATA = Path(os.environ.get("ROMP_TEST_DATA", "/nonexistent"))
 
 
-@pytest.mark.skipif(not DATA.exists(), reason="ai-almanac datasets not available")
+@pytest.mark.skipif(not DATA.exists(), reason="set ROMP_TEST_DATA to run real-data checks")
 @pytest.mark.parametrize("obs_path,var,boundary,model_path,good_label", [
     ("ethiopia/obs/2020.nc", "total_precipitation_24hr", "00 UTC, labelled by start",
      "ethiopia/models/AIFS_v2/2020.nc", "start"),
