@@ -4,6 +4,7 @@
     momp-run init [...]             write a starting run.yaml, detecting dataset values from your paths
     momp-run datasets -p run.yaml   show what the config's datasets resolve to, with checks
     momp-run convert old.in -o run.yaml   convert an old config.in to YAML
+    momp-run export -p run.yaml     write the gridded onset dates of each source as NetCDF (no scoring)
     momp-run -h                     this help (with a config, -h lists the run-time overrides)
 """
 from __future__ import annotations
@@ -16,6 +17,7 @@ HELP = """usage: momp-run [-p run.yaml] [overrides]      run the config
        momp-run init [options]                  write a starting run.yaml
        momp-run datasets -p run.yaml            show how the config's datasets resolve
        momp-run convert old.in -o run.yaml      convert an old config.in to YAML
+       momp-run export -p run.yaml              write the gridded onset dates as NetCDF
 
 ROMP (Rainy season Onset Metrics Package) benchmarks rainy-season onset forecasts.
 One YAML run config describes a run; point momp-run at it with -p (or MOMP_CONFIG).
@@ -29,6 +31,10 @@ commands:
              --force, --dataset-template obs|forecast.
   datasets   resolve the datasets of a config (detections with their evidence, warnings, problems).
   convert    read an old config.in and write the equivalent YAML (-o FILE, --force).
+  export     run only the onset detection of a config and write one NetCDF per source (observed, each model,
+             climatology, conditional_climatology) with the dates exactly as ROMP scores them. Options:
+             --sources observed,AIFS,climatology (default: all the run uses), --out DIR (default dir_out/onsets).
+             `output.save_onsets: true` in the run file does the same before a normal run's scoring.
 """
 
 
@@ -118,18 +124,41 @@ def _convert(argv) -> int:
     return 0
 
 
+def _export(argv) -> int:
+    """`momp-run export -p run.yaml [--sources ...] [--out DIR]`: write the gridded onset dates as NetCDF."""
+    from momp.export import export_onsets, load_cfg
+
+    p = argparse.ArgumentParser(prog="momp-run export", description="Write the gridded onset dates of a run as "
+                                "NetCDF, one file per source, running only the detection.")
+    p.add_argument("-p", "--param", default=os.environ.get("MOMP_CONFIG"), help="the run config (or MOMP_CONFIG)")
+    p.add_argument("--sources", help="comma-separated: observed, model names, climatology, conditional_climatology "
+                                     "(default: everything the run uses)")
+    p.add_argument("--out", help="folder for the files (default: dir_out/onsets of the config)")
+    args = p.parse_args(argv)
+    if not args.param:
+        p.error("give the run config with -p run.yaml (or set MOMP_CONFIG)")
+    try:
+        paths = export_onsets(load_cfg(args.param), sources=args.sources, out=args.out)
+    except Exception as exc:  # noqa: BLE001 - config and data problems carry their own fix text
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    for source, path in paths.items():
+        print(f"{source}: {path}")
+    return 0
+
+
 def _has_config(argv) -> bool:
     """Whether a config is named by -p/--param in argv or MOMP_CONFIG."""
     return any(a in ("-p", "--param") or a.startswith("--param=") for a in argv) or bool(os.environ.get("MOMP_CONFIG"))
 
 
 def handled_without_run(argv) -> bool:
-    """Run init/datasets/convert or print the top-level help; True if that was the whole job.
+    """Run init/datasets/convert/export or print the top-level help; True if that was the whole job.
 
     `run` is dropped from sys.argv. -h with a config falls through so the run parser lists its overrides.
     """
     command = argv[0] if argv else None
-    commands = {"init": _init, "datasets": _datasets, "convert": _convert}
+    commands = {"init": _init, "datasets": _datasets, "convert": _convert, "export": _export}
     if command in commands:
         code = commands[command](argv[1:])
         if code:

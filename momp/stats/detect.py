@@ -60,6 +60,25 @@ def _season_climatology(setup, thresh_slice, lat, lon):
     return _on_grid(climatology, lat, lon)
 
 
+def detect_observed_result(rain_slice, thresh_slice, year, **kwargs):
+    """Run the engine on one year of observed rainfall; return (engine Dataset, OnsetSetup).
+
+    The Dataset has dims (year, season, lat, lon) with one year and the selected season (both kept as
+    length-1 dims) and the variables onset_date, onset_index and status of momp.onset.engine.detect_observed;
+    its "calendar" attribute is the calendar of the dates. detect_observed_onset and the NetCDF export
+    (momp.export) both read their values from here, so they cannot disagree.
+    """
+    setup = onset_setup(kwargs, thresh_slice)
+    rain = ingest(rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations")
+    lat, lon = rain.coords["lat"], rain.coords["lon"]
+    result = engine.detect_observed(
+        setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, lat, lon, per_window=False), years=[year],
+        season_climatology=_season_climatology(setup, thresh_slice, lat, lon), backend=setup.backend)
+    result = result.sel(year=[year], season=[setup.season])
+    result.attrs["calendar"] = rain.calendar
+    return result, setup
+
+
 def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):
     """Detect observed onset dates for a given year.
 
@@ -69,15 +88,12 @@ def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):
     Returns a (lat, lon) DataArray of datetime64 onset dates, NaT where the cell
     has no onset.
     """
-    setup = onset_setup(kwargs, thresh_slice)
-    rain = ingest(rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations")
-    lat, lon = rain.coords["lat"], rain.coords["lon"]
-    result = engine.detect_observed(
-        setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, lat, lon, per_window=False), years=[year],
-        season_climatology=_season_climatology(setup, thresh_slice, lat, lon), backend=setup.backend)
-    onset = result["onset_date"].sel(year=year, season=setup.season).transpose("lat", "lon")
+    result, setup = detect_observed_result(rain_slice, thresh_slice, year, **kwargs)
+    lat, lon = result["lat"].values, result["lon"].values
+    onset = result["onset_date"].isel(year=0, season=0).transpose("lat", "lon")
     if not setup.legacy:
-        counts = {s.name: int((result["status"].sel(year=year, season=setup.season) == s).sum()) for s in Status}
+        status = result["status"].isel(year=0, season=0)
+        counts = {s.name: int((status == s).sum()) for s in Status}
         print(f"Observed onset {year}, cells by status: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v))
     return xr.DataArray(onset.values.astype("datetime64[ns]"), coords=[("lat", lat), ("lon", lon)], name="onset_date")
 
@@ -101,7 +117,9 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
 
     Returns a dict of numpy arrays shaped (init_time, [member], lat, lon): lead day
     after init of the onset (NaN none; 0 or below for an onset back-dated by the observed history), date, status; plus the valid-case mask
-    (init before the observed onset) and the observed onset dates (init_time, lat, lon).
+    (init before the observed onset) and the observed onset dates (init_time, lat, lon). "result" is the engine
+    Dataset these arrays come from (season kept as a length-1 dim, with the ensemble summary for members) and
+    "calendar" the calendar of its dates; the NetCDF export (momp.export) reads them.
     """
     setup = onset_setup(kwargs, thresh_slice)
     max_forecast_day = kwargs["max_forecast_day"]
@@ -123,6 +141,7 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
         setup.definition, forecast, thresholds=_thresholds(setup, thresh_slice, lat, lon),
         lead_window=(1, max_forecast_day), backend=setup.backend, history=stitched,
         season_climatology=_season_climatology(setup, thresh_slice, lat, lon))
+    export_result = result.sel(season=[setup.season])
     result = result.sel(season=setup.season)
     if not setup.legacy and bool((result["status"] == Status.CENSORED).any()):
         warnings.warn("some forecast searches are CENSORED although the lead window was shortened to fit the rule; "
@@ -138,7 +157,8 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     found = status == Status.ONSET
     init_day = init.astype("datetime64[D]").reshape((-1,) + (1,) * (dates.ndim - 1))
     days_after_init = (dates.astype("datetime64[D]") - init_day) / np.timedelta64(1, "D")
-    return {"setup": setup, "init": init, "lat": np.asarray(lat), "lon": np.asarray(lon),
+    return {"setup": setup, "result": export_result, "calendar": forecast.calendar,
+            "init": init, "lat": np.asarray(lat), "lon": np.asarray(lon),
             "member": np.asarray(forecast.coords["member"]) if "member" in forecast.dims else None,
             "day": np.where(found, days_after_init, np.nan), "date": dates, "status": status,
             "valid": valid, "obs": obs_values, "totals": (int(obs.size * len(init)), int((~np.isnat(obs_values)).sum()))}
@@ -225,6 +245,24 @@ def _ensemble_status(status, threshold, has_onset):
     return names
 
 
+def ensemble_onset(day, init, threshold):
+    """The ensemble onset ROMP scores from member onset days (init_time, member, lat, lon), NaN for none.
+
+    Returns (count of members with an onset, their fraction, ensemble onset day, ensemble onset date), each
+    shaped (init_time, lat, lon). The ensemble has an onset when the fraction is at least threshold; its day
+    (days after the init) is the mean member day rounded half to even. init is the array of init dates.
+    """
+    n_member = day.shape[1]
+    count = (~np.isnan(day)).sum(axis=1)
+    fraction = count / n_member if n_member > 0 else np.zeros(count.shape)
+    with np.errstate(invalid="ignore"):
+        mean_day = np.nanmean(day, axis=1) if n_member else np.full(count.shape, np.nan)
+    ensemble_day = np.where(fraction >= threshold, np.round(mean_day), np.nan)
+    ensemble_date = pd.DatetimeIndex(init).values[:, None, None] + (
+        np.nan_to_num(ensemble_day, nan=0).astype("int64").astype("timedelta64[D]"))
+    return count, fraction, ensemble_day, ensemble_date
+
+
 def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None, **kwargs):
     """Compute per-member and ensemble onsets.
 
@@ -241,13 +279,7 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None,
     print(f"Processing {n_init} init times x {len(out['lat']) * len(out['lon'])} unique locations x {n_member} members...")
 
     member_day = day
-    count = (~np.isnan(day)).sum(axis=1)
-    fraction = count / n_member if n_member > 0 else np.zeros(count.shape)
-    with np.errstate(invalid="ignore"):
-        mean_day = np.nanmean(member_day, axis=1) if n_member else np.full(count.shape, np.nan)
-    ensemble_day = np.where(fraction >= threshold, np.round(mean_day), np.nan)
-    ensemble_date = pd.DatetimeIndex(out["init"]).values[:, None, None] + (
-        np.nan_to_num(ensemble_day, nan=0).astype("int64").astype("timedelta64[D]"))
+    count, fraction, ensemble_day, ensemble_date = ensemble_onset(day, out["init"], threshold)
     onset_loop = setup.legacy and kwargs["dry_extent"] > kwargs["wet_spell"]
 
     grid = valid.shape

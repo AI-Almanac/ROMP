@@ -188,6 +188,10 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
     if desc_dict is not None:
         ds.attrs.update(desc_dict)
 
+    from momp.utils.mask import mask_attrs
+
+    ds.attrs.update(mask_attrs())   # nothing unless a region mask is in use
+
     ds.to_netcdf(fout)
 
     print(f"{fname} saved to: {fout}")

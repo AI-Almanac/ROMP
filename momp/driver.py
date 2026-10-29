@@ -90,6 +90,15 @@ def run_momp(cfg=None, setting=None):
 
     write_explain_cells(cfg)
 
+    if getattr(cfg, "save_onsets", False):
+        try:
+            from momp.export import export_onsets
+
+            export_onsets(vars(cfg))
+        except Exception as e:  # the scores matter more than the export: report it and go on
+            logger.error(f"output.save_onsets: could not write the onset files: {e}")
+            traceback.print_exc()
+
     logger.info("Starting ROMP Workflow...")
 
     try:
@@ -98,6 +107,12 @@ def run_momp(cfg=None, setting=None):
 
         # 2. Generate spatial metrics and maps
         spatial_far_mr_mae_map()
+
+        if getattr(cfg, "mask", None):
+            try:
+                write_resolved(vars(cfg))   # again, now that the masks of each dataset's grid are known
+            except OSError as exc:
+                logger.warning(f"could not update resolved_config.yaml with the masks: {exc}")
 
         logger.info("ROMP Workflow completed successfully!")
 

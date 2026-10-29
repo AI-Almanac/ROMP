@@ -48,6 +48,8 @@ Every run writes `resolved_config.yaml` (every value after defaults, region, det
 
 Each run loads the config, reads observations and forecasts, detects onset, scores the forecasts against the observed onset and a reference (climatology by default), then writes NetCDF/CSV results to `dir_out` and figures to `dir_fig`.
 
+Export the gridded onset dates (observed, each model, the climatology references) as NetCDF with `momp-run export -p run.yaml` or `output.save_onsets: true`; see "Exporting onset dates" in `docs/onset_in_romp.md`.
+
 ## Onset definitions
 
 List, read and draw definitions from the command line:
@@ -83,6 +85,22 @@ More:
 
 * `docs/onset_in_romp.md`: how ROMP uses the component (config keys, lead windows, forecast history, thresholds, legacy mode).
 * `docs/onset_spec.md`: the specification (YAML grammar, detection semantics, backends).
+
+## Region masks
+
+The optional `mask:` section limits the evaluated cells. The parts you give intersect:
+
+```yaml
+mask:
+  land: true                 # land only (Natural Earth land polygons from cartopy)
+  country: Ethiopia          # one or more names (NAME, NAME_LONG or ADM0_A3, any case)
+  file: /path/mask.nc        # a 0/1 NetCDF (or a shapefile / GeoJSON); variable and keep_value pick the field
+  condition: {file: /path/dem.nc, variable: elevation, above: 1500}   # a mask from a field (above / below)
+  cell_rule: centre          # centre | overlap_fraction (with overlap_fraction: 0.5)
+  resolution: 50m            # Natural Earth resolution: 10m, 50m or 110m
+```
+
+The mask is built on each dataset's own grid (the observations and every model separately); rainfall is never regridded. A shape is rasterised by the cell rule. A mask file is aligned first (latitude order, 0-360 or -180-180 longitudes, axis names); on the same grid it is used as it is, otherwise the mask (not the rainfall) is regridded: a finer mask keeps a cell when kept mask cells cover at least `overlap_fraction` of it, a coarser one gives the nearest mask cell, and a mask that does not cover the data is an error naming both extents. The run prints the sources, rule, alignment actions and kept cell count per dataset, saves `mask_<dataset>.png` in the figure folder, and records the sources with content hashes in `resolved_config.yaml` and the NetCDF outputs. The old flat `nc_mask` key still works as before (it cannot be combined with `mask`). Natural Earth data downloads on first use; `scripts/prefetch_cartopy_data.py` fetches it for offline machines. See `docs/onset_in_romp.md`.
 
 ## Package layout
 

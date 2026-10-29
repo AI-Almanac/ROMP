@@ -108,11 +108,55 @@ Once per model at the start of a run, ROMP compares the first year's forecasts (
 
 Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `"start"` (lead k is init + k - 1); IMD (day ending at 03 UTC, labelled by end) lines up with `"end"`. ROMP used to assume `"end"` always, so Ethiopia forecast onsets were one day late against CHIRPS.
 
+## Exporting onset dates
+
+`momp-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to `dir_out/onsets/` before a normal run scores (the detection runs twice). In Python: `momp.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}`; `momp.export.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
+
+The values are the ones ROMP scores: the export calls the scoring's own functions with the keyword arguments the scoring builds (masks, shortened lead window, `forecast_history`, thresholds, definition). Unlike the scored tables, which keep only cases with an observed onset and an init before it, the files hold every init and cell; the flag `scored` (1 for those cases) marks what ROMP scores. Dates are CF times (int32 days since 1970-01-01, with the data's calendar; cftime for non-standard calendars); no onset is the fill value (NaT) and NaN in the float variables. Onset date, day of year and lead are set only where `status` is `ONSET`: a `PRIOR` search is reported as no onset, as scored. Files are zlib-compressed NetCDF4, CF-1.8, with global attributes holding the definition (id, version, hash, sentence, YAML, overrides), thresholds (source, years, files, values hash), mask summary, forecast history, lead label and window, day boundaries, dataset paths, ROMP version, creation time and the resolved run config (`resolved_config_yaml`).
+
+| File | Variable | Dims | Meaning |
+|---|---|---|---|
+| `onsets_observed.nc` | `onset_date`, `onset_doy`, `status` | `year, season, lat, lon` | Observed onset (date; day of the calendar year; `status` int8 with `flag_values`/`flag_meanings` ONSET, NOT_FOUND, CENSORED, PRIOR, INSUFFICIENT_DATA). |
+| `onsets_<model>.nc` | `onset_date`, `onset_doy`, `onset_lead`, `onset_day`, `status` | `init_time, [member], season, lat, lon` | Forecast onset. `onset_lead` is the engine's 1-based lead (NaN none; 0 or below: back-dated into the observed history); `onset_day` is days from the init date to the onset date, as the scored tables' `onset_day`. |
+| | `scored` | `init_time, lat, lon` | 1 where ROMP scores the case. |
+| | `members_by_status` | `status_code, init_time, season, lat, lon` | Ensembles: members per status. |
+| | `onset_probability` | `init_time, season, lead, lat, lon` | Ensembles: share of members with onset on or before each lead (lead 0 to the lead window; `lead` has units days). |
+| | `ensemble_onset_date`, `ensemble_onset_doy`, `ensemble_onset_day`, `ensemble_status` | `init_time, season, lat, lon` | Ensembles: the ensemble onset ROMP scores (mean member day rounded half to even, needs `onset_percentage_threshold` of the members; this is not a median). |
+| `onsets_climatology.nc` | `climatological_onset_doy`, `climatological_onset_date` | `season, lat, lon` | Rounded mean day of the climatology years' onsets; the date places it in the first evaluated year (nominal). |
+| | `onset_date`, `onset_doy`, `onset_lead`, `onset_day`, `status`, `scored` | `init_time, season, lat, lon` | The climatology as a forecast, as scored: its date if within the lead window, else NOT_FOUND. Lead k is init + k. |
+| `onsets_conditional_climatology.nc` | `onset_date`, `onset_doy`, `onset_lead`, `onset_day`, `status`, `scored` | `init_time, season, lat, lon` | The conditional median onset (first lead whose conditional CDF reaches 0.5). |
+| | `onset_probability` | `init_time, season, lead, lat, lon` | The conditional CDF of the onset over leads 0 to the lead window (NaN for cells without a KDE). `climatology_cv` records the mode the scoring used. |
+
+xarray cannot decode masked dates on a non-standard calendar and decodes `units: days` as a timedelta, so open files with `momp.export.open_onsets(path)`, which gives cftime objects (None for no onset) and plain lead numbers.
+
 ## Looking inside a result
 
 * `explain_cells` (above) writes one anatomy plot and explain log per cell and year during a run.
 * `python -m momp.onset explain ...` does the same for one cell and year from the command line.
 * In Python, `momp.onset.viz` has `anatomy_plot`, `schematic`, `compare_definitions`, `forecast_vs_truth` and `drill_down`; `momp.onset.explain` has `trace_observed`, `trace_forecast` and `explain`.
+
+## Region masks
+
+The `mask:` section (`momp/utils/mask.py`, schema in `momp/lib/config_schema.py`) chooses the cells that are evaluated. `Config(mask=Mask(...))` in Python is the same thing.
+
+| key | meaning |
+|---|---|
+| `land` | land cells only (cartopy Natural Earth land polygons) |
+| `country` | a name or list; matched on Natural Earth `NAME`, `NAME_LONG` or `ADM0_A3`, any case; an unknown name lists the closest ones |
+| `file` | a 0/1 NetCDF (`variable` auto-detected if the file has only one, `keep_value` default 1), or a shapefile / GeoJSON (any CRS) |
+| `condition` | `{file, variable, above, below}`: a field thresholded on its own grid (`above` and `below` are strict) |
+| `cell_rule` | `centre` (default): the cell centre is inside the shape; `overlap_fraction`: the share of the cell's area (planar, degrees squared) inside is at least `overlap_fraction` (default 0.5) |
+| `resolution` | Natural Earth `10m`, `50m` (default) or `110m` |
+
+All given parts intersect. Shapes (land, countries, a shapefile) are intersected as geometry and rasterised once; mask files and conditions are aligned to the data grid and combined with the shape cells.
+
+**Alignment.** The final mask is built separately for the observations and for each model, on that dataset's own grid, and rainfall is never regridded. For a mask file ROMP detects the latitude and longitude names, flips a north-to-south latitude, wraps the longitudes to the data's convention (0-360 or -180-180) and compares resolution and cell centres. If every data cell centre matches a mask cell centre within a hundredth of a cell and the cell sizes agree, the mask is used directly. Otherwise the mask is regridded onto the data grid: a finer mask keeps a data cell when the area share covered by kept mask cells is at least `overlap_fraction`; a coarser (or equally fine but offset) mask gives each data cell the value of the nearest mask cell. A mask that does not cover the data extent stops the run with both extents in the message. A shape cell on the antimeridian is tested by its centre longitude wrapped into -180..180.
+
+**What is printed and recorded.** Per dataset the run prints the sources, the rule, every alignment action (flip, longitude shift, regrid method with both resolutions) and the kept cell count, and saves `mask_<dataset>.png` (kept cells) in `output.figure_dir`. `resolved_config.yaml` carries the `mask:` section and, as comments at the top, the sources with SHA-256 content hashes, the rule, the actions and the kept counts per dataset; the spatial-metrics and climatology NetCDF files get `mask_cell_rule`, `mask_sources` and `mask_kept_cells_<dataset>` attributes. A mask that keeps no cell is an error.
+
+**Natural Earth data** is fetched by cartopy on first use. Offline, ROMP stops with a message saying so; run `python scripts/prefetch_cartopy_data.py` once while online (the Docker image does this at build time) or set `CARTOPY_DATA_DIR`.
+
+**Old keys.** Without `mask:`, the flat `nc_mask` (and the implicit land and country masks of `region_select`) behave exactly as before. `mask` and `nc_mask` together are a config error; `mask: {file: x.nc}` replaces `nc_mask: x.nc` and does not apply the implicit land and country masks.
 
 ## Legacy mode
 

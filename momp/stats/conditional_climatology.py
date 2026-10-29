@@ -82,6 +82,22 @@ def _cases(inits, obs):
     return np.nonzero(has_obs[None] & (inits.values.astype("datetime64[ns]")[:, None, None] < obs[None]))
 
 
+def conditional_lead_probabilities(clim_onset, year, init_dates, lats, lons, horizon, climatology_cv=None):
+    """Conditional onset probabilities of every init and cell, shaped (init, lat, lon, lead) for leads 1..horizon.
+
+    The same probabilities the scoring functions of this module use (the KDE of clim_onset refitted without
+    `year` when climatology_cv is leave_one_year_out); NaN for cells without a KDE. `lats` and `lons` are the
+    grid of the observed onsets (clim_onset is aligned to it as the scoring does) and init_dates the issue dates.
+    """
+    cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
+    clim = _align(clim_onset, lats, lons)
+    inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
+    lat_cell, lon_cell = (a.ravel() for a in np.indices((len(lats), len(lons))))
+    values, position, back = _conditional_by_case(clim, year, lat_cell, lon_cell, inits, horizon, cv)
+    prob = values[position][:, back, :]
+    return prob.reshape(len(lats), len(lons), len(inits), horizon).transpose(2, 0, 1, 3)
+
+
 def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, observed_onset_da=None, *,
                                                          day_bins, climatology_cv=None, **kwargs):
     """Forecast-observation pairs of the conditional climatology for one year, per init, cell and day bin.

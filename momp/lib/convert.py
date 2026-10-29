@@ -58,6 +58,8 @@ def read_legacy(path) -> dict:
 
 def plain(value):
     """Tuples to lists and Paths to text, recursively, so the value dumps as plain YAML."""
+    if hasattr(value, "to_mapping"):
+        return plain(value.to_mapping())
     if isinstance(value, (tuple, list)):
         return [plain(v) for v in value]
     if isinstance(value, dict):

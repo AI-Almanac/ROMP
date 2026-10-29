@@ -90,6 +90,15 @@ def _resolve_paths(dic):
             if not Path(str(dic[key])).is_absolute():
                 dic[key] = set_dir(dic[key])
 
+    if isinstance(dic.get("mask"), dict):
+        mask = dict(dic["mask"])
+        if mask.get("file") and not Path(str(mask["file"])).is_absolute():
+            mask["file"] = str(set_dir(mask["file"]))
+        condition = mask.get("condition")
+        if condition and not Path(str(condition["file"])).is_absolute():
+            mask["condition"] = {**condition, "file": str(set_dir(condition["file"]))}
+        dic["mask"] = mask
+
     if isinstance(dic.get("thresholds"), dict):
         dic["thresholds"] = {
             name: _resolve_threshold_ref(ref) for name, ref in dic["thresholds"].items()

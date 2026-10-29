@@ -282,6 +282,85 @@ def _years(value):
     return _integers(value)
 
 
+MASK_KEYS = {
+    "land": ("true or false", "keep land cells only (Natural Earth land polygons from cartopy)"),
+    "country": ("a country name or a list of them", "keep the cells of these countries (Natural Earth "
+                "admin_0_countries; matched on NAME, NAME_LONG or ADM0_A3, any case)"),
+    "file": ("a path", "an existing mask: a 0/1 NetCDF file, or a shapefile / GeoJSON"),
+    "variable": ("text", "the mask variable of a NetCDF file (auto-detected if the file has only one)"),
+    "keep_value": ("a number", "the value of the cells to keep in the NetCDF mask (default 1)"),
+    "condition": ("a mapping {file, variable, above, below}", "a mask made from a field, e.g. "
+                  "{file: dem.nc, variable: elevation, above: 1500}: keeps the cells above and/or below the numbers"),
+    "cell_rule": ("one of 'centre', 'overlap_fraction'", "how a shape picks cells: 'centre' (the cell centre is "
+                  "inside; default) or 'overlap_fraction' (enough of the cell's area is inside)"),
+    "overlap_fraction": ("a number in (0, 1]", "the share of a cell's area that must be inside the shape (or, for a "
+                         "mask file with finer cells, covered by kept mask cells); default 0.5"),
+    "resolution": ("one of '10m', '50m', '110m'", "Natural Earth resolution of land and country shapes "
+                   "(default '50m')"),
+}
+"""The keys of the ``mask:`` section: expected form and help."""
+_MASK_CONDITION_KEYS = ("file", "variable", "above", "below")
+
+
+def _mask(value):
+    """A mask section: a mapping of land, country, file, variable, keep_value, condition, cell_rule, ...
+
+    Returns a plain mapping of the keys given (country always as a list, file paths with ${ENV_VAR} expanded).
+    A bare ValueError message explains what is wrong.
+    """
+    if not isinstance(value, dict):
+        raise ValueError(f"expected a mapping with {', '.join(MASK_KEYS)}")
+    for key in value:
+        if key not in MASK_KEYS:
+            raise ValueError(f"unknown key {key!r}.{suggest(key, MASK_KEYS)} Keys: {', '.join(MASK_KEYS)}")
+    out = {}
+    for key, item in value.items():
+        if key == "land":
+            out[key] = _boolean(item)
+        elif key == "country":
+            names = [item] if isinstance(item, str) else item
+            if not isinstance(names, (list, tuple)) or not names or not all(isinstance(n, str) and n for n in names):
+                raise ValueError("country must be a country name or a non-empty list of names")
+            out[key] = list(names)
+        elif key in ("file", "variable"):
+            out[key] = _path(item) if key == "file" else _text(item)
+        elif key == "keep_value":
+            if not (_is_number(item) or isinstance(item, bool)):
+                raise ValueError("keep_value must be a number")
+            out[key] = item
+        elif key == "condition":
+            if not isinstance(item, dict) or "file" not in item:
+                raise ValueError("condition must be a mapping with file, variable and above and/or below")
+            for sub in item:
+                if sub not in _MASK_CONDITION_KEYS:
+                    raise ValueError(f"unknown key condition.{sub}.{suggest(sub, _MASK_CONDITION_KEYS)} "
+                                     f"Keys: {', '.join(_MASK_CONDITION_KEYS)}")
+            if item.get("above") is None and item.get("below") is None:
+                raise ValueError("condition needs above and/or below")
+            if any(item.get(s) is not None and not _is_number(item[s]) for s in ("above", "below")):
+                raise ValueError("condition.above and condition.below must be numbers")
+            out[key] = {s: (_path(item[s]) if s == "file" else item[s]) for s in _MASK_CONDITION_KEYS
+                        if item.get(s) is not None}
+        elif key == "cell_rule":
+            if item not in ("centre", "overlap_fraction"):
+                raise ValueError(f"cell_rule must be 'centre' or 'overlap_fraction', got {item!r}")
+            out[key] = item
+        elif key == "overlap_fraction":
+            if not _is_number(item) or not 0 < item <= 1:
+                raise ValueError("overlap_fraction must be a number above 0 and at most 1")
+            out[key] = item
+        elif key == "resolution":
+            if item not in ("10m", "50m", "110m"):
+                raise ValueError(f"resolution must be '10m', '50m' or '110m', got {item!r}")
+            out[key] = item
+    if not any(out.get(k) for k in ("land", "country", "file", "condition")):
+        raise ValueError("give at least one of land: true, country, file, condition (a mask section needs "
+                         "something to select)")
+    if ("variable" in out or "keep_value" in out) and "file" not in out:
+        raise ValueError("variable and keep_value describe the mask file; set file too")
+    return out
+
+
 def _anything(value):
     """Any value."""
     return value
@@ -309,6 +388,8 @@ KINDS: dict[str, tuple[str, Callable]] = {
     "cells": ("a list of [lat, lon] pairs, e.g. [[9.0, 38.75]]", _cells),
     "thresholds": ("a mapping of threshold names to 'path.nc:variable'", _thresholds),
     "years": ("'All' or a list of years", _years),
+    "mask": ("a mapping of land, country, file, variable, keep_value, condition, cell_rule, overlap_fraction, "
+             "resolution", _mask),
     "any": ("any value", _anything),
 }
 """Value kinds: a description of the form expected and the function that checks and normalises a value."""
@@ -319,6 +400,7 @@ _TOGGLES = (
     ("save_nc_spatial_far_mr_mae", "save the spatial FAR, MR and MAE as NetCDF", True),
     ("save_csv_score", "save the skill scores as CSV", True),
     ("save_nc_climatology", "save the climatological onset as NetCDF", True),
+    ("save_onsets", "write every source's onset dates as NetCDF to dir_out/onsets/ (repeats the detection)", False),
     ("plot_spatial_far_mr_mae", "map FAR, MR and MAE", True),
     ("plot_heatmap_bss_auc", "heatmaps of BSS and AUC", True),
     ("plot_reliability", "reliability diagrams", True),
@@ -351,6 +433,8 @@ def _fields() -> tuple[Field, ...]:
         Field("catalog_dirs", "paths", "folders of <id>.yaml dataset files, referenced by id with `dataset:`", ()),
         Field("region", "str", "target region id or alias, see `python -m momp.onset regions`", REQUIRED),
         Field("nc_mask", "path", "NetCDF mask of 1s and 0s limiting the evaluated cells", None, nullable=True),
+        Field("mask", "mask", "cells to evaluate, on each dataset's own grid; the parts given intersect: "
+              + "; ".join(f"{k}: {h}" for k, (_, h) in MASK_KEYS.items()), None, nullable=True, fill=False),
         Field("shpfile_dir", "path", "shapefile for the region boundary in maps", None, nullable=True),
         Field("polygon", "bool", "mask and boundary from region polygons (params/region_def)", False),
         Field("parallel", "bool", "compute with several cores", False),
@@ -568,8 +652,9 @@ def normalise_value(field: Field, value, written: str, errors: list[str]):
         return None
     try:
         out = KINDS[field.kind][1](value)
-    except (ValueError, TypeError):
-        errors.append(f"'{written}': expected {field.expected}, got {value!r}")
+    except (ValueError, TypeError) as exc:
+        detail = f" ({exc})" if field.kind == "mask" and str(exc) else ""
+        errors.append(f"'{written}': expected {field.expected}, got {value!r}{detail}")
         return None
     if field.choices and out not in field.choices:
         errors.append(f"'{written}': expected {field.expected}, got {value!r}.{suggest(out, field.choices)}")
@@ -621,3 +706,8 @@ def describe_schema() -> list[tuple[str, str, str, str]]:
             default = "ROMP chooses"
         rows.append((f.path, f.expected, default, f.help))
     return rows
+
+
+def describe_mask_schema() -> list[tuple[str, str, str, str]]:
+    """Rows (path, expected form, default, help) for the keys inside the ``mask:`` section."""
+    return [(f"mask.{key}", expected, "unset", help_) for key, (expected, help_) in MASK_KEYS.items()]

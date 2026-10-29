@@ -2,6 +2,8 @@
 
 ``resolved_config.yaml`` holds every value after defaults, region defaults, auto-detection and overrides, each
 with a comment saying where it came from; running ``momp-run -p resolved_config.yaml`` reproduces the run.
+When a region mask is in use, comments at the top record per dataset the mask sources with content hashes, the
+cell rule, the alignment actions and the kept cell counts (known once each dataset's grid has been read).
 ``resolved_definition.yaml`` holds the onset definition as used (after any override), with its hash.
 """
 from __future__ import annotations
@@ -49,18 +51,28 @@ def resolved_mapping(cfg: dict) -> tuple[dict, dict, object]:
     return flat, sources, setup
 
 
-def write_resolved(cfg: dict, directory=None) -> tuple[Path, Path]:
-    """Write resolved_config.yaml and resolved_definition.yaml into directory (default: dir_out)."""
-    directory = Path(directory or cfg["dir_out"])
-    directory.mkdir(parents=True, exist_ok=True)
+def resolved_config_text(cfg: dict) -> str:
+    """The text of resolved_config.yaml for a flat config dict (header, values and their sources)."""
     flat, sources, setup = resolved_mapping(cfg)
     mapping, comments = flat_to_mapping(flat, sources)
     header = ("# Resolved config of this run: every value after defaults, region defaults, auto-detection and\n"
               "# overrides, each with its source. Reproduce the run with:  momp-run -p resolved_config.yaml\n"
               f"# definition: {setup.definition.id} v{setup.definition.version}, hash "
               f"{definition_mod.definition_hash(setup.definition)}\n")
+    from momp.utils.mask import record_lines, records
+
+    for record in records().values():
+        header += "".join(f"# {line}\n" for line in record_lines(record))
+    return render_yaml(mapping, comments, header=header)
+
+
+def write_resolved(cfg: dict, directory=None) -> tuple[Path, Path]:
+    """Write resolved_config.yaml and resolved_definition.yaml into directory (default: dir_out)."""
+    directory = Path(directory or cfg["dir_out"])
+    directory.mkdir(parents=True, exist_ok=True)
+    setup = onset_setup(cfg)
     config_path = directory / "resolved_config.yaml"
-    config_path.write_text(render_yaml(mapping, comments, header=header))
+    config_path.write_text(resolved_config_text(cfg))
     definition_path = directory / "resolved_definition.yaml"
     definition_path.write_text(
         f"# Onset definition as used by this run"

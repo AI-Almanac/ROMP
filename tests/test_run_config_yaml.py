@@ -158,7 +158,7 @@ def test_converted_flat_dict_matches_the_old_one(tmp_path):
              "dataset_files", "climatology_cv", "years", "years_clim", "fallback_date"}
     for key, value in old.items():
         assert new[key] == value, key
-    assert set(new) - set(old) <= extra | {"plot_portrait"}
+    assert set(new) - set(old) <= extra | {"plot_portrait", "save_onsets"}
 
 
 def test_convert_maps_units_and_rejects_free_multipliers(tmp_path):

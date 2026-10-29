@@ -340,6 +340,9 @@ def build_config(raw, source="<config>") -> dict:
     elif "model_list" not in config:
         errors.append("missing required key 'models': at least one forecast model. Fix: write 'models:' with "
                       "'- name: AIFS', path, variable and units")
+    if config.get("mask") and config.get("nc_mask"):
+        errors.append("'mask' and 'nc_mask' are both set. Fix: use one; `nc_mask: file.nc` is the old flat key "
+                      "(it also applies the land and country masks implicitly), `mask: {file: file.nc}` the new section")
     _derive(config, sources, errors)
     skip = _MODEL_LISTS if any(e.startswith(("'models", "missing required key 'models'")) for e in errors) else ()
     filled = schema.apply_defaults(config, errors, skip=skip)
