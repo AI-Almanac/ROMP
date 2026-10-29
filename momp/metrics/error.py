@@ -31,60 +31,45 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
 
     spatial_metrics = {}
 
-    false_alarm_rate_map = np.full((len(lats), len(lons)), np.nan)
-    miss_rate_map = np.full((len(lats), len(lons)), np.nan)
-    mean_mae_map = np.full((len(lats), len(lons)), np.nan)
-
+    shape = (len(lats), len(lons))
+    grid = pd.MultiIndex.from_product([lats, lons])
+    totals = {name: np.zeros(shape) for name in ('false_positive', 'true_negative', 'false_negative', 'num_onset')}
+    has_any_valid_data = np.zeros(shape, dtype=bool)
+    mae_sum = np.zeros(shape)
+    mae_count = np.zeros(shape, dtype=np.int64)
     yearly_mae_maps = {}
-    for year in metrics_df_dict.keys():
-        yearly_mae_maps[year] = np.full((len(lats), len(lons)), np.nan)
 
-    for i, lat_val in enumerate(lats):
-        for j, lon_val in enumerate(lons):
+    for year, metrics_df in metrics_df_dict.items():
+        yearly_mae_maps[year] = np.full(shape, np.nan)
+        if len(metrics_df) == 0:
+            continue
 
-            total_FP = 0
-            total_TN = 0
-            total_FN = 0
-            total_num_onset = 0
+        # a grid point's first row stands for it; points without an observed onset this year are skipped
+        points = metrics_df.drop_duplicates(['lat', 'lon'])
+        flat = grid.get_indexer(pd.MultiIndex.from_frame(points[['lat', 'lon']]))
+        in_grid = flat >= 0
+        points, flat = points[in_grid], flat[in_grid]
+        has_onset = ~pd.isna(onset_da_dict[year].values).ravel()[flat]
+        points, flat = points[has_onset], flat[has_onset]
+        i, j = np.unravel_index(flat, shape)
 
-            mae_values = []
-            has_any_valid_data = False
+        has_any_valid_data[i, j] = True
+        for name, total in totals.items():
+            total[i, j] += points[name].to_numpy()
 
-            for year, metrics_df in metrics_df_dict.items():
-                obs_onset_val = onset_da_dict[year].isel(lat=i, lon=j).values
+        mae = points['mae_combined'].to_numpy(dtype=float)
+        valid_mae = ~np.isnan(mae)
+        yearly_mae_maps[year][i[valid_mae], j[valid_mae]] = mae[valid_mae]
+        mae_sum[i[valid_mae], j[valid_mae]] += mae[valid_mae]
+        mae_count[i[valid_mae], j[valid_mae]] += 1
 
-                if pd.isna(obs_onset_val):
-                    continue
-
-                grid_data = metrics_df[(metrics_df['lat'] == lat_val) & (metrics_df['lon'] == lon_val)]
-
-                if len(grid_data) > 0:
-                    has_any_valid_data = True
-                    row = grid_data.iloc[0]
-
-                    total_FP += row['false_positive']
-                    total_TN += row['true_negative']
-                    total_FN += row['false_negative']
-                    total_num_onset += row['num_onset']
-
-                    mae_val = row['mae_combined']
-                    if not pd.isna(mae_val):
-                        yearly_mae_maps[year][i, j] = mae_val
-                        mae_values.append(mae_val)
-
-            if has_any_valid_data:
-                if (total_FP + total_TN) > 0:
-                    false_alarm_rate_map[i, j] = total_FP / (total_FP + total_TN)
-                else:
-                    false_alarm_rate_map[i, j] = 0
-
-                if total_num_onset > 0:
-                    miss_rate_map[i, j] = total_FN / total_num_onset
-                else:
-                    miss_rate_map[i, j] = 0
-
-                if len(mae_values) > 0:
-                    mean_mae_map[i, j] = np.mean(mae_values)
+    false_alarm_denominator = totals['false_positive'] + totals['true_negative']
+    with np.errstate(invalid='ignore', divide='ignore'):
+        false_alarm_rate_map = np.where(
+            has_any_valid_data, np.where(false_alarm_denominator > 0, totals['false_positive'] / false_alarm_denominator, 0), np.nan)
+        miss_rate_map = np.where(
+            has_any_valid_data, np.where(totals['num_onset'] > 0, totals['false_negative'] / totals['num_onset'], 0), np.nan)
+        mean_mae_map = np.where(mae_count > 0, mae_sum / np.maximum(mae_count, 1), np.nan)
 
     spatial_metrics['false_alarm_rate'] = xr.DataArray(
         false_alarm_rate_map,

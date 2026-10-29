@@ -7,7 +7,6 @@ from momp.utils.practical import restore_args
 import numpy as np
 import xarray as xr
 import pandas as pd
-from datetime import datetime, timedelta
 
 
 def compute_climatological_onset(*, obs_dir, obs_file_pattern, obs_var, thresh_file, thresh_var, wet_threshold, 
@@ -114,129 +113,61 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     earliest_onset_date: optional (month, day) tuple; if set, only onsets on or after that date count (falsy = no filter)
 
     Returns:
-    pandas DataFrame with climatology forecast results
+    pandas DataFrame with climatology forecast results, one row per (init, lat, lon) in that order for
+    cells with an observed onset and an init before it; the climatological onset falls in the year of its init
     """
-
-    results_list = []
-
-    # Get dimensions
     lats = climatological_onset_doy.lat.values
     lons = climatological_onset_doy.lon.values
 
     print(f"Processing climatology as forecast for {len(init_dates)} init times x {len(lats)} lats x {len(lons)} lons...")
     print(f"Year: {year}")
 
-    # Track statistics
-    total_potential_inits = 0
-    valid_inits = 0
-    skipped_no_obs = 0
-    skipped_late_init = 0
-    onsets_forecasted = 0
+    inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
+    init_ns = inits.values.astype("datetime64[ns]")
+    obs = observed_onset_da.values.astype("datetime64[ns]")
+    no_obs = np.isnat(obs)
+    total_potential_inits = len(inits) * obs.size
+    skipped_no_obs = len(inits) * int(no_obs.sum())
 
-    # Loop over all initialization dates and grid points
-    for t_idx, init_time in enumerate(init_dates):
+    late = init_ns[:, None, None] >= obs[None]
+    skipped_late_init = int((~no_obs[None] & late).sum())
+    valid = ~no_obs[None] & ~late
+    i, j, k = np.nonzero(valid)
+    valid_inits = len(i)
 
-        init_date = pd.to_datetime(init_time)
-        year = init_date.year
+    doy = climatological_onset_doy.values.astype(float)[j, k]
+    no_clim = np.isnan(doy)
+    init_year = inits.year.to_numpy()[i] - 1970
+    clim_date = (init_year.astype("datetime64[Y]").astype("datetime64[D]")
+                 + (np.where(no_clim, 1, doy).astype(np.int64) - 1).astype("timedelta64[D]"))
+    init_at = init_ns[i]
+    clim_at = clim_date.astype("datetime64[ns]")
+    in_window = (~no_clim & (init_at + np.timedelta64(1, "D") <= clim_at)
+                 & (clim_at <= init_at + np.timedelta64(int(max_forecast_day), "D")))
+    if earliest_onset_date:
+        earliest = (init_year.astype("datetime64[Y]").astype("datetime64[M]") + np.timedelta64(earliest_onset_date[0] - 1, "M")
+                    ).astype("datetime64[D]") + np.timedelta64(earliest_onset_date[1] - 1, "D")
+        in_window &= clim_date >= earliest
+    onsets_forecasted = int(in_window.sum())
 
-        if earliest_onset_date:
-            earliest_date = datetime(year, *earliest_onset_date)
+    def dates(values):
+        """Format the values as an object array of YYYY-MM-DD strings."""
+        return pd.DatetimeIndex(values).strftime('%Y-%m-%d').to_numpy(dtype=object)
 
-        for i, lat in enumerate(lats):
-            for j, lon in enumerate(lons):
-
-                total_potential_inits += 1
-
-                # Get observed onset date for this grid point
-                try:
-                    obs_onset = observed_onset_da.isel(lat=i, lon=j).values
-                except:
-                    skipped_no_obs += 1
-                    continue
-
-                # Skip if no observed onset
-                if pd.isna(obs_onset):
-                    skipped_no_obs += 1
-                    continue
-
-                # Convert observed onset to datetime
-                obs_onset_dt = pd.to_datetime(obs_onset)
-
-                # Only process if forecast was initialized before observed onset
-                if init_date >= obs_onset_dt:
-                    skipped_late_init += 1
-                    continue
-
-                valid_inits += 1
-
-                # Get climatological onset day of year for this grid point
-                clim_onset_doy = climatological_onset_doy.isel(lat=i, lon=j).values
-
-                # Skip if no climatological onset available
-                # Bug fix from original code which directly skip/continue if no clim onset
-                if np.isnan(clim_onset_doy):
-                    onset_day, onset_date = None, None
-                    result = {
-                        'init_time': init_time,
-                        'lat': lat,
-                        'lon': lon,
-                        'onset_day': onset_day,  # None if no onset forecasted
-                        'onset_date': onset_date.strftime('%Y-%m-%d') if onset_date is not None else None,
-                        'climatological_onset_doy': clim_onset_doy,
-                        'climatological_onset_date': clim_onset_date.strftime('%Y-%m-%d'),
-                        'obs_onset_date': obs_onset_dt.strftime('%Y-%m-%d')  # Store observed onset for reference
-                    }
-                    results_list.append(result)
-                    continue
-
-                # Convert climatological day of year to actual date for this year
-                try:
-                    clim_onset_date = datetime(year, 1, 1) + timedelta(days=int(clim_onset_doy) - 1)
-                    clim_onset_date = pd.to_datetime(clim_onset_date)
-                except:
-                    continue  # Skip if invalid day of year
-
-                # Check if climatological onset is within forecast window
-                forecast_window_start = init_date + pd.Timedelta(days=1)
-                forecast_window_end = init_date + pd.Timedelta(days=max_forecast_day)
-
-                onset_day = None
-                onset_date = None
-
-                if forecast_window_start <= clim_onset_date <= forecast_window_end:
-                    # Climatological onset is within forecast window
-                    onset_day = (clim_onset_date - init_date).days
-
-                    # Apply the earliest onset date filter if requested
-                    if earliest_onset_date:
-                        if clim_onset_date.date() >= earliest_date.date():
-                            # Valid onset on or after the earliest onset date
-                            onset_date = clim_onset_date
-                            onsets_forecasted += 1
-                        else:
-                            # Reset if before the earliest onset date
-                            onset_day = None
-                            onset_date = None
-                    else:
-                        # No date filtering
-                        onset_date = clim_onset_date
-                        onsets_forecasted += 1
-
-                # Store result
-                result = {
-                    'init_time': init_time,
-                    'lat': lat,
-                    'lon': lon,
-                    'onset_day': onset_day,  # None if no onset forecasted
-                    'onset_date': onset_date.strftime('%Y-%m-%d') if onset_date is not None else None,
-                    'climatological_onset_doy': clim_onset_doy,
-                    'climatological_onset_date': clim_onset_date.strftime('%Y-%m-%d'),
-                    'obs_onset_date': obs_onset_dt.strftime('%Y-%m-%d')  # Store observed onset for reference
-                }
-                results_list.append(result)
-
-    # Convert to DataFrame
-    climatology_forecast_df = pd.DataFrame(results_list)
+    if valid_inits:
+        onset_day = (clim_at - init_at) // np.timedelta64(1, "D")
+        climatology_forecast_df = pd.DataFrame({
+            'init_time': [init_dates[n] for n in i],
+            'lat': lats[j],
+            'lon': lons[k],
+            'onset_day': onset_day if in_window.all() else np.where(in_window, onset_day, np.nan),
+            'onset_date': np.where(in_window, dates(clim_date), None),
+            'climatological_onset_doy': doy,
+            'climatological_onset_date': np.where(no_clim, None, dates(clim_date)),
+            'obs_onset_date': dates(obs[j, k]),
+        })
+    else:
+        climatology_forecast_df = pd.DataFrame([])
 
     print(f"\nClimatology Forecast Summary:")
     print(f"Total potential initializations: {total_potential_inits}")
