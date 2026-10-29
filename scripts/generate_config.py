@@ -42,6 +42,8 @@ Optional env vars (with defaults matching the demo config):
   ROMP_MODEL_LEAD_LABEL - start or end (default: from the day boundary)
   ROMP_CHECK_ALIGNMENT  - True/False (default: True)
   ROMP_DRY_SPELL_CHECK  - False drops the definition's dry-spell condition (default: True; both modes)
+  ROMP_FORECAST_HISTORY - observed or none (default: observed; definition mode only)
+  ROMP_THRESHOLD_SOURCE - observations or model (default: observations; definition mode only)
   ROMP_ONSET_BACKEND    - numba, reference or gpu (default: numba)
   ROMP_START_DATE       - evaluation start as YYYY-MM-DD (default: 2019-05-01)
   ROMP_END_DATE         - evaluation end as YYYY-MM-DD (default: 2024-07-31)
@@ -161,7 +163,8 @@ def parse_model_dims(val: str) -> dict | None:
 
 
 ONSET_ENV = ("ROMP_ONSET_DEFINITION", "ROMP_ONSET_SEASON", "ROMP_THRESHOLD_YEARS", "ROMP_THRESHOLDS",
-             "ROMP_OBS_DAY_BOUNDARY", "ROMP_MODEL_LEAD_LABEL", "ROMP_CHECK_ALIGNMENT", "ROMP_ONSET_BACKEND")
+             "ROMP_OBS_DAY_BOUNDARY", "ROMP_MODEL_LEAD_LABEL", "ROMP_CHECK_ALIGNMENT", "ROMP_ONSET_BACKEND",
+             "ROMP_FORECAST_HISTORY", "ROMP_THRESHOLD_SOURCE")
 FLAT_ONSET_ENV = ("ROMP_WET_INIT", "ROMP_WET_THRESHOLD", "ROMP_WET_SPELL", "ROMP_DRY_SPELL", "ROMP_DRY_EXTENT",
                   "ROMP_THRESH_FILE")
 
@@ -182,6 +185,16 @@ def parse_thresholds(val: str) -> dict | None:
     if not isinstance(mapping, dict) or not all(isinstance(v, str) for v in mapping.values()):
         raise ValueError('must be a JSON object like {"name": "path.nc:variable"}')
     return mapping
+
+
+def parse_choice(*allowed):
+    """A parser accepting only the allowed strings."""
+    def parse(val: str) -> str:
+        """Return val if it is one of the allowed strings."""
+        if val not in allowed:
+            raise ValueError(f"must be one of {', '.join(allowed)}")
+        return val
+    return parse
 
 
 def onset_values() -> dict:
@@ -211,6 +224,8 @@ def onset_values() -> dict:
         "model_lead_label": _parsed("ROMP_MODEL_LEAD_LABEL", "", optional_path),
         "check_alignment": _parsed("ROMP_CHECK_ALIGNMENT", "True", parse_bool),
         "onset_backend": opt("ROMP_ONSET_BACKEND", "numba"),
+        "forecast_history": _parsed("ROMP_FORECAST_HISTORY", "observed", parse_choice("observed", "none")),
+        "threshold_source": _parsed("ROMP_THRESHOLD_SOURCE", "observations", parse_choice("observations", "model")),
         **dry_spell_check,
     }
 

@@ -2,7 +2,7 @@
 
 import pandas as pd
 import numpy as np
-from momp.io.input import load_thresholds, get_initialization_dates
+from momp.io.input import load_thresholds, load_history, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly
 from momp.io.input import load_imd_rainfall
 from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
@@ -493,7 +493,8 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
             print(f"Found onset in {(~pd.isna(onset_da.values)).sum()} out of {onset_da.size} grid points")
 
             print("Computing onset for all ensemble members...")
-            onset_all_members, _ = compute_onset_for_all_members(p_model_slice, thresh_slice, onset_da, **kwargs)
+            onset_all_members, _ = compute_onset_for_all_members(p_model_slice, thresh_slice, onset_da,
+                                                           history=load_history(year, rainfall_ds_slice, **kwargs), **kwargs)
             print(f"Found onset in {onset_all_members['onset_day'].notna().sum()} member cases")
 
             print("Creating forecast-observation pairs...")

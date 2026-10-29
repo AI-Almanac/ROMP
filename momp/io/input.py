@@ -7,9 +7,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
-from momp.lib.onset_config import Thresholds, forecast_reach, is_legacy, onset_setup
-from momp.onset.climatology import ThresholdCache, harmonic_seasons
-from momp.onset.ingest import ingest
+from momp.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, is_legacy, onset_setup
+from momp.onset import definition as definition_mod
+from momp.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
+from momp.onset.ingest import ingest, ingest_forecast
 from momp.utils.standard import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble
 from momp.utils.region import region_select
 from momp.utils.practical import restore_args
@@ -92,6 +93,51 @@ def _harmonic_cached(cache_dir, rain, years):
     return result
 
 
+def _model_forecasts(setup, years, kwargs):
+    """Yield the model's forecasts of each reference year as ForecastRain, with ROMP's loader and unit conversion."""
+    loader = get_forecast_probabilistic_twice_weekly if kwargs.get("probabilistic") \
+        else get_forecast_deterministic_twice_weekly
+    found = False
+    for year in range(years[0], years[1] + 1):
+        try:
+            cube = loader(year, **kwargs)
+        except FileNotFoundError as exc:
+            print(f"Model climatology: skipping year {year} ({exc})")
+            continue
+        found = True
+        order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
+        yield ingest_forecast(cube.transpose(*order), day_boundary=setup.forecast_boundary,
+                              lead_label=setup.lead_label, units="mm", source=str(kwargs.get("model")))
+    if not found:
+        raise FileNotFoundError(f"no forecast file of {kwargs.get('model')} for the years {years[0]}-{years[1]}")
+
+
+def _model_thresholds(setup, pending, years, cache_dir, kwargs):
+    """The model's own climatology of the pending thresholds, read from or written to the cache directory."""
+    window = (1, int(kwargs["max_forecast_day"]))
+    key = json.dumps([str(kwargs.get("model")), str(kwargs.get("model_dir")), [int(years[0]), int(years[1])],
+                      list(window), definition_mod.definition_hash(setup.definition), [repr(p) for p in pending],
+                      setup.lead_label, [int(d) for d in kwargs.get("init_days", ())],
+                      None if not kwargs.get("members") else [int(m) for m in kwargs["members"]]])
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    paths = {name: Path(cache_dir) / f"model_{name}_{digest}.nc" for name, _ in pending}
+    out = {}
+    if all(path.exists() for path in paths.values()):
+        for name, path in paths.items():
+            with xr.open_dataarray(path) as stored:
+                out[name] = stored.load()
+        return out
+    names = {name for name, _ in pending}
+    from dataclasses import replace
+    reduced = replace(setup.definition, thresholds=tuple((n, sp) for n, sp in setup.definition.thresholds if n in names))
+    computed = compute_thresholds_from_forecasts(reduced, _model_forecasts(setup, years, kwargs), years, window)
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    for name, array in computed.items():
+        array.to_netcdf(paths[name])
+        out[name] = array
+    return out
+
+
 def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
     """The named thresholds of the definition, as {name: DataArray(lat, lon)} in mm.
 
@@ -109,6 +155,12 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
     if not pending and not setup.derived_seasons:
         return thresholds
     years = setup.threshold_years
+    if pending and setup.threshold_source == "model":
+        thresholds.update(_model_thresholds(setup, pending, years, Path(dir_out) / ".onset_cache",
+                                            {"dir_out": dir_out, "region": region, **kwargs}))
+        pending = []
+        if not setup.derived_seasons:
+            return thresholds
     probe = _reference_rain(setup, (years[0], years[0]), {"dir_out": dir_out, "region": region, **kwargs})
     full = _LazyRain(probe, lambda: _reference_rain(setup, years, {"region": region, **kwargs}))
     cache_dir = Path(dir_out) / ".onset_cache"
@@ -128,7 +180,7 @@ def load_thresholds(**kwargs):
     if is_legacy(kwargs):
         return load_thresh_file(**kwargs)
     setup = onset_setup(kwargs)
-    key = (id(setup), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
+    key = (id(setup), str(kwargs.get("model")), str(kwargs.get("max_forecast_day")), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
            str(kwargs.get("region")))
     if key not in _loaded_thresholds:
         _loaded_thresholds[key] = load_onset_thresholds(setup, **kwargs)
@@ -312,3 +364,24 @@ def get_forecast_probabilistic_twice_weekly(year, *, model_dir, model_var, date_
     ds.close()
 
     return p_model
+
+
+def load_history(year, current, **kwargs):
+    """The observed rain to stitch before each forecast of `year`, or None when forecast_history is "none".
+
+    `current` is the year's observations (already loaded). The previous year's file is
+    added when a season or the rule's look-back reaches before 1 January; a missing
+    previous file is skipped, which makes the earliest searches INSUFFICIENT_DATA.
+    """
+    if is_legacy(kwargs):
+        return None
+    setup = onset_setup(kwargs)
+    if setup.forecast_history != "observed":
+        return None
+    if not history_needs_previous_year(setup):
+        return current
+    try:
+        previous = load_imd_rainfall(year - 1, **kwargs)
+    except FileNotFoundError:
+        return current
+    return xr.concat([previous, current], dim="time")

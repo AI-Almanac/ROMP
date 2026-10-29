@@ -88,11 +88,11 @@ def _check_steps(p_model, steps_needed):
                 < min steps required {steps_needed}, consider decrese dry_extent value")
 
 
-def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None):
+def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, history=None):
     """Run the engine on a forecast cube and line it up with the observed onsets.
 
     Returns a dict of numpy arrays shaped (init_time, [member], lat, lon): lead day
-    after init of the onset (-1 none), date, status; plus the valid-case mask
+    after init of the onset (NaN none; 0 or below for an onset back-dated by the observed history), date, status; plus the valid-case mask
     (init before the observed onset) and the observed onset dates (init_time, lat, lon).
     """
     setup = onset_setup(kwargs, thresh_slice)
@@ -103,12 +103,18 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None):
     cube = p_model.sel(step=slice(1, steps_needed))
     if "member" in cube.dims and members:
         cube = cube.sel(member=list(members))
-    forecast = ingest_forecast(cube, day_boundary=setup.forecast_boundary, lead_label=setup.lead_label,
-                               units="mm", source="forecast")
+    order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
+    forecast = ingest_forecast(cube.transpose(*order), day_boundary=setup.forecast_boundary,
+                               lead_label=setup.lead_label, units="mm", source="forecast")
     lat, lon = forecast.coords["lat"], forecast.coords["lon"]
+    stitched = None
+    if history is not None and not setup.legacy and setup.forecast_history == "observed":
+        on_grid = _on_grid(history, lat, lon).transpose("lat", "lon", ...)
+        stitched = ingest(on_grid, day_boundary=setup.ingest_boundary, units="mm", source="observed history")
     result = engine.detect_forecast(
         setup.definition, forecast, thresholds=_thresholds(setup, thresh_slice, lat, lon),
-        lead_window=(1, max_forecast_day), restrict_to_season=not setup.derived_seasons, backend=setup.backend)
+        lead_window=(1, max_forecast_day), restrict_to_season=not setup.derived_seasons, backend=setup.backend,
+        history=stitched)
     season = "window" if setup.derived_seasons else setup.season
     result = result.sel(season=season)
     if not setup.legacy and bool((result["status"] == Status.CENSORED).any()):
@@ -116,24 +122,32 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None):
                       "they are reported as no onset. Is max_forecast_day larger than the loaded leads allow?",
                       UserWarning)
     lead_dims = ("init_time", "member", "lat", "lon") if "member" in forecast.dims else ("init_time", "lat", "lon")
-    lead = result["onset_lead"].transpose(*lead_dims).values
     dates = result["onset_date"].transpose(*lead_dims).values
     status = result["status"].transpose(*lead_dims).values
     init = np.asarray(forecast.coords["init_time"])
     obs = onset_da.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE).transpose("lat", "lon")
     obs_values = obs.values.astype("datetime64[ns]")
     valid = ~np.isnat(obs_values)[None] & (init.astype("datetime64[ns]")[:, None, None] < obs_values[None])
-    offset = 1 if setup.lead_label == "start" else 0
     found = status == Status.ONSET
+    init_day = init.astype("datetime64[D]").reshape((-1,) + (1,) * (dates.ndim - 1))
+    days_after_init = (dates.astype("datetime64[D]") - init_day) / np.timedelta64(1, "D")
     return {"setup": setup, "init": init, "lat": np.asarray(lat), "lon": np.asarray(lon),
             "member": np.asarray(forecast.coords["member"]) if "member" in forecast.dims else None,
-            "day": np.where(found, np.nan_to_num(lead, nan=-1) - offset, -1).astype(np.int64), "date": dates, "status": status,
+            "day": np.where(found, days_after_init, np.nan), "date": dates, "status": status,
             "valid": valid, "obs": obs_values, "totals": (int(obs.size * len(init)), int((~np.isnat(obs_values)).sum()))}
 
 
 def _date_strings(values):
     """'%Y-%m-%d' text of datetime64 values, as a list."""
     return pd.DatetimeIndex(np.ravel(values)).strftime("%Y-%m-%d").tolist()
+
+
+def _print_back_dated(day, valid):
+    """Print how many scored forecast onsets lie on or before the init (back-dated by the observed history)."""
+    mask = np.broadcast_to(valid[:, None] if day.ndim == 4 else valid, day.shape)
+    count = int((day[mask] <= 0).sum())
+    if count:
+        print(f"Back-dated forecast onsets (onset_day <= 0, scored as documented in docs/onset_in_romp.md): {count}")
 
 
 def _print_status_counts(setup, status, valid):
@@ -143,8 +157,11 @@ def _print_status_counts(setup, status, valid):
     mask = np.broadcast_to(valid[:, None] if status.ndim == 4 else valid, status.shape)
     counts = np.bincount(status[mask].astype(np.int64), minlength=len(Status))
     print("Forecast onset searches by status: "
-          + ", ".join(f"{s.name} {int(counts[s])}" for s in Status if counts[s])
-          + "")
+          + ", ".join(f"{s.name} {int(counts[s])}" for s in Status if counts[s]))
+    if counts[Status.PRIOR]:
+        warnings.warn(f"{int(counts[Status.PRIOR])} forecast searches before the observed onset are PRIOR; the "
+                      "observed history confirmed an onset that the observed onset date does not show. They are "
+                      "reported as no onset.", UserWarning)
 
 
 def _names(status):
@@ -153,7 +170,7 @@ def _names(status):
     return labels[np.asarray(status, dtype=np.int64)]
 
 
-def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, **kwargs):
+def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, history=None, **kwargs):
     """Compute onset dates for deterministic model forecast.
 
     p_model has dims (init_time, lat, lon, step). Returns one row per (init, cell)
@@ -161,12 +178,12 @@ def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, **kwa
     columns init_time, lat, lon, onset_day (lead day, None if no onset), onset_date
     ('YYYY-MM-DD' or None) and obs_onset_date, plus onset_status for definitions.
     """
-    out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs)
+    out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs, history=history)
     setup, valid = out["setup"], out["valid"]
     print(f"Processing {len(out['init'])} init times x {len(out['lat'])} lats x {len(out['lon'])} lons...")
     i, j, k = np.nonzero(valid)
     day = out["day"][i, j, k]
-    has = day >= 0
+    has = ~np.isnan(day)
     onset_date = np.where(has, _date_strings(out["date"][i, j, k]), None).tolist() if len(i) else []
     columns = {
         "init_time": out["init"][i], "lat": out["lat"][j], "lon": out["lon"][k],
@@ -186,6 +203,7 @@ def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, **kwa
     print(f"Onsets found: {int(has.sum())}")
     print(f"Onset rate: {has.sum() / len(i):.3f}" if len(i) else "Onset rate: 0.000")
     _print_status_counts(setup, out["status"], valid)
+    _print_back_dated(out["day"], valid)
     return onset_df
 
 
@@ -200,7 +218,7 @@ def _ensemble_status(status, threshold, has_onset):
     return names
 
 
-def compute_onset_for_all_members(p_model, thresh_slice, onset_da, **kwargs):
+def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None, **kwargs):
     """Compute per-member and ensemble onsets.
 
     p_model has dims (init_time, member, lat, lon, step). The ensemble has an onset
@@ -210,13 +228,13 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, **kwargs):
     """
     members = kwargs.get("members")
     threshold = kwargs["onset_percentage_threshold"]
-    out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs, members=members)
+    out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs, members=members, history=history)
     setup, valid, day = out["setup"], out["valid"], out["day"]
     n_init, n_member = day.shape[0], day.shape[1]
     print(f"Processing {n_init} init times x {len(out['lat']) * len(out['lon'])} unique locations x {n_member} members...")
 
-    member_day = np.where(day >= 0, day, np.nan).astype(float)
-    count = (day >= 0).sum(axis=1)
+    member_day = day
+    count = (~np.isnan(day)).sum(axis=1)
     fraction = count / n_member if n_member > 0 else np.zeros(count.shape)
     with np.errstate(invalid="ignore"):
         mean_day = np.nanmean(member_day, axis=1) if n_member else np.full(count.shape, np.nan)
@@ -273,11 +291,12 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, **kwargs):
 
     print(f"\nProcessing Summary:")
     print(f"Generated {len(onset_df)} member-forecast combinations")
-    print(f"Found onset in {int(np.sum(member_values >= 0))} cases")
-    print(f"Onset rate: {np.mean(member_values >= 0):.3f}" if len(member_values) else "Onset rate: nan")
+    print(f"Found onset in {int(np.sum(~np.isnan(member_values)))} cases")
+    print(f"Onset rate: {np.mean(~np.isnan(member_values)):.3f}" if len(member_values) else "Onset rate: nan")
     print(f"Ensemble onsets found (>= {threshold:.0%} of members): {int(has_onset.sum())}")
     print(f"Ensemble onset rate: {has_onset.mean():.3f}" if len(has_onset) else "Ensemble onset rate: 0.000")
     _print_status_counts(setup, out["status"], valid)
+    _print_back_dated(member_day, valid)
     return onset_df, ensemble_df
 
 

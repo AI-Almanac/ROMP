@@ -53,6 +53,8 @@ class OnsetSetup:
     backend: str
     check_alignment: bool
     dry_check: str = "on"
+    forecast_history: str = "none"
+    threshold_source: str = "observations"
     sources: dict = field(default_factory=dict, compare=False)
 
     @property
@@ -91,6 +93,8 @@ class OnsetSetup:
         out.append(f"Day boundary     : {self.obs_day_boundary or 'unknown'}  [{src.get('obs_day_boundary')}]")
         out.append(f"Lead label       : {self.lead_label}  [{src.get('lead_label')}]")
         out.append(f"Dry-spell check  : {self.dry_check}  [{src.get('dry_check')}]")
+        out.append(f"Forecast history : {self.forecast_history}  [{src.get('forecast_history')}]")
+        out.append(f"Threshold source : {self.threshold_source}  [{src.get('threshold_source')}]")
         out.append(f"Backend          : {self.backend}  [{src.get('backend')}]")
         return out
 
@@ -202,7 +206,8 @@ def onset_setup(cfg, thresh_slice=None) -> OnsetSetup:
     if is_legacy(cfg):
         return _legacy_setup(cfg, thresh_slice)
     keys = ("onset_definition", "onset_season", "threshold_years", "thresholds", "obs_day_boundary",
-            "model_lead_label", "check_alignment", "onset_backend", "region", "dry_spell_check")
+            "model_lead_label", "check_alignment", "onset_backend", "region", "dry_spell_check",
+            "forecast_history", "threshold_source")
     key = repr([cfg.get(k) for k in keys])
     if key not in _cache:
         _cache[key] = _definition_setup(cfg)
@@ -225,6 +230,42 @@ def _dry_check(definition: Definition, cfg) -> tuple[Definition, str, str]:
     return replace(definition, rule=replace(definition.rule, reject_if=())), "off", source
 
 
+def _choices(cfg, key, allowed, default, legacy_mode):
+    """Validate forecast_history / threshold_source; legacy mode only allows the previous behaviour."""
+    value = cfg.get(key)
+    if value is None:
+        return default, "default"
+    if value not in allowed:
+        raise OnsetConfigError(f"{key} = {value!r} must be one of: {', '.join(repr(a) for a in allowed)}")
+    if legacy_mode and value != default:
+        raise OnsetConfigError(f"{key} = {value!r} needs an onset_definition; the old flat keys only work with "
+                               f"{key} = {default!r}. Fix: set onset_definition, or remove {key}")
+    return value, f"config {key}"
+
+
+def history_lookback(definition: Definition) -> int:
+    """How many days before the candidate any requirement or veto of the rule reads (0 if none)."""
+    compiled = plan_mod.compile(definition)
+    firsts = [c.first for c in compiled.conditions if not c.since_start] + [v.first for v in compiled.vetoes]
+    return max(0, -min(firsts, default=0))
+
+
+def history_needs_previous_year(setup: OnsetSetup) -> bool:
+    """Whether the observed history of a year may start in the previous year: a wrapping season, or a season start
+    closer to 1 January than the rule's look-back."""
+    import datetime
+
+    seasons = setup.definition.seasons
+    if isinstance(seasons, DerivedSeasons) or setup.forecast_history != "observed":
+        return False
+    season = next(s for s in seasons if s.name == setup.season)
+    start, end = season.start, season.end
+    if (end.month, end.day) < (start.month, start.day):
+        return True
+    doy = datetime.date(2001, start.month, start.day).timetuple().tm_yday + start.offset_days
+    return doy - history_lookback(setup.definition) < 1
+
+
 def _legacy_setup(cfg, thresh_slice) -> OnsetSetup:
     """Translate the flat keys; the day boundary is only known from an explicit key or the region."""
     flat = dict(cfg)
@@ -243,13 +284,16 @@ def _legacy_setup(cfg, thresh_slice) -> OnsetSetup:
         boundary, region_id = _region_value(chain, "day_boundary")
         origin = f"region default ({region_id})" if boundary else "unknown"
     definition, dry_check, dry_source = _dry_check(definition, cfg)
+    history, history_source = _choices(cfg, "forecast_history", ("observed", "none"), "none", True)
+    source, source_source = _choices(cfg, "threshold_source", ("observations", "model"), "observations", True)
     backend, note = _backend(cfg.get("onset_backend") or "numba")
-    sources = {"dry_check": dry_source, "definition": "old flat keys", "season": "from start_date/earliest_onset_date to end_date + 47 days",
+    sources = {"dry_check": dry_source, "forecast_history": "legacy mode", "threshold_source": "legacy mode",
+               "definition": "old flat keys", "season": "from start_date/earliest_onset_date to end_date + 47 days",
                "threshold_years": "legacy mode", "obs_day_boundary": origin,
                "lead_label": "legacy convention: lead k is init + k",
                "backend": note or "config onset_backend"}
     return OnsetSetup(True, definition, legacy.LEGACY_SEASON, None, (), boundary, "end", backend,
-                      bool(cfg.get("check_alignment", True)), dry_check, sources)
+                      bool(cfg.get("check_alignment", True)), dry_check, history, source, sources)
 
 
 def _definition_setup(cfg) -> OnsetSetup:
@@ -336,10 +380,20 @@ def _definition_setup(cfg) -> OnsetSetup:
             raise OnsetConfigError(f"model_lead_label = {label!r} must be \"start\" or \"end\"")
 
     definition, dry_check, sources["dry_check"] = _dry_check(definition, cfg)
+    history, sources["forecast_history"] = _choices(cfg, "forecast_history", ("observed", "none"), "observed", False)
+    source, sources["threshold_source"] = _choices(cfg, "threshold_source", ("observations", "model"),
+                                                   "observations", False)
+    if source == "model":
+        for name, spec in definition.thresholds:
+            if name not in covered and spec.kind not in ("mean_total", "mean_daily"):
+                raise OnsetConfigError(
+                    f"threshold_source = 'model' cannot compute threshold '{name}' of '{definition.id}' "
+                    f"({spec.kind}); the model's climatology supports only mean-based thresholds. "
+                    "Fix: set threshold_source = 'observations' or give that threshold in thresholds = {...}")
     backend, note = _backend(cfg.get("onset_backend") or "numba")
     sources["backend"] = note or "config onset_backend"
     return OnsetSetup(False, definition, season, years, files, boundary, label, backend,
-                      bool(cfg.get("check_alignment", True)), dry_check, sources)
+                      bool(cfg.get("check_alignment", True)), dry_check, history, source, sources)
 
 
 def check_config(dic: dict) -> None:

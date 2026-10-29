@@ -1,6 +1,6 @@
 """Onset contingency metrics (TP/FP/FN/TN, MAE) for model or climatology forecasts across years."""
 
-from momp.io.input import load_thresholds, get_initialization_dates
+from momp.io.input import load_thresholds, load_history, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly, get_forecast_deterministic_twice_weekly
 from momp.io.input import load_imd_rainfall
 from momp.stats.detect import detect_observed_onset, compute_onset_for_deterministic_model, compute_onset_for_all_members
@@ -10,6 +10,11 @@ from momp.utils.practical import restore_args
 
 import numpy as np
 import pandas as pd
+
+
+def has_model_onset_early(model_onset, t_init):
+    """Whether a forecast onset exists and lies on or before the init date."""
+    return not pd.isna(model_onset) and model_onset <= t_init
 
 
 def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification_window, **kwargs):
@@ -53,6 +58,14 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
             t_init = init_row['init_dt']
             model_onset = init_row['model_onset_dt']
 
+            # A forecast onset on or before the init (back-dated by the observed history) is
+            # judged as if it fell on the first lead: it can be a hit or a false alarm in a
+            # window starting at lead 1 and is ignored, like any early onset, in later windows.
+            if has_model_onset_early(model_onset, t_init):
+                model_onset_in_window = t_init + pd.Timedelta(days=1)
+            else:
+                model_onset_in_window = model_onset
+
             valid_window_start = t_init + pd.Timedelta(days=forecast_bin_start)
             valid_window_end = t_init + pd.Timedelta(days=forecast_bin_end)
 
@@ -69,7 +82,7 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
             has_model_onset = not pd.isna(model_onset)
 
             if has_model_onset:
-                is_model_in_valid_window = valid_window_start <= model_onset <= valid_window_end
+                is_model_in_valid_window = valid_window_start <= model_onset_in_window <= valid_window_end
 
                 if is_model_in_valid_window:
                     abs_diff_days = abs((model_onset - gt_grd).days)
@@ -82,7 +95,7 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
                         mae_fp.append(abs_diff_days)
 
                 else:
-                    if model_onset > valid_window_end: #make sure no model onset in early bins
+                    if model_onset_in_window > valid_window_end: #make sure no model onset in early bins
                         if is_obs_onset_in_whole_window:
                             FN += 1
                         else:
@@ -182,6 +195,7 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         # obs onset
         imd = load_imd_rainfall(year, **kwargs)
         onset_da = detect_observed_onset(imd, thresh_da, year, **kwargs)
+        history = load_history(year, imd, **kwargs)
         # extract forecast at approporiate init dates
         if probabilistic:
             print("Extracting ensemble forecast data ...")
@@ -197,13 +211,13 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         if probabilistic: # emsemble forecast onset
             print("Computing onset for ensemble forecast ...")
             _, onset_df = compute_onset_for_all_members(
-                p_model, thresh_da, onset_da, **kwargs
+                p_model, thresh_da, onset_da, history=history, **kwargs
             )
 
         elif not ref_clim: # deterministic model onset
             print("Computing onset for model forecast ...")
             onset_df = compute_onset_for_deterministic_model(
-                p_model, thresh_da, onset_da, **kwargs
+                p_model, thresh_da, onset_da, history=history, **kwargs
             )
 
         elif ref_clim: # climatology as forecast
@@ -268,6 +282,7 @@ def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         # obs onset
         imd = load_imd_rainfall(year, **kwargs)
         onset_da = detect_observed_onset(imd, thresh_da, year, **kwargs)
+        history = load_history(year, imd, **kwargs)
 
         # extract forecast at approporiate init dates
         if probabilistic and not ref_clim:
@@ -277,7 +292,7 @@ def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
             print("...")
 
             print("-------Computing onset for ensemble forecast ...")
-            _, onset_df = compute_onset_for_all_members(p_model, thresh_da, onset_da, **kwargs)
+            _, onset_df = compute_onset_for_all_members(p_model, thresh_da, onset_da, history=history, **kwargs)
             print("...")
 
         elif ref_clim: # climatology as forecast

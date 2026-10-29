@@ -83,6 +83,8 @@ class Setting:
     model_lead_label: Optional[str] = field(default=None)
     check_alignment: bool = field(default=True)
     dry_spell_check: bool = field(default=True)
+    forecast_history: Optional[str] = field(default=None)
+    threshold_source: Optional[str] = field(default=None)
     onset_backend: str = field(default="numba")
     # Set by the loader in definition mode: the (first, last) leads searched.
     lead_window: Optional[tuple[int, int]] = field(default=None)

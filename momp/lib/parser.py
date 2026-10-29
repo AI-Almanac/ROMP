@@ -53,6 +53,11 @@ def create_parser(config, cli_args=None):
             help=f"Keep the definition's dry-spell condition, True or False (default: {config['dry_spell_check']})"
         )
 
+    for name, choices in (("forecast_history", ("observed", "none")), ("threshold_source", ("observations", "model"))):
+        if name in config:
+            parser.add_argument(f"--{name}", choices=choices, default=config[name],
+                                help=f"{name}: {' or '.join(choices)} (default: {config[name]})")
+
     parser.add_argument(
         "--onset_percentage_threshold",
         type=float,

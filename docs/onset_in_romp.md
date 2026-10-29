@@ -83,6 +83,48 @@ the effect of `dry_extent = 0`. In code: `definition.without_dry_spell_check(def
 and `python -m momp.onset describe <id> --no-dry-spell-check` prints the variant.
 Env var for generated configs: `ROMP_DRY_SPELL_CHECK`.
 
+## Forecast history
+
+`forecast_history = "observed"` (the default for definitions) searches each forecast
+together with the observed rain up to the day before its first lead. A wet spell
+that began in the observations can be completed by the forecast, and a season that
+started before the init is searched from its start. Nothing observed on or after
+lead 1's date is read. `"none"` searches the forecast leads alone, as earlier runs
+did; old flat-key configs always use it. ROMP loads the previous year's observations
+as well when the season wraps over New Year or the rule looks back past 1 January.
+
+Statuses: when the observations alone already confirm the onset the result is
+`PRIOR`; ROMP still scores nothing for those inits, because inits on or after the
+cell's observed onset produce no rows (a `PRIOR` result in a scored row is counted,
+warned about and reported as no onset). A forecast may also complete an onset that
+began before the init: the row then has `onset_day <= 0` (days after the init; the
+date is in the observed history) and status `ONSET`.
+
+How back-dated onsets (`onset_day <= 0`) are scored:
+
+* Deterministic and ensemble-mean tables (`compute_onset_metrics_with_windows`): the
+  onset is treated as falling on the first lead for window membership, so in a window
+  starting at lead 1 it is a hit if its real date is within the tolerance of the
+  observed onset and a false alarm otherwise; in windows starting later it is ignored,
+  like any forecast onset before the window. MAE uses its real date. Before this
+  rule such onsets were dropped from every window, which also applied to an onset on
+  the init day itself (lead 1 with lead label "start"); this changes `"none"` runs
+  with that label slightly.
+* Ensemble probability bins: members with `onset_day < 1` fall in the "Before day 1"
+  bin, where the observed onset (always after the init in scored rows) is 0, so they
+  are penalised by the Brier score.
+
+## Threshold source
+
+`threshold_source = "observations"` computes climatological thresholds from the
+reference observations; `"model"` computes them from the model's own forecasts: the
+mean over the leads 1 to `max_forecast_day`, the forecast days whose date lies in the
+threshold's `during` period in `threshold_years`, with ROMP's forecast loader (init
+days, unit conversion). Only mean-based thresholds (`mean total over`,
+`mean daily rain`) support it; others are an error naming them. Results are cached
+under `dir_out/.onset_cache` by model, years, lead window and definition hash. Old
+flat-key configs use observations only.
+
 ## Legacy mode
 
 A config with no `onset_definition` key but the old flat keys runs as before
