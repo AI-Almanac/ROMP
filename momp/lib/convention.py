@@ -149,7 +149,8 @@ class Setting:
     show_plot: bool = field(default=False)
     show_panel: bool = field(default=False)
 
-    parallel: bool = field(default=False)
+    parallel: bool = field(default=True)
+    parallel_workers: Optional[int] = field(default=None)
 
     debug: bool = field(default=False)
     project_name: str = field(default="ROMP application project")

@@ -203,7 +203,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
     from momp.lib.loader import use_config
     from momp.lib.onset_config import onset_setup
     from momp.lib.resolved import definition_lines, write_resolved
-    from momp.stats import detect, observed_cache
+    from momp.stats import benchmark, climatology, detect, observed_cache
     from momp.io import input as io_input
     from momp.utils import mask as mask_mod
     from momp.utils.printing import print_momp_banner
@@ -213,6 +213,8 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
         run_folder.prepare(paths, overwrite)
     with logs.session(verbosity, paths.log_file if write else None):
         mask_mod.reset()
+        benchmark.reset_onset_tables()
+        climatology.reset_memo()
         detect._alignment_done.clear()
         io_input._loaded_thresholds.clear()
         io_input._reported_ingest.clear()
@@ -262,5 +264,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
             observed = _observed_dataset()
         finally:
             observed_cache.reset()
+            benchmark.reset_onset_tables()
+            climatology.reset_memo()
     return RunResult(observed=observed, scores=_scores(results, tables), folder=paths.root if write else None,
                      config=dic)

@@ -373,7 +373,7 @@ def test_observed_onsets_are_detected_once_per_run_for_all_models_and_references
         return real(rain, thresh, year, **kwargs)
 
     monkeypatch.setattr(stats_detect, "detect_observed_result", counting)
-    result = momp.run(_fresh(world, tmp_path, ("DET", "DETC")), quiet=True)
+    result = momp.run(_fresh(world, tmp_path, ("DET", "DETC")), quiet=True, parallel=False)   # the spy counts this process
     assert sorted(calls) == list(CLIM_YEARS)
     assert isinstance(result.observed, xr.Dataset) and list(result.observed["year"].values) == list(CLIM_YEARS)
     assert result.observed["onset_date"].dtype == np.dtype("datetime64[ns]")

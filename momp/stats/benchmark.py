@@ -9,6 +9,7 @@ from momp.stats.climatology import compute_climatological_onset, compute_climato
 from momp.stats.bins import counts_back_dated
 from momp.stats.climatology import compute_climatological_onset_dataset
 from momp.stats.conditional_climatology import CONDITIONAL_CLIMATOLOGY, compute_conditional_climatology_as_forecast
+from momp.stats.parallel import map_years
 from momp.utils.practical import restore_args
 
 import numpy as np
@@ -132,41 +133,39 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
     return metrics_df, summary_stats
 
 
-def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
-                                   thresh_file, thresh_var, wet_threshold,
-                                   wet_init, wet_spell, dry_spell, dry_threshold, dry_extent,
-                                   start_date, end_date, fallback_date, earliest_onset_date, years, years_clim,
-                                   model_dir, model_var, ref_model, date_filter_year, init_days,
-                                   unit_cvt, file_pattern, tolerance_days, verification_window, max_forecast_day,
-                                   members,  onset_percentage_threshold, probabilistic, save_nc_climatology, **kwargs):
+_ONSET_TABLES: dict = {}
+"""The onset tables of the source being scored: {family key: {year: (onset table, observed onsets)}} (see onset_tables)."""
+_PER_CASE = ("verification_window", "tolerance_days", "case_name")
+"""Case settings that change the metrics but not the onset dates, so cases differing in them share onset tables."""
 
-    """Compute onset metrics for multiple years."""
-    kwargs = restore_args(compute_metrics_multiple_years, kwargs, locals())
 
-    metrics_df_dict = {}
-    onset_da_dict = {}
+def reset_onset_tables() -> None:
+    """Forget the shared onset tables (a new run starts)."""
+    _ONSET_TABLES.clear()
 
-    # load onset precip threshold, 2-D or scalar
+
+def _family_key(ens, thresh_da, years, kwargs) -> str:
+    """Text identifying the onset tables a case needs: every setting except those that only change the metrics."""
+    items = sorted((k, repr(v)) for k, v in kwargs.items() if k not in _PER_CASE and k != "years")
+    return repr((bool(ens), id(thresh_da), tuple(years), items))
+
+
+def _onset_tables_of_years(*, years, ens, climatological_onset_doy=None, clim_onset=None, **kwargs):
+    """The onset table and the observed onsets of each year in years: {year: (onset_df, onset_da)}.
+
+    This is the part of the evaluation that reads and detects (the observed onsets, the forecast or climatology
+    onsets paired with them); the metrics of a verification window are computed from it, so one table serves every
+    window. The onset table has one row per (init, grid point) as compute_onset_for_deterministic_model (or, for
+    ensembles, compute_onset_for_all_members' ensemble table) gives. ens selects the ensemble variant of the
+    evaluation (a climatology source then never reads a forecast).
+    """
+    probabilistic = kwargs["probabilistic"]
+    ref_clim = (kwargs["model"] == "climatology")
+    ref_cond = (kwargs["model"] == CONDITIONAL_CLIMATOLOGY)
+    use_ensemble = (probabilistic and not ref_clim) if ens else probabilistic
     thresh_da = load_thresholds(**kwargs)
-
-    ref_clim = (kwargs['model'] == 'climatology')
-    ref_cond = (kwargs['model'] == CONDITIONAL_CLIMATOLOGY)
-
-    # observed onsets of the climatology years, the conditional climatology's training data
-    if ref_cond:
-        log.debug("Computing observed onsets of the climatology years for the conditional climatology")
-        clim_onset = compute_climatological_onset_dataset(**kwargs)
-
-    # calculate obs climatology onset
-    if ref_clim:
-        log.debug("Generating climatology onset doy for each year as onset_da_dict")
-        climatological_onset_doy = compute_climatological_onset(**kwargs)
-
-        # climatological onset as "obs" for climatology baseline metrics
-        onset_da_dict = {year: climatological_onset_doy for year in years}
-
-    # model onset vs obs onset
-    for year in progress(years, desc=f"{kwargs.get('model')} {verification_window} years"):
+    out = {}
+    for year in years:
         log.debug(f"\n{'-'*50}")
         log.debug(f"Processing year {year}")
 
@@ -175,63 +174,107 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         onset_da = detect_observed_onset(imd, thresh_da, year, **kwargs)
         history = load_history(year, imd, **kwargs)
         # extract forecast at approporiate init dates
+        p_model = None
         if ref_cond:
             pass
-        elif probabilistic:
+        elif use_ensemble:
             log.debug("Extracting ensemble forecast data ...")
             p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
-        elif not ref_clim:
+        elif not ref_clim and not ens:
             log.debug("Extracting model forecast data ...")
             p_model = get_forecast_deterministic_twice_weekly(year, **kwargs)
 
-        if not ref_cond and (probabilistic or not ref_clim):
+        if p_model is not None and (use_ensemble or not ref_clim):
             check_alignment_once(imd, p_model, **kwargs)
 
         # detect onset dates
-        if ref_cond: # conditional climatology as forecast
+        if ref_cond:  # conditional climatology as forecast
             log.debug("Computing onset for conditional climatology as forecast ...")
             onset_df = compute_conditional_climatology_as_forecast(
-                clim_onset, year, get_initialization_dates(year, **kwargs), onset_da, **kwargs
-            )
-
-        elif probabilistic: # emsemble forecast onset
+                clim_onset, year, get_initialization_dates(year, **kwargs), onset_da, **kwargs)
+        elif use_ensemble:  # ensemble forecast onset
             log.debug("Computing onset for ensemble forecast ...")
-            _, onset_df = compute_onset_for_all_members(
-                p_model, thresh_da, onset_da, history=history, **kwargs
-            )
-
-        elif not ref_clim: # deterministic model onset
+            _, onset_df = compute_onset_for_all_members(p_model, thresh_da, onset_da, history=history, **kwargs)
+        elif not ref_clim:  # deterministic model onset
             log.debug("Computing onset for model forecast ...")
-            onset_df = compute_onset_for_deterministic_model(
-                p_model, thresh_da, onset_da, history=history, **kwargs
-            )
-
-        elif ref_clim: # climatology as forecast
+            onset_df = compute_onset_for_deterministic_model(p_model, thresh_da, onset_da, history=history, **kwargs)
+        else:  # climatology as forecast
             log.debug("Computing onset for climatology as forecast ...")
-            init_dates = get_initialization_dates(year, **kwargs)
             onset_df = compute_climatology_as_forecast(
-                climatological_onset_doy, year, init_dates, onset_da,
-                **kwargs
-            )
+                climatological_onset_doy, year, get_initialization_dates(year, **kwargs), onset_da, **kwargs)
+        del p_model, imd, history
+        out[year] = (onset_df, onset_da)
+    return out
 
+
+def onset_tables(*, years, ens=False, **kwargs):
+    """The onset tables of the years, ({year: (onset_df, onset_da)}, extra), detected once for all verification windows.
+
+    The first case of a source (model, climatology, ...) detects every year, in worker processes unless
+    ``parallel`` is off; the cases of its other verification windows get the same tables back (they differ only in the
+    metrics). extra holds the climatological onset (a climatology source) and the climatology years' onsets
+    (conditional climatology). Only the source being scored is kept: a new source drops the previous one's tables.
+    """
+    thresh_da = load_thresholds(**kwargs)
+    key = _family_key(ens, thresh_da, years, kwargs)
+    if key not in _ONSET_TABLES:
+        _ONSET_TABLES.clear()
+        extra = {}
+        if kwargs["model"] == "climatology":
+            log.debug("Generating climatology onset doy for each year as onset_da_dict")
+            extra["climatological_onset_doy"] = compute_climatological_onset(**kwargs)
+        elif kwargs["model"] == CONDITIONAL_CLIMATOLOGY:
+            log.debug("Computing observed onsets of the climatology years for the conditional climatology")
+            extra["clim_onset"] = compute_climatological_onset_dataset(**kwargs)
+        chunks = map_years(_onset_tables_of_years, years, {**kwargs, "ens": ens, **extra}, skip=None)
+        tables = {}
+        for chunk in chunks:
+            tables.update(chunk)
+        _ONSET_TABLES[key] = {"tables": tables, "extra": extra, "pin": thresh_da}
+    held = _ONSET_TABLES[key]
+    wanted = set(years)
+    return ({year: (df, da.copy(deep=True)) for year, (df, da) in held["tables"].items() if year in wanted},
+            held["extra"])
+
+
+def _metrics_of_tables(tables, extra, **kwargs):
+    """The per-year metrics tables and observed onsets of one verification window, from the shared onset tables."""
+    years = kwargs["years"]
+    metrics_df_dict = {}
+    onset_da_dict = {}
+    ref_clim = (kwargs["model"] == "climatology")
+    if ref_clim:
+        # climatological onset as "obs" for climatology baseline metrics
+        climatological_onset_doy = extra["climatological_onset_doy"].copy(deep=True)
+        onset_da_dict = {year: climatological_onset_doy for year in years}
+    for year in progress(years, desc=f"{kwargs.get('model')} {kwargs['verification_window']} years"):
+        onset_df, onset_da = tables[year]
         # onset-obs metrics TP,TN,FP,FN for all locations and init times
         log.debug("Computing onset-obs metrics TP,TN,FP,FN for all locations and init times ...")
-        metrics_df, summary_stats = compute_onset_metrics_with_windows(
-            onset_df, **kwargs
-        )
-
+        metrics_df, summary_stats = compute_onset_metrics_with_windows(onset_df, **kwargs)
         metrics_df_dict[year] = metrics_df
-
         if not ref_clim:
             onset_da_dict[year] = onset_da
-
         log.debug(f"Year {year} completed. Grid points processed: {len(metrics_df)}")
         log.debug(f"Summary stats: TP={summary_stats['overall_true_positive']}, "
-              f"FP={summary_stats['overall_false_positive']}, "
-              f"FN={summary_stats['overall_false_negative']}, "
-              f"TN={summary_stats['overall_true_negative']}")
-
+                  f"FP={summary_stats['overall_false_positive']}, "
+                  f"FN={summary_stats['overall_false_negative']}, "
+                  f"TN={summary_stats['overall_true_negative']}")
     return metrics_df_dict, onset_da_dict
+
+
+def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
+                                   thresh_file, thresh_var, wet_threshold,
+                                   wet_init, wet_spell, dry_spell, dry_threshold, dry_extent,
+                                   start_date, end_date, fallback_date, earliest_onset_date, years, years_clim,
+                                   model_dir, model_var, ref_model, date_filter_year, init_days,
+                                   unit_cvt, file_pattern, tolerance_days, verification_window, max_forecast_day,
+                                   members,  onset_percentage_threshold, probabilistic, save_nc_climatology, **kwargs):
+
+    """Compute onset metrics for multiple years (the onset dates are detected once per source, see onset_tables)."""
+    kwargs = restore_args(compute_metrics_multiple_years, kwargs, locals())
+    tables, extra = onset_tables(ens=False, **kwargs)
+    return _metrics_of_tables(tables, extra, **kwargs)
 
 
 def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
@@ -242,78 +285,8 @@ def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
                                    unit_cvt, file_pattern, tolerance_days, verification_window, max_forecast_day,
                                    members,  onset_percentage_threshold, probabilistic, save_nc_climatology, **kwargs):
 
-    """Compute onset metrics for multiple years."""
+    """Compute onset metrics for multiple years, ensemble forecasts."""
 
     kwargs = restore_args(ens_compute_metrics_multiple_years, kwargs, locals())
-
-    metrics_df_dict = {}
-    onset_da_dict = {}
-
-    # load onset precip threshold, 2-D or scalar
-    thresh_da = load_thresholds(**kwargs)
-
-    ref_clim = (kwargs['model'] == 'climatology')
-    ref_cond = (kwargs['model'] == CONDITIONAL_CLIMATOLOGY)
-
-    if ref_cond:
-        clim_onset = compute_climatological_onset_dataset(**kwargs)
-
-    # calculate obs climatology onset
-    if ref_clim:
-        climatological_onset_doy = compute_climatological_onset(**kwargs)
-
-        # climatological onset as "obs" for climatology baseline metrics
-        onset_da_dict = {year: climatological_onset_doy for year in years}
-
-    for year in progress(years, desc=f"{kwargs.get('model')} {verification_window} years"):
-        log.debug(f"{'-'*50}")
-        log.debug(f"Processing year {year}")
-
-        # obs onset
-        imd = load_imd_rainfall(year, **kwargs)
-        onset_da = detect_observed_onset(imd, thresh_da, year, **kwargs)
-        history = load_history(year, imd, **kwargs)
-
-        # extract forecast at approporiate init dates
-        if ref_cond: # conditional climatology as forecast
-            log.debug("-------Computing onset for conditional climatology as forecast ...")
-            onset_df = compute_conditional_climatology_as_forecast(
-                clim_onset, year, get_initialization_dates(year, **kwargs), onset_da, **kwargs
-            )
-
-        elif probabilistic and not ref_clim:
-            log.debug("-------Extracting ensemble forecast data ...")
-            p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
-            check_alignment_once(imd, p_model, **kwargs)
-            log.debug("...")
-
-            log.debug("-------Computing onset for ensemble forecast ...")
-            _, onset_df = compute_onset_for_all_members(p_model, thresh_da, onset_da, history=history, **kwargs)
-            log.debug("...")
-
-        elif ref_clim: # climatology as forecast
-            log.debug("-------Computing onset for climatology as forecast ...")
-            init_dates = get_initialization_dates(year, **kwargs)
-            onset_df = compute_climatology_as_forecast(
-                climatological_onset_doy, year, init_dates, onset_da,
-                **kwargs
-            )
-
-        # onset-obs metrics TP,TN,FP,FN for all locations and init times
-        log.debug("-------Computing onset-obs metrics TP,TN,FP,FN for all locations and init times ...")
-        metrics_df, summary_stats = compute_onset_metrics_with_windows(
-            onset_df, **kwargs
-        )
-
-        metrics_df_dict[year] = metrics_df
-
-        if not ref_clim:
-            onset_da_dict[year] = onset_da
-
-        log.debug(f"Year {year} completed. Grid points processed: {len(metrics_df)}")
-        log.debug(f"Summary stats: TP={summary_stats['overall_true_positive']}, "
-              f"FP={summary_stats['overall_false_positive']}, "
-              f"FN={summary_stats['overall_false_negative']}, "
-              f"TN={summary_stats['overall_true_negative']}")
-
-    return metrics_df_dict, onset_da_dict
+    tables, extra = onset_tables(ens=True, **kwargs)
+    return _metrics_of_tables(tables, extra, **kwargs)

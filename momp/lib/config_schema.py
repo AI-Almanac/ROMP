@@ -149,6 +149,13 @@ def _number(value):
     return value
 
 
+def _workers(value):
+    """A number of workers: a whole number of 1 or more."""
+    if not _is_int(value) or value < 1:
+        raise ValueError
+    return value
+
+
 def _boolean(value):
     """True or false."""
     if not isinstance(value, bool):
@@ -373,6 +380,7 @@ KINDS: dict[str, tuple[str, Callable]] = {
     "int": ("a whole number", _integer),
     "number": ("a number", _number),
     "bool": ("true or false", _boolean),
+    "workers": ("a whole number of 1 or more", _workers),
     "date": ("a date, [year, month, day] or 'YYYY-MM-DD'", _date),
     "month_day": ("a month and day, [month, day] or 'MM-DD'", _month_day),
     "year_pair": ("a pair of years, [first, last] or 'first-last'", _pair),
@@ -437,7 +445,10 @@ def _fields() -> tuple[Field, ...]:
               + "; ".join(f"{k}: {h}" for k, (_, h) in MASK_KEYS.items()), None, nullable=True, fill=False),
         Field("shpfile_dir", "path", "shapefile for the region boundary in maps", None, nullable=True),
         Field("polygon", "bool", "mask and boundary from region polygons (params/region_def)", False),
-        Field("parallel", "bool", "compute with several cores", False),
+        Field("parallel", "bool", "compute years in several worker processes (false: one process); "
+              "write `parallel: {workers: N}` to choose the number", True),
+        Field("parallel_workers", "workers", "worker processes when parallel is on (parallel.workers); null: the "
+              "cores available, never more than there are years", None, nullable=True, fill=False),
         Field("debug", "bool", "developer mode: keep going on invalid config", False),
         Field("years", "years", "reserved: years to evaluate instead of start/end dates", None, nullable=True),
         Field("years_clim", "years", "reserved: climatology years instead of start/end", None, nullable=True),
@@ -637,6 +648,15 @@ def flatten_sections(raw: dict, errors: list[str]) -> tuple[dict, dict, dict]:
                     special[key][sub] = subvalue
                 else:
                     errors.append(unknown_key_message(str(sub), key))
+        elif key == "parallel" and isinstance(value, dict):
+            for sub, subvalue in value.items():
+                if sub == "workers":
+                    put(BY_KEY["parallel_workers"], subvalue, "parallel.workers")
+                elif sub == "enabled":
+                    put(BY_KEY["parallel"], subvalue, "parallel.enabled")
+                else:
+                    errors.append(f"'parallel.{sub}': unknown key.{suggest(str(sub), ('workers', 'enabled'))} "
+                                  "`parallel` is true, false, or a mapping of workers (and enabled)")
         elif key in BY_KEY and not BY_KEY[key].internal:
             put(BY_KEY[key], value, key)
         else:

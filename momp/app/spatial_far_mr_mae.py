@@ -16,7 +16,6 @@ from momp.io.output import add_back_dated_map, save_metrics_to_netcdf
 from momp.io.output import set_nested
 from momp.utils.mask import mask_attrs
 from momp.utils.printing import tuple_to_str_range
-from momp.stats.parallel import parallel_metrics_multiple_years
 from momp.lib.run_folder import file_name
 import logging
 from momp.utils.log import progress
@@ -55,10 +54,7 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
         case_cfg = {**asdict(case), **asdict(setting)}
 
         # model-obs onset benchmarking
-        if setting.parallel:
-            metrics_df_dict, onset_da_dict = parallel_metrics_multiple_years(**case_cfg)
-        else:
-            metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg)
+        metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg)
 
         # Create spatial metrics
         spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)
@@ -115,10 +111,7 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
         case_cfg_ref = {**asdict(case), **asdict(setting)}
 
         # model-obs onset benchmarking
-        if setting.parallel:
-            metrics_df_dict, onset_da_dict = parallel_metrics_multiple_years(**case_cfg_ref)
-        else:
-            metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
+        metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
 
         # Create spatial metrics
         spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)

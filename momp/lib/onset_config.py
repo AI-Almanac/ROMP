@@ -199,6 +199,17 @@ def _backend(requested):
 _cache: dict = {}
 
 
+_SETUP_KEYS = ("onset_definition", "onset_season", "threshold_years", "thresholds", "obs_day_boundary",
+               "model_lead_label", "check_alignment", "onset_backend", "region", "dry_spell_check",
+               "forecast_history", "threshold_source", "onset_override", "onset_rule")
+"""The config keys the onset setup (definition mode) is resolved from."""
+
+
+def setup_key(cfg) -> str:
+    """Text identifying the onset setup of a config (definition mode): equal for equal settings, in any process."""
+    return repr([cfg.get(k) for k in _SETUP_KEYS])
+
+
 def onset_setup(cfg, thresh_slice=None) -> OnsetSetup:
     """Resolve the onset settings of a config mapping (memoized in definition mode).
 
@@ -207,10 +218,7 @@ def onset_setup(cfg, thresh_slice=None) -> OnsetSetup:
     """
     if is_legacy(cfg):
         return _legacy_setup(cfg, thresh_slice)
-    keys = ("onset_definition", "onset_season", "threshold_years", "thresholds", "obs_day_boundary",
-            "model_lead_label", "check_alignment", "onset_backend", "region", "dry_spell_check",
-            "forecast_history", "threshold_source", "onset_override", "onset_rule")
-    key = repr([cfg.get(k) for k in keys])
+    key = setup_key(cfg)
     if key not in _cache:
         _cache[key] = _definition_setup(cfg)
     return _cache[key]

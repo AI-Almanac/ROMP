@@ -14,7 +14,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
-from momp.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, is_legacy, onset_setup
+from momp.utils.workers import ordered_prefetch, worker_count
+from momp.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, is_legacy, onset_setup, setup_key
 from momp.onset import definition as definition_mod
 from momp.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
 from momp.onset.ingest import IngestInfo, ingest, ingest_forecast_info
@@ -181,12 +182,12 @@ def _stream_reference(setup, years, kwargs, source):
     """
     from momp.onset.model import DailyRain
 
-    keep = _run_years(kwargs)
     first = date(years[0], 1, 1)
     total = (date(years[1], 12, 31) - first).days + 1
     out, offset = None, 0
-    for year in range(years[0], years[1] + 1):
-        rain = _reference_year(year, kwargs, keep)
+    for year, (rain, error) in zip(range(years[0], years[1] + 1), obs_years(range(years[0], years[1] + 1), kwargs)):
+        if error is not None:
+            raise error
         one = ingest(rain, day_boundary=setup.obs_day_boundary, units="mm", source=source)
         del rain
         if one.calendar != "standard" or one.tenths.shape[-1] != (date(year, 12, 31) - date(year, 1, 1)).days + 1 \
@@ -344,7 +345,7 @@ def load_thresholds(**kwargs):
     if is_legacy(kwargs):
         return load_thresh_file(**kwargs)
     setup = onset_setup(kwargs)
-    key = (id(setup), str(kwargs.get("model")), str(kwargs.get("max_forecast_day")), str(kwargs.get("verification_window_list")), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
+    key = (setup_key(kwargs), str(kwargs.get("model")), str(kwargs.get("max_forecast_day")), str(kwargs.get("verification_window_list")), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
            str(kwargs.get("region")))
     if key not in _loaded_thresholds:
         _loaded_thresholds[key] = load_onset_thresholds(setup, **kwargs)
@@ -388,6 +389,130 @@ def _obs_source(year, obs_dir, obs_file_pattern):
         f"Tried patterns: {file_patterns}. "
         f"Available files: {available_files}"
     )
+
+
+_OBS_ARGS = ("obs_dir", "obs_file_pattern", "obs_var", "obs_unit_cvt", "region")
+"""The settings that locate and read the observations (the rest of a config is passed on as kwargs)."""
+_GRID_ARGS = ("grid_point", "lat_select", "lon_select")
+"""Settings applied after a year is read (a single cell is picked out of it)."""
+_GROUP_BYTES = 1_500_000_000
+"""The most observation data read in one block when years are read together (a block is read, sliced per year, freed)."""
+
+
+def _read_obs_range(first, last, store, obs_var, obs_unit_cvt, region, kwargs):
+    """The region's box of a zarr store's observations from Jan 1 of first to Dec 31 of last, read in one pass.
+
+    Equal, year by year, to _read_obs_year (the same cells masked, the same unit factor); an archive chunked over
+    the whole time axis is decoded once for all the years instead of once per year.
+    """
+    ds = dim_fmt(open_store(store))
+    ds = ds[[obs_var]].sel(time=slice(f"{first}-01-01", f"{last}-12-31"))
+    da = region_select(ds[[obs_var]], read_by="time", **{**kwargs, "region": region,
+                                                         "dataset_name": str(kwargs.get("obs") or "obs")})[obs_var]
+    return _scale_in_place(_in_memory(da), obs_unit_cvt)
+
+
+def _long_time_chunks(store, obs_var) -> bool:
+    """Whether the store's time chunks are longer than a year, so each year read decodes data of other years too."""
+    try:
+        da = dim_fmt(open_store(store))[obs_var]
+        chunks = da.encoding.get("chunks")
+        return bool(chunks) and chunks[da.dims.index("time")] > 366
+    except Exception:  # noqa: BLE001 - an unreadable layout is read year by year, as before
+        return False
+
+
+def _year_slice(block, year, store):
+    """One year of a block read by _read_obs_range (a view of it); FileNotFoundError when the year is not in it."""
+    sub = block.sel(time=slice(f"{year}-01-01", f"{year}-12-31"))
+    if sub.sizes["time"] == 0:
+        raise FileNotFoundError(f"No observations for year {year} in {store}")
+    return sub
+
+
+def _estimated_year_bytes(store, obs_var) -> int:
+    """An upper bound of one year of the store's variable in memory (its whole grid, 366 days, as stored)."""
+    da = dim_fmt(open_store(store))[obs_var]
+    cells = int(np.prod([n for dim, n in da.sizes.items() if dim != "time"], dtype=np.int64))
+    return max(1, cells * da.dtype.itemsize * 366)
+
+
+def obs_years(years, kwargs, hold=True):
+    """Yield (rain, None), or (None, error), for each of the years' observations in order, as load_imd_rainfall gives them.
+
+    The years the run holds (the evaluated years and the year before each) are taken from, and kept in, the run's
+    observation cache. A zarr store chunked over many years is read in blocks of about 1.5 GB, each decoded once
+    and sliced per year; any other source is read a year at a time, the next few ahead in threads (zarr only;
+    NetCDF files are read one at a time, as HDF5 is not thread-safe). Memory stays at one block, or
+    a few years, however many years are asked for. hold=False reads without keeping even the held years.
+    """
+    years = list(years)
+    if not years:
+        return
+    args = {k: kwargs[k] for k in _OBS_ARGS}
+    skip = _OBS_ARGS + _GRID_ARGS
+    rest = {k: v for k, v in kwargs.items() if k not in skip}
+    keep = _run_years(kwargs) if hold else set()
+
+    def locate(year):
+        """(observation-cache key, zarr store or None, file path or None) of a year."""
+        store, path = _obs_source(year, args["obs_dir"], args["obs_file_pattern"])
+        return _obs_key(year, store, path, args["obs_var"], args["obs_unit_cvt"], args["region"], rest), store, path
+
+    def held(year):
+        """The array the run holds for the year, or None."""
+        with _obs_lock:
+            return _obs_years.get(locate(year)[0])
+
+    def finish(year, rainfall, view=False):
+        """Hold the year if the run does (a copy when it is a view of a block, so the block can be freed), then apply grid_point."""
+        if year in keep:
+            with _obs_lock:
+                rainfall = _obs_years.setdefault(locate(year)[0], rainfall.copy(deep=True) if view else rainfall)
+        if kwargs.get("grid_point"):
+            rainfall = rainfall.sel(lat=[kwargs["lat_select"]], lon=[kwargs["lon_select"]])
+        return rainfall
+
+    try:
+        store = locate(years[0])[1]
+    except FileNotFoundError:
+        store = None
+    if store is not None and len(years) > 1 and _long_time_chunks(store, args["obs_var"]):
+        per_block = max(1, _GROUP_BYTES // _estimated_year_bytes(store, args["obs_var"]))
+        for start in range(0, len(years), per_block):
+            group = years[start:start + per_block]
+            need = [year for year in group if held(year) is None]
+            block = _read_obs_range(min(need), max(need), store, args["obs_var"], args["obs_unit_cvt"],
+                                    args["region"], rest) if need else None
+            for year in group:
+                try:
+                    rainfall = held(year)
+                    if rainfall is None:
+                        yield finish(year, _year_slice(block, year, store), view=True), None
+                    else:
+                        yield finish(year, rainfall), None
+                except FileNotFoundError as exc:
+                    yield None, exc
+            del block
+        return
+
+    # NetCDF/HDF5 readers are not thread-safe: only a zarr store is read by several threads at once
+    readers = worker_count(kwargs, len(years)) if store is not None else 1
+
+    def single(year):
+        """One year read on its own (or the held one), or the error that stopped it."""
+        try:
+            rainfall = held(year)
+            if rainfall is None:
+                _, store, path = locate(year)
+                rainfall = _read_obs_year(year, store, path, args["obs_var"], args["obs_unit_cvt"], args["region"],
+                                          rest)
+            return rainfall, None
+        except Exception as exc:  # noqa: BLE001 - handed to the caller, which decides what a missing year means
+            return None, exc
+
+    for year, (rainfall, error) in zip(years, ordered_prefetch(single, years, readers)):
+        yield (finish(year, rainfall), None) if error is None else (None, error)
 
 
 def _read_obs_year(year, store, path, obs_var, obs_unit_cvt, region, kwargs):
@@ -434,6 +559,14 @@ def load_imd_rainfall(year, *, obs_dir, obs_file_pattern, obs_var, obs_unit_cvt,
     key = _obs_key(year, store, path, obs_var, obs_unit_cvt, region, kwargs)
     with _obs_lock:
         rainfall = _obs_years.get(key)
+    if rainfall is None and store is not None and year in _run_years(kwargs) and _long_time_chunks(store, obs_var):
+        # an archive chunked over many years: read all the years the run holds in one pass, not one decode per year
+        everything = {**kwargs, "obs_dir": obs_dir, "obs_file_pattern": obs_file_pattern, "obs_var": obs_var,
+                      "obs_unit_cvt": obs_unit_cvt, "region": region}
+        for _ in obs_years(sorted(_run_years(kwargs)), everything):
+            pass
+        with _obs_lock:
+            rainfall = _obs_years.get(key)
     if rainfall is None:
         rainfall = _read_obs_year(year, store, path, obs_var, obs_unit_cvt, region, kwargs)
         if year in _run_years(kwargs):

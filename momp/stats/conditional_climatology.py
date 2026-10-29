@@ -213,25 +213,6 @@ def _detect_observed_onset(year, kwargs):
     return detect_observed_onset(load_imd_rainfall(year, **kwargs), load_thresholds(**kwargs), year, **kwargs)
 
 
-def _pairs_for_chunk(task):
-    """Pair tables of one chunk of years (a picklable worker for the process pool)."""
-    chunk, clim_onset, kwargs = task
-    return multi_year_conditional_climatological_forecast_obs_pairs(clim_onset, **{**kwargs, "years": list(chunk)})
-
-
-def parallel_conditional_climatological_forecast_obs_pairs(clim_onset, **kwargs):
-    """multi_year_conditional_climatological_forecast_obs_pairs with the years split over processes."""
-    import os
-    from concurrent.futures import ProcessPoolExecutor
-
-    years = kwargs["years"]
-    workers = min(os.cpu_count() or 1, len(years))
-    chunks = np.array_split(np.asarray(years), workers)
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        tables = list(pool.map(_pairs_for_chunk, [(chunk, clim_onset, kwargs) for chunk in chunks if len(chunk)]))
-    return pd.concat(tables, ignore_index=True)
-
-
 def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, observed_onset_da, *,
                                                 max_forecast_day, earliest_onset_date, climatology_cv=None, **kwargs):
     """The conditional median onset as a deterministic forecast, one row per (init, lat, lon), as compute_climatology_as_forecast.

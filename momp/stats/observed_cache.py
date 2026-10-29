@@ -27,8 +27,9 @@ log = logging.getLogger(__name__)
 PARTS = ("obs_files", "obs_ingest", "cells", "definition", "thresholds", "years")
 """The parts of a fingerprint, in the order they are reported."""
 SUBFOLDER = "observed_onsets"
-_state = {"on": False, "dir": None}
+_state = {"on": False, "dir": None, "worker": False}
 _tables: dict = {}
+_new: list = []
 _announced: set = set()
 _memo: dict = {}
 
@@ -41,7 +42,8 @@ def activate(cache_dir=None) -> None:
 
 def reset() -> None:
     """Stop using the cache and forget the in-memory tables, announcements and memoised parts."""
-    _state.update(on=False, dir=None)
+    _state.update(on=False, dir=None, worker=False)
+    _new.clear()
     _tables.clear()
     _announced.clear()
     _memo.clear()
@@ -271,7 +273,10 @@ def store(rain, thresh, year, kwargs, onset) -> None:
         table = _table(fp, parts)
         table["years"][int(year)] = np.asarray(onset.values).astype("datetime64[ns]")
         table["lat"], table["lon"] = np.asarray(onset["lat"].values), np.asarray(onset["lon"].values)
-        _write(fp, parts, table)
+        if _state["worker"]:   # a worker process: the parent writes the entry (see absorb)
+            _new.append((fp, parts, int(year), table["years"][int(year)], table["lat"], table["lon"]))
+        else:
+            _write(fp, parts, table)
     except Exception as exc:  # noqa: BLE001 - the cache must never break a run
         log.debug("observed-onset cache store failed (%s)", exc)
 
@@ -279,3 +284,34 @@ def store(rain, thresh, year, kwargs, onset) -> None:
 def current() -> dict:
     """The in-memory tables of this run, {fingerprint: {"years": {year: values}, "lat", "lon"}} (for results)."""
     return _tables
+
+
+def export_state() -> dict:
+    """The cache as worker processes need it: its folder, the tables read or detected so far and which were announced."""
+    return {"dir": _state["dir"], "tables": dict(_tables), "announced": set(_announced)}
+
+
+def install_state(state: dict) -> None:
+    """Start a worker process's cache from the parent's state: reads the same folder, never writes to it."""
+    reset()
+    _state.update(on=True, dir=state["dir"], worker=True)
+    _tables.update(state["tables"])
+    _announced.update(state["announced"])
+
+
+def drain_new() -> list:
+    """The onset tables a worker detected since the last call, [(fingerprint, parts, year, values, lat, lon)]; clears them."""
+    out = list(_new)
+    _new.clear()
+    return out
+
+
+def absorb(records: list) -> None:
+    """Take onsets a worker detected into this process's cache (memory, and the folder when one is set), in order."""
+    if not _state["on"]:
+        return
+    for fp, parts, year, values, lat, lon in records:
+        table = _table(fp, parts)
+        table["years"][year] = values
+        table["lat"], table["lon"] = lat, lon
+        _write(fp, parts, table)

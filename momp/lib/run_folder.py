@@ -31,7 +31,7 @@ DEFINITION_FILE = "definition.yaml"
 LOG_FILE = "run.log"
 _NOT_IN_FINGERPRINT = {
     "dataset_report", "config_sources", "onset_lead_lines", "run_paths", "config_file", "cache_dir", "short_names",
-    "run_overrides", "work_dir", "pkg_dir", "dir_out", "dir_fig", "project_name", "debug", "parallel", "onset_backend",
+    "run_overrides", "work_dir", "pkg_dir", "dir_out", "dir_fig", "project_name", "debug", "parallel", "parallel_workers", "onset_backend",
     "show_plot", "show_panel", "save_fig", "save_nc_spatial_far_mr_mae", "save_csv_score", "save_nc_climatology",
     "save_onsets", "plot_spatial_far_mr_mae", "plot_heatmap_bss_auc", "plot_reliability", "plot_climatology_onset",
     "plot_panel_heatmap_error", "plot_panel_heatmap_skill", "plot_bar_bss_rpss_auc", "plot_portrait", "explain_cells",

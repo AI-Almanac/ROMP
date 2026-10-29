@@ -407,6 +407,8 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
     for year in years:
         log.debug(f"\n{'-'*50}")
         log.debug(f"Processing year {year}")
+        # let go of the previous year's cubes before this year's are read (peak memory: one year, not two)
+        p_model = p_model_slice = rainfall_ds = rainfall_ds_slice = onset_all_members = onset_da = None
 
         try:
             # Load model and observation data
@@ -433,6 +435,7 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
 
             # Add to master list
             all_forecast_obs_pairs.append(forecast_obs_pairs)
+            del p_model, p_model_slice, rainfall_ds, rainfall_ds_slice, onset_all_members, onset_da
 
             log.debug(f"Year {year} completed: {len(forecast_obs_pairs)} forecast-observation pairs")
 

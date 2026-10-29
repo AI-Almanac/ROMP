@@ -174,17 +174,25 @@ def load_blocks(da, block_dim):
     if da.variable._in_memory or block_dim not in da.dims or da.ndim == 0:
         return da.load()
     axis = da.dims.index(block_dim)
+    chunks = da.encoding.get("chunks")
+    chunks = chunks if chunks and len(chunks) == da.ndim else None
     row_bytes = max(1, da.dtype.itemsize * int(np.prod(da.shape[:axis] + da.shape[axis + 1:], dtype=np.int64)))
     rows = max(1, _BLOCK_BYTES // row_bytes)
-    chunks = da.encoding.get("chunks")
-    stored = chunks[axis] if chunks and len(chunks) == da.ndim else None
+    if chunks and rows < chunks[axis] and da.shape[axis] > rows:
+        # a block along block_dim would be part of one stored chunk, which every block would decode again (an
+        # archive chunked over the whole time axis): block along the axis with the most blocks instead
+        others = [n for n in range(da.ndim) if n != axis]
+        axis = max(others, key=lambda n: da.shape[n] / chunks[n])
+        row_bytes = max(1, da.dtype.itemsize * int(np.prod(da.shape[:axis] + da.shape[axis + 1:], dtype=np.int64)))
+        rows = max(1, _BLOCK_BYTES // row_bytes)
+    stored = chunks[axis] if chunks else None
     if stored:
         rows = max(1, rows // stored) * stored
     out = np.empty(da.shape, dtype=da.dtype)
     for start in range(0, da.shape[axis], rows):
         index = [slice(None)] * da.ndim
         index[axis] = slice(start, start + rows)
-        out[tuple(index)] = da.isel({block_dim: index[axis]}).values
+        out[tuple(index)] = da.isel({da.dims[axis]: index[axis]}).values
     return xr.DataArray(out, dims=da.dims, coords=da.coords, attrs=da.attrs, name=da.name)
 
 

@@ -1,6 +1,6 @@
 """Climatological onset dates from observed rainfall, and climatology used as a baseline forecast."""
 
-from momp.io.input import load_imd_rainfall, load_thresholds
+from momp.io.input import load_thresholds, obs_years
 from momp.stats.detect import detect_observed_onset
 from momp.utils.practical import restore_args
 
@@ -10,6 +10,24 @@ import pandas as pd
 import logging
 
 log = logging.getLogger(__name__)
+
+_MEMO: dict = {}
+"""Climatological onset datasets of this run: {key: (thresholds held so their id stays unique, dataset)}."""
+_MODEL_ONLY = ("model", "model_dir", "model_var", "file_pattern", "unit_cvt", "members", "case_name", "model_dims",
+               "verification_window", "tolerance_days", "accumulation", "daily_boundary", "day_bins",
+               "onset_percentage_threshold", "ref_model", "ref_model_dir", "ref_model_var", "ref_model_file_pattern",
+               "ref_model_unit_cvt", "ref_model_dims")
+"""Settings of the forecast model or of one case that do not change the observed onsets of the climatology years."""
+
+
+def reset_memo() -> None:
+    """Forget the climatological onsets kept for the run (a new run starts)."""
+    _MEMO.clear()
+
+
+def _read_years(years, kwargs):
+    """Yield (rain, None), or (None, error), for each year's observations (momp.io.input.obs_years: read in blocks or ahead)."""
+    return obs_years(years, kwargs)
 
 
 def compute_climatological_onset(*, years_clim,
@@ -34,19 +52,18 @@ def compute_climatological_onset(*, years_clim,
     all_onset_days = []
     rainfall_all_years = []
 
-    for year in years_clim:       
+    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, kwargs)):
         try:
             # Load rainfall data using the existing function that handles both patterns
+            if read_error is not None:
+                raise read_error
+            rainfall_ds = rain
+            del rain
             if grid_point:
                 if np.ndim(thresh_da) > 0:
                     raise ValueError("thresh_da must be scalar.")
 
-                rainfall_ds = load_imd_rainfall(year, **kwargs)
-
                 rainfall_all_years.append(rainfall_ds)
-
-            else:
-                rainfall_ds = load_imd_rainfall(year, **kwargs)
 
             # Detect onset for this year
             onset_da = detect_observed_onset(rainfall_ds, thresh_da, year, **kwargs)
@@ -215,6 +232,10 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     kwargs = restore_args(compute_climatological_onset_dataset, kwargs, locals())
 
     thresh_slice = load_thresholds(**kwargs)
+    key = repr((id(thresh_slice), sorted((k, repr(v)) for k, v in kwargs.items() if k not in _MODEL_ONLY)))
+    if key in _MEMO:
+        log.debug("Climatological onset dataset: reusing the one computed earlier in this run")
+        return _MEMO[key][1].copy(deep=True)
 
     log.debug(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
 
@@ -223,12 +244,15 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     valid_years = []
 
     # Process each year
-    for year in years_clim:
+    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, kwargs)):
         log.debug(f"\nProcessing year {year}...")
 
         try:
             # Load rainfall data for this year
-            rainfall_ds = load_imd_rainfall(year, **kwargs)
+            if read_error is not None:
+                raise read_error
+            rainfall_ds = rain
+            del rain
 
             # Select the same spatial domain as thresh_slice
             rainfall_slice = rainfall_ds
@@ -284,6 +308,5 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     log.debug(f"Total valid onsets: {total_valid:,}/{total_possible:,} ({total_valid/total_possible:.1%})")
     log.debug(f"Method: {climatological_onset_da.attrs['method']}")
 
-    # Show onset statistics by year
-
-    return climatological_onset_da
+    _MEMO[key] = (thresh_slice, climatological_onset_da)
+    return climatological_onset_da.copy(deep=True)
