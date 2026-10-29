@@ -51,6 +51,7 @@ class ROMPValidator:
         self._check_probabilistic_constraints()
         self._check_monsoon_logic()
         self._check_onset()
+        self._check_explain_cells()
 
         if self.errors:
             report = "\n".join([f"  • {err}" for err in self.errors])
@@ -148,6 +149,18 @@ class ROMPValidator:
             check_config(vars(self.cfg))
         except OnsetConfigError as exc:
             self._add_error(str(exc))
+
+    def _check_explain_cells(self):
+        """Check explain_cells is None or a list of (lat, lon) pairs of numbers."""
+        cells = getattr(self.cfg, "explain_cells", None)
+        if cells is None:
+            return
+        ok = isinstance(cells, (list, tuple)) and all(
+            isinstance(c, (list, tuple)) and len(c) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in c) for c in cells)
+        if not ok:
+            self._add_error("explain_cells must be None or a list of (lat, lon) pairs of numbers, "
+                            "e.g. [(9.0, 38.75), (8.5, 39.0)]")
 
     def _check_graphics_dependencies(self):
         """Validates that plot settings match data availability and output requirements."""

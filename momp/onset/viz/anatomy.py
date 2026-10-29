@@ -208,6 +208,21 @@ def _candidate_panel(ax, a: Anatomy, p: style.Palette, x0: int, handles: dict) -
     ax.tick_params(axis="y", length=0)
 
 
+def _headroom(ax, values: np.ndarray, floor: float | None = None) -> None:
+    """Set y-limits that keep a margin around the data so markers on the extremes are not cut by the axes edge.
+
+    With a floor (the rolling totals are never below 0) the ticks below it are dropped.
+    """
+    finite = values[np.isfinite(values)]
+    lo, hi = (float(finite.min()), float(finite.max())) if len(finite) else (0.0, 1.0)
+    if floor is not None:
+        lo = min(lo, floor)
+    pad = 0.12 * ((hi - lo) or 1.0)
+    ax.set_ylim(lo - pad, hi + pad)
+    if floor is not None:
+        ax.set_yticks([t for t in ax.get_yticks() if lo - 1e-9 <= t <= hi + pad])
+
+
 def _total_panel(ax, a: Anatomy, p: style.Palette, x0: int, index: int) -> None:
     """The rolling window total of the first total requirement for every candidate, against its threshold."""
     days, values, check0 = [], [], None
@@ -227,7 +242,7 @@ def _total_panel(ax, a: Anatomy, p: style.Palette, x0: int, index: int) -> None:
     if onset is not None:
         ax.plot([onset.day - x0], [next(ch.value for ch in onset.checks if ch.role == "require" and ch.index == index)],
                 marker="o", ms=style.MARKER_SIZE + 1, color=p.ink, ls="none", zorder=4)
-    ax.set_ylim(min(0.0, np.nanmin(values) if np.isfinite(values).any() else 0.0), None)
+    _headroom(ax, np.append(values, check0.limit), floor=0.0)
     ax.set_ylabel(f"{_total_label(check0)}\nfrom each candidate (mm)" if not check0.since_start else "season total (mm)")
 
 
@@ -242,6 +257,7 @@ def _curve_panel(ax, a: Anatomy, p: style.Palette, x0: int) -> None:
     ax.annotate(f"minimum {c.min_mm:.0f} mm, {format_date(a.date_of(c.min_day))}", (mx, c.min_mm),
                 xytext=(-8 if right else 8, 8), textcoords="offset points", ha="right" if right else "left",
                 va="bottom", size=8, color=p.ink)
+    _headroom(ax, np.append(c.cumulative_mm, 0.0))
     ax.set_ylabel(f"cumulative anomaly (mm)\nrain minus {c.baseline_mm:.3g} mm/day")
 
 
@@ -255,57 +271,74 @@ def _subtitle(fig: Figure, a: Anatomy, left: float, y: float, p: style.Palette) 
              size=9, color=p.ink_secondary, va="center")
 
 
+PANEL_RATIOS = {"rain": 3.6, "candidates": 1.1, "curve": 2.0, "total": 2.0}
+"""Relative heights of the anatomy panels."""
+
+
+def anatomy_panels(a: Anatomy) -> list[str]:
+    """Names of the panels an Anatomy has, top to bottom: "rain", then "candidates", then "curve" or "total"."""
+    panels = ["rain"]
+    if a.candidates:
+        panels.append("candidates")
+    if a.curve is not None or _first_total(a) is not None:
+        panels.append("curve" if a.curve is not None else "total")
+    return panels
+
+
+def draw_anatomy(axes: dict, a: Anatomy, p: style.Palette) -> None:
+    """Draw the panels of an Anatomy into given axes.
+
+    axes maps the names from anatomy_panels to Axes that share the x axis. Their positions must already
+    be final, because direct labels are placed by the width of the axes.
+    """
+    total_index = _first_total(a)
+    x0 = int(a.days[0])
+    n = len(a.days)
+    extra = max((ch.need_last for c in a.candidates if c.state == "U" for ch in c.checks
+                 if ch.outcome == "unknown"), default=a.days[-1]) - a.days[-1]
+    n_axis = n + max(int(extra), 0)
+    handles: dict = {}
+    _rain_panel(axes["rain"], a, p, x0, n_axis, handles)
+    if "candidates" in axes:
+        cand_handles: dict = {}
+        _candidate_panel(axes["candidates"], a, p, x0, cand_handles)
+        if cand_handles:
+            axes["candidates"].legend(cand_handles.values(), cand_handles.keys(), loc="lower right",
+                                      bbox_to_anchor=(1.0, 1.0), ncol=len(cand_handles), handletextpad=0.3,
+                                      columnspacing=1.2, labelcolor=p.ink_secondary)
+    if "total" in axes:
+        _total_panel(axes["total"], a, p, x0, total_index)
+    if "curve" in axes:
+        _curve_panel(axes["curve"], a, p, x0)
+    axes["rain"].legend(handles.values(), handles.keys(), loc="lower left", bbox_to_anchor=(0.0, 1.0),
+                        ncol=len(handles), handletextpad=0.5, columnspacing=1.4, labelcolor=p.ink_secondary)
+    last = list(axes.values())[-1]
+    last.set_xlim(-0.5, n_axis - 0.5)
+    ticks, labels = _tick_positions(a, n_axis)
+    last.set_xticks(ticks, labels)
+    years = sorted({date_ymd(d)[0] for d in a.dates})
+    last.set_xlabel(" - ".join(str(y) for y in (years[0], years[-1])) if len(years) > 1 else str(years[0]))
+    for ax in axes.values():
+        ax.tick_params(axis="x", length=3)
+
+
 def anatomy_plot(a: Anatomy, *, mode: str = "light", figsize: tuple[float, float] | None = None) -> Figure:
     """Draw the anatomy of one onset search as stacked panels sharing the date axis.
 
     mode is "light" or "dark". The figure has the daily rain, the candidate strip (first-passage rules)
     and the rolling total or cumulative anomaly (when the rule has one).
     """
-    total_index = _first_total(a)
-    panels = ["rain"]
-    if a.candidates:
-        panels.append("candidates")
-    if a.curve is not None or total_index is not None:
-        panels.append("curve" if a.curve is not None else "total")
-    ratios = {"rain": 3.6, "candidates": 1.1, "curve": 2.0, "total": 2.0}
-    size = figsize or (9.2, 2.2 + 0.85 * sum(ratios[k] for k in panels))
+    panels = anatomy_panels(a)
+    size = figsize or (9.2, 2.2 + 0.85 * sum(PANEL_RATIOS[k] for k in panels))
     with style.figure_style(mode) as p:
         fig = Figure(figsize=size, dpi=100)
         fig.set_facecolor(p.surface)
         left, right = 0.17, 0.89
         top, bottom = 1 - 1.3 / size[1], 0.65 / size[1]
         axes = fig.subplots(len(panels), 1, sharex=True,
-                            gridspec_kw={"height_ratios": [ratios[k] for k in panels], "hspace": 0.38,
+                            gridspec_kw={"height_ratios": [PANEL_RATIOS[k] for k in panels], "hspace": 0.38,
                                          "left": left, "right": right, "top": top, "bottom": bottom})
-        axes = np.atleast_1d(axes)
-        x0 = int(a.days[0])
-        n = len(a.days)
-        extra = max((ch.need_last for c in a.candidates if c.state == "U" for ch in c.checks
-                     if ch.outcome == "unknown"), default=a.days[-1]) - a.days[-1]
-        n_axis = n + max(int(extra), 0)
-        handles: dict = {}
-        by_name = dict(zip(panels, axes))
-        _rain_panel(by_name["rain"], a, p, x0, n_axis, handles)
-        if "candidates" in by_name:
-            cand_handles: dict = {}
-            _candidate_panel(by_name["candidates"], a, p, x0, cand_handles)
-            if cand_handles:
-                by_name["candidates"].legend(cand_handles.values(), cand_handles.keys(), loc="lower right",
-                                             bbox_to_anchor=(1.0, 1.0), ncol=len(cand_handles), handletextpad=0.3,
-                                             columnspacing=1.2, labelcolor=p.ink_secondary)
-        if "total" in by_name:
-            _total_panel(by_name["total"], a, p, x0, total_index)
-        if "curve" in by_name:
-            _curve_panel(by_name["curve"], a, p, x0)
-        by_name["rain"].legend(handles.values(), handles.keys(), loc="lower left", bbox_to_anchor=(0.0, 1.0),
-                               ncol=len(handles), handletextpad=0.5, columnspacing=1.4, labelcolor=p.ink_secondary)
-        axes[-1].set_xlim(-0.5, n_axis - 0.5)
-        ticks, labels = _tick_positions(a, n_axis)
-        axes[-1].set_xticks(ticks, labels)
-        years = sorted({date_ymd(d)[0] for d in a.dates})
-        axes[-1].set_xlabel(" - ".join(str(y) for y in (years[0], years[-1])) if len(years) > 1 else str(years[0]))
-        for ax in axes:
-            ax.tick_params(axis="x", length=3)
+        draw_anatomy(dict(zip(panels, np.atleast_1d(axes))), a, p)
         fig.text(left, 1 - 0.28 / size[1], _title(a), size=11, weight="semibold", color=p.ink, va="center")
         _subtitle(fig, a, left, 1 - 0.58 / size[1], p)
     return fig

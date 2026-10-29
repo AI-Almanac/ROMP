@@ -20,6 +20,7 @@ from momp.lib.loader import get_cfg, get_setting
 from momp.lib.assertion import ROMPConfigError
 from momp.app.bin_skill_score import skill_score_in_bins
 from momp.app.spatial_far_mr_mae import spatial_far_mr_mae_map
+from momp.lib.explain_cells import write_explain_cells
 from momp.lib.onset_config import onset_setup
 from momp.utils.printing import print_momp_banner
 
@@ -68,6 +69,8 @@ def run_momp(cfg=None, setting=None):
         print(f"  {line}")
     for line in getattr(cfg, "onset_lead_lines", ()):
         print(f"  {line}")
+
+    write_explain_cells(cfg)
 
     logger.info("Starting ROMP Workflow...")
 

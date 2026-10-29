@@ -114,6 +114,19 @@ How back-dated onsets (`onset_day <= 0`) are scored:
   bin, where the observed onset (always after the init in scored rows) is 0, so they
   are penalised by the Brier score.
 
+How many onsets were back-dated is reported so readers can see their weight (definition mode with
+`forecast_history = "observed"` only; legacy and `"none"` outputs are unchanged):
+
+* Spatial-metric NetCDFs: the per-cell variable `n_back_dated` is the number of scored init cases whose
+  forecast onset was back-dated, summed over the years with an observed onset in that cell, and the global
+  attribute `n_back_dated_total` is its sum over the grid. They count only for verification windows starting at
+  lead 1 (the only windows that score such onsets); other windows hold 0. For ensemble runs this is the
+  ensemble-mean onset. The climatology baseline has none.
+* Ensemble skill scores: `overall_skill_scores_<model>_<window>.csv` gets a column `back_dated_member_share`,
+  the share of the scored member onsets (members with an onset, in cases initialised before the observed
+  onset) dated on or before the init. A column was added rather than a sibling file because the only reader
+  (`panel_bar_skill`) selects columns by name. It is NaN when no member found an onset.
+
 ## Threshold source
 
 `threshold_source = "observations"` computes climatological thresholds from the

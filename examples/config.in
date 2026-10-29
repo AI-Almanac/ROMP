@@ -149,6 +149,11 @@ onset_backend = "numba"
 # Share (0.0 - 1.0) of ensemble members that must have an onset for the ensemble to have one.
 onset_percentage_threshold = 0.5
 
+# Cells to explain, a list of (lat, lon), e.g. [(9.0, 38.75)]. None = off. For each cell and
+# each year it writes an anatomy PNG and the explain() log of the observed onset search
+# into dir_fig/explain/. Needs an onset definition (not the old flat keys).
+explain_cells = None
+
 # ------------------------------------------------------------------------------
 # 7. TEMPORAL SETTINGS (Dates & Years)
 # ------------------------------------------------------------------------------

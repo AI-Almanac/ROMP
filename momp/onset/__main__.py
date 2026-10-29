@@ -1,4 +1,4 @@
-"""Command line for the onset component: python -m momp.onset {list,describe,regions,check-alignment}."""
+"""Command line for the onset component: python -m momp.onset {list,describe,regions,check-alignment,explain,schematic}."""
 from __future__ import annotations
 
 import argparse
@@ -67,6 +67,46 @@ def _check_alignment(args) -> int:
     return 0
 
 
+def _explain(args) -> int:
+    """Print the readable log of one cell's onset search and optionally save its anatomy plot."""
+    from momp.onset import climatology, explain
+    from momp.onset.model import DerivedSeasons
+
+    defn = definition.load(args.definition)
+    if args.no_dry_spell_check:
+        defn = definition.without_dry_spell_check(defn)
+    with xr.open_dataset(args.obs) as ds:
+        rain = ingest(ds[args.obs_var].load(), day_boundary=args.day_boundary, units=args.obs_units, source=args.obs)
+    thresholds = clim = None
+    years = tuple(args.threshold_years) if args.threshold_years else None
+    if defn.thresholds:
+        if years is None:
+            raise ValueError(f"definition '{defn.id}' needs thresholds; give --threshold-years Y0 Y1")
+        thresholds = climatology.compute_thresholds(defn, rain, years)
+    if isinstance(defn.seasons, DerivedSeasons):
+        if years is None:
+            raise ValueError(f"definition '{defn.id}' has derived seasons; give --threshold-years Y0 Y1")
+        clim = climatology.harmonic_seasons(rain, years)
+    anatomy = explain.trace_observed(defn, rain, lat=args.lat, lon=args.lon, year=args.year, thresholds=thresholds,
+                                     season_climatology=clim)
+    print(explain.explain(anatomy))
+    if args.png:
+        from momp.onset.viz.anatomy import anatomy_plot
+
+        anatomy_plot(anatomy, mode="dark" if args.dark else "light").savefig(args.png, dpi=150)
+        print(f"saved {args.png}")
+    return 0
+
+
+def _schematic(args) -> int:
+    """Save the schematic of a definition as a PNG."""
+    from momp.onset.viz.schematic import schematic
+
+    schematic(definition.load(args.definition), mode="dark" if args.dark else "light").savefig(args.png, dpi=150)
+    print(f"saved {args.png}")
+    return 0
+
+
 def main(argv=None) -> int:
     """Run the command line; returns the exit status."""
     parser = argparse.ArgumentParser(prog="python -m momp.onset", description=__doc__)
@@ -87,6 +127,26 @@ def main(argv=None) -> int:
     p.add_argument("--units", required=True, help='forecast units, e.g. "m" or "mm"')
     p.add_argument("--lead-label", required=True, choices=("start", "end"))
     p.set_defaults(run=_check_alignment)
+    p = sub.add_parser("explain", help="why one cell got its observed onset date: a log and an optional anatomy PNG")
+    p.add_argument("--obs", required=True, help="observation NetCDF file")
+    p.add_argument("--obs-var", required=True)
+    p.add_argument("--obs-units", default="mm", help="observation units (default mm)")
+    p.add_argument("--day-boundary", required=True, help='e.g. "00 UTC, labelled by start"')
+    p.add_argument("--definition", required=True, help="registry id or path of a YAML file")
+    p.add_argument("--lat", type=float, required=True)
+    p.add_argument("--lon", type=float, required=True)
+    p.add_argument("--year", type=int, required=True)
+    p.add_argument("--threshold-years", type=int, nargs=2, metavar=("Y0", "Y1"),
+                   help="years of the observations that thresholds are computed from")
+    p.add_argument("--no-dry-spell-check", action="store_true", help="explain the variant without the 'reject if' vetoes")
+    p.add_argument("--png", help="save the anatomy plot here")
+    p.add_argument("--dark", action="store_true", help="dark-mode plot")
+    p.set_defaults(run=_explain)
+    p = sub.add_parser("schematic", help="a picture of what a definition asks for")
+    p.add_argument("definition", help="registry id or path of a YAML file")
+    p.add_argument("--png", required=True, help="output file")
+    p.add_argument("--dark", action="store_true", help="dark-mode plot")
+    p.set_defaults(run=_schematic)
     args = parser.parse_args(argv)
     try:
         return args.run(args)
