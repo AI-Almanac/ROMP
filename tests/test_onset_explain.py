@@ -9,6 +9,7 @@ from momp.onset import engine, explain
 from momp.onset import model as m
 from momp.onset.model import Status
 from test_onset_engine import ANY_WET, TWO_WET, day_index, definition, make_forecast, make_rain, season
+from test_onset_engine import derived_setup, history_and_forecast
 from test_onset_forecast_layer import JJAS, case, hist_with
 from test_onset_oracle_agreement import random_data, random_definition
 
@@ -295,3 +296,45 @@ def test_thresholds_report_the_integers_compared():
     a = explain.trace_observed(definition(ge, (season("s", (3, 1), (5, 31)),), (("amt", m.ThresholdSpec("mean_daily")),)),
                                make_rain(np.zeros((1, 1, 366))), lat=-10, lon=-10, year=2000, thresholds={"amt": 3.27})
     assert a.thresholds[0].compared == {"ge": 33}
+
+
+DUNNING_THRESHOLDS = {"mean_daily_rain": np.array([[2.0, 2.0]])}
+
+
+@pytest.mark.parametrize("stitched", [False, True])
+@pytest.mark.parametrize("init,n_leads,k", [("2020-04-01", 130, "1"), ("2020-09-20", 110, "2")])
+def test_trace_forecast_derived_seasons_equal_detect_forecast(stitched, init, n_leads, k):
+    """For dunning (derived seasons) the traced forecast result equals detect_forecast's, forecast-only and stitched."""
+    defn = dfn.load("dunning")
+    _, clim = derived_setup()
+    hist, fc = history_and_forecast(init, n_leads, dry_spells=True)
+    use = hist if stitched else None
+    ds = engine.detect_forecast(defn, fc, thresholds=DUNNING_THRESHOLDS, history=use, season_climatology=clim,
+                                lead_window=(1, n_leads), backend="reference").sel(season=k)
+    for ci in range(2):
+        a = explain.trace_forecast(defn, fc, init=init, lat=0, lon=ci, history=use, thresholds=DUNNING_THRESHOLDS,
+                                   lead_window=(1, n_leads), season=k, season_climatology=clim)
+        assert a.season == k
+        assert_result_matches(a, ds, (0, 0, ci))
+        assert_internally_consistent(a)
+
+
+def test_trace_forecast_derived_seasons_need_a_climatology():
+    """Derived seasons without season_climatology give a clear ValueError naming it."""
+    hist, fc = history_and_forecast("2020-04-01", 40, dry_spells=True)
+    with pytest.raises(ValueError, match="season_climatology"):
+        explain.trace_forecast(dfn.load("dunning"), fc, init="2020-04-01", lat=0, lon=0,
+                               thresholds=DUNNING_THRESHOLDS)
+
+
+def test_trace_observed_derived_seasons_equal_detect_observed():
+    """trace_observed passes the season climatology through, so dunning's trace equals detect_observed's."""
+    defn = dfn.load("dunning")
+    _, clim = derived_setup()
+    hist, _ = history_and_forecast("2020-04-01", 40, dry_spells=True)
+    ds = engine.detect_observed(defn, hist, thresholds=DUNNING_THRESHOLDS, years=[2020], season_climatology=clim,
+                                backend="reference").sel(season="1")
+    for ci in range(2):
+        a = explain.trace_observed(defn, hist, lat=0, lon=ci, year=2020, season="1", thresholds=DUNNING_THRESHOLDS,
+                                   season_climatology=clim)
+        assert_result_matches(a, ds, (0, 0, ci))

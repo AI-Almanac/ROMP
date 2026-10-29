@@ -19,7 +19,7 @@ from momp.onset import plan as P
 from momp.onset.backends import reference
 from momp.onset.describe import describe
 from momp.onset.model import (
-    Curve, DailyRain, Definition, ForecastRain, Jobs, Status,
+    Curve, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status,
 )
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -648,7 +648,7 @@ def _find_member(forecast: ForecastRain, member) -> int | None:
 def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float | None, lon: float | None,
                    member=None, history: DailyRain | None = None, thresholds=None,
                    lead_window: tuple[int, int] = (1, 30), season: str | None = None,
-                   restrict_to_season: bool = True) -> Anatomy:
+                   restrict_to_season: bool = True, season_climatology: xr.Dataset | None = None) -> Anatomy:
     """Trace the onset search of one init (and member) at the cell nearest (lat, lon).
 
     With `history` the search is stitched (observed history before lead 1, then the forecast, with the
@@ -656,7 +656,14 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     the engine's own (build_forecast_jobs / build_stitched_jobs on the one-cell series), so the result
     equals detect_forecast's. Days are indexed in the stitched series (lead 1 is day `split`) or, without
     history, by lead - 1.
+
+    DerivedSeasons (with restrict_to_season=True) need season_climatology, as for detect_forecast
+    (dims (season, *spatial) on the forecast's grid); the traced cell's own season is used and `season`
+    picks among the derived seasons by name ("1", "2", ...; the first by default).
     """
+    if isinstance(defn.seasons, DerivedSeasons) and restrict_to_season and season_climatology is None:
+        raise ValueError("this definition has derived seasons: pass season_climatology "
+                         "(n_seasons, onset_doy, cessation_doy) to trace_forecast")
     plan = P.compile(defn)
     series_dims = forecast.dims[:-1]
     n_lead_dims = 2 if "member" in series_dims else 1
@@ -665,6 +672,9 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     cell = _cell_of(spatial_dims, forecast.coords, lat, lon)
     ii = _find_init(forecast, init)
     mi = _find_member(forecast, member)
+    clim1 = None
+    if season_climatology is not None:
+        clim1 = season_climatology.isel({d: slice(i, i + 1) for d, i in zip(spatial_dims, cell)})
     fc1 = _single_forecast(forecast, ii, mi, cell)
     per_cell = _cell_thresholds(plan, thresholds, spatial_dims, spatial_shape, cell)
     amounts, invalid = P.resolve_amounts(plan, per_cell, n_series=1)
@@ -677,7 +687,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     common = dict(location=_location(spatial_dims, forecast.coords, cell), year=None, init=init_date, member=member,
                   lead_label=forecast.lead_label)
     if history is None:
-        jobs, layout = engine.build_forecast_jobs(defn, fc1, lead_window, restrict_to_season)
+        jobs, layout = engine.build_forecast_jobs(defn, fc1, lead_window, restrict_to_season, clim1)
         k = _season_index(layout.season_names, season)
         start, end, data_end = int(jobs.start[k]), int(jobs.end[k]), int(jobs.data_end[k])
         labels = _Labels(forecast.calendar, fy, fm, fd)
@@ -686,7 +696,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
         return _build(defn, plan, case, per_cell, amounts, bool(invalid[0]), season=layout.season_names[k],
                       stitched=False, **common)
     hist1 = _single_rain(history, cell)
-    jobs, layout = engine.build_stitched_jobs(defn, hist1, fc1, lead_window, restrict_to_season)
+    jobs, layout = engine.build_stitched_jobs(defn, hist1, fc1, lead_window, restrict_to_season, clim1)
     k = _season_index(layout.season_names, season)
     split, start, end, data_end = (int(a[k]) for a in (jobs.split, jobs.start, jobs.end, jobs.data_end))
     hist_row = (*cell, slice(None))
