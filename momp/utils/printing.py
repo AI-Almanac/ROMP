@@ -58,18 +58,6 @@ def print_momp_banner(cfg):
 """
     print(banner)
 
-#  __  __   ___   __  __   ____
-# |  \/  | / _ \ |  \/  | |  _ \\
-# | |\/| || | | || |\/| | | |_) |
-# | |  | || |_| || |  | | |  __/
-# |_|  |_| \___/ |_|  |_| |_|
-#
-
-#def print_cfg(config, key_pattern):
-#    for key, value in config.items():
-#        if key.endswith(key_pattern) or key_pattern in key:
-#            print(f"{key}: {value}")
-
 
 def print_cfg(cfg, key_patterns):
     """
@@ -95,7 +83,7 @@ def print_data_info(data_dir, pattern="*.nc"):
     # List all .nc files
     nc_files = list(data_dir.glob(pattern))
     if not nc_files:
-        raise FileNotFoundError(f"No .nc files found in {shp_dir}")
+        raise FileNotFoundError(f"No .nc files found in {data_dir}")
     
     # Pick the first file
     first_file = nc_files[0]
