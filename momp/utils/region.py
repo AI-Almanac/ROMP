@@ -2,7 +2,7 @@
 import xarray as xr
 import numpy as np
 from momp.params.region_def import domain
-from momp.utils.land_mask import polygon_mask, mask_land, shp_mask, apply_nc_mask
+from momp.utils.land_mask import polygon_mask, mask_land, shp_mask, apply_nc_mask, land_mask_for
 import logging
 
 log = logging.getLogger(__name__)
@@ -131,19 +131,107 @@ def coords_fmt(ds_tag, *, region, **kwargs):
 
 
 
-def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,
-                  dir_fig=None, **kwargs):
-    """Subset `ds` to the region's lat/lon box, then limit it to the cells of the run's mask.
+def region_box(ds, *, region):
+    """Subset `ds` (Dataset or DataArray) to the region's lat/lon box, lazily: nothing is read from file here.
 
-    With a `mask` mapping (the config's ``mask:`` section) the mask is built on this dataset's own grid by
-    momp.utils.mask (dataset_name labels it in messages, records and the PNG saved to dir_fig); it replaces
-    the implicit land and country masks below and cannot be combined with nc_mask. Without `mask` the old
-    behaviour is unchanged: the optional NetCDF mask nc_mask, then the land mask and the country-shapefile mask.
+    Longitude and latitude are put in ROMP's orientation first (see coords_fmt). A dataset that has to cross the
+    longitude seam is loaded by swap_lon_axis; slice inits, leads and members before calling for large inputs.
     """
     lats, latn, lonw, lone, ds = coords_fmt(ds, region=region)
+    return ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
 
-    ds_reg = ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
 
+_KEEP_CACHE = {}
+
+
+def _keep_cells(lat, lon, region, land_only, shp_only):
+    """Boolean (lat, lon) array of the cells the implicit land and country masks keep; cached by grid and region.
+
+    The land part is momp.utils.land_mask.land_mask_for (cached per grid); the country part is shp_mask run on a
+    2-D field of ones, so the cells are exactly those the masks would leave unmasked on any data with these coordinates.
+    """
+    key = (np.asarray(lat).tobytes(), np.asarray(lon).tobytes(), str(region), bool(land_only), bool(shp_only))
+    if key not in _KEEP_CACHE:
+        keep = land_mask_for(lat, lon).copy() if land_only else np.ones((len(lat), len(lon)), dtype=bool)
+        if shp_only:
+            field = xr.DataArray(np.ones((len(lat), len(lon)), dtype="float32"), dims=("lat", "lon"),
+                                 coords={"lat": np.asarray(lat), "lon": np.asarray(lon)})
+            keep &= ~np.isnan(shp_mask(field, region=region).values)
+        _KEEP_CACHE[key] = keep
+    return _KEEP_CACHE[key]
+
+
+_BLOCK_BYTES = 64 * 1024 * 1024
+
+
+def load_blocks(da, block_dim):
+    """Read a (lazy) DataArray into memory once, filled block by block along block_dim.
+
+    The result is allocated once; each block (about 64 MB, a whole number of stored chunks when the source is
+    chunked) is read and copied in, so the reader's temporaries for fancy-indexed reads stay block sized instead of
+    the size of the whole selection. An array already in memory is returned as it is.
+    """
+    if da.variable._in_memory or block_dim not in da.dims or da.ndim == 0:
+        return da.load()
+    axis = da.dims.index(block_dim)
+    row_bytes = max(1, da.dtype.itemsize * int(np.prod(da.shape[:axis] + da.shape[axis + 1:], dtype=np.int64)))
+    rows = max(1, _BLOCK_BYTES // row_bytes)
+    chunks = da.encoding.get("chunks")
+    stored = chunks[axis] if chunks and len(chunks) == da.ndim else None
+    if stored:
+        rows = max(1, rows // stored) * stored
+    out = np.empty(da.shape, dtype=da.dtype)
+    for start in range(0, da.shape[axis], rows):
+        index = [slice(None)] * da.ndim
+        index[axis] = slice(start, start + rows)
+        out[tuple(index)] = da.isel({block_dim: index[axis]}).values
+    return xr.DataArray(out, dims=da.dims, coords=da.coords, attrs=da.attrs, name=da.name)
+
+
+def read_selection(obj, block_dim):
+    """Read a box-selected Dataset or DataArray into memory (see load_blocks); Dataset variables are read one by one."""
+    if isinstance(obj, xr.DataArray):
+        return load_blocks(obj, block_dim)
+    return obj.assign({name: load_blocks(var, block_dim) for name, var in obj.data_vars.items()})
+
+
+def _mask_in_place(da, keep):
+    """Set the cells outside `keep` (a (lat, lon) boolean array) to NaN in the array's own memory; returns da."""
+    if not np.issubdtype(da.dtype, np.floating):
+        return da.where(xr.DataArray(keep, dims=("lat", "lon"), coords={"lat": da["lat"], "lon": da["lon"]}))
+    data = da.values
+    view = np.moveaxis(data, (da.dims.index("lat"), da.dims.index("lon")), (-2, -1))
+    view[..., ~keep] = np.nan
+    return da
+
+
+def mask_region_loaded(obj, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,
+                       dir_fig=None, **kwargs):
+    """Limit an already loaded, box-selected Dataset or DataArray to the cells of the run's mask, others set to NaN.
+
+    The same cells as region_select keeps. With the implicit land and country masks the NaNs are written into the
+    array's own memory (one pass, no copy); a `mask` section or an nc_mask goes through momp.utils.mask or
+    apply_nc_mask as in region_select, which build a masked copy.
+    """
+    if mask or nc_mask:
+        return region_select_masks(obj, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
+                                   mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)
+    if not (land_only or shp_only):
+        return obj
+    keep = _keep_cells(obj["lat"].values, obj["lon"].values, region, land_only, shp_only)
+    if keep.all():
+        return obj
+    if isinstance(obj, xr.DataArray):
+        return _mask_in_place(obj, keep)
+    for name, var in obj.data_vars.items():
+        if "lat" in var.dims and "lon" in var.dims:
+            obj[name] = _mask_in_place(var, keep)
+    return obj
+
+
+def region_select_masks(ds_reg, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None,
+                        dataset_name=None, dir_fig=None):
+    """Apply the cell masks of region_select to a box-selected dataset: `mask`, else nc_mask, land and country masks."""
     if mask:
         if nc_mask:
             from momp.utils.mask import MaskError
@@ -158,7 +246,6 @@ def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, ma
     if nc_mask:
         ds_reg = apply_nc_mask(ds_reg, nc_mask)
 
-
     if land_only:
         ds_reg = mask_land(ds_reg)
 
@@ -166,3 +253,25 @@ def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, ma
         ds_reg = shp_mask(ds_reg, region=region)
 
     return ds_reg
+
+
+def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,
+                  dir_fig=None, read_by=None, **kwargs):
+    """Subset `ds` to the region's lat/lon box, then limit it to the cells of the run's mask.
+
+    With a `mask` mapping (the config's ``mask:`` section) the mask is built on this dataset's own grid by
+    momp.utils.mask (dataset_name labels it in messages, records and the PNG saved to dir_fig); it replaces
+    the implicit land and country masks below and cannot be combined with nc_mask. Without `mask` the old
+    behaviour is unchanged: the optional NetCDF mask nc_mask, then the land mask and the country-shapefile mask.
+
+    Without read_by the result stays lazy and the masks are applied with where. With read_by (a dim name) the
+    box is read into memory once, block by block along that dim, and the implicit masks are then written in place
+    (see mask_region_loaded): slice inits, leads and members before calling so only those are read.
+    """
+    ds_reg = region_box(ds, region=region)
+    if read_by:
+        ds_reg = read_selection(ds_reg, read_by)
+        return mask_region_loaded(ds_reg, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
+                                  mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)
+    return region_select_masks(ds_reg, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
+                               mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)

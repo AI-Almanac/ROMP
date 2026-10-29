@@ -45,6 +45,9 @@ def reset() -> None:
     _tables.clear()
     _announced.clear()
     _memo.clear()
+    from momp.io.input import clear_obs_cache
+
+    clear_obs_cache()
 
 
 def _digest(*chunks) -> str:
@@ -110,6 +113,12 @@ def _obs_files_hash(kwargs, years) -> str:
     key = ("files", str(kwargs.get("obs_dir")), str(kwargs.get("obs_file_pattern")), tuple(years))
     if key not in _memo:
         found = []
+        from momp.io.input import is_zarr
+
+        if is_zarr(kwargs["obs_dir"]):
+            store = Path(str(kwargs["obs_dir"]))
+            found = [_file_id(store / name) for name in ("zarr.json", ".zmetadata", ".zgroup")] + [list(years)]
+            years = ()
         for year in years:
             for pattern in kwargs.get("obs_file_pattern") or ():
                 path = Path(str(kwargs["obs_dir"])) / pattern.format(year)

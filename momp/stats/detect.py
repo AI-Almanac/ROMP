@@ -137,8 +137,8 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     if setup.legacy:
         _check_steps(p_model, steps_needed)
     cube = p_model.sel(step=slice(1, steps_needed))
-    if "member" in cube.dims and members:
-        cube = cube.sel(member=list(members))
+    if "member" in cube.dims and members and list(cube["member"].values) != list(members):
+        cube = cube.sel(member=list(members))  # the loader already took them; selecting again would copy the cube
     order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
     forecast = ingest_model_forecast(cube.transpose(*order), setup, kwargs, "forecast")
     lat, lon = forecast.coords["lat"], forecast.coords["lon"]

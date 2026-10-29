@@ -20,14 +20,20 @@ def usable_last_lead(n_leads: int, reach: int) -> int:
 
 
 def count_leads(dic: dict, index: int) -> int:
-    """Number of forecast leads (steps of at least 1) in the first year's file of model_list[index]."""
+    """Number of forecast leads (steps of at least 1) of model_list[index]: from the first year's file, or from the zarr store."""
+    from momp.io.input import is_zarr, open_store
+
     year = dic["start_date"][0]
-    path = os.path.join(set_dir(str(dic["model_dir_list"][index])), dic["file_pattern_list"][index].format(year))
+    folder = set_dir(str(dic["model_dir_list"][index]))
+    dims_list = dic.get("model_dims_list")
+    dims = dims_list[index] if dims_list else None
+    if is_zarr(folder):
+        return int((dim_fmt_model(open_store(folder), dims)["step"].values >= 1).sum())
+    path = os.path.join(folder, dic["file_pattern_list"][index].format(year))
     if not os.path.exists(path):
         raise OnsetConfigError(f"cannot count the forecast leads of {dic['model_list'][index]}: {path} not found")
-    dims_list = dic.get("model_dims_list")
     with xr.open_dataset(path) as ds:
-        ds = dim_fmt_model(ds, dims_list[index] if dims_list else None)
+        ds = dim_fmt_model(ds, dims)
         return int((ds["step"].values >= 1).sum())
 
 
