@@ -1,9 +1,10 @@
 """Onset contingency metrics (TP/FP/FN/TN, MAE) for model or climatology forecasts across years."""
 
-from momp.io.input import load_thresh_file, get_initialization_dates
+from momp.io.input import load_thresholds, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly, get_forecast_deterministic_twice_weekly
 from momp.io.input import load_imd_rainfall
 from momp.stats.detect import detect_observed_onset, compute_onset_for_deterministic_model, compute_onset_for_all_members
+from momp.stats.detect import check_alignment_once
 from momp.stats.climatology import compute_climatological_onset, compute_climatology_as_forecast
 from momp.utils.practical import restore_args
 
@@ -161,7 +162,7 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
     onset_da_dict = {}
 
     # load onset precip threshold, 2-D or scalar
-    thresh_da = load_thresh_file(**kwargs)
+    thresh_da = load_thresholds(**kwargs)
 
     ref_clim = (kwargs['model'] == 'climatology')
 
@@ -188,6 +189,9 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         elif not ref_clim:
             print("Extracting model forecast data ...")
             p_model = get_forecast_deterministic_twice_weekly(year, **kwargs)
+
+        if probabilistic or not ref_clim:
+            check_alignment_once(imd, p_model, **kwargs)
 
         # detect onset dates
         if probabilistic: # emsemble forecast onset
@@ -246,7 +250,7 @@ def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
     onset_da_dict = {}
 
     # load onset precip threshold, 2-D or scalar
-    thresh_da = load_thresh_file(**kwargs)
+    thresh_da = load_thresholds(**kwargs)
 
     ref_clim = (kwargs['model'] == 'climatology')
 
@@ -269,6 +273,7 @@ def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         if probabilistic and not ref_clim:
             print("-------Extracting ensemble forecast data ...")
             p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
+            check_alignment_once(imd, p_model, **kwargs)
             print("...")
 
             print("-------Computing onset for ensemble forecast ...")

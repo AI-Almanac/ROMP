@@ -86,8 +86,9 @@ pip install .
 You should see a path pointing to your **source directory**
 
 ## Configuration
-Experiment configuration is controlled via:  
-`params/config.in`
+Each run is described by a config file you keep with your project, outside the
+package. Copy the template `examples/config.in`, edit it, and pass it to every run
+with `-p` (or set the `MOMP_CONFIG` environment variable, e.g. in a notebook).
 
 This file defines:
 - Input and output directories
@@ -100,9 +101,9 @@ Region boundaries are defined in:
 `params/region_def.py`
 
 ## Run ROMP
-With user-defined `config.in`, the main benchmarking workflow is executed via CLI::  
+With your config file, the main benchmarking workflow is executed via CLI::  
 
-`momp-run`
+`momp-run -p my_config.in`
 
 Typical steps performed:
 1. Load configuration

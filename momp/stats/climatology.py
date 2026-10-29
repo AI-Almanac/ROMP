@@ -1,6 +1,6 @@
 """Climatological onset dates from observed rainfall, and climatology used as a baseline forecast."""
 
-from momp.io.input import load_imd_rainfall, load_thresh_file
+from momp.io.input import load_imd_rainfall, load_thresholds
 from momp.stats.detect import detect_observed_onset
 from momp.utils.practical import restore_args
 
@@ -28,7 +28,7 @@ def compute_climatological_onset(*, obs_dir, obs_file_pattern, obs_var, thresh_f
 
     kwargs = restore_args(compute_climatological_onset, kwargs, locals())
 
-    thresh_da = load_thresh_file(**kwargs)
+    thresh_da = load_thresholds(**kwargs)
 
     print(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
 
@@ -283,7 +283,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
 
     kwargs = restore_args(compute_climatological_onset_dataset, kwargs, locals())
 
-    thresh_slice = load_thresh_file(**kwargs)
+    thresh_slice = load_thresholds(**kwargs)
 
     print(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
 

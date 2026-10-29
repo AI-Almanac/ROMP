@@ -30,6 +30,19 @@ Optional env vars (with defaults matching the demo config):
   ROMP_WET_SPELL        - wet spell length days (default: 3)
   ROMP_DRY_SPELL        - dry spell length days (default: 7)
   ROMP_DRY_EXTENT       - dry spell search window days (default: 0)
+  ROMP_ONSET_DEFINITION - onset definition id or YAML path (default: unset, flat keys below).
+                          Setting this, or any of the ROMP_ONSET_* / ROMP_THRESHOLD_YEARS /
+                          ROMP_THRESHOLDS / ROMP_OBS_DAY_BOUNDARY / ROMP_MODEL_LEAD_LABEL /
+                          ROMP_CHECK_ALIGNMENT variables, selects definition mode; the flat
+                          ROMP_WET_* / ROMP_DRY_* / ROMP_THRESH_FILE variables must then be unset
+  ROMP_ONSET_SEASON     - season name for definitions with several seasons (default: None)
+  ROMP_THRESHOLD_YEARS  - first-last years for climatological thresholds, e.g. 1998-2024 (default: region)
+  ROMP_THRESHOLDS       - JSON object {"name": "path.nc:variable"} of precomputed thresholds (default: None)
+  ROMP_OBS_DAY_BOUNDARY - e.g. "00 UTC, labelled by start" (default: region)
+  ROMP_MODEL_LEAD_LABEL - start or end (default: from the day boundary)
+  ROMP_CHECK_ALIGNMENT  - True/False (default: True)
+  ROMP_DRY_SPELL_CHECK  - False drops the definition's dry-spell condition (default: True; both modes)
+  ROMP_ONSET_BACKEND    - numba, reference or gpu (default: numba)
   ROMP_START_DATE       - evaluation start as YYYY-MM-DD (default: 2019-05-01)
   ROMP_END_DATE         - evaluation end as YYYY-MM-DD (default: 2024-07-31)
   ROMP_START_YEAR_CLIM  - climatology start year (default: 1998)
@@ -147,6 +160,61 @@ def parse_model_dims(val: str) -> dict | None:
     return dims
 
 
+ONSET_ENV = ("ROMP_ONSET_DEFINITION", "ROMP_ONSET_SEASON", "ROMP_THRESHOLD_YEARS", "ROMP_THRESHOLDS",
+             "ROMP_OBS_DAY_BOUNDARY", "ROMP_MODEL_LEAD_LABEL", "ROMP_CHECK_ALIGNMENT", "ROMP_ONSET_BACKEND")
+FLAT_ONSET_ENV = ("ROMP_WET_INIT", "ROMP_WET_THRESHOLD", "ROMP_WET_SPELL", "ROMP_DRY_SPELL", "ROMP_DRY_EXTENT",
+                  "ROMP_THRESH_FILE")
+
+
+def parse_years(val: str) -> tuple | None:
+    """Parse "first-last" into a (first, last) tuple, or None if empty."""
+    if not val:
+        return None
+    first, last = (int(part) for part in val.split("-"))
+    return (first, last)
+
+
+def parse_thresholds(val: str) -> dict | None:
+    """Parse a JSON object mapping threshold names to "path.nc:variable", or None if empty."""
+    if not val:
+        return None
+    mapping = json.loads(val)
+    if not isinstance(mapping, dict) or not all(isinstance(v, str) for v in mapping.values()):
+        raise ValueError('must be a JSON object like {"name": "path.nc:variable"}')
+    return mapping
+
+
+def onset_values() -> dict:
+    """The onset part of the config: flat legacy keys, or the onset_definition keys when any of those is set."""
+    dry_spell_check = {"dry_spell_check": _parsed("ROMP_DRY_SPELL_CHECK", "True", parse_bool)}
+    if not any(name in os.environ for name in ONSET_ENV):
+        return {**dry_spell_check,
+            "wet_init": _parsed("ROMP_WET_INIT", "1", parse_number),
+            "wet_threshold": _parsed("ROMP_WET_THRESHOLD", "20", parse_number),
+            "wet_spell": _parsed("ROMP_WET_SPELL", "3", int),
+            "dry_threshold": 1,
+            "dry_spell": _parsed("ROMP_DRY_SPELL", "7", int),
+            "dry_extent": _parsed("ROMP_DRY_EXTENT", "0", int),
+            "thresh_file": _parsed("ROMP_THRESH_FILE", "", optional_path),
+            "thresh_var": None,
+        }
+    clash = [name for name in FLAT_ONSET_ENV if name in os.environ]
+    if clash:
+        raise ConfigError(f"{', '.join(clash)} cannot be combined with the onset definition variables; "
+                          "put the rule in a definition file (extends: <id>) instead")
+    return {
+        "onset_definition": _parsed("ROMP_ONSET_DEFINITION", "", optional_path),
+        "onset_season": _parsed("ROMP_ONSET_SEASON", "", optional_path),
+        "threshold_years": _parsed("ROMP_THRESHOLD_YEARS", "", parse_years),
+        "thresholds": _parsed("ROMP_THRESHOLDS", "", parse_thresholds),
+        "obs_day_boundary": _parsed("ROMP_OBS_DAY_BOUNDARY", "", optional_path),
+        "model_lead_label": _parsed("ROMP_MODEL_LEAD_LABEL", "", optional_path),
+        "check_alignment": _parsed("ROMP_CHECK_ALIGNMENT", "True", parse_bool),
+        "onset_backend": opt("ROMP_ONSET_BACKEND", "numba"),
+        **dry_spell_check,
+    }
+
+
 def config_values() -> dict:
     """Build the config dictionary from environment variables, applying the documented defaults."""
     obs_dir = require("ROMP_OBS_DIR")
@@ -186,14 +254,7 @@ def config_values() -> dict:
         "nc_mask": _parsed("ROMP_NC_MASK", "", optional_path),
         "shpfile_dir": None,
         "polygon": False,
-        "wet_init": _parsed("ROMP_WET_INIT", "1", parse_number),
-        "wet_threshold": _parsed("ROMP_WET_THRESHOLD", "20", parse_number),
-        "wet_spell": _parsed("ROMP_WET_SPELL", "3", int),
-        "dry_threshold": 1,
-        "dry_spell": _parsed("ROMP_DRY_SPELL", "7", int),
-        "dry_extent": _parsed("ROMP_DRY_EXTENT", "0", int),
-        "thresh_file": _parsed("ROMP_THRESH_FILE", "", optional_path),
-        "thresh_var": None,
+        **onset_values(),
         "onset_percentage_threshold": 0.5,
         "start_date": start_date,
         "end_date": end_date,

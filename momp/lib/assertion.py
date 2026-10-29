@@ -50,6 +50,7 @@ class ROMPValidator:
         self._check_forecast_limits()
         self._check_probabilistic_constraints()
         self._check_monsoon_logic()
+        self._check_onset()
 
         if self.errors:
             report = "\n".join([f"  • {err}" for err in self.errors])
@@ -129,12 +130,24 @@ class ROMPValidator:
 
     def _check_monsoon_logic(self):
         """Check dry_extent against dry_spell and that thresh_file exists if given."""
+        if not hasattr(self.cfg, "dry_extent"):
+            return
+
         if self.cfg.dry_extent > 0 and self.cfg.dry_extent < self.cfg.dry_spell:
             self._add_error(f"Logic Conflict: \
                     dry_extent ({self.cfg.dry_extent}) < dry_spell ({self.cfg.dry_spell})")
 
-        if self.cfg.thresh_file and not os.path.exists(self.cfg.thresh_file):
+        if getattr(self.cfg, "thresh_file", None) and not os.path.exists(self.cfg.thresh_file):
             self._add_error(f"File missing: thresh_file not found at '{self.cfg.thresh_file}'")
+
+    def _check_onset(self):
+        """Check the onset settings resolve: no flat keys beside onset_definition, and every needed setting known."""
+        from momp.lib.onset_config import OnsetConfigError, check_config
+
+        try:
+            check_config(vars(self.cfg))
+        except OnsetConfigError as exc:
+            self._add_error(str(exc))
 
     def _check_graphics_dependencies(self):
         """Validates that plot settings match data availability and output requirements."""

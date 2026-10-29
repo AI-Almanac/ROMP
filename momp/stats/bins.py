@@ -2,10 +2,10 @@
 
 import pandas as pd
 import numpy as np
-from momp.io.input import load_thresh_file, get_initialization_dates
+from momp.io.input import load_thresholds, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly
 from momp.io.input import load_imd_rainfall
-from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members
+from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
 from momp.utils.practical import restore_args
 from itertools import product
 
@@ -467,7 +467,7 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
 
     print(f"Processing years: {years}")
 
-    thresh_slice = load_thresh_file(**kwargs)
+    thresh_slice = load_thresholds(**kwargs)
 
     # Initialize list to store all forecast-observation pairs
     all_forecast_obs_pairs = []
@@ -486,6 +486,7 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
             print("Loading observational rainfall data...")
             rainfall_ds = load_imd_rainfall(year, **kwargs)
             rainfall_ds_slice = rainfall_ds #!!!!! region subset
+            check_alignment_once(rainfall_ds_slice, p_model_slice, **kwargs)
 
             print("Detecting observed onset...")
             onset_da = detect_observed_onset(rainfall_ds_slice, thresh_slice, year, **kwargs)

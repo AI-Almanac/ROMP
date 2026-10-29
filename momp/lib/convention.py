@@ -75,6 +75,20 @@ class Setting:
     end_year_clim: int = field(default=2000)
     fallback_date: Optional[tuple[int, int]] = field(default=None)
 
+    onset_definition: Optional[str] = field(default=None)
+    onset_season: Optional[str] = field(default=None)
+    threshold_years: Optional[tuple[int, int]] = field(default=None)
+    thresholds: Optional[dict] = field(default=None)
+    obs_day_boundary: Optional[str] = field(default=None)
+    model_lead_label: Optional[str] = field(default=None)
+    check_alignment: bool = field(default=True)
+    dry_spell_check: bool = field(default=True)
+    onset_backend: str = field(default="numba")
+    # Set by the loader in definition mode: the (first, last) leads searched.
+    lead_window: Optional[tuple[int, int]] = field(default=None)
+    # Set by the loader: True when the config uses the old flat onset keys.
+    onset_legacy: bool = field(default=False)
+
     init_days: tuple = field(default=(0,3))
     date_filter_year: int = field(default=2024)
 

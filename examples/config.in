@@ -1,7 +1,9 @@
 # ==============================================================================
 # Rainy season Onset Metrics Package (ROMP) Configuration
 # Version: 0.0.1
-# Description: Workflow configuration for evaluating rainy season onset forecast 
+# Description: Workflow configuration for evaluating rainy season onset forecast
+# Usage: copy this file next to your project, edit it, and run
+#        `momp-run -p my_config.in`. Relative paths resolve from where you run.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -87,34 +89,51 @@ shpfile_dir = None
 polygon = False
 
 # ------------------------------------------------------------------------------
-# 6. ONSET CRITERIA (Physics Logic)
+# 6. ONSET DEFINITION
 # ------------------------------------------------------------------------------
-# Rain threshold (mm) to identify the first potential wet day.
-wet_init = 1
+# What counts as onset is a named, published definition (see docs/onset_in_romp.md).
+# Every setting below falls back to the default of the region set in section 5
+# (see `python -m momp.onset regions`); with neither, ROMP stops and names the key.
+# List definitions with `python -m momp.onset list` and read one in plain words with
+# `python -m momp.onset describe <id>`.
 
-# Rainfall threshold (mm) used only if no spatial thresh_file is provided.
-wet_threshold = 20
+# Registry id (e.g. "icpac", "moron_robertson_mok") or path to a definition YAML file.
+# None = the region's default definition. A rule that differs a little from a
+# registry one goes in a YAML file with `extends: <id>`.
+onset_definition = None
 
-# Minimum number of days the accumlated rainfall must stay above threshold (Wet Spell).
-wet_spell = 3
+# Season name, only for definitions with several seasons (e.g. "long_rains").
+onset_season = None
 
-# Maximum allowed rainfall (mm) to define a dry day/spell.
-dry_threshold = 1
+# (first, last) years of observations that climatological thresholds are computed
+# from, e.g. (1998, 2024). None = the region's default.
+threshold_years = None
 
-# Maximum number of consecutive dry days allowed after onset.
-dry_spell = 7
+# Optional precomputed thresholds instead of computing them, {name: "path.nc:variable"}.
+thresholds = None
 
-# Search window (days) after onset to check for the dry spell. Must be >= dry_spell.
-# set to 0 if rainy season cessation is not part of the search algorithm
-dry_extent = 0
+# When the observed day starts and which date labels it, e.g. "00 UTC, labelled by start"
+# or "03 UTC, labelled by end". None = the region's default.
+obs_day_boundary = None
 
-# Path to a NetCDF file containing spatial thresholds (MWset). None = Use scalar.
-thresh_file = None
+# Date of lead k of a forecast: "start" = init + k - 1, "end" = init + k.
+# None = from obs_day_boundary ("labelled by start" -> "start", "labelled by end" -> "end").
+model_lead_label = None
 
-# Variable name for the threshold inside the thresh_file.
-thresh_var = None
+# At the start of a run, compare observations and forecasts at day lags -3..+3
+# and warn if they look shifted against each other.
+check_alignment = True
 
-# Probability threshold (0.0 - 1.0) for determining onset in ensemble members.
+# Set False to drop the definition's dry-spell condition ('reject if'), such as
+# Moron-Robertson's 10-day dry window or ICPAC's 7-day dry run; handy for demos and
+# short forecasts. The change is recorded in the outputs.
+dry_spell_check = True
+
+# Detection engine: "numba", "reference" or "gpu". Falls back to "reference" with a
+# warning if numba (or a GPU) is not available. All give identical results.
+onset_backend = "numba"
+
+# Share (0.0 - 1.0) of ensemble members that must have an onset for the ensemble to have one.
 onset_percentage_threshold = 0.5
 
 # ------------------------------------------------------------------------------
@@ -123,11 +142,6 @@ onset_percentage_threshold = 0.5
 # Date range for the evaluation period.
 start_date = (2019, 5, 1)
 end_date = (2024, 7, 31)
-
-# Earliest date (Month, Day) an onset may occur; None for no date filter.
-# Observed onsets are searched from this date and forecast onsets before it are not
-# counted, e.g. (6, 2), the climatological monsoon onset over Kerala (MOK) for India.
-earliest_onset_date = (5, 15)
 
 # Start and end years for calculating long-term climatology.
 start_year_clim = 1998

@@ -24,11 +24,21 @@ _setting = None
 
 
 def _get_config_path_pre_parse(cli_args=None):
-    """Return the -p/--param config path from cli_args (default "params/config.in")."""
+    """Return the config path from -p/--param in cli_args, else the MOMP_CONFIG environment variable.
+
+    A run must always say which config it uses; with neither set this raises,
+    explaining how to give one (the template is examples/config.in in the repository).
+    """
     pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("-p", "--param", default="params/config.in")
+    pre_parser.add_argument("-p", "--param", default=None)
     args, _ = pre_parser.parse_known_args(cli_args)
-    return args.param
+    path = args.param or os.environ.get("MOMP_CONFIG")
+    if not path:
+        raise ROMPConfigError(
+            "No config file given. Pass one with `momp-run -p path/to/config.in` (or set the "
+            "MOMP_CONFIG environment variable, e.g. in a notebook). Start from examples/config.in "
+            "in the ROMP repository.")
+    return path
 
 
 def _read_config(config_path):
@@ -75,6 +85,16 @@ def _rename_deprecated_keys(dic):
     return dic
 
 
+def _set_onset_mode(dic):
+    """Flag configs that use the old flat onset keys; other configs get onset_definition = None if it is unset."""
+    from momp.lib.onset_config import detect_legacy
+
+    dic["onset_legacy"] = detect_legacy(dic)
+    if not dic["onset_legacy"]:
+        dic.setdefault("onset_definition", None)
+    return dic
+
+
 def _resolve_paths(dic):
     """Resolve relative paths in config dict to absolute paths."""
     dic["work_dir"] = Path(dic["work_dir"]).expanduser().resolve()
@@ -89,7 +109,20 @@ def _resolve_paths(dic):
             if not Path(str(dic[key])).is_absolute():
                 dic[key] = set_dir(dic[key])
 
+    if isinstance(dic.get("thresholds"), dict):
+        dic["thresholds"] = {
+            name: _resolve_threshold_ref(ref) for name, ref in dic["thresholds"].items()
+        }
+
     return dic
+
+
+def _resolve_threshold_ref(ref):
+    """Make the path part of a "path.nc:variable" threshold reference absolute."""
+    path, sep, var = str(ref).rpartition(":")
+    if not sep or not path or Path(path).is_absolute():
+        return ref
+    return f"{set_dir(path)}:{var}"
 
 
 def build_cfg(cli_args=None):
@@ -97,6 +130,7 @@ def build_cfg(cli_args=None):
     config_path = ensure_config_exists(_get_config_path_pre_parse(cli_args))
     dic = _read_config(config_path)
     dic = _rename_deprecated_keys(dic)
+    dic = _set_onset_mode(dic)
     dic = _resolve_paths(dic)
 
     os.makedirs(dic["dir_fig"], exist_ok=True)
@@ -119,6 +153,9 @@ def get_cfg(cli_args=None):
     try:
         validator = ROMPValidator(_cfg)
         validator.validate()
+        if "lead_window" not in _cfg:
+            from momp.lib.lead_window import apply_lead_window
+            apply_lead_window(_cfg)
     except ROMPConfigError as e:
         print(f"Error: Invalid Config!!! {e}")
         if not _cfg.get('debug'):

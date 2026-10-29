@@ -1,6 +1,6 @@
 """Plot observed rainfall time series with detected onset (and optional climatological onset) at a grid point."""
 import os
-from momp.io.input import load_imd_rainfall, load_thresh_file
+from momp.io.input import load_imd_rainfall, load_thresholds
 from momp.stats.detect import detect_observed_onset
 from momp.lib.loader import get_cfg, get_setting
 from momp.graphics.rainfall_time_series import plot_rainfall_timeseries_with_onset_and_wetspell
@@ -17,7 +17,7 @@ def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwa
     kwargs["years_clim"] = years_clim
 
     # load onset precip threshold, 2-D or scalar
-    thresh_da = load_thresh_file(**kwargs)
+    thresh_da = load_thresholds(**kwargs)
 
     print(f"\n{'-'*50}")
     print(f"Processing year {year}")

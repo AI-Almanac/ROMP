@@ -17,8 +17,10 @@ import traceback
 
 # Local Package Imports
 from momp.lib.loader import get_cfg, get_setting
+from momp.lib.assertion import ROMPConfigError
 from momp.app.bin_skill_score import skill_score_in_bins
 from momp.app.spatial_far_mr_mae import spatial_far_mr_mae_map
+from momp.lib.onset_config import onset_setup
 from momp.utils.printing import print_momp_banner
 
 
@@ -50,12 +52,22 @@ def run_momp(cfg=None, setting=None):
         setting: The environment and directory settings.
     """
 
-    if cfg is None:
-        cfg = get_cfg()
-    if setting is None:
-        setting = get_setting()
+    try:
+        if cfg is None:
+            cfg = get_cfg()
+        if setting is None:
+            setting = get_setting()
+    except (ROMPConfigError, FileNotFoundError) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
     print_momp_banner(cfg)
+
+    print("Onset settings:")
+    for line in onset_setup(vars(cfg)).lines():
+        print(f"  {line}")
+    for line in getattr(cfg, "onset_lead_lines", ()):
+        print(f"  {line}")
 
     logger.info("Starting ROMP Workflow...")
 

@@ -36,7 +36,7 @@ dependencies = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-momp = ["params/config.in", "onset/registry/*.yaml", "onset/regions/*.yaml"]
+momp = ["onset/registry/*.yaml", "onset/regions/*.yaml"]
 
 [tool.setuptools.packages.find] 
 where = ["."]

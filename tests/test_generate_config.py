@@ -160,3 +160,36 @@ def test_malformed_model_dims_are_rejected(tmp_path, value):
 
     assert result.returncode == 1
     assert "ROMP_MODEL_DIMS" in result.stderr
+
+
+def test_onset_definition_variables_replace_the_flat_keys(tmp_path):
+    """Setting ROMP_ONSET_DEFINITION writes the definition keys and no flat onset keys."""
+    result = _generate(tmp_path, ROMP_ONSET_DEFINITION="icpac", ROMP_THRESHOLD_YEARS="1998-2024",
+                       ROMP_CHECK_ALIGNMENT="False")
+    assert result.returncode == 0
+
+    config = _exec_config(tmp_path)
+
+    assert config["onset_definition"] == "icpac"
+    assert config["threshold_years"] == (1998, 2024)
+    assert config["check_alignment"] is False
+    assert config["onset_backend"] == "numba"
+    assert "wet_init" not in config and "thresh_file" not in config
+
+
+def test_flat_onset_variables_cannot_be_mixed_with_a_definition(tmp_path):
+    """A flat onset variable beside ROMP_ONSET_DEFINITION fails with a message naming it."""
+    result = _generate(tmp_path, ROMP_ONSET_DEFINITION="icpac", ROMP_WET_SPELL="4")
+
+    assert result.returncode == 1
+    assert "ROMP_WET_SPELL" in result.stderr
+
+
+def test_defaults_keep_the_flat_onset_keys(tmp_path):
+    """Without onset definition variables the config has the flat keys and no onset_definition (legacy mode)."""
+    assert _generate(tmp_path).returncode == 0
+
+    config = _exec_config(tmp_path)
+
+    assert "onset_definition" not in config
+    assert config["wet_spell"] == 3

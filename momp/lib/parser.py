@@ -2,7 +2,6 @@
 import argparse
 import ast
 from pathlib import Path
-from importlib import resources
 
 
 def create_parser(config, cli_args=None):
@@ -32,47 +31,27 @@ def create_parser(config, cli_args=None):
         help="Max forecast day (default: {config['max_forecast_day']})"
     )
 
-    parser.add_argument(
-        "--wet_init",
-        type=float,
-        default=config['wet_init'],
-        help=f"Rain threshold (mm) for first potential wet day (default: {config['wet_init']})"
+    # The flat onset keys exist only in legacy configs (see momp.lib.onset_config).
+    flat_options = (
+        ("wet_init", float, "Rain threshold (mm) for first potential wet day"),
+        ("wet_threshold", float, "Rainfall threshold (mm) if no thresh_file provided"),
+        ("wet_spell", int, "Min days rainfall must stay above threshold"),
+        ("dry_threshold", float, "Max rainfall (mm) to define a dry day"),
+        ("dry_spell", int, "Max consecutive dry days allowed after onset"),
+        ("dry_extent", int, "Search window (days) after onset to check for dry spell"),
     )
+    for name, kind, text in flat_options:
+        if name in config:
+            parser.add_argument(f"--{name}", type=kind, default=config[name],
+                                help=f"{text} (default: {config[name]})")
 
-    parser.add_argument(
-        "--wet_threshold",
-        type=float,
-        default=config['wet_threshold'],
-        help=f"Rainfall threshold (mm) if no thresh_file provided (default: {config['wet_threshold']})"
-    )
-
-    parser.add_argument(
-        "--wet_spell",
-        type=int,
-        default=config['wet_spell'],
-        help=f"Min days rainfall must stay above threshold (default: {config['wet_spell']})"
-    )
-
-    parser.add_argument(
-        "--dry_threshold",
-        type=float,
-        default=config['dry_threshold'],
-        help=f"Max rainfall (mm) to define a dry day (default: {config['dry_threshold']})"
-    )
-
-    parser.add_argument(
-        "--dry_spell",
-        type=int,
-        default=config['dry_spell'],
-        help=f"Max consecutive dry days allowed after onset (default: {config['dry_spell']})"
-    )
-
-    parser.add_argument(
-        "--dry_extent",
-        type=int,
-        default=config['dry_extent'],
-        help=f"Search window (days) after onset to check for dry spell (default: {config['dry_extent']})"
-    )
+    if "dry_spell_check" in config:
+        parser.add_argument(
+            "--dry_spell_check",
+            type=str2bool,
+            default=config["dry_spell_check"],
+            help=f"Keep the definition's dry-spell condition, True or False (default: {config['dry_spell_check']})"
+        )
 
     parser.add_argument(
         "--onset_percentage_threshold",
@@ -235,13 +214,9 @@ def parse_num_to_tuple(value):
 
 
 def ensure_config_exists(param_path: str) -> Path:
-    """
-    Return the config file path: the packaged momp/params/config.in for "params/config.in",
-    otherwise param_path expanded and resolved (nothing is created).
-    """
-    if param_path == "params/config.in":
-        # return a real path to the packaged file (read-only)
-        with resources.as_file(resources.files("momp").joinpath("params/config.in")) as p:
-            return Path(p)
-
-    return Path(param_path).expanduser().resolve()
+    """Return param_path expanded and resolved, raising FileNotFoundError (with a hint) if it doesn't exist."""
+    path = Path(param_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Config file not found: {path}. Start from examples/config.in in the ROMP repository.")
+    return path

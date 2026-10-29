@@ -1,6 +1,6 @@
 """Plot the spatial map of observed onset day of year for a single year."""
 from momp.io.input import load_imd_rainfall
-from momp.io.input import load_thresh_file
+from momp.io.input import load_thresholds
 from momp.stats.detect import detect_observed_onset
 from momp.lib.loader import get_cfg, get_setting
 from momp.graphics.func_map import spatial_metrics_map
@@ -16,7 +16,7 @@ def spatial_onset(year, *, obs_dir, obs_file_pattern, obs_var,
     """Detect observed onset for a year, map it as day of year, and return the day-of-year DataArray."""
     kwargs = restore_args(spatial_onset, kwargs, locals())
 
-    thresh_slice = load_thresh_file(**kwargs)
+    thresh_slice = load_thresholds(**kwargs)
 
     print("Loading observational rainfall data...")
     rainfall_ds = load_imd_rainfall(year, **kwargs)

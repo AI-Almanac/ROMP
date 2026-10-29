@@ -1,23 +1,35 @@
 """Loading of observed rainfall, thresholds and (deterministic/ensemble) model forecasts from NetCDF files."""
+import hashlib
+import json
 import os
 from datetime import datetime
+from pathlib import Path
+import numpy as np
 import pandas as pd
 import xarray as xr
+from momp.lib.onset_config import Thresholds, forecast_reach, is_legacy, onset_setup
+from momp.onset.climatology import ThresholdCache, harmonic_seasons
+from momp.onset.ingest import ingest
 from momp.utils.standard import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble
 from momp.utils.region import region_select
 from momp.utils.practical import restore_args
 
 
 def onset_steps_needed(*, max_forecast_day=None, wet_spell=None, dry_extent=None, **kwargs):
-    """The last lead day ensemble onset detection reads, or None if it can't be told.
+    """The last lead day onset detection reads, or None if it can't be told.
 
-    Both paths in momp.stats.detect stop here: the vectorized one at
-    max_forecast_day + wet_spell - 1, the per-member loop at that or at
-    max_forecast_day + dry_extent when the dry check reaches further.
+    With a definition, the largest day any requirement or veto of the compiled
+    plan reads for the last candidate day max_forecast_day, so loading never
+    truncates what the rule reads. For the old flat keys, the formula of the
+    old detection: max_forecast_day + max(wet_spell - 1, dry_extent).
     """
-    if not all(isinstance(value, int) for value in (max_forecast_day, wet_spell, dry_extent)):
+    if is_legacy(kwargs):
+        if not all(isinstance(value, int) for value in (max_forecast_day, wet_spell, dry_extent)):
+            return None
+        return max_forecast_day + max(wet_spell - 1, dry_extent)
+    if not isinstance(max_forecast_day, int):
         return None
-    return max_forecast_day + max(wet_spell - 1, dry_extent)
+    return max_forecast_day + forecast_reach(onset_setup(kwargs)) - 1
 
 
 def load_thresh_file(*, thresh_file, thresh_var, wet_threshold, region, **kwargs):
@@ -32,6 +44,95 @@ def load_thresh_file(*, thresh_file, thresh_var, wet_threshold, region, **kwargs
         thresh_da = wet_threshold
 
     return thresh_da
+
+
+class _LazyRain:
+    """A DailyRain whose data is read only when something other than its grid and source is asked for.
+
+    The threshold cache keys on the grid and source, so a cache hit never loads the reference years.
+    """
+
+    def __init__(self, probe, load):
+        """Take dims, coords and source from the probe (one year); `load` returns the full DailyRain."""
+        self.dims, self.coords, self.source = probe.dims, probe.coords, probe.source
+        self._load, self._full = load, None
+
+    def __getattr__(self, name):
+        """Load the full reference rainfall on first use and read the attribute from it."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if self._full is None:
+            self._full = self._load()
+        return getattr(self._full, name)
+
+
+def _reference_rain(setup, years, kwargs):
+    """The observations of years[0]..years[1] as ingested DailyRain, labelled with their source."""
+    source = (f"{kwargs.get('obs')}:{kwargs.get('obs_dir')}:{kwargs.get('obs_file_pattern')}:"
+              f"{kwargs.get('obs_var')}:cvt={kwargs.get('obs_unit_cvt')}")
+    return ingest(
+        xr.concat([load_imd_rainfall(year, **kwargs) for year in range(years[0], years[1] + 1)], dim="time"),
+        day_boundary=setup.obs_day_boundary, units="mm", source=source)
+
+
+def _harmonic_cached(cache_dir, rain, years):
+    """The harmonic season analysis of the reference years, read from or written to the cache directory."""
+    grid = hashlib.sha256()
+    for dim in rain.dims[:-1]:
+        grid.update(dim.encode())
+        grid.update(np.ascontiguousarray(rain.coords[dim]).tobytes())
+    payload = json.dumps(["harmonic", rain.source, [int(years[0]), int(years[1])], grid.hexdigest()])
+    path = Path(cache_dir) / f"harmonic_{hashlib.sha256(payload.encode()).hexdigest()[:16]}.nc"
+    if path.exists():
+        with xr.open_dataset(path) as stored:
+            return stored.load()
+    result = harmonic_seasons(rain, years)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    result.to_netcdf(path)
+    return result
+
+
+def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
+    """The named thresholds of the definition, as {name: DataArray(lat, lon)} in mm.
+
+    Files given in `thresholds` are used as they are; the others are computed from
+    the observations of threshold_years and cached under dir_out/.onset_cache.
+    The returned Thresholds also carries season_climatology for derived seasons.
+    """
+    thresholds = Thresholds()
+    if not setup.uses_thresholds:
+        return thresholds
+    for name, path, var in setup.threshold_files:
+        with xr.open_dataset(path) as ds:
+            thresholds[name] = region_select(ds[var], region=region, **kwargs).load()
+    pending = [(name, spec) for name, spec in setup.definition.thresholds if name not in thresholds]
+    if not pending and not setup.derived_seasons:
+        return thresholds
+    years = setup.threshold_years
+    probe = _reference_rain(setup, (years[0], years[0]), {"dir_out": dir_out, "region": region, **kwargs})
+    full = _LazyRain(probe, lambda: _reference_rain(setup, years, {"region": region, **kwargs}))
+    cache_dir = Path(dir_out) / ".onset_cache"
+    cache = ThresholdCache(cache_dir)
+    for name, spec in pending:
+        thresholds[name] = cache.get_or_compute(spec, full, years, name)
+    if setup.derived_seasons:
+        thresholds.season_climatology = _harmonic_cached(cache_dir, full, years)
+    return thresholds
+
+
+_loaded_thresholds = {}
+
+
+def load_thresholds(**kwargs):
+    """The threshold the onset detection takes as thresh_slice: the old scalar or 2-D threshold for the flat keys, else the definition's named thresholds."""
+    if is_legacy(kwargs):
+        return load_thresh_file(**kwargs)
+    setup = onset_setup(kwargs)
+    key = (id(setup), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
+           str(kwargs.get("region")))
+    if key not in _loaded_thresholds:
+        _loaded_thresholds[key] = load_onset_thresholds(setup, **kwargs)
+    return _loaded_thresholds[key]
 
 
 def get_initialization_dates(year, *, date_filter_year, init_days, start_date, end_date, **kwargs):
