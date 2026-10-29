@@ -28,6 +28,7 @@ dependencies = [
   "cartopy",
   "fsspec==2025.3.2.*",
   "pyyaml>=6.0.3",
+  "numba>=0.68.1",
 ]
 
 
@@ -50,6 +51,9 @@ dev = [
   "ruff",
   "ipython",
   "gcsfs",
+]
+gpu = [
+    "cupy-cuda13x>=14.2.0",
 ]
 
 [project.scripts]
