@@ -313,6 +313,69 @@ def check_forecast_alignment(obs: DailyRain, forecast: ForecastRain, leads=(1, 2
     return ForecastAlignmentReport(forecast.lead_label, per_lead, verdict, notes)
 
 
+def lagged_correlations(obs_days: np.ndarray, forecast: np.ndarray, base: np.ndarray, lags: np.ndarray,
+                        ) -> tuple[np.ndarray, np.ndarray]:
+    """Pooled correlation at every lag and lead in one vectorised step.
+
+    obs_days (init, day, cell) holds sqrt-rain on consecutive days after each init; forecast (init, lead, cell)
+    holds the member-mean sqrt-rain of each lead; both are NaN where missing. base (lead,) is the index in the
+    day axis of the day each lead's date label names, and lag L pairs lead j with day base[j] + L (NaN outside
+    the day axis). The observations are gathered once into a (init, lag, lead, cell) view and every
+    (lag, lead) correlation is taken with cell means removed over the valid inits, pooled over cells and inits
+    exactly as `_pooled_corr` does. Returns (r, n_pairs), both (lag, lead); r is NaN below three pairs.
+    """
+    lags = np.asarray(lags, dtype=np.int64)
+    day = np.asarray(base, dtype=np.int64)[None, :] + lags[:, None]
+    inside = (day >= 0) & (day < obs_days.shape[1])
+    stacked = obs_days[:, np.clip(day, 0, obs_days.shape[1] - 1), :].astype(np.float64)
+    stacked[:, ~inside, :] = np.nan
+    fc = np.broadcast_to(forecast[:, None, :, :].astype(np.float64), stacked.shape)
+    valid = np.isfinite(stacked) & np.isfinite(fc)
+    count = valid.sum(axis=0)
+    safe = np.maximum(count, 1)
+    xv = np.where(valid, stacked, 0.0)
+    yv = np.where(valid, fc, 0.0)
+    xa = np.where(valid, xv - (xv.sum(axis=0) / safe)[None], 0.0)
+    ya = np.where(valid, yv - (yv.sum(axis=0) / safe)[None], 0.0)
+    with np.errstate(all="ignore"):
+        denom = np.sqrt((xa ** 2).sum(axis=(0, 3)) * (ya ** 2).sum(axis=(0, 3)))
+        r = (xa * ya).sum(axis=(0, 3)) / denom
+    n_pairs = valid.sum(axis=(0, 3))
+    r = np.where((n_pairs >= 3) & (denom > 0), r, np.nan)
+    return r, n_pairs
+
+
+def forecast_alignment_from_samples(obs_days: np.ndarray, forecast: np.ndarray, *, leads, pad: int,
+                                    lead_label: str, obs: str, source: str, n_inits: int, obs_boundary: str = "",
+                                    forecast_boundary: str = "", max_lag: int = 3) -> ForecastAlignmentReport:
+    """The per-lead report and overall verdict of `check_forecast_alignment`, from prepared sample arrays.
+
+    obs_days (init, day, cell) holds sqrt-rain for day index j = (days after the init) + pad, so it must reach
+    from -pad to the largest lead offset + max_lag; forecast (init, lead, cell) is the member-mean sqrt-rain
+    of `leads`. Lead k is dated init + k - 1 ("start") or init + k ("end"). Verdicts are those of
+    `check_forecast_alignment` (spec section 8).
+    """
+    leads = tuple(int(k) for k in leads)
+    lags = np.arange(-max_lag, max_lag + 1)
+    base = np.array([(k - 1 if lead_label == "start" else k) + pad for k in leads])
+    r, n_pairs = lagged_correlations(obs_days, forecast, base, lags)
+    n_cells = int(obs_days.shape[2])
+    per_lead: dict[int, AlignmentReport] = {}
+    for j, k in enumerate(leads):
+        report = AlignmentReport(reference=obs, other=source)
+        report.correlations = {int(lag): float(r[i, j]) for i, lag in enumerate(lags)}
+        report.n_pairs = {int(lag): int(n_pairs[i, j]) for i, lag in enumerate(lags)}
+        report.best_lag, report.verdict = _verdict(report.correlations)
+        report.n_cells, report.n_overlap_days = n_cells, int(n_inits)
+        per_lead[k] = report
+    verdict, notes = _forecast_verdict(per_lead, lead_label)
+    shift = _boundary_shift(obs_boundary, forecast_boundary, lead_label) if obs_boundary and forecast_boundary \
+        else None
+    if shift is not None and abs(shift) > 1e-9:
+        notes.append(f"declared day boundary and lead_label imply a lag of about {shift:+.2f} day(s)")
+    return ForecastAlignmentReport(lead_label, per_lead, verdict, notes)
+
+
 def _forecast_verdict(per_lead: dict[int, AlignmentReport], lead_label: str) -> tuple[str, list[str]]:
     """Overall verdict across leads, with a lead_label suggestion when the shift is consistent."""
     verdicts = {r.verdict for r in per_lead.values()}

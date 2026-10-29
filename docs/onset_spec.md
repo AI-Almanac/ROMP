@@ -452,6 +452,20 @@ against each other, often by exactly one day.
 * `check_forecast_alignment(obs, forecast, leads=(1, 2, 3), max_lag=3)` does
   the same per lead, comparing each lead's date label with the observed day.
   A best lag that is consistently nonzero suggests the wrong `lead_label`.
+* `lagged_correlations` / `forecast_alignment_from_samples` give the same
+  verdicts from prepared sample arrays: the forecast is aligned once against a
+  stacked (lag, ...) view of the observed days and every lag and lead is
+  correlated in one vectorised step.
+* `momp.lib.align_sample` is the fast check behind `momp-run --check
+  --alignment` and the lead-label detection of zarr datasets. It reads a
+  deterministic sample once (up to 40 inits spread over the evaluated period,
+  up to about 3000 cells on a regular subgrid of the shared land cells, leads
+  1-3, members averaged on sqrt rain, in contiguous selections per file or
+  store), judges it under the declared (or both) lead labels, runs several
+  models in parallel threads and caches each verdict under a fingerprint of both
+  datasets, the label, the day boundaries and the sample specification, in
+  `<cache>/alignment` next to the detection cache. On the real archives its
+  verdicts and best lags equal the whole-year check's.
 
 ## 9. Output and reproducibility
 

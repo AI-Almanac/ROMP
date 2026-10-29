@@ -2,8 +2,8 @@
 
 ``build_report(dic)`` takes the resolved flat config (momp.lib.loader.load_run_config) and returns a
 ``CheckReport``: the settings with where each value came from, the datasets with what was detected and the
-evidence, the mask, the lead windows, which files exist or are missing, the alignment of each model with the
-observations, sanity hints (each names the key to set), the run folder and the observed-onset cache that a run
+evidence, the mask, the lead windows, which files exist or are missing, the sampled alignment of each model with
+the observations, sanity hints (each names the key to set), the run folder and the observed-onset cache that a run
 would use. Reading is limited to a sample of the files; nothing is written. Errors (a run would fail) make
 ``CheckReport.ok`` False.
 """
@@ -347,38 +347,41 @@ def _step_hours(step: xr.DataArray) -> np.ndarray:
 
 
 def _alignment(dic: dict, report: CheckReport) -> None:
-    """The alignment check of each model with the observations, on the first year both have."""
+    """The alignment of each model with the observations: a sampled check, run in parallel over the models.
+
+    A few dozen inits spread over the period and a few thousand cells are read once per dataset and every lag is
+    correlated in one step (momp.lib.align_sample); the verdict is cached with a fingerprint of both datasets.
+    """
     report.section("Alignment")
     setup = onset_setup(dic)
     if not setup.check_alignment:
         report.add("onset.check_alignment is false: skipped")
         return
+    if setup.obs_day_boundary is None:
+        report.add("skipped (the observation day boundary is unknown: set obs_day_boundary to enable it)")
+        return
     from momp.export import case_kwargs
-    from momp.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
-                               load_imd_rainfall)
-    from momp.stats.detect import alignment_report
+    from momp.lib import align_sample
+    from momp.lib.onset_config import FORECAST_BOUNDARY
 
-    years, _ = _years(dic)
+    jobs = {}
     for model in dic["model_list"]:
         try:
             kw = {**case_kwargs(dic, model), "dir_fig": None}
-            year = next(y for y in years if _find(kw["obs_dir"], tuple(kw["obs_file_pattern"]), y)
-                        and _find(kw["model_dir"], (kw["file_pattern"],), y))
-            rain = load_imd_rainfall(year, **kw)
-            loader = (get_forecast_probabilistic_twice_weekly if dic.get("probabilistic")
-                      else get_forecast_deterministic_twice_weekly)
-            cube = loader(year, **kw)
-            result, note = alignment_report(rain, cube, **kw)
-        except StopIteration:
-            report.add(f"{model}: no year has both observation and forecast files; skipped")
-            continue
         except Exception as exc:  # noqa: BLE001
             report.add(f"{model}: skipped ({exc})")
             continue
-        if result is None:
-            report.add(f"{model}: skipped ({note})")
+        jobs[model] = (kw, (setup.lead_label,), {"obs_boundary": setup.obs_day_boundary, "source": model,
+                                                 "forecast_boundary_format": FORECAST_BOUNDARY})
+    for model, result in align_sample.check_models(jobs).items():
+        if isinstance(result, Exception):
+            report.add(f"{model}: skipped ({result})")
             continue
-        report.add(f"{model} (year {year}): " + result.summary().replace("\n", "\n    "))
+        (result, cached), = result.values()
+        n_inits = next((r.n_overlap_days for r in result.per_lead.values()), 0)
+        n_cells = next((r.n_cells for r in result.per_lead.values()), 0)
+        report.add(f"{model} (sample of {n_inits} inits x {n_cells} cells){' (cached)' if cached else ''}: "
+                   + result.summary().replace("\n", "\n    "))
         if str(result.verdict).startswith("likely shifted"):
             report.hint("lead_label", f"{model} looks shifted against the observations ({result.verdict}); check "
                                       "onset.lead_label and observations.day_boundary")

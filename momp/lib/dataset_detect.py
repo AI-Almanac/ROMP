@@ -10,6 +10,8 @@ the files contradict (units "mm" with values that look like metres, a dim that d
 is an error for names and a warning for units.
 
 What is detected, and how:
+  zarr store    a ``.zarr`` path is one dataset holding every year: no file_pattern; the years come from the
+                time/init coordinate, the rest from the store's metadata and a tiny slice
   file_pattern  the year-like number in the file names in ``path``, replaced by {}
   kind          forecast if the data has a lead/step dimension, else observations (checked, not set)
   variable      the only gridded variable, else the only precipitation-like one
@@ -17,7 +19,8 @@ What is detected, and how:
   dims          known dimension names (as momp.onset.ingest), role by role
   members       the size of the member dimension
   accumulation  daily or since_init, from how the values grow along the lead (momp.onset.ingest.detect_accumulation)
-  lead_label    forecast against observations at day lags -3..+3 (momp.onset.alignment)
+  lead_label    forecast against observations at day lags -3..+3 (momp.onset.alignment; the sampled
+                momp.lib.align_sample when a dataset is a zarr store)
   day_boundary  only an explicit ``day_boundary`` attribute in the file
   region        the lat/lon extent against the domains in momp/onset/regions
 """
@@ -138,10 +141,19 @@ _SAMPLES: dict = {}
 """Loaded detection samples, per (file, modification time, variable), for the life of the process."""
 
 
+def is_zarr_store(path) -> bool:
+    """True for a zarr store: a name ending in .zarr, or a folder holding zarr metadata."""
+    text = str(path).rstrip("/")
+    if text.endswith(".zarr"):
+        return True
+    folder = Path(text)
+    return folder.is_dir() and any((folder / name).exists() for name in ("zarr.json", ".zgroup", ".zarray"))
+
+
 def open_data(path: str) -> xr.Dataset:
     """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) with xr.open_zarr."""
-    if str(path).rstrip("/").endswith(".zarr") or os.path.isdir(path):
-        return xr.open_zarr(path)
+    if is_zarr_store(path):
+        return xr.open_zarr(path, chunks=None)
     return xr.open_dataset(path)
 
 
@@ -259,8 +271,10 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
 
     if obs is None or not obs.get("variable") or not obs.get("day_boundary"):
         return None, "needs the observations (with variable and day_boundary) to compare against"
-    year = YEAR_RE.search(os.path.basename(sample))
     obs_dir = expand_path(obs["path"])
+    if is_zarr_store(sample) or is_zarr_store(obs_dir):
+        return _lead_label_sampled(values, sample, obs, roles, obs_dir)
+    year = YEAR_RE.search(os.path.basename(sample))
     files = sorted(glob.glob(os.path.join(obs_dir, obs["file_pattern"].replace("{}", year.group(1) if year else "*"))))
     if not files:
         return None, f"no observation file for year {year.group(1) if year else '?'} in {obs_dir}"
@@ -289,6 +303,37 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
     return None, f"the alignment check is not conclusive ({detail})"
 
 
+def _lead_label_sampled(values: dict, sample: str, obs: dict, roles: dict, obs_dir: str) -> tuple[str | None, str]:
+    """Detect lead_label with the sampled alignment check (momp.lib.align_sample), for zarr stores.
+
+    The sample (a few dozen inits and a few thousand cells, all lags at once) is read once and judged under
+    both labels; exactly one aligned label settles it, anything else is inconclusive.
+    """
+    from momp.lib import align_sample
+    from momp.lib.dataset_schema import unit_factor
+
+    try:
+        obs_units, fc_units = obs.get("units"), values.get("units")
+        obs_pattern = obs.get("file_pattern") or "{}.nc"
+        model_pattern = values.get("file_pattern") or "{}.nc"
+        model_dir = sample if is_zarr_store(sample) else os.path.dirname(sample)
+        kw = {"obs_dir": obs_dir, "obs_file_pattern": [obs_pattern], "obs_var": obs["variable"],
+              "obs_unit_cvt": unit_factor(obs_units, "units") if obs_units else None, "model_dir": model_dir,
+              "model_var": values["variable"], "unit_cvt": unit_factor(fc_units, "units") if fc_units else None,
+              "file_pattern": model_pattern, "model_dims": values.get("dims"), "probabilistic": "member" in roles,
+              "accumulation": values.get("accumulation"), "daily_boundary": values.get("daily_boundary"),
+              "region": None, "years": None}
+        done = align_sample.check_labels(kw, ("start", "end"), obs_boundary=obs["day_boundary"], source="forecast")
+    except (ValueError, KeyError, OSError, DatasetError) as exc:
+        return None, f"the alignment check could not run: {exc}"
+    verdicts = {label: report.verdict for label, (report, _) in done.items()}
+    aligned = [label for label, verdict in verdicts.items() if verdict == "aligned"]
+    detail = "; ".join(f"{label}: {verdict}" for label, verdict in verdicts.items())
+    if len(aligned) == 1:
+        return aligned[0], f'forecast lines up with observations at lag 0 under "{aligned[0]}" (sampled check; {detail})'
+    return None, f"the alignment check is not conclusive ({detail})"
+
+
 _CACHE_VERSION = 1
 """Bump when detection changes what it reports, to drop old cache entries."""
 
@@ -306,10 +351,18 @@ def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict
     """
     try:
         folder = Path(expand_path(entry["path"]))
-        files = sorted(p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
+        if is_zarr_store(folder):
+            from momp.lib.align_sample import _signature
+
+            files = []
+            stats = _signature(folder, None)
+            if not stats:
+                return None
+        else:
+            files = sorted(p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
+            stats = []
     except (KeyError, DatasetError, OSError):
         return None
-    stats = []
     for path in files:
         try:
             st = path.stat()
@@ -402,6 +455,8 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         problems["path"] = str(exc)
         return res
     specified("path")
+    if is_zarr_store(folder):
+        return _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label, lead_label_default)
     names = sorted(p.name for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr")) \
         if folder.is_dir() else []
     needed = [k for k in ("file_pattern", "variable", "day_boundary", "lead_label", "units") if k not in values]
@@ -443,6 +498,41 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
     with ds:
         _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, detect_lead_label,
                            lead_label_default)
+    return res
+
+
+def _store_years(ds: xr.Dataset) -> tuple[str, int, int] | None:
+    """(coordinate name, first year, last year) of the first 1-D datetime coordinate of a store, or None."""
+    for name, coord in ds.coords.items():
+        if coord.ndim == 1 and np.issubdtype(coord.dtype, np.datetime64) and coord.size:
+            years = coord.dt.year
+            return str(name), int(years.min()), int(years.max())
+    return None
+
+
+def _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label, lead_label_default):
+    """Resolve a dataset that is one zarr store holding every year: no file_pattern, everything from the metadata.
+
+    The years come from the time (or init) coordinate, the variable, units, dims and members from the store's
+    metadata and a tiny slice for the value checks; day_boundary and lead_label are as for NetCDF files.
+    """
+    values, problems = res.values, res.problems
+    try:
+        ds = open_data(str(folder))
+    except Exception as exc:  # noqa: BLE001 - any reader error is reported against the path
+        problems["path"] = f"cannot open the zarr store {folder}: {exc}"
+        return res
+    res.sample_file, res.checked = str(folder), True
+    span = _store_years(ds)
+    evidence = "zarr store: one dataset holding every year" + (
+        f" ({span[1]}-{span[2]} from coordinate '{span[0]}')" if span else "")
+    if "file_pattern" in values:
+        specified("file_pattern")
+    else:
+        res.lines.append(Line("file_pattern", "not needed", "detected", evidence))
+    with ds:
+        _resolve_from_file(ds, Path(folder).name, str(folder), kind, res, specified, detected, obs,
+                           detect_lead_label, lead_label_default)
     return res
 
 

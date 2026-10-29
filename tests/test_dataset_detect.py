@@ -152,3 +152,55 @@ def test_dataset_schema_rejects_unknown_keys_with_a_suggestion():
     """A misspelt key names the likely one."""
     with pytest.raises(DatasetError, match='Did you mean "variable"'):
         parse_dataset({"id": "a", "kind": "forecast", "path": "/x", "varible": "tp", "units": "m", "lead_label": "end"}, "t")
+
+
+def _to_zarr(folder, name):
+    """Convert the one NetCDF file written into folder to a sibling zarr store and return its path."""
+    import xarray as xr
+
+    store = folder.parent / name
+    with xr.open_dataset(next(folder.glob("*.nc"))) as ds:
+        ds.to_zarr(store)
+    return str(store)
+
+
+def test_zarr_store_is_one_dataset_without_a_file_pattern(tmp_path):
+    """A zarr store needs no file_pattern; variable, units, dims and the years come from its metadata."""
+    write_obs(tmp_path / "obs_nc")
+    store = _to_zarr(tmp_path / "obs_nc", "obs.zarr")
+    res = detect.resolve_entry({"path": store, "day_boundary": "00 UTC, labelled by start"}, "observations",
+                               use_cache=False)
+    assert not res.problems and res.checked
+    assert res.values["variable"] == "precip" and res.values["units"] == "mm"
+    assert res.values["dims"] == {"time": "time", "lat": "lat", "lon": "lon"}
+    assert "file_pattern" not in res.values
+    text = "\n".join(res.report())
+    assert "file_pattern: not needed  [detected: zarr store: one dataset holding every year (2020-2020" in text
+    assert "no NetCDF files" not in text
+
+
+def test_zarr_forecast_members_and_the_lead_label_from_the_sampled_check(tmp_path):
+    """A zarr forecast gets members from the store and its lead_label from the sampled alignment check."""
+    write_obs(tmp_path / "obs_nc")
+    obs_store = _to_zarr(tmp_path / "obs_nc", "obs.zarr")
+    write_forecast(tmp_path / "fc_nc", members=4, label="end")
+    fc_store = _to_zarr(tmp_path / "fc_nc", "fc.zarr")
+    obs = detect.resolve_entry({"path": obs_store, "day_boundary": "00 UTC, labelled by start"}, "observations",
+                               use_cache=False)
+    res = detect.resolve_entry({"path": fc_store}, "forecast", obs=obs.values, use_cache=False)
+    assert res.values["members"] == 4 and res.values["lead_label"] == "end"
+    assert 'lines up with observations at lag 0 under "end" (sampled check' in "\n".join(res.report())
+
+
+def test_zarr_detection_is_cached_and_follows_the_store(tmp_path):
+    """The detection cache keys on the store's metadata, so a rewritten store is a miss."""
+    write_obs(tmp_path / "obs_nc")
+    store = _to_zarr(tmp_path / "obs_nc", "obs.zarr")
+    entry = {"path": store, "day_boundary": "00 UTC, labelled by start"}
+    first = detect._fingerprint(entry, "observations", False)
+    assert first and first == detect._fingerprint(entry, "observations", False)
+    import shutil
+    shutil.rmtree(store)
+    write_obs(tmp_path / "obs_nc", name="2020.nc", var="rain")
+    store = _to_zarr(tmp_path / "obs_nc", "obs.zarr")
+    assert detect._fingerprint(entry, "observations", False) != first
