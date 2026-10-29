@@ -92,10 +92,13 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
         case = make_case(Case, combi, vars(cfg_ref))
         print(f"processing model onset evaluation for {case.case_name}")
 
-        case_ref = {'model_dir': case_cfg['ref_model_dir'],
-                    'model_var': case_cfg['ref_model_var'],
-                    'file_pattern': case_cfg['ref_model_file_pattern'],
-                    'unit_cvt': case_cfg['ref_model_unit_cvt']
+        # the reference model's own data location, variable, pattern, unit and dims
+        # (read from setting/case, which exist even if the forecast loop never ran)
+        case_ref = {'model_dir': setting.ref_model_dir,
+                    'model_var': case.ref_model_var,
+                    'file_pattern': setting.ref_model_file_pattern,
+                    'unit_cvt': setting.ref_model_unit_cvt,
+                    'model_dims': None
                     }
 
         case.update(case_ref)
@@ -119,7 +122,7 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
         results = set_nested(results, combi, spatial_metrics)
 
         # Save spatial metrics to NetCDF
-        if case_cfg["save_nc_spatial_far_mr_mae"]:
+        if case_cfg_ref["save_nc_spatial_far_mr_mae"]:
             desc_dict = {
                     'title': 'Monsoon Onset MAE, FAR, MR Analysis',
                     'description': """Spatial maps of Mean Absolute Error, False Alarm Rate, and Miss Rate 
@@ -129,12 +132,12 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
 
 
         # make spatial metrics plot
-        if case_cfg['plot_spatial_far_mr_mae']:
+        if case_cfg_ref['plot_spatial_far_mr_mae']:
             plot_spatial_metrics(spatial_metrics, **case_cfg_ref)
 
 
     # save climatological onset to netcdf
-    if case.model == 'climatology' and case_cfg['save_nc_climatology']:
+    if case.model == 'climatology' and case_cfg_ref['save_nc_climatology']:
         fout = os.path.join(case_cfg_ref['dir_out'], "climatology_onset_doy_{}.nc")
         fout = fout.format(tuple_to_str_range(case_cfg_ref['years_clim']))
         climatological_onset_doy = next(iter(onset_da_dict.values()))
@@ -142,11 +145,11 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
         climatological_onset_doy.to_netcdf(fout)
 
     # spatial map of climatology onset day
-    if case_cfg['plot_climatology_onset']:
+    if case_cfg_ref['plot_climatology_onset']:
         plot_spatial_climatology_onset(onset_da_dict, **case_cfg_ref)
 
     # panel portrait plot of mae, far, mr
-    if case_cfg['plot_panel_heatmap_error']:
+    if case_cfg_ref['plot_panel_heatmap_error']:
        panel_portrait_mae_far_mr(results, **case_cfg_ref)
 
     return results

@@ -9,11 +9,33 @@ from momp.stats.parallel import parallel_forecast_obs_pairs
 from momp.stats.parallel import parallel_climatological_onset_dataset
 
 
-def prepare_score_cache(**kwargs):
-    """Build the forecast-observation pair tables (and climatology tables if ref_model is climatology) shared across cases.
+def reference_model_kwargs(kwargs):
+    """Copy kwargs with the reference model's name, directory, variable, file pattern, unit conversion and dims.
 
-    Returns a dict with keys _forecast_obs_df_all, _clim_onset and
-    _climatology_obs_df_all, which create_score_results reuses instead of recomputing.
+    The forecast model's own model_dims are dropped (the reference archive is
+    read by name inference) unless kwargs carries ref_model_dims.
+    """
+    return {**kwargs,
+            'model': kwargs['ref_model'],
+            'model_dir': kwargs['ref_model_dir'],
+            'model_var': kwargs['ref_model_var'],
+            'file_pattern': kwargs['ref_model_file_pattern'],
+            'unit_cvt': kwargs['ref_model_unit_cvt'],
+            'model_dims': kwargs.get('ref_model_dims')}
+
+
+def _pairs(**kwargs):
+    """Forecast-observation pairs for all years, in parallel when kwargs["parallel"] is set."""
+    return parallel_forecast_obs_pairs(**kwargs) if kwargs.get("parallel") else multi_year_forecast_obs_pairs(**kwargs)
+
+
+def prepare_score_cache(**kwargs):
+    """Build the forecast-observation pair tables (and the reference's) shared across cases.
+
+    Returns a dict with keys _forecast_obs_df_all, _ref_obs_df_all (reference
+    model pairs, built from the reference model's own data; None for
+    climatology), _clim_onset and _climatology_obs_df_all, which
+    create_score_results reuses instead of recomputing.
     """
     parallel = kwargs.get('parallel')
     ref_model = kwargs["ref_model"]
@@ -26,6 +48,10 @@ def prepare_score_cache(**kwargs):
 
     clim_onset = None
     climatology_obs_df_all = None
+    ref_obs_df_all = None
+
+    if ref_model != "climatology":
+        ref_obs_df_all = _pairs(**reference_model_kwargs(kwargs))
 
     if ref_model == "climatology":
         clim_onset = (
@@ -41,6 +67,7 @@ def prepare_score_cache(**kwargs):
 
     return {
         "_forecast_obs_df_all": forecast_obs_df_all,
+        "_ref_obs_df_all": ref_obs_df_all,
         "_clim_onset": clim_onset,
         "_climatology_obs_df_all": climatology_obs_df_all,
     }
@@ -142,18 +169,10 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
     else:
         results["climatology_obs_df"] = None
 
-        kwargs_ref = {**kwargs,
-                      'model': ref_model,
-                      'model_dir': ref_model_dir,
-                      'model_var': ref_model_var,
-                      'file_pattern': ref_model_file_pattern,
-                      'unit_cvt': ref_model_unit_cvt
-                      }
-
-        if parallel:
-            ref_obs_df_all = parallel_forecast_obs_pairs(**kwargs)
-        else:
-            ref_obs_df_all = multi_year_forecast_obs_pairs(**kwargs)
+        # the reference model's own data and settings, never the forecast model's
+        ref_obs_df_all = kwargs.get("_ref_obs_df_all")
+        if ref_obs_df_all is None:
+            ref_obs_df_all = _pairs(**reference_model_kwargs(kwargs))
         ref_obs_df = extract_pd_bins(ref_obs_df_all, day_bins)
 
         if BS:
