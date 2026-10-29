@@ -121,10 +121,9 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
         stitched = ingest(on_grid, day_boundary=setup.ingest_boundary, units="mm", source="observed history")
     result = engine.detect_forecast(
         setup.definition, forecast, thresholds=_thresholds(setup, thresh_slice, lat, lon),
-        lead_window=(1, max_forecast_day), restrict_to_season=not setup.derived_seasons, backend=setup.backend,
-        history=stitched)
-    season = "window" if setup.derived_seasons else setup.season
-    result = result.sel(season=season)
+        lead_window=(1, max_forecast_day), backend=setup.backend, history=stitched,
+        season_climatology=_season_climatology(setup, thresh_slice, lat, lon))
+    result = result.sel(season=setup.season)
     if not setup.legacy and bool((result["status"] == Status.CENSORED).any()):
         warnings.warn("some forecast searches are CENSORED although the lead window was shortened to fit the rule; "
                       "they are reported as no onset. Is max_forecast_day larger than the loaded leads allow?",

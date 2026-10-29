@@ -333,14 +333,158 @@ def test_forecast_thresholds_broadcast_over_inits_and_members():
     assert (ds["status"].values[..., 0, 0, 1] == NOT_FOUND).all()
 
 
-def test_forecast_derived_seasons_need_unrestricted_window():
-    """Derived seasons are only supported with restrict_to_season=False."""
-    defn = definition(ANY_WET, m.DerivedSeasons("harmonic", m.DayRef(climatological="onset"),
-                                                m.DayRef(climatological="cessation")))
+def derived_setup(rule=ANY_WET, thresholds=()):
+    """A derived-season definition and a 1 x 2 climatology: cell 0 has two seasons, cell 1 only one (later start)."""
+    defn = definition(rule, m.DerivedSeasons("harmonic", m.DayRef(climatological="onset"),
+                                             m.DayRef(climatological="cessation")), thresholds)
+    clim = xr.Dataset({
+        "n_seasons": (("lat", "lon"), [[2, 1]]),
+        "onset_doy": (("season", "lat", "lon"), [[[100.0, 110.0]], [[270.0, np.nan]]]),
+        "cessation_doy": (("season", "lat", "lon"), [[[160.0, 170.0]], [[350.0, np.nan]]])},
+        coords={"season": [1, 2]})
+    return defn, clim
+
+
+def forecast_wet_on(init, wet_days, n_leads=40, cells=2):
+    """A one-init forecast over 1 x cells cells whose lead k has 10 mm on the listed ISO dates (lead label start)."""
+    day0 = np.datetime64(init)
+    values = np.zeros((1, 1, cells, n_leads), dtype=np.int32)
+    for date in wet_days:
+        values[..., int((np.datetime64(date) - day0) / np.timedelta64(1, "D"))] = 100
+    return make_forecast(values, [init])
+
+
+def test_forecast_derived_seasons_need_a_climatology():
+    """Derived seasons with restrict_to_season=True need season_climatology; without the restriction they do not."""
+    defn, _ = derived_setup()
     fc = make_forecast(np.zeros((1, 1, 1, 10), dtype=np.int32), ["2020-05-25"])
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="season_climatology"):
         engine.detect_forecast(defn, fc)
+    with pytest.raises(ValueError, match="season_climatology"):
+        engine.detect_forecast(defn, fc, history=on_forecast_grid(make_rain(np.zeros((1, 1, 366)), "2020-01-01"), fc))
     assert engine.detect_forecast(defn, fc, restrict_to_season=False)["status"].shape == (1, 1, 1, 1)
+
+
+def test_forecast_derived_seasons_per_cell_forecast_only():
+    """Forecast-only candidates are the leads inside each cell's own season; absent seasons are NOT_FOUND."""
+    defn, clim = derived_setup()
+    # cell 0 season 1 is 9 Apr - 8 Jun, cell 1 is 19 Apr - 18 Jun (2020 is a leap year)
+    fc = forecast_wet_on("2020-04-01", ["2020-04-05", "2020-04-15", "2020-04-25"])
+    ds = engine.detect_forecast(defn, fc, season_climatology=clim)
+    assert ds["status"].dims == ("init_time", "season", "lat", "lon")
+    assert list(ds["season"].values) == ["1", "2"]
+    dates = ds["onset_date"].values.astype("datetime64[D]")
+    status = ds["status"].values
+    assert dates[0, 0, 0, 0] == np.datetime64("2020-04-15") and dates[0, 0, 0, 1] == np.datetime64("2020-04-25")
+    assert ds["onset_lead"].values[0, 0, 0, :].tolist() == [15.0, 25.0]
+    assert status[0, 0].ravel().tolist() == [ONSET, ONSET]
+    assert status[0, 1].ravel().tolist() == [NOT_FOUND, NOT_FOUND]
+    # season 2 of cell 0 (27 Sep - 15 Dec); cell 1 has none, and season 1 is out of reach of a September init
+    fc = forecast_wet_on("2020-09-20", ["2020-09-22", "2020-10-02"])
+    ds = engine.detect_forecast(defn, fc, season_climatology=clim)
+    assert ds["status"].values[0, 0].ravel().tolist() == [NOT_FOUND, NOT_FOUND]
+    assert ds["status"].values[0, 1].ravel().tolist() == [ONSET, NOT_FOUND]
+    assert ds["onset_date"].values.astype("datetime64[D]")[0, 1, 0, 0] == np.datetime64("2020-10-02")
+
+
+def test_forecast_derived_seasons_year_choice_and_members():
+    """The season year is the earliest of year -1, 0, +1 with a lead inside; members share their cell's window."""
+    defn, clim = derived_setup()
+    values = np.zeros((1, 3, 1, 2, 130), dtype=np.int32)
+    values[..., 100:] = 100
+    fc = make_forecast(values, ["2020-12-20"], members=True)
+    ds = engine.detect_forecast(defn, fc, season_climatology=clim, lead_window=(1, 130))
+    assert ds["status"].dims == ("init_time", "member", "season", "lat", "lon")
+    # rain from lead 101 (2021-03-30); season 1 starts 10 Apr 2021 (cell 0) and 20 Apr 2021 (cell 1)
+    dates = ds["onset_date"].values.astype("datetime64[D]")
+    assert dates[0, :, 0, 0, 0].tolist() == [np.datetime64("2021-04-10")] * 3
+    assert dates[0, :, 0, 0, 1].tolist() == [np.datetime64("2021-04-20")] * 3
+    # cell 0 season 2 (27 Sep - 15 Dec) of 2020 ended after the init day only through 15 Dec, so 2020's window has no lead
+    assert (ds["status"].values[0, :, 1] == NOT_FOUND).all()
+
+
+def on_forecast_grid(hist, fc):
+    """The history with its cell coordinates set to the forecast's."""
+    hist.coords.update({dim: fc.coords[dim] for dim in hist.dims[:-1]})
+    return hist
+
+
+def history_and_forecast(init, n_leads, seed=3, cells=2, dry_spells=False):
+    """Random observed rain of 2020-2021 (1 x cells), and a forecast repeating it from `init` (a perfect forecast).
+
+    dry_spells makes the rain frequent but with no rain before day 130 and from day 270 to 299 of 2020, so a
+    cumulative-anomaly curve has an interior minimum in both seasons.
+    """
+    rng = np.random.default_rng(seed)
+    wet = (rng.random((1, cells, 731)) < (0.6 if dry_spells else 0.25)) * rng.integers(5, 200, (1, cells, 731))
+    if dry_spells:
+        wet[..., :129] = 0
+        wet[..., 269:299] = 0
+    hist = make_rain(wet.astype(np.int32), "2020-01-01")
+    split = day_index(hist, init)
+    fc = make_forecast(hist.tenths[:, :, split:split + n_leads][None].copy(), [init])
+    return on_forecast_grid(hist, fc), fc
+
+
+@pytest.mark.parametrize("rule,thresholds", [
+    (ANY_WET, ()), (TWO_WET, ()), (m.Curve("base"), (("base", m.ThresholdSpec("mean_daily")),))])
+@pytest.mark.parametrize("init,n_leads,k", [("2020-04-01", 130, "1"), ("2020-09-20", 110, "2")])
+def test_stitched_derived_seasons_perfect_forecast_equals_observed(rule, thresholds, init, n_leads, k):
+    """With a forecast equal to the observations, an init before the season start gets the observed onset.
+
+    Season k is the one whose window the forecast reaches; the other season's window has no lead, so it is NOT_FOUND.
+    """
+    defn, clim = derived_setup(rule, thresholds)
+    hist, fc = history_and_forecast(init, n_leads, dry_spells=bool(thresholds))
+    thr = {"base": np.array([[2.0, 2.0]])} if thresholds else None
+    ds = engine.detect_forecast(defn, fc, history=hist, season_climatology=clim, thresholds=thr, lead_window=(1, n_leads))
+    obs = engine.detect_observed(defn, hist, years=[2020], season_climatology=clim, thresholds=thr)
+    got, want = ds.sel(season=k)["status"].values.ravel(), obs.sel(year=2020, season=k)["status"].values.ravel()
+    found = want == ONSET
+    assert found.any()
+    assert (got[found] == ONSET).all() and not (got[~found] == ONSET).any()
+    want_dates = obs.sel(year=2020, season=k)["onset_date"].values.ravel()
+    assert (ds.sel(season=k)["onset_date"].values.ravel()[found] == want_dates[found]).all()
+    other = "2" if k == "1" else "1"
+    assert (ds.sel(season=other)["status"].values == NOT_FOUND).all()
+
+
+def test_stitched_derived_seasons_curve_accumulates_from_the_season_start():
+    """The curve starts at each cell's season start in the history, not at lead 1."""
+    defn, clim = derived_setup(m.Curve("base"), (("base", m.ThresholdSpec("mean_daily")),))
+    values = np.zeros((1, 2, 731), dtype=np.int32)
+    hist = make_rain(values, "2020-01-01")
+    values[..., day_index(hist, "2020-04-15"):] = 50
+    fc = make_forecast(np.full((1, 1, 2, 40), 50, dtype=np.int32), ["2020-04-15"])
+    hist = on_forecast_grid(make_rain(values, "2020-01-01"), fc)
+    thr = {"base": np.array([[4.0, 4.0]])}
+    ds = engine.detect_forecast(defn, fc, history=hist, season_climatology=clim, thresholds=thr, lead_window=(1, 40))
+    # dry (anomaly -4/day) from the season start to 14 Apr, then +1/day: cell 0 (season from 9 Apr) has its minimum on
+    # 14 Apr, so its onset is 15 Apr (lead 1); cell 1's season starts 19 Apr, so its minimum is that first day
+    assert (ds["status"].values[0, 0] == ONSET).all()
+    assert ds["onset_lead"].values[0, 0].tolist() == [[1.0, 6.0]]
+    assert ds["onset_date"].values.astype("datetime64[D]")[0, 0, 0].tolist() == [np.datetime64("2020-04-15"),
+                                                                                  np.datetime64("2020-04-20")]
+    # searched from lead 1 alone the curve rises at once, so cell 0's minimum is lead 1 and its onset lead 2
+    alone = engine.detect_forecast(defn, fc, season_climatology=clim, thresholds=thr, lead_window=(1, 40))
+    assert alone["onset_lead"].values[0, 0].tolist() == [[2.0, 6.0]]
+
+
+def test_stitched_derived_seasons_absent_and_insufficient():
+    """Absent seasons are NOT_FOUND; a season starting before the history is INSUFFICIENT_DATA."""
+    defn, clim = derived_setup()
+    hist, fc = history_and_forecast("2020-09-20", 40)
+    ds = engine.detect_forecast(defn, fc, history=hist, season_climatology=clim, lead_window=(1, 40))
+    assert ds["status"].values[0, 1, 0, 1] == NOT_FOUND
+    assert ds["status"].values[0, 0, 0, 0] == NOT_FOUND
+    # a wrapping season (27 Nov - 9 Feb) that started in 2019 holds the leads of a 2 Jan 2020 init
+    hist, fc = history_and_forecast("2020-01-02", 40)
+    wrap = clim.copy(deep=True)
+    wrap["onset_doy"].values[0, 0, 0] = 331.0
+    wrap["cessation_doy"].values[0, 0, 0] = 40.0
+    ds = engine.detect_forecast(defn, fc, history=hist, season_climatology=wrap, lead_window=(1, 40))
+    assert ds["status"].values[0, 0, 0, 0] == INSUFFICIENT
+    assert ds["status"].values[0, 0, 0, 1] == NOT_FOUND
 
 
 def test_unknown_backend_names():

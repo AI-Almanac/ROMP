@@ -2,6 +2,7 @@
 import matplotlib
 import numpy as np
 import pytest
+import xarray as xr
 
 matplotlib.use("Agg")
 
@@ -53,8 +54,66 @@ def test_dates_equal_the_engines():
     assert sorted(zip(x.astype(int), y.astype(int))) == expected
 
 
+def derived():
+    """A derived-season definition, and a one-cell climatology with two seasons (30 May - 30 Sep, 1 Jan - 20 Apr)."""
+    defn = definition(TWO_WET, m.DerivedSeasons("harmonic", m.DayRef(climatological="onset"),
+                                                m.DayRef(climatological="cessation")))
+    clim = xr.Dataset({
+        "n_seasons": (("lat", "lon"), [[2]]),
+        "onset_doy": (("season", "lat", "lon"), [[[150.0]], [[1.0]]]),
+        "cessation_doy": (("season", "lat", "lon"), [[[273.0]], [[110.0]]])},
+        coords={"season": [1, 2], "lat": [0.0], "lon": [0.0]})
+    return defn, clim
+
+
+def observed_line(fig):
+    """The y value of the horizontal observed-onset line (the thick grey one)."""
+    line = next(l for l in fig.axes[0].lines if l.get_linewidth() == 2.0 and len(l.get_ydata()) == 2)
+    return float(line.get_ydata()[0])
+
+
+@pytest.mark.parametrize("number", [1, 2])
+def test_derived_seasons_equal_the_engines(number):
+    """Derived seasons plot the engine's forecast dates (limited to the cell's season) and observed onset for the chosen season."""
+    hist, fc = synthetic()
+    defn, clim = derived()
+    fig = forecast_vs_truth(defn, fc, history=hist, lat=0, lon=0, lead_window=(1, 25), season_climatology=clim,
+                            season=number)
+    ds = engine.detect_forecast(defn, fc, history=hist, lead_window=(1, 25), season_climatology=clim)
+    ds = ds.sel(season=str(number)).isel(lat=0, lon=0)
+    status, date = ds["status"].values, ds["onset_date"].values.astype("datetime64[D]").astype(np.int64)
+    inits = np.array(INITS, dtype="datetime64[D]").astype(np.int64)
+    expected = sorted((int(inits[i]), int(date[i, j])) for i in range(len(INITS)) for j in range(4)
+                      if status[i, j] == m.Status.ONSET)
+    if number == 2:
+        # season 2 (1 Jan - 20 Apr) holds no lead of a June init, so every member is NOT_FOUND and nothing is dotted
+        assert not expected and (status == m.Status.NOT_FOUND).all()
+    else:
+        x, y = dots(fig)
+        assert expected
+        assert sorted(zip(x.astype(int), y.astype(int))) == expected
+    obs = engine.detect_observed(defn, hist, years=[2000], season_climatology=clim).sel(year=2000, season=str(number))
+    if int(obs["status"].values.item()) == m.Status.ONSET:
+        assert observed_line(fig) == obs["onset_date"].values.astype("datetime64[D]").astype(np.int64).item()
+    texts = [t.get_text() for t in fig.texts]
+    assert not any("not restricted" in t for t in texts)
+    assert any(f"season {number} of 2" in t for t in texts)
+
+
+def test_derived_seasons_errors():
+    """Derived seasons need the climatology, and a season the cell does not have is refused with its count."""
+    hist, fc = synthetic()
+    defn, clim = derived()
+    with pytest.raises(ValueError, match="season_climatology"):
+        forecast_vs_truth(defn, fc, history=hist, lat=0, lon=0)
+    one = clim.copy(deep=True)
+    one["n_seasons"][:] = 1
+    with pytest.raises(ValueError, match="has 1 season"):
+        forecast_vs_truth(defn, fc, history=hist, lat=0, lon=0, season_climatology=one, season=2)
+
+
 def test_errors():
-    """Derived seasons and non-standard calendars are refused."""
+    """Non-standard calendars are refused."""
     hist, fc = synthetic()
     fc.calendar = "noleap"
     with pytest.raises(ValueError, match="standard calendar"):

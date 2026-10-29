@@ -154,20 +154,36 @@ def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, threshold
     return day, status
 
 
-def _derived_bounds(definition: Definition, keys: np.ndarray, years: np.ndarray, climatology: xr.Dataset,
-                    spatial_dims: tuple[str, ...], n_series: int):
-    """First and last day indices (K, Y, S) plus a "no such season" mask for DerivedSeasons."""
+def _climatology_doys(definition: Definition, climatology: xr.Dataset, spatial_dims: tuple[str, ...], n_series: int):
+    """Per-cell season bounds of a season climatology: (start doy, end doy) as (K, cells), n_seasons (cells) or None, names.
+
+    The start and end variables are the ones the definition's DerivedSeasons bounds refer to.
+    """
     seasons = definition.seasons
     for ref in (seasons.start, seasons.end):
         if ref.climatological is None:
             raise ValueError("derived seasons need climatological bounds")
     var = {"onset": "onset_doy", "cessation": "cessation_doy"}
     n_k = climatology.sizes["season"]
-    onset = climatology[var[seasons.start.climatological]].transpose("season", *spatial_dims).values.reshape(n_k, n_series)
-    cessation = climatology[var[seasons.end.climatological]].transpose("season", *spatial_dims).values.reshape(n_k, n_series)
-    n_seasons = None
-    if "n_seasons" in climatology:
-        n_seasons = climatology["n_seasons"].transpose(*spatial_dims).values.reshape(n_series)
+    try:
+        onset = climatology[var[seasons.start.climatological]].transpose("season", *spatial_dims).values.reshape(n_k, n_series)
+        cessation = climatology[var[seasons.end.climatological]].transpose("season", *spatial_dims).values.reshape(n_k, n_series)
+        n_seasons = None
+        if "n_seasons" in climatology:
+            n_seasons = climatology["n_seasons"].transpose(*spatial_dims).values.reshape(n_series)
+    except ValueError as exc:
+        raise ValueError(f"season_climatology does not match the grid ({n_series} cells over {spatial_dims}): {exc}") from exc
+    names = [str(s) for s in climatology["season"].values] if "season" in climatology.coords \
+        else [f"season_{k + 1}" for k in range(n_k)]
+    return onset, cessation, n_seasons, names
+
+
+def _derived_bounds(definition: Definition, keys: np.ndarray, years: np.ndarray, climatology: xr.Dataset,
+                    spatial_dims: tuple[str, ...], n_series: int):
+    """First and last day indices (K, Y, S) plus a "no such season" mask for DerivedSeasons."""
+    seasons = definition.seasons
+    onset, cessation, n_seasons, names = _climatology_doys(definition, climatology, spatial_dims, n_series)
+    n_k = onset.shape[0]
     jan1 = cal.find_days(keys, years, 1, 1)
     firsts, lasts, none = [], [], []
     for k in range(n_k):
@@ -184,8 +200,6 @@ def _derived_bounds(definition: Definition, keys: np.ndarray, years: np.ndarray,
         firsts.append(first)
         lasts.append(last)
         none.append(np.broadcast_to(absent[None, :], first.shape))
-    names = [str(s) for s in climatology["season"].values] if "season" in climatology.coords \
-        else [f"season_{k + 1}" for k in range(n_k)]
     return np.stack(firsts), np.stack(lasts), np.stack(none), names
 
 
@@ -367,14 +381,125 @@ def _bound_key(calendar: str, year: np.ndarray, ref) -> np.ndarray:
     return cal.label_keys(y, m, d)
 
 
+def _derived_windows(definition: Definition, calendar: str, init_year: np.ndarray, climatology: xr.Dataset,
+                     spatial_dims: tuple[str, ...], n_cell: int):
+    """Label-key windows of each derived season per init and cell, for the init's year minus one, the year and the year after.
+
+    Returns (low, high, present, names): low and high are int64 arrays shaped (3, K, n_init, n_cell) holding
+    the year*10000 + month*100 + day key of the first and last day of the season that starts in year
+    init_year + shift (shift -1, 0, 1); present is (K, n_cell), False where the cell lacks that season.
+    The bounds follow calendar.doy_bounds: a season ending before its start day-of-year ends in the following year.
+    """
+    seasons = definition.seasons
+    onset, cessation, n_seasons, names = _climatology_doys(definition, climatology, spatial_dims, n_cell)
+    n_k = onset.shape[0]
+    present = np.isfinite(onset) & np.isfinite(cessation)
+    if n_seasons is not None:
+        present &= (n_seasons[None, :] > np.arange(n_k)[:, None])
+    init_year = np.asarray(init_year, dtype=np.int64)
+    n_init = len(init_year)
+    low = np.zeros((3, n_k, n_init, n_cell), dtype=np.int64)
+    high = np.zeros_like(low)
+
+    def shifted_keys(year: np.ndarray, offsets: np.ndarray) -> np.ndarray:
+        """Label keys of Jan 1 of each year plus per-cell day offsets, shaped (len(year), n_cell)."""
+        uniq, inverse = np.unique(offsets, return_inverse=True)
+        ones = np.ones_like(year)
+        y, m, d = _add_days(calendar, year, ones, ones, uniq)
+        return cal.label_keys(y, m, d)[:, inverse.reshape(-1)]
+
+    for k in range(n_k):
+        s_doy = np.rint(np.nan_to_num(onset[k], nan=1.0)).astype(np.int64)
+        e_doy = np.rint(np.nan_to_num(cessation[k], nan=1.0)).astype(np.int64)
+        wraps = (e_doy < s_doy)[None, :]
+        start_off = s_doy - 1 + seasons.start.offset_days
+        end_off = e_doy - 1 + seasons.end.offset_days
+        for i, shift in enumerate((-1, 0, 1)):
+            year = init_year + shift
+            low[i, k] = shifted_keys(year, start_off)
+            high[i, k] = np.where(wraps, shifted_keys(year + 1, end_off), shifted_keys(year, end_off))
+    return low, high, present, names
+
+
+def _pick_derived(keys: np.ndarray, allowed: np.ndarray, low: np.ndarray, high: np.ndarray, present: np.ndarray):
+    """Choose each (init, cell)'s season year and the first and last qualifying lead of every derived season.
+
+    keys are the lead label keys (n_init, n_leads); allowed marks the leads of the lead window; low, high and
+    present come from _derived_windows. A season takes the earliest of the three years having a lead of the window
+    inside it. Returns first, last (K, n_init, n_cell; -1 where none), has (K, n_init, n_cell) and take (3, K, n_init, n_cell),
+    the shift each (init, cell) chose.
+    """
+    _, n_k, n_init, n_cell = low.shape
+    first = np.zeros((n_k, n_init, n_cell), dtype=np.int64)
+    last = np.full((n_k, n_init, n_cell), -1, dtype=np.int64)
+    has = np.zeros((n_k, n_init, n_cell), dtype=bool)
+    chosen = np.zeros((3, n_k, n_init, n_cell), dtype=bool)
+    n_leads = keys.shape[1]
+    for k in range(n_k):
+        done = ~np.broadcast_to(present[k][None, :], (n_init, n_cell))
+        for i in range(3):
+            inside = ((keys[:, :, None] >= low[i, k][:, None, :]) & (keys[:, :, None] <= high[i, k][:, None, :])
+                      & allowed[None, :, None])
+            take = inside.any(axis=1) & ~done
+            first[k] = np.where(take, np.argmax(inside, axis=1), first[k])
+            last[k] = np.where(take, n_leads - 1 - np.argmax(inside[:, ::-1, :], axis=1), last[k])
+            has[k] |= take
+            chosen[i, k] = take
+            done |= take
+    return first, last, has, chosen
+
+
 def _label_table(forecast: ForecastRain, n_leads: int):
     """Date labels (year, month, day), each (n_init, n_leads): init + k - 1 days for lead_label "start", init + k for "end"."""
     lead_offsets = np.arange(n_leads) + (1 if forecast.lead_label == "end" else 0)
     return _add_days(forecast.calendar, forecast.init_year, forecast.init_month, forecast.init_day, lead_offsets)
 
 
+def _derived_dims(forecast: ForecastRain):
+    """(spatial dims, n_member, n_cell) of a forecast's series dims (init, [member], *spatial)."""
+    n_lead_dims = 2 if "member" in forecast.dims[:-1] else 1
+    spatial_dims = forecast.dims[n_lead_dims:-1]
+    n_cell = int(np.prod(forecast.tenths.shape[n_lead_dims:-1], dtype=np.int64))
+    n_member = forecast.tenths.shape[1] if n_lead_dims == 2 else 1
+    return spatial_dims, n_member, n_cell
+
+
+def _expand_rows(a: np.ndarray, n_member: int, n_cell: int) -> np.ndarray:
+    """Flatten (season, init) or (season, init, cell) values to (season, init, member, cell) order."""
+    k, n_init = a.shape[:2]
+    shaped = a.reshape(k, n_init, 1, -1) if a.ndim == 3 else a.reshape(k, n_init, 1, 1)
+    return np.broadcast_to(shaped, (k, n_init, n_member, n_cell)).ravel()
+
+
+def _require_climatology(season_climatology: xr.Dataset | None) -> xr.Dataset:
+    """season_climatology, or a ValueError saying derived seasons need one."""
+    if season_climatology is None:
+        raise ValueError("derived seasons need season_climatology (n_seasons, onset_doy, cessation_doy)")
+    return season_climatology
+
+
+def _derived_forecast_jobs(definition: Definition, forecast: ForecastRain, allowed: np.ndarray,
+                           season_climatology: xr.Dataset | None) -> tuple[Jobs, JobLayout]:
+    """build_forecast_jobs for DerivedSeasons restricted to each cell's own season."""
+    climatology = _require_climatology(season_climatology)
+    n_leads, n_init = forecast.tenths.shape[-1], forecast.tenths.shape[0]
+    spatial_dims, n_member, n_cell = _derived_dims(forecast)
+    n_series = n_init * n_member * n_cell
+    low, high, present, names = _derived_windows(definition, forecast.calendar, forecast.init_year, climatology,
+                                                 spatial_dims, n_cell)
+    keys = cal.label_keys(*_label_table(forecast, n_leads))
+    first, last, has, _ = _pick_derived(keys, allowed, low, high, present)
+    k = len(names)
+    preset = np.where(has, NO_PRESET, Status.NOT_FOUND).astype(np.int8)
+    series = np.broadcast_to(np.arange(n_series, dtype=np.int64), (k, n_series)).ravel().copy()
+    jobs = Jobs(series, _expand_rows(np.where(has, first, 0), n_member, n_cell),
+                _expand_rows(np.where(has, last, -1), n_member, n_cell), np.full(k * n_series, n_leads, dtype=np.int64))
+    return jobs, JobLayout((k,), _expand_rows(preset, n_member, n_cell), names, n_series)
+
+
 def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_window: tuple[int, int] = (1, 30),
-                        restrict_to_season: bool = True) -> tuple[Jobs, JobLayout]:
+                        restrict_to_season: bool = True, season_climatology: xr.Dataset | None = None
+                        ) -> tuple[Jobs, JobLayout]:
     """One job per (season, series) with series = (init, [member], cell) rows over the lead axis.
 
     Candidates are the leads in lead_window (1-based, inclusive) whose date label
@@ -382,8 +507,11 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
     minus one, the init's year and the year after that has any such lead; the
     qualifying leads are contiguous. With none, the job is NOT_FOUND. With
     restrict_to_season=False there is one season, "window", and every lead of
-    lead_window is a candidate (this also allows derived seasons). data_end is
-    the number of leads.
+    lead_window is a candidate. DerivedSeasons with restrict_to_season=True need
+    season_climatology (as for build_observed_jobs): each cell's windows come from
+    its own season bounds, the season year is chosen per (init, cell) as above, and
+    a cell without that season is NOT_FOUND, so first, last and the status vary
+    by series row. data_end is the number of leads.
     """
     n_leads = forecast.tenths.shape[-1]
     n_init = forecast.tenths.shape[0]
@@ -397,7 +525,7 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
         masks = [np.broadcast_to(allowed, (n_init, n_leads))]
     else:
         if isinstance(definition.seasons, DerivedSeasons):
-            raise NotImplementedError("derived seasons are not supported for forecasts with restrict_to_season=True")
+            return _derived_forecast_jobs(definition, forecast, allowed, season_climatology)
         names = [s.name for s in definition.seasons]
         label_y, label_m, label_d = _label_table(forecast, n_leads)
         keys = cal.label_keys(label_y, label_m, label_d)
@@ -451,8 +579,8 @@ def _check_same_grid(history: DailyRain, forecast: ForecastRain, spatial_dims: t
 
 
 def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: ForecastRain,
-                        lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True
-                        ) -> tuple[StitchedJobs, StitchedLayout]:
+                        lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True,
+                        season_climatology: xr.Dataset | None = None) -> tuple[StitchedJobs, StitchedLayout]:
     """One stitched job per (season, init, [member], cell) over observed history followed by the forecast (spec section 13).
 
     The forecast row of a job is the flat (init, [member], cell) series index and
@@ -464,8 +592,11 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
     later) to the earlier of the season end and the last lead of lead_window.
     A season start before the history gives INSUFFICIENT_DATA, a season missing
     from the init's years NOT_FOUND. With restrict_to_season=False there is one
-    season, "window", whose candidates are the leads of lead_window. lead_window
-    must start at 1. data_end is split plus the number of leads.
+    season, "window", whose candidates are the leads of lead_window. DerivedSeasons
+    with restrict_to_season=True need season_climatology: the same rules apply with
+    each cell's own season window (the season start is then per cell, and a cell
+    without that season is NOT_FOUND). lead_window must start at 1. data_end is
+    split plus the number of leads.
     """
     if lead_window[0] != 1:
         raise ValueError(f"stitched detection needs lead_window to start at 1, got {lead_window}")
@@ -500,45 +631,47 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
         start_hist = np.full((1, n_init), -1, dtype=np.int64)
     else:
         if isinstance(definition.seasons, DerivedSeasons):
-            raise NotImplementedError("derived seasons are not supported for forecasts with restrict_to_season=True")
-        names = [season.name for season in definition.seasons]
-        k = len(names)
-        first = np.zeros((k, n_init), dtype=np.int64)
-        last = np.full((k, n_init), -1, dtype=np.int64)
-        has = np.zeros((k, n_init), dtype=bool)
-        start_hist = np.full((k, n_init), -1, dtype=np.int64)
-        for i, season in enumerate(definition.seasons):
-            wraps = (season.end.month, season.end.day) < (season.start.month, season.start.day)
-            done = np.zeros(n_init, dtype=bool)
-            for shift in (-1, 0, 1):
-                year = np.asarray(forecast.init_year, dtype=np.int64) + shift
-                low = _bound_key(forecast.calendar, year, season.start)
-                high = _bound_key(forecast.calendar, year + wraps, season.end)
-                inside = (keys >= low) & (keys <= high) & allowed[None, :]
-                take = inside.any(axis=1) & ~done
-                first[i, take] = np.argmax(inside, axis=1)[take]
-                last[i, take] = (n_leads - 1 - np.argmax(inside[:, ::-1], axis=1))[take]
-                has[i, take] = True
-                before = take & (low[:, 0] <= keys[:, 0])
-                at = np.searchsorted(hist_keys, low[:, 0])
-                found = (at < len(hist_keys)) & (hist_keys[np.minimum(at, len(hist_keys) - 1)] == low[:, 0])
-                start_hist[i, before] = np.where(found, at, -2)[before]
-                done |= take
+            names, first, last, has, start_hist = _derived_stitched_windows(
+                definition, forecast, hist_keys, keys, allowed, season_climatology)
+        else:
+            names = [season.name for season in definition.seasons]
+            k = len(names)
+            first = np.zeros((k, n_init), dtype=np.int64)
+            last = np.full((k, n_init), -1, dtype=np.int64)
+            has = np.zeros((k, n_init), dtype=bool)
+            start_hist = np.full((k, n_init), -1, dtype=np.int64)
+            for i, season in enumerate(definition.seasons):
+                wraps = (season.end.month, season.end.day) < (season.start.month, season.start.day)
+                done = np.zeros(n_init, dtype=bool)
+                for shift in (-1, 0, 1):
+                    year = np.asarray(forecast.init_year, dtype=np.int64) + shift
+                    low = _bound_key(forecast.calendar, year, season.start)
+                    high = _bound_key(forecast.calendar, year + wraps, season.end)
+                    inside = (keys >= low) & (keys <= high) & allowed[None, :]
+                    take = inside.any(axis=1) & ~done
+                    first[i, take] = np.argmax(inside, axis=1)[take]
+                    last[i, take] = (n_leads - 1 - np.argmax(inside[:, ::-1], axis=1))[take]
+                    has[i, take] = True
+                    before = take & (low[:, 0] <= keys[:, 0])
+                    at = np.searchsorted(hist_keys, low[:, 0])
+                    found = (at < len(hist_keys)) & (hist_keys[np.minimum(at, len(hist_keys) - 1)] == low[:, 0])
+                    start_hist[i, before] = np.where(found, at, -2)[before]
+                    done |= take
     k = len(names)
+    split_b = split[None, :, None] if first.ndim == 3 else split[None, :]
     in_history = start_hist != -1
-    start = np.where(in_history, start_hist, split[None, :] + first)
-    end = split[None, :] + last
-    preset = np.full((k, n_init), NO_PRESET, dtype=np.int8)
+    start = np.where(in_history, start_hist, split_b + first)
+    end = split_b + last
+    preset = np.full(first.shape, NO_PRESET, dtype=np.int8)
     preset[~has] = Status.NOT_FOUND
     preset[has & (start_hist == -2)] = Status.INSUFFICIENT_DATA
     skip = preset >= 0
     start = np.where(skip, 0, start)
     end = np.where(skip, -1, end)
-    rest = n_series // max(n_init, 1)
 
     def expand(a: np.ndarray) -> np.ndarray:
-        """Repeat per-init values over the member and cell rows of each init."""
-        return np.repeat(a, rest, axis=1).ravel()
+        """Repeat per-init (or per-init-and-cell) values over the member and cell rows of each init."""
+        return _expand_rows(a, n_member, n_cell)
 
     series = np.broadcast_to(np.arange(n_series, dtype=np.int64), (k, n_series)).ravel().copy()
     jobs = StitchedJobs(cell=series % n_cell, series=series, split=expand(np.broadcast_to(split, (k, n_init))),
@@ -546,6 +679,27 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
                         data_end=expand(np.broadcast_to(split + n_leads, (k, n_init))))
     layout = StitchedLayout((k,), expand(preset), names, n_series, n_init, n_member, n_cell)
     return jobs, layout
+
+
+def _derived_stitched_windows(definition: Definition, forecast: ForecastRain, hist_keys: np.ndarray, keys: np.ndarray,
+                              allowed: np.ndarray, season_climatology: xr.Dataset | None):
+    """Per (season, init, cell) first and last lead, presence and history start of the derived seasons of a stitched search.
+
+    Returns names, first, last, has and start_hist, each (K, n_init, n_cell) except names: start_hist is the history
+    index of the season start when it is on or before lead 1's day (-2 when the history lacks that day), else -1.
+    """
+    climatology = _require_climatology(season_climatology)
+    spatial_dims, _, n_cell = _derived_dims(forecast)
+    low, high, present, names = _derived_windows(definition, forecast.calendar, forecast.init_year, climatology,
+                                                 spatial_dims, n_cell)
+    first, last, has, chosen = _pick_derived(keys, allowed, low, high, present)
+    start_hist = np.full(first.shape, -1, dtype=np.int64)
+    for i in range(3):
+        before = chosen[i] & (low[i] <= keys[None, :, :1])
+        at = np.searchsorted(hist_keys, low[i])
+        found = (at < len(hist_keys)) & (hist_keys[np.minimum(at, len(hist_keys) - 1)] == low[i])
+        start_hist[before] = np.where(found, at, -2)[before]
+    return names, first, last, has, start_hist
 
 
 def _prior_search(plan: plan_mod.Plan, history: DailyRain, jobs: StitchedJobs, layout: StitchedLayout,
@@ -659,7 +813,8 @@ def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...
 def detect_forecast(definition: Definition, forecast: ForecastRain, *, thresholds=None,
                     lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True,
                     backend: str = "numba", attrs: dict | None = None,
-                    history: DailyRain | None = None, threshold_windows=None) -> xr.Dataset:
+                    history: DailyRain | None = None, threshold_windows=None,
+                    season_climatology: xr.Dataset | None = None) -> xr.Dataset:
     """Detect onset in every (init, [member], season, cell) of a forecast.
 
     Returns dims (init_time, [member], season, *spatial) with onset_lead (float64:
@@ -680,6 +835,12 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     windows) is applied per candidate by the window its lead falls in; the window
     start leads come from threshold_windows or the threshold's window_first
     coordinate (spec section 13).
+
+    DerivedSeasons with restrict_to_season=True need season_climatology (n_seasons,
+    onset_doy, cessation_doy with dims (season, *spatial) on the forecast's grid, as
+    for detect_observed): candidates are then limited to each cell's own season, the
+    season coordinate is the climatology's (1, 2, ...), and a cell without that season
+    is NOT_FOUND. Stitched, curve rules accumulate from the cell's season start.
     """
     plan = plan_mod.compile(definition)
     n_leads = forecast.tenths.shape[-1]
@@ -690,13 +851,15 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     per_series = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, series_shape)
     windows = _threshold_windows(plan, thresholds, threshold_windows)
     if history is None:
-        jobs, layout = build_forecast_jobs(definition, forecast, lead_window, restrict_to_season)
+        jobs, layout = build_forecast_jobs(definition, forecast, lead_window, restrict_to_season,
+                                            season_climatology)
         day, status = _run(plan, forecast.tenths.reshape(layout.n_series, n_leads),
                            forecast.missing.reshape(layout.n_series, n_leads), per_series, jobs, layout.preset, backend, windows)
         split = np.zeros(len(day), dtype=np.int64)
         hist_labels = None
     else:
-        jobs, layout = build_stitched_jobs(definition, history, forecast, lead_window, restrict_to_season)
+        jobs, layout = build_stitched_jobs(definition, history, forecast, lead_window, restrict_to_season,
+                                              season_climatology)
         per_cell = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape,
                                       first_window_only=True)
         day, status = _run_stitched(plan, history, forecast, per_series, per_cell, jobs, layout, backend, windows)

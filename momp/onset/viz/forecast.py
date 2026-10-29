@@ -7,6 +7,7 @@ members without an onset are counted per init above the axes.
 """
 from __future__ import annotations
 
+import textwrap
 import warnings
 from dataclasses import replace
 
@@ -80,9 +81,24 @@ def _median_days(days: np.ndarray, keep: np.ndarray) -> np.ndarray:
         return np.nanmedian(masked, axis=1)
 
 
-def _observed_onsets(definition, hist1, thresholds, years, season_name):
+def _climatology_cell(climatology: xr.Dataset, hist1: DailyRain, season: int) -> tuple[xr.Dataset, int]:
+    """The season climatology cut to the history's single cell (every dim kept, length 1) and that cell's season count.
+
+    Raises ValueError when the cell has fewer than `season` seasons.
+    """
+    dims = hist1.dims[:-1]
+    cell = climatology.sel({d: [float(hist1.coords[d][0])] for d in dims}, method="nearest")
+    n = int(cell["n_seasons"].values.reshape(-1)[0]) if "n_seasons" in cell else int(
+        np.isfinite(cell["onset_doy"].values.reshape(cell.sizes["season"], -1)[:, 0]).sum())
+    if season > n:
+        raise ValueError(f"season {season} requested but the cell has {n} season{'s' if n != 1 else ''}")
+    return cell, n
+
+
+def _observed_onsets(definition, hist1, thresholds, years, season_name, season_climatology=None):
     """{year: (status, date or None)} of the observed onset of each year at the cell."""
-    obs = engine.detect_observed(definition, hist1, thresholds=thresholds, years=years)
+    obs = engine.detect_observed(definition, hist1, thresholds=thresholds, years=years,
+                                 season_climatology=season_climatology)
     out = {}
     for year in years:
         sel = obs.sel(year=year, season=season_name).isel({d: 0 for d in obs["status"].dims if d not in ("year", "season")})
@@ -101,13 +117,13 @@ def _thin(positions: list[float], priority: list[float], gap: float) -> list[int
     return kept
 
 
-def _count_rows(fig, ax, init_x, status) -> None:
+def _count_rows(fig, ax, init_x, status, mode: str = "light") -> None:
     """Small icon-and-count labels per init above the axes, one row per status present, thinned to stay legible."""
     present = [s for s in _NO_ONSET if (status == s).any()]
     renderer = fig.canvas.get_renderer()
     x_to_px = ax.transData.transform([(x, 0) for x in init_x])[:, 0]
     for row, s in enumerate(present):
-        colour, icon, label = style.status_style(s)
+        colour, icon, label = style.status_style(s, mode)
         counts = (status == s).sum(axis=1)
         idx = np.nonzero(counts)[0]
         y = 1.0 + (_ROW_IN * (len(present) - 1 - row) + 0.06) / (ax.get_position().height * fig.get_figheight())
@@ -122,8 +138,8 @@ def _count_rows(fig, ax, init_x, status) -> None:
 
 
 def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history: DailyRain, lat: float, lon: float,
-                      season: str | None = None, thresholds=None, lead_window: tuple[int, int] = (1, 30),
-                      mode: str = "light") -> Figure:
+                      season: str | int | None = None, thresholds=None, lead_window: tuple[int, int] = (1, 30),
+                      season_climatology: xr.Dataset | None = None, mode: str = "light") -> Figure:
     """Onset date of every ensemble member against the init date, with the observed onset as a line.
 
     The dates come from engine.detect_forecast on the cell nearest (lat, lon) with `history` stitched in
@@ -132,18 +148,36 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
     whose onset the history alone had decided (PRIOR) carry the status marker. Dots below the diagonal are
     back-dated into the history. Members without an onset are counted per init above the axes. season picks
     one season by name (default: the first); thresholds are as for detect_forecast. Needs a standard
-    calendar and a definition with named seasons.
+    calendar.
+
+    Derived (per-cell) seasons need season_climatology (n_seasons, onset_doy, cessation_doy, as from
+    climatology.harmonic_seasons) and take `season` as 1 or 2 (default 1; ValueError when the cell has fewer).
+    The forecast and the observed onset both use that cell's derived season (engine.detect_forecast with
+    season_climatology), and the subtitle names the season.
     """
     if forecast.calendar not in _STANDARD:
         raise ValueError(f"forecast_vs_truth needs a standard calendar, got '{forecast.calendar}'")
-    if isinstance(definition.seasons, DerivedSeasons):
-        raise ValueError("forecast_vs_truth does not support derived seasons")
+    derived = isinstance(definition.seasons, DerivedSeasons)
     fc1, hist1, thr1, place = _one_cell(forecast, history, lat, lon, thresholds)
-    det = engine.detect_forecast(definition, fc1, thresholds=thr1, lead_window=lead_window, history=hist1)
-    names = [str(s) for s in det["season"].values]
-    season_name = names[_season_index(names, season)]
+    clim1 = None
+    if derived:
+        if season_climatology is None:
+            raise ValueError("derived seasons need season_climatology (n_seasons, onset_doy, cessation_doy)")
+        number = 1 if season is None else int(season)
+        if number < 1:
+            raise ValueError(f"season must be 1 or 2 for derived seasons, got {season!r}")
+        clim1, n_seasons = _climatology_cell(season_climatology, hist1, number)
+        season_name = str(number)
+        det = engine.detect_forecast(definition, fc1, thresholds=thr1, lead_window=lead_window, history=hist1,
+                                     season_climatology=clim1)
+        det = det.sel(season=season_name)
+    else:
+        det = engine.detect_forecast(definition, fc1, thresholds=thr1, lead_window=lead_window, history=hist1)
+        names = [str(s) for s in det["season"].values]
+        season_name = names[_season_index(names, season)]
+        det = det.sel(season=season_name)
     spatial = {d: 0 for d in det["status"].dims if d not in ("init_time", "member", "season")}
-    det = det.sel(season=season_name).isel(spatial)
+    det = det.isel(spatial)
     status = det["status"].values.astype(int)
     onset = det["onset_date"].values
     if status.ndim == 1:
@@ -152,7 +186,7 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
     days = _days(onset)
     n_init, n_member = status.shape
     years = sorted({int(y) for y in fc1.init_year})
-    observed = _observed_onsets(definition, hist1, thr1, years, season_name)
+    observed = _observed_onsets(definition, hist1, thr1, years, season_name, clim1)
 
     keep_onset = status == Status.ONSET
     prior_rows = (status == Status.PRIOR).any(axis=1)
@@ -162,11 +196,15 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
     present = [s for s in _NO_ONSET if (status == s).any()]
     cell = _coord_text(place.get("lat", lat), place.get("lon", lon))
     with style.figure_style(mode) as pal:
-        height = 5.4 + _ROW_IN * len(present)
+        title = f"{definition.title} - {cell.replace(chr(32), chr(160))} - forecast onset by init"
+        title = textwrap.fill(title, 78)
+        n_title = title.count("\n")
+        extra = (0.2 if derived else 0.0) + 0.2 * n_title
+        height = 5.4 + extra + _ROW_IN * len(present)
         fig = Figure(figsize=(_FIG_WIDTH, height), dpi=100)
         FigureCanvasAgg(fig)
         fig.set_facecolor(pal.surface)
-        top_in = 1.25 + _ROW_IN * len(present)
+        top_in = 1.25 + extra + _ROW_IN * len(present)
         ax = fig.add_axes([0.085, 0.72 / height, 1 - 0.085 - 1.45 / _FIG_WIDTH, 1 - (top_in + 0.72) / height])
 
         all_days = np.concatenate([days[np.isfinite(days)], [d.toordinal() - 719163 for _, d in observed.values() if d is not None]])
@@ -195,9 +233,7 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
         ax.plot(init_num[ok], median[ok], "-", color=pal.ink, lw=1.0, alpha=0.6, zorder=3)
         ax.plot(init_num[ok & ~prior_rows], median[ok & ~prior_rows], "o", ms=5, color=pal.ink, mec=pal.surface, mew=0.8,
                 zorder=4)
-        p_colour, p_icon, p_label = style.status_style(Status.PRIOR)
-        if mode == "dark":
-            p_colour = pal.ink_secondary
+        p_colour, p_icon, p_label = style.status_style(Status.PRIOR, pal.mode)
         if (ok & prior_rows).any():
             ax.plot(init_num[ok & prior_rows], median[ok & prior_rows], marker="<", ms=4.5, color=p_colour, mec=pal.surface,
                     mew=0.4, ls="none", zorder=4.5)
@@ -221,11 +257,13 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
         ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.0, legend_y), ncol=len(handles), handletextpad=0.4,
                   columnspacing=1.6, labelcolor=pal.ink_secondary, borderaxespad=0)
         fig.canvas.draw()
-        _count_rows(fig, ax, init_num, status)
-        title = f"{definition.title} - {cell} - forecast onset by init"
+        _count_rows(fig, ax, init_num, status, pal.mode)
         fig.text(0.085, 1 - 0.28 / height, title, size=11, weight="semibold", color=pal.ink, va="center")
         sub = f"{fc1.source or 'forecast'} with {hist1.source or 'observed'} history stitched in before lead 1; lead window {lead_window[0]}-{lead_window[1]}"
-        fig.text(0.085, 1 - 0.56 / height, sub, size=9, color=pal.ink_secondary, va="center")
+        if derived:
+            sub += f"\nseason {season_name} of {n_seasons} at this cell"
+        fig.text(0.085, 1 - (0.46 + 0.2 * n_title if derived else 0.56 + 0.2 * n_title) / height, sub, size=9,
+                 color=pal.ink_secondary, va="top" if derived else "center", linespacing=1.4)
     return fig
 
 
