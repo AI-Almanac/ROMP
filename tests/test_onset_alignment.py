@@ -33,6 +33,7 @@ def to_daily(values, start="2001-01-01", boundary=START, lat0=0.0, source="x"):
 
 
 def test_unshifted_is_aligned():
+    """Identical series are reported as aligned with lag 0 and correlation 1."""
     base = rain_series()
     report = check_alignment(to_daily(base), to_daily(base))
     assert report.verdict == "aligned" and report.best_lag == 0
@@ -42,6 +43,7 @@ def test_unshifted_is_aligned():
 
 @pytest.mark.parametrize("shift", [1, -1])
 def test_one_day_shift_detected(shift):
+    """A series shifted by one day in either direction is reported with that best lag."""
     base = rain_series()
     ref = to_daily(base[3:N_DAYS + 3])
     other = to_daily(np.roll(base, -shift, axis=0)[3:N_DAYS + 3])
@@ -52,11 +54,13 @@ def test_one_day_shift_detected(shift):
 
 
 def test_noise_is_inconclusive():
+    """Two unrelated noise series give an inconclusive verdict."""
     report = check_alignment(to_daily(rain_series(1)), to_daily(rain_series(2)))
     assert report.verdict == "inconclusive"
 
 
 def test_no_shared_cells_is_inconclusive():
+    """Series on non-overlapping grids give an inconclusive verdict noting no shared cells."""
     base = rain_series()
     report = check_alignment(to_daily(base), to_daily(base, lat0=0.1))
     assert report.verdict == "inconclusive" and "no shared cells" in report.notes
@@ -64,6 +68,7 @@ def test_no_shared_cells_is_inconclusive():
 
 
 def test_no_overlap_and_calendar_mismatch():
+    """Non-overlapping dates and differing calendars are noted and give an inconclusive verdict."""
     base = rain_series()
     assert "no overlapping dates" in check_alignment(to_daily(base), to_daily(base, start="2005-01-01")).notes
     times = xr.date_range("2001-01-01", periods=len(base), calendar="noleap", use_cftime=True)
@@ -75,6 +80,7 @@ def test_no_overlap_and_calendar_mismatch():
 
 
 def test_declared_boundary_mismatch_noted():
+    """Differing declared day boundaries are noted in the report, and matching ones are not."""
     base = rain_series()
     report = check_alignment(to_daily(base), to_daily(base, boundary="03 UTC, labelled by end"))
     assert any("day boundaries differ" in n and "-0.88" in n for n in report.notes)
@@ -101,6 +107,7 @@ def build_forecast(base, label_shift, n_leads=4, members=None):
 @pytest.mark.parametrize("label,label_shift,expected_lag", [("start", 0, 0), ("end", 0, -1), ("end", 1, 0),
                                                             ("start", 1, 1)])
 def test_forecast_label_shift(label, label_shift, expected_lag):
+    """The forecast alignment check finds the lag implied by the lead label and any label shift."""
     base = rain_series()
     obs = to_daily(base)
     fc = ingest_forecast(build_forecast(base, label_shift), day_boundary=START, lead_label=label)
@@ -115,6 +122,7 @@ def test_forecast_label_shift(label, label_shift, expected_lag):
 
 
 def test_forecast_label_hint_and_members():
+    """A forecast with members labelled as start but shifted suggests lead_label='end' and honours the chosen leads."""
     base = rain_series()
     obs = to_daily(base)
     fc = ingest_forecast(build_forecast(base, 1, members=3), day_boundary=START, lead_label="start")
@@ -124,6 +132,7 @@ def test_forecast_label_hint_and_members():
 
 
 def test_forecast_unknown_lead_and_no_cells():
+    """An unknown lead raises ValueError, and a forecast sharing no cells with the observations is inconclusive."""
     base = rain_series()
     fc = ingest_forecast(build_forecast(base, 0), day_boundary=START, lead_label="start")
     with pytest.raises(ValueError, match="lead 9"):
@@ -142,6 +151,7 @@ DATA = Path("/home/hcwf/code/ai-almanac/datasets")
     ("india/obs/data_2020.nc", "RAINFALL", "03 UTC, labelled by end", "india/models/AIFS_v2/2020.nc", "end"),
 ])
 def test_real_data_lead_label(obs_path, var, boundary, model_path, good_label):
+    """On real observations and AIFS forecasts, the correct lead label is aligned and the other is shifted."""
     obs = ingest(xr.open_dataset(DATA / obs_path)[var], day_boundary=boundary, source="obs")
     tp = xr.open_dataset(DATA / model_path)["tp"].isel(time=slice(0, 20))
     reports = {label: check_forecast_alignment(obs, ingest_forecast(tp, day_boundary=START, lead_label=label,

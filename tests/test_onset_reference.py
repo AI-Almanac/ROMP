@@ -360,12 +360,15 @@ def brute(defn, x, miss, thr, start, end, E):
         return Fraction(a.tenths) if a.threshold is None else Fraction(round(thr[a.threshold] * 20), 20) * 10
 
     def wet(t):
+        """Whether day t is observed and wet under the definition's wet-day rule."""
         return (not miss[t]) and brute_cmp(defn.wet_day.op, Fraction(x[t]), amount(defn.wet_day.amount))
 
     def dry(t):
+        """Whether day t is observed and not wet."""
         return (not miss[t]) and not wet(t)
 
     def flags(a, b):
+        """Return bit flags for a window: 2 if it runs past the data end, 1 if it starts before the data or includes missing days."""
         f = 0
         if b > E:
             f |= 2
@@ -374,6 +377,7 @@ def brute(defn, x, miss, thr, start, end, E):
         return f
 
     def status_of(f):
+        """Map window flags to the CENSORED or INSUFFICIENT status."""
         return CENSORED if f == 2 else INSUFFICIENT
 
     rule = defn.rule
@@ -394,9 +398,11 @@ def brute(defn, x, miss, thr, start, end, E):
         return (arg + 1 if rule.report == "day_after_minimum" else arg), ONSET
 
     def span(sp, d):
+        """Return the first and last day of a veto span relative to day d."""
         return (start if sp.since_search_start else d + sp.first - 1), d + sp.last
 
     def holds(veto, u):
+        """Whether the veto's spell condition holds from day u."""
         L = veto.spell.length if isinstance(veto.spell, m.DryRun) else veto.spell.days
         if flags(u, u + L):
             return False

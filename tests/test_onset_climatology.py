@@ -32,6 +32,7 @@ def md(month, day):
 
 
 def test_mean_daily_and_total_whole_year():
+    """Mean daily and mean total thresholds over the whole year match hand-computed values."""
     rain = make_rain(lambda i, t, c: 2.0 if c == 0 else float(t.month))
     daily = compute_threshold(ThresholdSpec("mean_daily"), rain, (2001, 2003))
     assert daily.shape == (2, 1)
@@ -43,7 +44,9 @@ def test_mean_daily_and_total_whole_year():
 
 
 def test_mean_total_during_season():
+    """The mean total threshold restricted to a season uses only windows in that season."""
     def fn(i, t, c):
+        """Return a synthetic daily rain value for the test series."""
         return 1.0 if 6 <= t.month <= 9 else 10.0
     rain = make_rain(fn)
     spec = ThresholdSpec("mean_total", days=5, during=(md(6, 1), md(9, 30)))
@@ -51,6 +54,7 @@ def test_mean_total_during_season():
 
 
 def test_quantile_total_hand_computed():
+    """The quantile total threshold matches hand-computed window sums at the median and maximum."""
     rain = make_rain(lambda i, t, c: float(t.day) if t.month == 3 and t.day <= 10 else 0.0)
     spec = ThresholdSpec("quantile_total", days=3, during=(md(3, 1), md(3, 10)), quantile=0.5)
     sums = [3 * d + 3 for d in range(1, 9)] * 3
@@ -60,7 +64,9 @@ def test_quantile_total_hand_computed():
 
 
 def test_window_across_year_end_belongs_to_start_year():
+    """A window spanning the year end is attributed to the year in which it starts."""
     def fn(i, t, c):
+        """Return a synthetic daily rain value for the test series."""
         if t.month == 12 and t.day >= 25:
             return 1.0
         if t.month == 1 and t.day <= 5:
@@ -73,7 +79,9 @@ def test_window_across_year_end_belongs_to_start_year():
 
 
 def test_missing_reference_days():
+    """Days missing from the reference are handled when computing the threshold."""
     def fn(i, t, c):
+        """Return a synthetic daily rain value for the test series."""
         if c == 1 and i % 5 == 0:
             return np.nan
         if c == 0 and i % 25 == 0:
@@ -86,6 +94,7 @@ def test_missing_reference_days():
 
 
 def test_compute_thresholds_attrs():
+    """compute_thresholds returns every named threshold with its dims and provenance attributes."""
     rain = make_rain(lambda i, t, c: 3.0)
     definition = Definition(
         id="d", version=1, title="", citation="", wording="", status="draft", notes="",
@@ -110,6 +119,7 @@ def cycle_rain(fn, **kw):
 
 
 def test_harmonic_one_season():
+    """Harmonic analysis of a single-peak annual cycle finds one season with the expected onset and cessation."""
     rain = cycle_rain(lambda d: 5 + 4 * np.cos(2 * np.pi * (d - 200) / 365), years=(2000, 2003))
     out = harmonic_seasons(rain, (2000, 2003))
     assert out.n_seasons.values.tolist() == [[1], [1]]
@@ -120,6 +130,7 @@ def test_harmonic_one_season():
 
 
 def test_harmonic_two_seasons_noleap():
+    """Harmonic analysis of a two-peak annual cycle on a noleap calendar finds both seasons."""
     rain = cycle_rain(lambda d: 5 + 4 * np.cos(4 * np.pi * (d - 100) / 365), calendar="noleap")
     out = harmonic_seasons(rain, (2001, 2003))
     assert out.n_seasons.values.max() == 2 and out.n_seasons.values.min() == 2
@@ -129,6 +140,7 @@ def test_harmonic_two_seasons_noleap():
 
 
 def test_harmonic_max_seasons_one_and_bad_inputs():
+    """max_seasons limits the seasons returned, and invalid max_seasons or calendar raise ValueError."""
     rain = cycle_rain(lambda d: 5 + 4 * np.cos(4 * np.pi * (d - 100) / 365), calendar="noleap")
     out = harmonic_seasons(rain, (2001, 2003), max_seasons=1)
     assert out.n_seasons.values.max() == 1 and out.onset_doy.shape[0] == 1
@@ -139,6 +151,7 @@ def test_harmonic_max_seasons_one_and_bad_inputs():
 
 
 def test_harmonic_cell_without_data():
+    """A cell without data gets no seasons and NaN onset in the harmonic analysis."""
     rain = cycle_rain(lambda d: 5 + 4 * np.cos(2 * np.pi * (d - 200) / 365), calendar="noleap")
     rain.missing[1] = True
     out = harmonic_seasons(rain, (2001, 2003))
@@ -147,6 +160,7 @@ def test_harmonic_cell_without_data():
 
 
 def test_cache_returns_stored_field_without_recomputing(tmp_path, monkeypatch):
+    """The threshold cache reuses a stored field and recomputes only when the inputs change."""
     rain = make_rain(lambda i, t, c: 2.0)
     spec = ThresholdSpec("mean_daily")
     calls = []
@@ -166,6 +180,7 @@ def test_cache_returns_stored_field_without_recomputing(tmp_path, monkeypatch):
 
 
 def test_cache_key_depends_on_source_and_grid():
+    """The threshold cache key differs with the source and grid and is stable for equal inputs."""
     spec = ThresholdSpec("mean_daily")
     a = make_rain(lambda i, t, c: 1.0, source="a")
     b = make_rain(lambda i, t, c: 1.0, source="b")
