@@ -116,3 +116,53 @@ def test_run_parallel_equals_serial(tmp_path):
     assert files
     for name in files:
         assert (outs["false"] / name).read_bytes() == (outs["true"] / name).read_bytes(), name
+
+
+def noisy_years(*, years, **kwargs):
+    """A picklable stand-in that warns and logs in the worker, one table row per year."""
+    import logging
+    import warnings
+
+    for year in years:
+        warnings.warn(f"odd data {year}")
+        logging.getLogger("momp.test_worker").info("hello from %s", year)
+    return pd.DataFrame({"year": list(years)})
+
+
+@pytest.mark.parametrize("quiet", [False, True])
+def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, quiet):
+    """A worker's warning and info record each appear once in run.log (with the year) and on the console as asked."""
+    from momp.utils import log as logs
+
+    logfile = tmp_path / "run.log"
+    with logs.session(logs.QUIET if quiet else logs.NORMAL, logfile):
+        parallel.concat_years(noisy_years, {"years": [2001, 2002, 2003], "parallel": True, "parallel_workers": 3})
+    text = logfile.read_text()
+    out = capsys.readouterr().out
+    for year in (2002, 2003):   # the first year runs in this process and warns through the same handlers
+        assert text.count(f"[year {year}] odd data {year}") == 1 and "[WARNING] momp.warnings" in text
+        assert text.count(f"[year {year}] hello from {year}") == 1 and "momp.test_worker" in text
+        assert out.count(f"warning: [year {year}] odd data {year}") == 1
+        assert (f"[year {year}] hello from {year}" in out) == (not quiet)
+    assert text.count("odd data 2001") == 1
+
+
+def test_legacy_threshold_reloaded_each_window_detects_once(monkeypatch):
+    """Equal thresholds loaded afresh per window share onset tables; a different threshold does not."""
+    from momp.stats import benchmark
+
+    calls = []
+    monkeypatch.setattr(benchmark, "map_years", lambda *a, **k: calls.append(1) or [{}])
+    fresh = {"value": 20.0}
+    monkeypatch.setattr(benchmark, "load_thresholds",
+                        lambda **kw: xr.DataArray(np.full((2, 2), fresh["value"]), dims=("lat", "lon"),
+                                                  coords={"lat": [1.0, 2.0], "lon": [3.0, 4.0]}))
+    benchmark.reset_onset_tables()
+    common = {"years": [2001, 2002], "model": "m", "probabilistic": False}
+    benchmark.onset_tables(verification_window=5, **common)
+    benchmark.onset_tables(verification_window=10, **common)
+    assert len(calls) == 1
+    fresh["value"] = 25.0
+    benchmark.onset_tables(verification_window=5, **common)
+    assert len(calls) == 2
+    benchmark.reset_onset_tables()

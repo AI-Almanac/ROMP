@@ -9,6 +9,10 @@ Modules log with ``log = logging.getLogger(__name__)``; nothing is configured on
 * turns Python warnings into log records (``IngestInfo`` notes as INFO, the rest as warnings);
 * restores the previous logging setup on exit.
 
+Worker processes (see ``momp.stats.parallel``) forward their log records and warnings to the process that owns the
+session through a queue (``forwarding`` / ``worker_logging``), so they reach run.log and the console like any other
+record, with the worker's year in the message.
+
 ``progress(iterable, desc)`` shows a tqdm bar when tqdm is installed and stderr is a terminal, and otherwise logs
 ``desc: i/n`` lines (nothing at all when quiet).
 """
@@ -16,6 +20,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import logging.handlers
+import multiprocessing
 import sys
 import time
 import warnings
@@ -44,6 +50,68 @@ class _Console(logging.Handler):
             self.handleError(record)
 
 
+def log_warning(message, category, filename=None, lineno=None, file=None, line=None):
+    """Log a Python warning as a ``momp.warnings`` record (ingest notes as INFO, the rest as warnings)."""
+    from momp.onset.ingest import IngestInfo
+
+    logging.getLogger(f"{ROOT}.warnings").log(
+        logging.INFO if issubclass(category, IngestInfo) else logging.WARNING, "%s", message)
+
+
+_worker = {"year": None}
+
+
+class _YearFilter(logging.Filter):
+    """Puts the year the worker is processing in front of each record's message (and in ``record.year``)."""
+
+    def filter(self, record):
+        """Prefix the message with the worker's year, if it has one."""
+        year = _worker["year"]
+        if year is not None:
+            record.year = year
+            record.msg = f"[year {year}] {record.getMessage()}"
+            record.args = None
+        return True
+
+
+def worker_logging(queue) -> None:
+    """Worker-process initializer: send every ``momp`` record and Python warning to the parent through `queue`."""
+    root = logging.getLogger(ROOT)
+    handler = logging.handlers.QueueHandler(queue)
+    handler.addFilter(_YearFilter())
+    root.handlers = [handler]
+    root.setLevel(logging.DEBUG)
+    root.propagate = False
+    warnings.showwarning = log_warning
+
+
+def set_worker_year(year) -> None:
+    """Name the year this worker is processing, for the messages it forwards (None clears it)."""
+    _worker["year"] = year
+
+
+@contextlib.contextmanager
+def forwarding():
+    """Yield a queue whose records go to the handlers of the current session (None if there are none to feed).
+
+    A listener thread passes what workers put on the queue to the ``momp`` logger's handlers (run.log and console,
+    each at its own level). It is stopped on exit, error or not; leave the block after the workers have finished.
+    """
+    handlers = list(logging.getLogger(ROOT).handlers)
+    if not handlers:
+        yield None
+        return
+    queue = multiprocessing.get_context("spawn").Queue()
+    listener = logging.handlers.QueueListener(queue, *handlers, respect_handler_level=True)
+    listener.start()
+    try:
+        yield queue
+    finally:
+        listener.stop()
+        queue.close()
+        queue.join_thread()
+
+
 @contextlib.contextmanager
 def session(verbosity: int = NORMAL, logfile=None):
     """Configure ROMP's logging for the duration of a run (see the module text); yields the ``momp`` logger."""
@@ -65,14 +133,7 @@ def session(verbosity: int = NORMAL, logfile=None):
                                                     "%Y-%m-%d %H:%M:%S"))
         root.addHandler(file_handler)
 
-    def show(message, category, filename, lineno, file=None, line=None):
-        """Log a Python warning (ingest notes as INFO)."""
-        from momp.onset.ingest import IngestInfo
-
-        logging.getLogger(f"{ROOT}.warnings").log(
-            logging.INFO if issubclass(category, IngestInfo) else logging.WARNING, "%s", message)
-
-    warnings.showwarning = show
+    warnings.showwarning = log_warning
     try:
         yield root
     finally:

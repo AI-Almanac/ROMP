@@ -1,5 +1,6 @@
 """Onset contingency metrics (TP/FP/FN/TN, MAE) for model or climatology forecasts across years."""
 
+import hashlib
 from momp.io.input import load_thresholds, load_history, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly, get_forecast_deterministic_twice_weekly
 from momp.io.input import load_imd_rainfall
@@ -13,6 +14,7 @@ from momp.stats.parallel import map_years
 from momp.utils.practical import restore_args
 
 import numpy as np
+import xarray as xr
 import pandas as pd
 import logging
 from momp.utils.log import progress
@@ -144,10 +146,23 @@ def reset_onset_tables() -> None:
     _ONSET_TABLES.clear()
 
 
+def _threshold_fingerprint(thresh) -> str:
+    """A content hash of a threshold (number or DataArray: values, dims, coordinates); other objects by identity."""
+    if not isinstance(thresh, xr.DataArray):   # a number, or the definition's memoized Thresholds object
+        return repr(thresh) if isinstance(thresh, (int, float, np.number)) else f"object-{id(thresh)}"
+    digest = hashlib.sha1()
+    digest.update(repr((thresh.dims, thresh.shape, str(thresh.dtype))).encode())
+    digest.update(np.ascontiguousarray(thresh.values).tobytes())
+    for name in sorted(map(str, thresh.coords)):
+        digest.update(name.encode())
+        digest.update(np.ascontiguousarray(thresh.coords[name].values).tobytes())
+    return digest.hexdigest()
+
+
 def _family_key(ens, thresh_da, years, kwargs) -> str:
-    """Text identifying the onset tables a case needs: every setting except those that only change the metrics."""
+    """Text identifying the onset tables a case needs (thresholds by content, so reloaded equal ones match): every setting except those that only change the metrics."""
     items = sorted((k, repr(v)) for k, v in kwargs.items() if k not in _PER_CASE and k != "years")
-    return repr((bool(ens), id(thresh_da), tuple(years), items))
+    return repr((bool(ens), _threshold_fingerprint(thresh_da), tuple(years), items))
 
 
 def _onset_tables_of_years(*, years, ens, climatological_onset_doy=None, clim_onset=None, **kwargs):

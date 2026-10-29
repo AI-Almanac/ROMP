@@ -11,6 +11,8 @@ cores available, never more than the years):
   (loaded thresholds, built masks, observed onsets already detected) travel as one small snapshot with each task;
   what a worker detects or builds is sent back and absorbed here in year order, so the observed-onset cache on
   disk is written once, by this process.
+* Log records and warnings raised in a worker are forwarded to this process's handlers (run.log, console) with
+  the year in the message; see momp.utils.log.forwarding.
 * The results are collected in year order whatever order the workers finish in, so a parallel run gives exactly
   the numbers of a serial one.
 """
@@ -25,6 +27,7 @@ from concurrent.futures.process import BrokenProcessPool
 
 import pandas as pd
 
+from momp.utils import log as logs
 from momp.utils.workers import cores, worker_count
 
 log = logging.getLogger(__name__)
@@ -100,6 +103,7 @@ def _warm() -> int:
 def _run_chunk(func, args, kwargs, years, state, token, skip):
     """Worker entry: install the snapshot, run func on the years; returns (result or None, what was found)."""
     install(state, token)
+    logs.set_worker_year(years[0] if len(years) == 1 else None)
     try:
         result = func(*args, **{**kwargs, "years": list(years)})
     except ValueError as exc:
@@ -135,7 +139,10 @@ def map_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO
     saved = os.environ.get("NUMBA_NUM_THREADS")
     os.environ["NUMBA_NUM_THREADS"] = str(max(1, cores() // workers))
     try:
-        with ProcessPoolExecutor(max_workers=pool_size, mp_context=multiprocessing.get_context("spawn")) as pool:
+        with logs.forwarding() as queue, ProcessPoolExecutor(
+                max_workers=pool_size, mp_context=multiprocessing.get_context("spawn"),
+                initializer=None if queue is None else logs.worker_logging,
+                initargs=() if queue is None else (queue,)) as pool:
             booting = [pool.submit(_warm) for _ in range(pool_size)]
             first = _run_here(func, args, kwargs, years[:1], skip)
             for job in booting:
