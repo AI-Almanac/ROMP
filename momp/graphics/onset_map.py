@@ -1,22 +1,18 @@
+"""Spatial map of climatological onset day of year, plus a script entry point that plots it."""
 import numpy as np
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import copy
-from matplotlib.patches import Polygon
-from momp.params.region_def import polygon_boundary
-from momp.utils.land_mask import get_india_outline
 from momp.graphics.maps import calculate_cmz_averages
 from momp.utils.printing import tuple_to_str_range
 import cartopy.crs as ccrs
 from matplotlib import colors as mcolors
 
 from momp.utils.visual import cbar_season, set_basemap
-from momp.utils.land_mask import shp_outline, shp_mask, add_polygon
+from momp.utils.land_mask import shp_mask, add_polygon
 from momp.graphics.func_map import spatial_metrics_map
 from momp.utils.visual import box_boundary
-
-#from momp.stats.parallel import parallel_metrics_multiple_years
 
 def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, polygon, dir_fig, 
                                    region, figsize=(18, 6), cbar_ssn=False, domain_mask=False, 
@@ -27,11 +23,11 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
 
     # Extract data
     climatological_onset_doy = next(iter(onset_da_dict.values()))
-    
+
     # Get coordinates
     lats = climatological_onset_doy.lat.values
     lons = climatological_onset_doy.lon.values
-    
+
     # Detect resolution from latitude spacing
     lat_diff = abs(lats[1] - lats[0])
     print(f"Detected resolution: {lat_diff:.1f} degrees")
@@ -52,7 +48,7 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         txt_fsize = 6
     else:
         txt_fsize = 8
-    
+
     # Define colormap levels for day of year - more refined levels
     levels = np.arange(135, 245, 3)  # May 15 (135) to late September (270)
 
@@ -70,13 +66,12 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         ax, polygon1_lat, polygon1_lon, polygon_defined = \
                                     add_polygon(ax, climatological_onset_doy, polygon, return_polygon=True)
 
-
         # Calculate statistics (only calculate CMZ stats if polygon is defined)
         if polygon_defined:
             cmz_onset_mean = calculate_cmz_averages(climatological_onset_doy, polygon1_lon, polygon1_lat)
         else:
             cmz_onset_mean = np.nan
-    
+
     if cbar_ssn:
         cmap_jjas, norm_jjas, bounds = cbar_season()
     else:
@@ -84,32 +79,24 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         cmap_jjas = plt.cm.Spectral
         norm_jjas = mcolors.BoundaryNorm(levels, cmap_jjas.N, extend='max')
 
-
     # mask data inside country boundary
     if domain_mask:
         climatological_onset_doy = shp_mask(climatological_onset_doy, region=region)
 
     vmin, vmax = climatological_onset_doy.quantile([0.05, 0.95], dim=None, skipna=True).values
-    #vmin, vmax = np.nanpercentile(climatological_onset_doy.values, [5, 95])
-
-    # mask invalid data, deprecated, use xarray syntax instead
-    #masked_onset = np.ma.masked_invalid(climatological_onset_doy.values)
-    #vmin, vmax = np.nanpercentile(masked_onset.compressed(), [5, 95])
-
 
     # Plot discrete values at each grid point using pcolormesh with custom colormap
     im = ax.pcolormesh(climatological_onset_doy.lon, climatological_onset_doy.lat, climatological_onset_doy.values, 
                      cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree(), shading='auto')
-    
 
     # Add colorbar with MMM DD labels for every other tick
     cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02, shrink=0.6, aspect=20)
-    
+
     if cbar_ssn:
         # Create tick positions - use every other bound for labeling
         tick_positions = bounds[::2]  # Every other boundary
         tick_labels = [doy_to_mmm_dd(doy) for doy in tick_positions[:-1]]  # Exclude last boundary
-        
+
         # Set all boundaries as minor ticks (for visual separation)
         cbar.set_ticks(bounds, minor=True)
         # Set every other boundary as major ticks (with labels)
@@ -121,10 +108,9 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         cbar.set_ticks(tick_levels)
 
     cbar.set_ticklabels(tick_labels)
-    
+
     cbar.set_label('Mean onset date', fontsize=12, fontweight='normal')
     cbar.ax.tick_params(labelsize=10)    
-
 
     # Add text annotations for onset days
     if txt_fsize:
@@ -136,7 +122,7 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
                     ax.text(lon, lat, f'{value:.0f}', 
                                ha='center', va='center',
                                color=text_color, fontsize=txt_fsize, fontweight='normal')
-    
+
     # Add CMZ average text (only if polygon is defined)
     if polygon_defined and not np.isnan(cmz_onset_mean):
         cmz_text = f'mean onset: {cmz_onset_mean:.0f} days'
@@ -148,26 +134,23 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
                 color='black', fontsize=14, fontweight='normal',
                 verticalalignment='top', horizontalalignment='right')
 
-    #ax.set_xlabel('Longitude', fontsize=12)
-    #ax.set_ylabel('Latitude', fontsize=12)
-    
     if rect_box:
         box_boundary('rect_boundary', ax, edgecolor='black', linewidth=2,
                     linestyle='-', fill=False, alpha=1.0,
                     zorder=20)
 
     plt.tight_layout()
-    
+
     # Save if path provided
     if dir_fig:
         plot_filename = f"climatology_onset_{tuple_to_str_range(years_clim)}.png"
         plot_path = os.path.join(dir_fig, plot_filename)
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         print(f"Figure saved to: {plot_path}")
-    
+
     if show_plot:
         plt.show()
-    
+
     return fig, ax, plot_path
 
 
@@ -191,20 +174,15 @@ if __name__ == "__main__":
     from momp.lib.convention import Case
     from momp.lib.loader import get_cfg, get_setting
     from dataclasses import asdict
-    #from momp.graphics.onset_map import plot_spatial_climatology_onset
 
     cfg, setting = get_cfg(), get_setting()
-    
-    #cfg['ref_model'] = 'climatology'
-    #cfg['probabilistic'] = False
+
     cfg.ref_model = 'climatology'
     cfg.probabilistic = False
 
     cfg_ref = copy.copy(cfg)
     cfg_ref.model_list = (cfg.ref_model,)
-    #print("cfg_ref['model_list'] = ", cfg_ref['model_list'])
     layout_pool = iter_list(vars(cfg_ref))
-    #print("cfg_ref layout_pool = ", layout_pool)
 
     for combi in product(*layout_pool):
         case = make_case(Case, combi, vars(cfg_ref))
@@ -227,25 +205,11 @@ if __name__ == "__main__":
         case_cfg_ref = {**asdict(case), **asdict(setting)}
         print("\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('file_pattern'))
 
-        #print("case_cfg_ref = \n", case_cfg_ref)
-
-        #case_cfg_ref = {**case_cfg,
-        #              #'model': case_cfg['ref_model'],
-        #              'model_dir': case_cfg['ref_model_dir'],
-        #              'model_var': case_cfg['ref_model_var'],
-        #              'file_pattern': case_cfg['ref_model_file_pattern'],
-        #              'unit_cvt': case_cfg['ref_model_unit_cvt']
-        #              }
-
         # model-obs onset benchmarking
         print("\n ", case_cfg_ref)
         metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
         print("\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('years_clim'))
         break
-
-
-#    plot_spatial_climatology_onset(onset_da_dict, 
-#                                   figsize=(18, 6), cbar_ssn=False, domain_mask=False, **case_cfg_ref)
 
     da = next(iter(onset_da_dict.values()))
 

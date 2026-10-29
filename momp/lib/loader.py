@@ -1,8 +1,10 @@
+"""Load config.in, apply command-line overrides and expose the config and Setting objects."""
 import importlib.resources
 import os
 from pathlib import Path
 import argparse
 import sys
+import warnings
 
 from momp.utils.practical import set_dir
 from momp.lib.control import init_dataclass
@@ -22,6 +24,7 @@ _setting = None
 
 
 def _get_config_path_pre_parse(cli_args=None):
+    """Return the -p/--param config path from cli_args (default "params/config.in")."""
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("-p", "--param", default="params/config.in")
     args, _ = pre_parser.parse_known_args(cli_args)
@@ -61,6 +64,17 @@ def _read_config(config_path):
     return dic
 
 
+def _rename_deprecated_keys(dic):
+    """Map the old India-specific ``mok`` key to ``earliest_onset_date``, which defaults to None (no filter)."""
+    if "mok" in dic:
+        if "earliest_onset_date" in dic:
+            raise ROMPConfigError("Config sets both 'mok' and 'earliest_onset_date'; remove 'mok'.")
+        warnings.warn("Config key 'mok' is deprecated; rename it to 'earliest_onset_date'.", FutureWarning)
+        dic["earliest_onset_date"] = dic.pop("mok")
+    dic.setdefault("earliest_onset_date", None)
+    return dic
+
+
 def _resolve_paths(dic):
     """Resolve relative paths in config dict to absolute paths."""
     dic["work_dir"] = Path(dic["work_dir"]).expanduser().resolve()
@@ -79,8 +93,10 @@ def _resolve_paths(dic):
 
 
 def build_cfg(cli_args=None):
+    """Read config.in, resolve paths, create output dirs and apply CLI overrides; return the config dict."""
     config_path = ensure_config_exists(_get_config_path_pre_parse(cli_args))
     dic = _read_config(config_path)
+    dic = _rename_deprecated_keys(dic)
     dic = _resolve_paths(dic)
 
     os.makedirs(dic["dir_fig"], exist_ok=True)
@@ -95,6 +111,7 @@ def build_cfg(cli_args=None):
 
 
 def get_cfg(cli_args=None):
+    """Return the validated config as a SimpleNamespace, built once and cached; exits on invalid config unless debug."""
     global _cfg
     if _cfg is None:
         _cfg = build_cfg(cli_args)
@@ -111,6 +128,7 @@ def get_cfg(cli_args=None):
 
 
 def get_setting(cli_args=None):
+    """Return the Setting dataclass built once from the config and cached."""
     global _setting
     if _setting is None:
         cfg = get_cfg(cli_args)

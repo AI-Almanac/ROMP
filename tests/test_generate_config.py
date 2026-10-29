@@ -12,6 +12,7 @@ PAYLOAD = "__import__('pathlib').Path({marker!r}).touch()"
 
 
 def _generate(tmp_path: Path, **env: str) -> subprocess.CompletedProcess:
+    """Run generate_config.py in a subprocess with the required ROMP_* env vars plus overrides."""
     required = {
         "ROMP_OBS_DIR": str(tmp_path / "obs"),
         "ROMP_MODEL_DIR": str(tmp_path / "model"),
@@ -30,17 +31,20 @@ def _generate(tmp_path: Path, **env: str) -> subprocess.CompletedProcess:
 
 
 def _string_values(config: dict) -> set:
+    """Collect every string found in the config values, including inside tuples."""
     values = (v if isinstance(v, tuple) else (v,) for v in config.values())
     return {item for group in values for item in group if isinstance(item, str)}
 
 
 def _exec_config(tmp_path: Path) -> dict:
+    """Exec the generated config.in and return the resulting namespace."""
     namespace: dict = {}
     exec((tmp_path / "config.in").read_text(), {}, namespace)
     return namespace
 
 
 def test_defaults_produce_the_demo_config(tmp_path):
+    """With only required variables set, the generated config holds the demo defaults."""
     assert _generate(tmp_path).returncode == 0
 
     config = _exec_config(tmp_path)
@@ -55,6 +59,7 @@ def test_defaults_produce_the_demo_config(tmp_path):
 
 
 def test_job_settings_are_parsed_into_typed_values(tmp_path):
+    """Environment settings are parsed into typed Python values in the generated config."""
     result = _generate(
         tmp_path,
         ROMP_INIT_DAYS="2, 5",
@@ -81,6 +86,7 @@ def test_job_settings_are_parsed_into_typed_values(tmp_path):
     ["ROMP_OBS_VAR", "ROMP_MODEL_NAME", "ROMP_FILE_PATTERN", "ROMP_NC_MASK", "ROMP_REGION"],
 )
 def test_text_settings_stay_inert_strings(tmp_path, name):
+    """Text settings containing code-like payloads are written as plain strings and never executed."""
     marker = tmp_path / "executed"
     value = f'x"\n{PAYLOAD.format(marker=str(marker))}\n"'
     assert _generate(tmp_path, **{name: value}).returncode == 0
@@ -106,6 +112,7 @@ def test_text_settings_stay_inert_strings(tmp_path, name):
     ],
 )
 def test_non_text_settings_that_are_not_values_are_rejected(tmp_path, name):
+    """Non-text settings given code-like payloads make the script fail without writing a config or running the payload."""
     marker = tmp_path / "executed"
     value = f"0) or {PAYLOAD.format(marker=str(marker))} or (1"
 
@@ -118,6 +125,7 @@ def test_non_text_settings_that_are_not_values_are_rejected(tmp_path, name):
 
 
 def test_model_unit_conversion_and_dims_reach_the_per_model_lists(tmp_path):
+    """ROMP_UNIT_CVT and ROMP_MODEL_DIMS end up in unit_cvt_list and model_dims_list."""
     result = _generate(
         tmp_path,
         ROMP_UNIT_CVT="1000",
@@ -134,6 +142,7 @@ def test_model_unit_conversion_and_dims_reach_the_per_model_lists(tmp_path):
 
 
 def test_model_dims_default_to_name_inference(tmp_path):
+    """Without ROMP_UNIT_CVT and ROMP_MODEL_DIMS, the per-model lists hold None."""
     assert _generate(tmp_path).returncode == 0
 
     config = _exec_config(tmp_path)
@@ -146,6 +155,7 @@ def test_model_dims_default_to_name_inference(tmp_path):
     "value", ['["time"]', '{"valid_time": "time"}', '{"init_time": ""}']
 )
 def test_malformed_model_dims_are_rejected(tmp_path, value):
+    """Malformed ROMP_MODEL_DIMS values make the script fail with an error naming the variable."""
     result = _generate(tmp_path, ROMP_MODEL_DIMS=value)
 
     assert result.returncode == 1

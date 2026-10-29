@@ -1,3 +1,4 @@
+"""Plotting helpers: monthly onset colormap, map basemaps and boxes, and portrait/heatmap plots."""
 import sys
 
 import matplotlib
@@ -17,7 +18,7 @@ def cbar_season():
     "Aug":    plt.cm.Purples,
     "Sep":    plt.cm.RdPu,
     }
-    
+
     # Day-of-year ranges (only until September)
     month_doys = {
         "May": (121, 151),  # May 15 - May 31
@@ -28,21 +29,21 @@ def cbar_season():
     }
     colors = []
     bounds = []
-    
+
     N_per_month = 8  # smoothness inside each month
-    
+
     for month, cmap in month_cmaps.items():
         d0, d1 = month_doys[month]
-    
+
         # Sequential slice of each colormap
         ramp = cmap(np.linspace(0.35, 0.95, N_per_month))
-    
+
         colors.extend(ramp)
         bounds.extend(np.linspace(d0, d1, N_per_month, endpoint=False))
-    
+
     # Add final bound
     bounds.append(list(month_doys.values())[-1][1])
-    
+
     cmap_jjas = ListedColormap(colors, name="JJAS_piecewise")
     norm_jjas = BoundaryNorm(bounds, cmap_jjas.N)
 
@@ -50,6 +51,7 @@ def cbar_season():
 
 
 def set_basemap(ax, region, shpfile_dir, polygon, linewidth=1.25, grid=True, line=False, **kwargs):
+    """Draw the region outline and set the map extent on a Cartopy axis; return (ax, gridliner or None)."""
     from momp.utils.land_mask import shp_outline, get_india_outline
     from momp.params.region_def import domain
     import cartopy.crs as ccrs
@@ -60,18 +62,14 @@ def set_basemap(ax, region, shpfile_dir, polygon, linewidth=1.25, grid=True, lin
         region_boundaries = get_india_outline(shpfile_dir)
         for boundary in region_boundaries:
             region_lon, region_lat = boundary
-            ax.plot(region_lon, region_lat, color='black', linewidth=1.5)        
+            ax.plot(region_lon, region_lat, color='black', linewidth=1.5)
     else:
         shp_outline(ax, region=region)
-    
+
     # Set map extent to Ethiopia
     lats, latn, lonw, lone = domain(region)
     ax.set_extent([lonw, lone, lats, latn], crs=ccrs.PlateCarree())
 
-    # Add polygon boundary
-    # need da as input for lat, lon coordinate
-    #ax = add_polygon(ax, da, polygon, return_polygon=False, linewidth=linewidth)
-    
     if not grid:
         return ax, None
 
@@ -101,7 +99,6 @@ def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
     Returns the Rectangle patch.
     """
     import matplotlib.patches as mpatches
-    #import cartopy.crs as ccrs
     from momp.params.region_def import domain
 
     lats, latn, lonw, lone = domain(rect_boundary)
@@ -120,7 +117,6 @@ def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
 
     try:
         import cartopy.mpl.geoaxes as cgeo
-        #import cartopy.crs as ccrs
 
         if isinstance(ax, cgeo.GeoAxes):
             import cartopy.crs as ccrs
@@ -143,7 +139,7 @@ def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
     )
 
     ax.add_patch(rect)
-    return ax #, rect
+    return ax
 
 
 def portrait_plot(
@@ -155,7 +151,6 @@ def portrait_plot(
     annotate=False,
     annotate_data=None,
     annotate_textcolors=("black", "white"),
-    #annotate_textcolors_threshold=(-2, 2),
     annotate_textcolors_threshold=None,
     annotate_fontsize=15,
     annotate_format="{x:.2f}",
@@ -202,13 +197,13 @@ def portrait_plot(
                   but work only for heatmap style map (i.e., no triangles)
     - `annotate_data`: 2d numpy array, default=None. If None, the image's data is used.  Optional.
     - `annotate_textcolors`: Tuple. A pair of colors for annotation text. Default is ("black", "white")
-    - `annotate_textcolors_threshold`: Tuple or float. Value in data units according to which the colors from textcolors are applied. Default=(-2, 2)
+    - `annotate_textcolors_threshold`: Tuple or float. Value in data units according to which the colors from textcolors are applied. Default=None
     - `annotate_fontsize`: number (int/float), default=15. Font size for annotation
     - `annotate_format`: format for annotate value, default="{x:.2f}"
     - `figsize`: tuple of two numbers (width, height), default=(12, 10), figure size in inches
     - `vrange`: tuple of two numbers, range of value for colorbar.  Optional.
-    - `xaxis_fontsize`: number, default=15, font size for xaxis tick labels.  Optional.
-    - `yaxis_fontsize`: number, default=15, font size for yaxis tick labels.  Optional.
+    - `xaxis_fontsize`: number, default=12, font size for xaxis tick labels.  Optional.
+    - `yaxis_fontsize`: number, default=12, font size for yaxis tick labels.  Optional.
     - `xaxis_tick_labels_top_and_bottom`: bool, default=False, if true duplicate xaxis tick label to the other side.  Optional.
     - `xticklabel_rotation`: int or float, default=45, degree of angle to rotate x-axis tick label.  Optional
     - `inner_line_color`: string, default="k" (black), color for inner lines (triangle edge lines).  Optional.
@@ -325,21 +320,9 @@ def portrait_plot(
         # additional x-axis tick labels
         ax.tick_params(axis="x", bottom=True, top=True, labelbottom=True, labeltop=True)
     else:
-        # Let the horizontal axes labeling appear on top.
-        #ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
         # Let the horizontal axes labeling appear on bottom.
         ax.tick_params(top=False, bottom=True, labeltop=False, labelbottom=True)
 
-    """
-    # Rotate the tick labels and set their alignment.
-    plt.setp(
-        ax.get_xticklabels(),
-        fontsize=xaxis_fontsize,
-        rotation=-30,
-        ha="right",
-        rotation_mode="anchor",
-    )
-    """
     # Rotate and align top ticklabels
     plt.setp(
         [tick.label2 for tick in ax.xaxis.get_major_ticks()],
@@ -391,7 +374,7 @@ def portrait_plot(
         cbar_pad = 0.14
         cbar_aspect = 16
         cbar_shrink = 0.75
-        cbar = ax.figure.colorbar(im, ax=ax, orientation='horizontal', 
+        cbar = ax.figure.colorbar(im, ax=ax, orientation='horizontal',
                                   pad=cbar_pad, shrink=cbar_shrink, aspect=cbar_aspect, **cbar_kw)
 
         # Label for colorbar
@@ -440,6 +423,10 @@ def portrait_plot(
 # Prepare data
 # ----------------------------------------------------------------------
 def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
+    """Convert `data` to a numpy array, check its shape against the labels, and return (data, num_divide).
+
+    `num_divide` is the number of stacked 2D arrays (1 for a single 2D array).
+    """
     # In case data was given as list of arrays, convert it to numpy (stacked) array
     if isinstance(data, list):
         if debug:
@@ -466,7 +453,6 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
         sys.exit("Error: Number of elements in yaxis_label mismatchs to the data")
 
     if isinstance(data, np.ndarray):
-        # data = np.squeeze(data)
         if len(data.shape) == 2:
             num_divide = 1
         elif len(data.shape) == 3:
@@ -505,7 +491,7 @@ def heatmap(data, xaxis_labels, yaxis_labels, ax=None, invert_yaxis=False, **kwa
     invert_yaxis
         A bool to decide top-down or bottom-up order on y-axis
     **kwargs
-        All other arguments are forwarded to `imshow`.
+        All other arguments are forwarded to `pcolormesh`.
     """
 
     if ax is None:
@@ -584,7 +570,6 @@ def annotate_heatmap(
     total_num = data.size
     x_num = data.shape[1]
     fontsize = kw.get('fontsize')
-    #fontsize *= 9/total_num
     fontsize *= 2/x_num
     kw.update({'fontsize': fontsize})
 
@@ -601,6 +586,7 @@ def annotate_heatmap(
     cmap_obj = plt.get_cmap(cmap)
 
     def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
+        """Return black or white, whichever contrasts better with the colormap color at `value`."""
         r, g, b, _ = cmap_obj(norm(value)) # background color
         luminance = 0.2126*r + 0.7152*g + 0.0722*b # perceived luminance (WCAG standard)
         return 'black' if luminance > threshold else 'white'
@@ -619,7 +605,6 @@ def annotate_heatmap(
                     ]
                 )
             else:
-                #kw.update(color=textcolors[int(data[i, j] > threshold)])
                 text_color = contrast_text_color(data[i,j], cmap_obj, norm, threshold=0.5)
                 kw.update(color=text_color)
 
@@ -635,6 +620,7 @@ def annotate_heatmap(
 def add_legend(
     num_divide, ax, box_xy=None, box_size=None, labels=None, lw=1, fontsize=14
 ):
+    """Draw a legend box divided into 2 or 4 labelled triangles next to the portrait plot."""
     if box_xy is None:
         box_x = ax.get_xlim()[1] * 1.25
         box_y = ax.get_ylim()[1]

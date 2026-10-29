@@ -1,4 +1,4 @@
-#from pathlib import Path
+"""Saving and loading of score results, spatial-metric NetCDF files and nested result dictionaries."""
 import os
 import numpy as np
 import pandas as pd
@@ -6,17 +6,11 @@ import xarray as xr
 import pickle
 from momp.stats.bins import get_target_bins
 from momp.utils.printing import tuple_to_str
-#from momp.utils.printing import tuple_to_str
-
-#def file_path(directory, filename):
-#    """Join directory and filename into a full path."""
-#    return Path(directory) / filename
 
 
-#def save_score_results(score_results, *, model, max_forecast_day, dir_out, **kwargs):
 def save_score_results(score_results, *, model, verification_window, dir_out, **kwargs):
-    """Save overall and binned skill scores to CSV files"""
-            
+    """Save overall and binned skill scores to CSV files; return (binned_data, overall_scores_nested)."""
+
     # Save overall scores
     overall_scores = {
         'Metric': ['Fair_Brier_Score', 'Fair_Brier_Skill_Score', 'Fair_RPS', 'Fair_RPS_Skill_Score', 'AUC', 'AUC_ref'],
@@ -32,7 +26,6 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
 
     overall_scores_nested = dict(zip(overall_scores['Metric'], overall_scores['Score']))
 
-    #overall_df = pd.DataFrame(overall_scores)
     # pd.DataFrame expects lists/arrays as values, or a list of dicts for rows, not a dict of scalars
     # Wrap the dict in a list so pandas treats it as a single row, or make each value wrapped in a list []
 
@@ -41,8 +34,6 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
 
     window_str = tuple_to_str(verification_window)
     overall_filename = f'overall_skill_scores_{model}_{window_str}.csv'
-                        #f'overall_skill_scores_{model}_{max_forecast_day}day.csv'
-                        #{model}_{tuple_to_str(verification_window)}window_{max_forecast_day}day.csv'
     overall_filename = os.path.join(dir_out, overall_filename)
     overall_df.to_csv(overall_filename, index=False)
     print(f"Saved overall scores to '{overall_filename}'")
@@ -67,7 +58,6 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
     binned_df = pd.DataFrame(binned_data)
 
     binned_filename = f'binned_skill_scores_{model}_{window_str}.csv'
-                        #f'binned_skill_scores_{model}_{max_forecast_day}day.csv'
     binned_filename = os.path.join(dir_out, binned_filename)
     binned_df.to_csv(binned_filename, index=False)
     print(f"Saved binned scores to '{binned_filename}'")
@@ -76,40 +66,32 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
     return binned_data, overall_scores_nested
 
 
-
 def save_ref_score_results(results, filename):
-                           #*, model, verification_window, max_forecast_day, dir_out, **kwargs):
-
+    """Pickle the reference (climatology) results to filename + ".pkl"."""
     to_save = {
     "climatology_obs_df": results["climatology_obs_df"],
     "brier_ref": results["BS_ref"],
     "rps_ref": results["RPS_ref"],
     "auc_ref": results["AUC_ref"],
     }
-    
-    #filename = f'ref_scores_{model}_{tuple_to_str(verification_window)}window_{max_forecast_day}day.csv'
-    #filename = os.path.join(dir_out, filename)
 
     with open(f"{filename}.pkl", "wb") as f:
         pickle.dump(to_save, f)
-    
 
 
 def load_ref_score_results(ref_score_file, results_dict):
-
-#if ref_score_file.exists():
+    """Load pickled reference results from the Path ref_score_file and merge them into results_dict."""
     with ref_score_file.open("rb") as f:
         loaded_results = pickle.load(f)
 
     results_dict.update(loaded_results)
 
     return results_dict
-    
 
 
 def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='spatial_metrics',
-                           allowed_attrs = ['model', 'years', 'tolerance_days', 'verification_window', 
-                                            'max_forecast_day', 'mok']):
+                           allowed_attrs = ['model', 'years', 'tolerance_days', 'verification_window',
+                                            'max_forecast_day', 'earliest_onset_date']):
     """
     Create an xarray Dataset from spatial_metrics, attach global attributes,
     and save to a NetCDF file.
@@ -120,8 +102,11 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
         Dictionary of data variables for xr.Dataset
     attrs_dict : dict
         Global attributes (values may be str, int, float, bool, list, tuple)
-    fout : str
-        Output NetCDF file path
+    desc_dict : dict, optional
+        Extra global attributes added after attrs_dict-derived ones
+    fname : str
+        File name prefix; the file is saved as dir_out/{fname}_{case_name}.nc
+        (dir_out and case_name are read from attrs_dict)
     """
 
     ds = xr.Dataset(spatial_metrics)
@@ -129,12 +114,9 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
     fout = os.path.join(attrs_dict['dir_out'], "{}_{}.nc")
     fout = fout.format(fname, attrs_dict.get('case_name', 'missing_case_name'))
 
-    #allowed_attrs = ['model', 'years', 'tolerance_days', 'verification_window', 'max_forecast_day', 'mok']
-
     # Normalize attributes for NetCDF compatibility
     clean_attrs = {}
 
-    #for key, val in attrs_dict.items():
     for key in allowed_attrs:
 
         try:
@@ -161,7 +143,6 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
     print(f"{fname} saved to: {fout}")
 
 
-
 def set_nested(result_dict, keys, value):
     """build nested dictionaries on the fly based on combi, dynamic-nesting"""
     d = result_dict
@@ -169,7 +150,6 @@ def set_nested(result_dict, keys, value):
         d = d.setdefault(key, {})
     d[keys[-1]] = value
     return result_dict
-
 
 
 def analyze_nested_dict(d):
@@ -214,9 +194,7 @@ def nested_dict_to_array(nested_dict, metric_key):
     for i, rkey in enumerate(row_labels):
         for j, ckey in enumerate(col_labels):
             # Safely get the value (default to np.nan if missing)
-            #arr[i, j] = nested_dict.get(rkey, {}).get(ckey, {}).get(metric_key, np.nan)
             da = nested_dict.get(rkey, {}).get(ckey, {}).get(metric_key, np.nan)
             arr[i,j] = da.mean()
 
     return arr, row_labels, col_labels
-

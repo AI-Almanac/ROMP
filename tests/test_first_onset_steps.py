@@ -11,6 +11,7 @@ from momp.stats.detect import _first_onset_steps
 
 
 def _rain(seed=0, init=5, member=4, lat=3, lon=4, step=12, nan_fraction=0.05):
+    """Build a random gamma-distributed rainfall array with some NaNs, dims (init_time, member, lat, lon, step)."""
     rng = np.random.default_rng(seed)
     values = rng.gamma(0.8, 4.0, size=(init, member, lat, lon, step)).astype(np.float32)
     values[rng.random(values.shape) < nan_fraction] = np.nan
@@ -58,6 +59,7 @@ def _rolling_reference(rain, thresh, valid_step, *, wet_init, wet_spell, max_for
 @pytest.mark.parametrize("wet_spell", [1, 3, 5])
 @pytest.mark.parametrize("block", [1, 2, 1_000_000])
 def test_matches_the_rolling_window_form(monkeypatch, wet_spell, block):
+    """The block-wise search matches the rolling-window reference for several wet-spell lengths and block sizes."""
     monkeypatch.setattr(detect, "_ONSET_BLOCK_ELEMENTS", block)
     rain = _rain()
     kwargs = dict(wet_init=1, wet_spell=wet_spell, max_forecast_day=8)
@@ -68,6 +70,7 @@ def test_matches_the_rolling_window_form(monkeypatch, wet_spell, block):
 
 
 def test_matches_with_a_threshold_field_and_a_lead_day_mask(monkeypatch):
+    """The block-wise search matches the reference with a spatial threshold field and a per-lead-day validity mask."""
     monkeypatch.setattr(detect, "_ONSET_BLOCK_ELEMENTS", 50)
     rain = _rain(seed=1)
     rng = np.random.default_rng(2)
@@ -85,6 +88,7 @@ def test_matches_with_a_threshold_field_and_a_lead_day_mask(monkeypatch):
 
 
 def test_no_onset_anywhere_is_all_nan():
+    """Dry data yields NaN for every first-onset step."""
     rain = _rain() * 0
 
     got = _first_onset_steps(rain, 1.0, None, wet_init=1, wet_spell=3, max_forecast_day=8)
@@ -99,6 +103,7 @@ def test_no_onset_anywhere_is_all_nan():
 def test_the_loader_keeps_every_lead_day_either_detection_path_reads(
     max_forecast_day, wet_spell, dry_extent, needed
 ):
+    """onset_steps_needed returns the number of lead days the onset detection needs, or None when dry_extent is None."""
     assert (
         onset_steps_needed(max_forecast_day=max_forecast_day, wet_spell=wet_spell, dry_extent=dry_extent)
         == needed

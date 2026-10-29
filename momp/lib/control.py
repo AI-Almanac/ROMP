@@ -1,24 +1,24 @@
-import os
-#import inspect
+"""Helpers that build Case objects from the config dict and manipulate case lists."""
 from dataclasses import fields
-from typing import Union, Tuple, List, Optional
+from typing import Union, Optional
 from pathlib import Path
 
-from momp.lib.convention import Case, Setting
+from momp.lib.convention import Setting
 from momp.utils.printing import combi_to_str
-#from momp.io.input import set_dir
 from momp.utils.practical import set_dir
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict
 import copy
 
 
 def init_dataclass(dc, dic):
+    """Instantiate dataclass dc from the entries of dic that match its annotated field names."""
     keys = dc.__annotations__.keys()
     subset = {key: dic[key] for key in keys if key in dic}
     return dc(**subset)
 
 
 def modify_list_keys(dictionary):
+    """Return the keys of dictionary ending in "_list", with that suffix removed."""
     modified_keys = []
     for key, value in dictionary.items():
         if key.endswith("_list"):
@@ -37,9 +37,10 @@ def case_across_list(item, list1, list2):
 
 
 def iter_list(dic, ext="_list"):
+    """Return the dic[field + ext] list for each field named in dic["layout"]."""
     layout_pool = []
     for field in dic["layout"]:
-        lst = dic.get(field + ext)  # .copy()
+        lst = dic.get(field + ext)
         layout_pool.append(lst)
     return layout_pool
 
@@ -61,46 +62,24 @@ def years_tuple_model(start_date: tuple[int,int,int], end_date: tuple[int,int,in
     return tuple(range(start_year, end_year + 1))
 
 
-#def take_ensemble_members(
-#    members: Union[List[int], str]
-#) -> List[int]:
-#    """
-#    Normalize members into a list of ints.
-#
-#    Accepts:
-#    - list of ints → returned as-is
-#    - string 'start-end' → expanded to list
-#    """
-#    # Case 1: already a list of ints
-#    if isinstance(members, list):
-#        return list(members)  # return a copy
-#
-#    # Case 2: string range "1-5"
-#    if isinstance(members, str) and "-" in members:
-#        start, end = map(int, members.split("-"))
-#        return list(range(start, end + 1))
-#
-#    raise TypeError("members must be list[int] or 'start-end' string")
-
-
 def take_ensemble_members(
     members: Optional[Union[tuple[int, ...], list[int], str]]
 ) -> list[int]:
     """
-    Normalize members into a list of ints.
+    Normalize members into a tuple of ints (or None).
 
     Accepts:
-    - list[int] or tuple[int, ...] → returned as a list
-    - string 'start-end' → expanded to list
-    - None → empty list
+    - list[int] or tuple[int, ...] → returned as a tuple
+    - string 'start-end' → expanded to a tuple
+    - None, empty or 'All' → None
     """
-    # Case 0: None
+    # Case 0: None, empty or 'All'
     if not members or members == 'All':
         return None
 
     # Case 1: list or tuple of ints
     if isinstance(members, (list, tuple)):
-        return tuple(members)  # normalize to list
+        return tuple(members)  # normalize to tuple
 
     # Case 2: string range "1-5"
     if isinstance(members, str) and "-" in members:
@@ -112,26 +91,10 @@ def take_ensemble_members(
     )
 
 
-#def restore_args(func, kwargs, bound_args):
-#    """
-#    Restore keyword-only parameters of `func` back into kwargs.
-#    """
-#    sig = inspect.signature(func)
-#    new_kwargs = dict(kwargs)
-#
-#    for name, param in sig.parameters.items():
-#        if (
-#            param.kind is param.KEYWORD_ONLY
-#            and name in bound_args
-#            and name not in new_kwargs
-#        ):
-#            new_kwargs[name] = bound_args[name]
-#
-#    return new_kwargs
-
-
 def make_case(dataclass, combi, dic):
-
+    """Build one Case: combi gives the values of the layout fields (in dic["layout"] order)
+    and the remaining per-model _list entries are looked up by model name.
+    """
     layout = dic["layout"]
 
     layout_dict = {key: None for key in layout}
@@ -148,7 +111,6 @@ def make_case(dataclass, combi, dic):
     list_keys = list(set(case_keys).intersection(set(dic_list_keys)))
     list_keys.remove("tolerance_days") # tolerance_days is paired with verification_window
 
-
     case = init_dataclass(dataclass, dic)
     case.update(layout_dict)
 
@@ -163,18 +125,12 @@ def make_case(dataclass, combi, dic):
 
         value_list.append(value)
 
-        #if key == "model_dir":
-        #    case.fn_var = value
-
-    #case_name = "{}".format("_".join(combi_to_str(combi)))
     case_name = combi_to_str(combi)
     case.case_name = case_name.replace(" ", "_")
 
-    #if not dic['years']:
     if dic.get('years') == 'All' or not dic.get('years'):
         case.years = years_tuple_model(dic['start_date'], dic['end_date'])
 
-    #if not dic['years_clim']:
     if dic.get('years_clim') == 'All' or not dic.get('years_clim'):
         case.years_clim = years_tuple_clim(dic['start_year_clim'], dic['end_year_clim'])
 
@@ -183,14 +139,14 @@ def make_case(dataclass, combi, dic):
     value_dic = dict(zip(list_keys, value_list))
     case.update(value_dic)
 
-    case.tolerance_days = case_across_list(case.verification_window, 
+    case.tolerance_days = case_across_list(case.verification_window,
                                            dic["verification_window_list"], dic["tolerance_days_list"])
 
     return case
 
 
-
 def ref_cfg_layout(cfg, ref_model=None, verification_window=None):
+    """Copy cfg for the reference model (a single-entry model_list); return the copy and its layout lists."""
 
     cfg_ref = copy.copy(cfg)
 
@@ -211,6 +167,7 @@ def ref_cfg_layout(cfg, ref_model=None, verification_window=None):
 
 
 def ref_model_case(case_orig, setting):
+    """Copy a case with the reference-model dir, variable, pattern and unit conversion; also return the merged case and setting dict."""
 
     case = copy.copy(case_orig)
 
@@ -230,19 +187,14 @@ def ref_model_case(case_orig, setting):
 
     case.update(case_ref)
 
-    #if case.model == 'climatology':
-    #    case.years = case.years_clim
-
     case_cfg_ref = {**asdict(case), **asdict(setting)}
-
 
     return case, case_cfg_ref
 
 
-
 def filter_bins_in_window(day_bins, verification_window):
     """
-    Returns only the day bins that are completely or partially within the verification window.
+    Returns only the day bins that lie completely within the verification window.
 
     Args:
         day_bins: tuple of tuples, e.g. ((1,5), (6,10), ...)
@@ -252,14 +204,6 @@ def filter_bins_in_window(day_bins, verification_window):
         tuple of tuples containing only the bins inside the window
     """
     start_win, end_win = verification_window
-
-    #filtered = []
-    #for bin_start, bin_end in day_bins:
-    #    # Check if the bin overlaps with or is inside the window
-    #    # Condition: bin is not completely before window AND not completely after window
-    #    if bin_end >= start_win and bin_start <= end_win:
-    #        filtered.append((bin_start, bin_end))
-    #return tuple(filtered)
 
     return tuple(
         bin_range

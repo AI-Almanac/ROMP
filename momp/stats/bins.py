@@ -1,12 +1,12 @@
+"""Build forecast-observation pairs per day bin (from ensemble members or climatology) for probabilistic verification."""
+
 import pandas as pd
 import numpy as np
 from momp.io.input import load_thresh_file, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly
 from momp.io.input import load_imd_rainfall
 from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members
-#from momp.lib.control import restore_args
 from momp.utils.practical import restore_args
-#from momp.stats.climatology import compute_climatological_onset_dataset
 from itertools import product
 
 
@@ -37,12 +37,11 @@ def get_target_bins(brier_forecast, brier_climatology):
     return sorted(target_bins, key=extract_day_range)
 
 
-
 # Function to create forecast-observation pairs with specified day bins for probabilistic verification
 def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, day_bins, max_forecast_day, **kwargs):
     """
     Create forecast-observation pairs using specified day bins, including a final bin for "after max_forecast_day".
-    
+
     Parameters:
     -----------
     onset_all_members : DataFrame
@@ -55,8 +54,6 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     max_forecast_day : int, default=15
         Maximum forecast day. Members without onset get assigned to "after day X" bin
     """
-    #day_bins = kwargs["stats_day_bins"]
-    #max_forecast_day = kwargs["max_forecast_day"]
 
     max_forecast_day = max(day_bins)[1]
     min_forecast_day = min(day_bins)[0]
@@ -67,25 +64,17 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     forecast_groups = onset_all_members.groupby(['init_time', 'lat', 'lon'])
 
     # Add the "after max_forecast_day" bin
-    #extended_bins = day_bins + ((max_forecast_day + 1, float('inf')),)
     extended_bins = ((-float('inf'), min_forecast_day - 1),) + day_bins + ((max_forecast_day + 1, float('inf')),)
-#    print("\n\n\n XXXXXXXX extended_bins = ", extended_bins)
 
     print(f"Processing {len(forecast_groups)} forecast cases with day bins: {day_bins}")
     print(f"Including 'after day {max_forecast_day}' bin for members without onset in forecast window")
 
     for (init_time, lat, lon), group in forecast_groups:
 
-#        print("init_time, lat, lon = ", init_time, lat, lon)
         # Get observed onset for this location
         try:
-#            print("onset_da.lat.values = ", onset_da.lat.values)
-#            print("lat = ,", lat)
-#            print("np.abs(onset_da.lat.values - lat) = ", np.abs(onset_da.lat.values - lat))
             lat_idx = np.where(np.abs(onset_da.lat.values - lat) < 0.01)[0][0]
             lon_idx = np.where(np.abs(onset_da.lon.values - lon) < 0.01)[0][0]
-#            print("lat_idx = ", lat_idx, "  lon_idx = ", lon_idx)
-#            print("onset_da = ", onset_da)
             obs_date = onset_da.isel(lat=lat_idx, lon=lon_idx).values
         except:
             continue
@@ -94,7 +83,6 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
         if hasattr(obs_date, 'item'):
             obs_date = obs_date.item()
 
-#        print("AAAAAA")
         # Skip if no observed onset
         if pd.isna(obs_date):
             continue
@@ -107,24 +95,20 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
         if init_date >= obs_date_dt:
             continue
 
-#        print("BBBBBB")
-        
         total_members = len(group)
 
         # For each day bin (including the "after max_forecast_day" bin)
         for bin_idx, (bin_start, bin_end) in enumerate(extended_bins):
 
             if bin_start == -float('inf'):
-            #if bin_start < min_forecast_day:
                 bin_label = f'Before day {min_forecast_day}'
 
-                # Check if observed onset occurs before window start 
+                # Check if observed onset occurs before window start
                 forecast_start_date = init_date + pd.Timedelta(days=min_forecast_day)
                 observed_onset = int(obs_date_dt.date() < forecast_start_date.date())
 
                 # Count members that didn't predict onset within forecast window
                 members_with_onset_in_bin = 0
-                #total_members = len(group)
 
                 for member_idx, member_row in group.iterrows():
                     member_onset_day = member_row['onset_day']
@@ -133,9 +117,7 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
                     if pd.notna(member_onset_day) and member_onset_day < min_forecast_day:
                         members_with_onset_in_bin += 1
 
-
             # Handle the "after max_forecast_day" bin differently
-            #if bin_start > max_forecast_day:
             elif bin_start > max_forecast_day:
                 bin_label = f'After day {max_forecast_day}'
 
@@ -145,7 +127,6 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
 
                 # Count members that didn't predict onset within forecast window
                 members_with_onset_in_bin = 0
-                #total_members = len(group)
 
                 for member_idx, member_row in group.iterrows():
                     member_onset_day = member_row['onset_day']
@@ -167,7 +148,6 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
 
                 # Calculate ensemble probability for this day bin
                 members_with_onset_in_bin = 0
-                #total_members = len(group)
 
                 for member_idx, member_row in group.iterrows():
                     member_onset_day = member_row['onset_day']
@@ -183,8 +163,6 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
                 'init_time': init_time,
                 'lat': lat,
                 'lon': lon,
-                #'bin_start': bin_start if bin_start <= max_forecast_day else max_forecast_day + 1,
-                #'bin_end': bin_end if bin_end <= max_forecast_day else float('inf'),
                 'bin_start': bin_start,
                 'bin_end': bin_end,
                 'bin_label': bin_label,
@@ -200,14 +178,6 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
 
     # Convert to DataFrame
     forecast_obs_df = pd.DataFrame(results_list)
-#    print("result_list = ", results_list)
-#    print("forecast_obs_df = ", forecast_obs_df)
-    #if 2 > 1:
-    #    import os
-    #    import pickle
-    #    fout = os.path.join(kwargs['dir_out'], "forecast_obs_df.pkl")
-    #    with open(fout, "wb") as f:
-    #        pickle.dump(forecast_obs_df, f)
 
     print(f"Generated {len(forecast_obs_df)} forecast-observation pairs")
     print(f"Total bins per forecast: {len(extended_bins)}")
@@ -227,7 +197,7 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
 
 
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
-def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, *, 
+def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, *,
                                              day_bins, max_forecast_day, **kwargs):
     """
     Create forecast-observation pairs using climatological ensemble where each year is a member.
@@ -246,9 +216,6 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
         e.g., [(1, 5), (6, 10), (11, 15)]
     max_forecast_day : int, default=15
         Maximum forecast day
-
-    #mok : bool, default=True
-    #    Whether to use MOK date filter (June 2nd)
 
     Returns:
     --------
@@ -272,14 +239,12 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     ensemble_onset_da = clim_onset.sel(year=ensemble_years)
 
     # Create extended bins including "before initialization" and "after max_forecast_day" bins
-    #extended_bins = ((-float('inf'), 0),) + day_bins + ((max_forecast_day + 1, float('inf')),)
     extended_bins = ((-float('inf'), min_forecast_day - 1),) + day_bins + ((max_forecast_day + 1, float('inf')),)
 
     print(f"Creating climatological forecasts for target year {target_year}")
     print(f"Using {len(ensemble_years)} years as ensemble members: {ensemble_years}")
     print(f"Processing {len(init_dates)} initialization dates")
     print(f"Day bins: {day_bins}")
-    #print(f"Extended bins include: 'Before initialization' and 'After day {max_forecast_day}' ")
     print(f"Extended bins include: 'Before day {min_forecast_day}' and 'After day {max_forecast_day}' ")
     print(f"Using day-of-year method for onset comparison")
 
@@ -288,7 +253,6 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     lons = obs_onset_da.lon.values
 
     # Create unique lat-lon pairs (no repetition)
-    #unique_pairs = list(zip(lons, lats))
     unique_pairs = list(product(lons, lats))
 
     print(f"Processing {len(unique_pairs)} unique lat-lon pairs")
@@ -359,7 +323,6 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
                 # Handle the "before initialization" bin
                 if bin_start == -float('inf'):
                     for i, member_onset_day in enumerate(ensemble_forecast_days):
-                        #if member_onset_day is not None and member_onset_day <= 0:
                         if member_onset_day is not None and member_onset_day <= min_forecast_day - 1:
                             members_with_onset_in_bin += 1
 
@@ -392,11 +355,9 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
 
                 # Handle the "before initialization" bin
                 if bin_start == -float('inf'):
-                    #bin_label = 'Before initialization'
                     bin_label = f'Before day {min_forecast_day}'
 
                     # Check if observed onset occurs before initialization (by day of year)
-                    #observed_onset = int(obs_onset_doy <= init_doy)
                     observed_onset = int(obs_onset_doy <= init_doy + min_forecast_day - 1 )
 
                     # Get contributing years
@@ -493,30 +454,16 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     return forecast_obs_df
 
 
-
 # This function creates the observed forecast pairs for multiple years (core monsoon zone grids) and combines them
 def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
                                   thresh_file, thresh_var, wet_threshold,
                                   date_filter_year, init_days, start_date, end_date,
                                   model_dir, model_var, unit_cvt, file_pattern,
-                                  wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, fallback_date, mok,
+                                  wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, fallback_date, earliest_onset_date,
                                   members, onset_percentage_threshold, max_forecast_day, day_bins, **kwargs):
     """Main function to perform multi-year reliability analysis."""
 
     kwargs = restore_args(multi_year_forecast_obs_pairs, kwargs, locals())
-#    print("\n\n\nmax_forecast_day = ", max_forecast_day)
-#    print("max_forecast_day kwargs = ", kwargs['max_forecast_day'])
-
-    #members = kwargs['members']
-    #probabilistic = kwargs['probabilistic']
-
-    #mok = kwargs["mok"]
-    #window = kwargs["wet_spell"]
-    #wet_init = kwargs["wet_init"]
-    #dry_spell = kwargs["dry_spell"]
-    #dry_extent = kwargs["dry_extent"]
-    #dry_threshold = kwargs["dry_threshold"]
-    #max_forecast_day = kwargs['max_forecast_day']
 
     print(f"Processing years: {years}")
 
@@ -524,40 +471,33 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
 
     # Initialize list to store all forecast-observation pairs
     all_forecast_obs_pairs = []
-                 
+
     # Process each year
     for year in years:
         print(f"\n{'-'*50}")
         print(f"Processing year {year}")
-        #print(f"{'='*50}")
-                        
-        try:            
+
+        try:
             # Load model and observation data
             print("Loading S2S model data...")
-            #p_model,_ = get_forecast_probabilistic_twice_weekly(year, **kwargs)
             p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
-#            p_model_slice = p_model.sel(lat=inside_lats, lon=inside_lons)
             p_model_slice = p_model # !!!!! region subset
-                    
+
             print("Loading observational rainfall data...")
             rainfall_ds = load_imd_rainfall(year, **kwargs)
-#            rainfall_ds_slice = rainfall_ds.sel(lat=inside_lats, lon=inside_lons)
             rainfall_ds_slice = rainfall_ds #!!!!! region subset
 
             print("Detecting observed onset...")
             onset_da = detect_observed_onset(rainfall_ds_slice, thresh_slice, year, **kwargs)
             print(f"Found onset in {(~pd.isna(onset_da.values)).sum()} out of {onset_da.size} grid points")
-                        
+
             print("Computing onset for all ensemble members...")
             onset_all_members, _ = compute_onset_for_all_members(p_model_slice, thresh_slice, onset_da, **kwargs)
             print(f"Found onset in {onset_all_members['onset_day'].notna().sum()} member cases")
-    
-#            print("onset_all_members = ", onset_all_members)
-#            print("onset_da = ", onset_da)
+
             print("Creating forecast-observation pairs...")
             forecast_obs_pairs = create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, **kwargs)
 
-#            print("DONE!!!")
             # Add to master list
             all_forecast_obs_pairs.append(forecast_obs_pairs)
 
@@ -572,7 +512,6 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
     # Combine all years
     print(f"\n{'-'*50}")
     print("Combining all years")
-    #print(f"{'='*50}")
 
     if not all_forecast_obs_pairs:
         raise ValueError("No data was successfully processed for any year")
@@ -585,8 +524,6 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
     return combined_forecast_obs
 
 
-
-#def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years_clim, day_bins, max_forecast_day, date_filter_year, init_days, start_date, end_date, **kwargs):
 def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins, max_forecast_day, date_filter_year, init_days, start_date, end_date, **kwargs):
     """
     Create climatological forecast-observation pairs for multiple target years.
@@ -595,15 +532,12 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
     -----------
     clim_onset : xarray.DataArray
         3D array with dimensions [year, lat, lon] containing onset dates
-    #years_clim : list
     years : list
         Years to use as truth for observations
     day_bins : list of tuples
         List of (start_day, end_day) tuples for bins
     max_forecast_day : int, default=15
         Maximum forecast day
-    #mok : bool, default=True
-    #    Whether to use MOK date filter
 
     Returns:
     --------
@@ -616,16 +550,13 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
 
     all_forecast_obs_pairs = []
 
-    #for target_year in years_clim:
     for target_year in years:
         print(f"\n{'-'*50}")
         print(f"Processing target year {target_year}")
-        #print(f"{'='*50}")
 
         try:
             # Get initialization dates for this year
             init_dates = get_initialization_dates(target_year, **kwargs)
-
 
             # Create forecast-observation pairs for this year
             forecast_obs_pairs = create_climatological_forecast_obs_pairs(
@@ -654,13 +585,9 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
     print(f"\n{'='*50}")
     print("CLIMATOLOGICAL FORECAST SUMMARY")
     print(f"{'='*50}")
-    #print(f"Target years processed: {years_clim}")
     print(f"Target years processed: {years}")
     print(f"Total forecast-observation pairs: {len(combined_forecast_obs)}")
     print(f"Probability range: {combined_forecast_obs['predicted_prob'].min():.3f} - {combined_forecast_obs['predicted_prob'].max():.3f}")
     print(f"Overall observed onset rate: {combined_forecast_obs['observed_onset'].mean():.3f}")
 
     return combined_forecast_obs
-
-
-

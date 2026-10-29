@@ -1,22 +1,14 @@
+"""Command-line parser that overrides config.in values, plus argparse type helpers."""
 import argparse
 import ast
-#from datetime import datetime
 from pathlib import Path
 from importlib import resources
 
+
 def create_parser(config, cli_args=None):
+    """Parse CLI overrides, using the config dict values as defaults; unknown arguments are ignored."""
 
     parser = argparse.ArgumentParser(description="ROMP Package Parameter Loader")
-
-    #parser.add_argument("-p", "--param", required=True)
-
-    #parser.add_argument(
-    #    "-p",
-    #    "--param",
-    #    type=str,
-    #    default="params/config.in",
-    #    help="Parameter file path (default: params/config.in)"
-    #)
 
     parser.add_argument(
         "--model_list",
@@ -27,12 +19,7 @@ def create_parser(config, cli_args=None):
 
     parser.add_argument(
         "--verification_window_list",
-        #nargs=2,
-        #type=int,
-        #action="append",
-        #metavar=("START", "END"),
         type=parse_window_list,
-        #default=((1, 15), (16, 30)),
         default=config['verification_window_list'],
         help="Verification window as start end day (default: {config['verification_window_list']}), \
                 (e.g., '1,15 16,20')"
@@ -97,7 +84,6 @@ def create_parser(config, cli_args=None):
     # Allowed error margin (in days)
     parser.add_argument(
         "--tolerance_days_list",
-        #type=parse_tuple,
         nargs='+',
         type=int,
         action=ForceTupleAction,
@@ -108,21 +94,12 @@ def create_parser(config, cli_args=None):
     # Time windows for grouping statistics
     parser.add_argument(
         "--day_bins",
-        #type=parse_tuple,
         type=parse_window_list,
         default=config['day_bins'],
         help=f"Day bins for statistics e.g., '1,15 16,30' (default: {config['day_bins']})"
     )
 
     # Date range for evaluation
-#    parser.add_argument(
-#        "--start_date",
-#        #type=parse_date,
-#        type=parse_tuple,
-#        default=config['start_date'],
-#        help=f"Evaluation start date as (YYYY, M, D) (default: {config['start_date']})"
-#    )
-
     parser.add_argument(
         "--start_date",
         nargs=3,
@@ -131,17 +108,9 @@ def create_parser(config, cli_args=None):
         default=config['start_date'],
         help="Start date as: YYYY M D (e.g., 2024 5 1)"
     )
-    
-#    parser.add_argument(
-#        "--start_date",
-#        type=parse_num_to_tuple,
-#        default=config['start_date'],
-#        help=f"Start date as 'YYYY M D' (default in config: {config['start_date']})"
-#    )
 
     parser.add_argument(
         "--end_date",
-        #type=parse_tuple,
         nargs=3,
         type=int,
         action=ForceTupleAction,
@@ -166,11 +135,10 @@ def create_parser(config, cli_args=None):
     parser.add_argument(
         "--probabilistic",
         type=str2bool,
-        #action='store_true' if not config['probabilistic'] else 'store_false',
         default=config['probabilistic'],
         help=f"Ensemble evaluation toggle, True or False (default: {config['probabilistic']})"
     )
-    
+
     parser.add_argument(
         "--debug",
         type=str2bool,
@@ -192,33 +160,6 @@ def create_parser(config, cli_args=None):
         help="region as defined in params.region_def (default: {config['region']})"
     )
 
-#    parser.add_argument(
-#        "--ensemble_list",
-#        nargs="+",
-#        type=int,
-#        default=config["ensemble_list"],
-#        help=f"Ensemble list (default: {config['ensemble_list']})"
-#    )
-#
-#    parser.add_argument(
-#        "--season_start",
-#        type=str,
-#        default=config["season_start"],
-#        help=f"Season start (default: {config['season_start']})"
-#    )
-#
-#    # Boolean argument with dynamic default
-#    parser.add_argument(
-#        "--MAE",
-#        type=bool,
-#        default=config["MAE"],
-#        help=f"Use MAE (default: {config['MAE']})"
-#    )
-
-
-    #args = parser.parse_args()
-    #args, unknown = parser.parse_known_args()
-
     # cli_args can be passed explicitly; if None, default to sys.argv
     if cli_args is None:
         args, unknown = parser.parse_known_args()
@@ -230,29 +171,14 @@ def create_parser(config, cli_args=None):
     if isinstance(args.model_list, list):
         args.model_list = tuple(args.model_list)
 
-#    if isinstance(args.ensemble_list, list):
-#        args.ensemble_list = tuple(args.ensemble_list)
-
-#    return parser
-    #print("\n\n\n config:", config["max_forecast_day"])
-    #print("\n args:", args.max_forecast_day)
-    #print("\n\n config:", config["verification_window_list"])
-    #print("\n args:", args.verification_window_list)
-    #print(args.start_date)
-    #print(args.model_list)
-    #print(args.day_bins)
-    #print(args.tolerance_days_list)
-    #print(args.show_panel)
-    #print(args.dry_extent)
-
-
     return args
-
 
 
 class ForceTupleAction(argparse.Action):
     """Custom action to convert nargs list into a tuple automatically."""
+
     def __call__(self, parser, namespace, values, option_string=None):
+        """Store values on the namespace as a tuple."""
         setattr(namespace, self.dest, tuple(values))
 
 
@@ -269,6 +195,7 @@ def parse_window_list(string):
 
 
 def str2bool(v):
+    """Convert a yes/no/true/false-style string (or a bool) to bool for argparse."""
     if isinstance(v, bool):
         return v
     if v.lower() in ('yes', 'True', 'true', 't', 'y', '1'):
@@ -307,61 +234,14 @@ def parse_num_to_tuple(value):
         )
 
 
-
 def ensure_config_exists(param_path: str) -> Path:
     """
-    Ensure a user-writable config exists at param_path.
-    If missing, create it from the packaged template momp/params/config.in.
+    Return the config file path: the packaged momp/params/config.in for "params/config.in",
+    otherwise param_path expanded and resolved (nothing is created).
     """
-#    dst = Path(param_path).expanduser()
-#
-#    if dst.exists():
-#        return dst
-#
-#    dst.parent.mkdir(parents=True, exist_ok=True)
-#
-#    template = (
-#        resources.files("momp")
-#        .joinpath("params/config.in")
-#        .read_text(encoding="utf-8")
-#    )
-#
-#    dst.write_text(template, encoding="utf-8")
-#    return dst
-
     if param_path == "params/config.in":
         # return a real path to the packaged file (read-only)
-#        print("WOWOWOWO")
         with resources.as_file(resources.files("momp").joinpath("params/config.in")) as p:
-#            print("NICE resolved")
             return Path(p)
 
     return Path(param_path).expanduser().resolve()
-
-
-## Helper to parse date tuples (YYYY, M, D), python script.py --start_date "(2019, 6, 1)"
-## datetime(*d_tuple): The * "unpacks" the tuple. So datetime(*(2019, 5, 1)) becomes datetime(2019, 5, 1)
-#def parse_date(value):
-#    d_tuple = ast.literal_eval(value)
-#    return datetime(*d_tuple).date()
-
-
-
-#reserved for python -p option in loader.py need from pathlib import Path 
-#def find_param_file(filename):
-#    # First, check cwd
-#    f = Path(filename)
-#    if f.is_file():
-#        return f.resolve()
-#
-#    # Then check package subdirectory 'params' relative to this script
-#    package_dir = Path(__file__).parent
-#    f2 = package_dir / "params" / filename
-#    if f2.is_file():
-#        return f2.resolve()
-#
-#    print(f"Parameter file {filename} not found")
-#    sys.exit(1)
-
-
-

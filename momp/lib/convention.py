@@ -1,14 +1,12 @@
-""" preprocessing, formatting and standardizing input data"""
+"""Dataclasses holding per-case (Case) and global (Setting) configuration."""
 from dataclasses import dataclass, field
-from typing import Optional, Any, Tuple, Union
-
-import numpy as np
-#import xcdat as xc
-#from ARMP.params.region_def import domain
+from typing import Optional, Union
 
 
 @dataclass
 class Case:
+    """One model/verification-window combination, built from the config."""
+
     case_name: str = field(default=None)
 
     model: str = field(default=None)
@@ -35,7 +33,7 @@ class Case:
     members: Optional[tuple[int, ...]] = field(default=None)
 
     onset_percentage_threshold: float = field(default=0.5)
-    
+
     verification_window: tuple[int, int] = field(default=(1,15))
     tolerance_days: int = field(default=3)
     max_forecast_day: int = field(default=30)
@@ -44,7 +42,7 @@ class Case:
     years: Optional[Union[tuple[int, ...], str]] = field(default=None)
     years_clim: Optional[Union[tuple[int, ...], str]] = field(default=None)
 
-    mok: Optional[tuple[int, int]] = field(default="")
+    earliest_onset_date: Optional[tuple[int, int]] = field(default=None)
 
     region: str = field(default=None)
 
@@ -53,23 +51,17 @@ class Case:
     # Canonical name -> name in the model files, e.g. {"init_time": "time"}.
     model_dims: Optional[dict] = field(default=None)
 
-
     def update(self, updates):
+        """Set the fields named in updates; keys that are not fields are ignored."""
         for key, value in updates.items():
             if key in self.__annotations__:
                 setattr(self, key, value)
 
 
-#    def __post_init__(self):
-#        self.fn_var = self.tag_var
-#        self.fn_var_out = self.tag_var_out
-#        self.fn_freq = self.tag_freq
-#        self.fn_list = self.tag_list
-
-
-
 @dataclass
 class Setting:
+    """Run-wide settings shared by all cases (paths, dates, metrics and output switches)."""
+
     work_dir: str = field(default="~/")
     pkg_dir: str = field(default="~/")
 
@@ -89,11 +81,6 @@ class Setting:
     MAE: bool = field(default=False)
     FAR: bool = field(default=False)
     MR: bool = field(default=False)
-    #CSI: bool = field(default=False)
-
-    #probabilistic: bool = field(default=False)
-    #members: Optional[tuple[int, ...]] = field(default=None)
-
     BS: bool = field(default=False)
     RPS: bool = field(default=False)
     AUC: bool = field(default=False)
@@ -108,11 +95,10 @@ class Setting:
 
     obs_file_pattern: str = field(default="{}.nc")
     ref_model_file_pattern: Optional[str] = field(default="{}.nc")
-    
+
     obs_unit_cvt: Optional[float] = field(default=None)
     ref_model_unit_cvt: Optional[float] = field(default=None)
 
-    #dir_in: str = field(default="data")
     dir_out: str = field(default="../output")
     dir_fig: str = field(default="../figures")
 
@@ -141,8 +127,7 @@ class Setting:
     project_name: str = field(default="ROMP application project")
 
     def update(self, updates):
+        """Set the fields named in updates; keys that are not fields are ignored."""
         for key, value in updates.items():
             if key in self.__annotations__:
                 setattr(self, key, value)
-
-

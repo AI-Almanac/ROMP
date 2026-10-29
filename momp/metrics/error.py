@@ -1,11 +1,26 @@
-#from momp.stats.benchmark import 
+"""Aggregate per-year onset verification metrics into spatial FAR, MR and MAE maps."""
 import numpy as np
 import xarray as xr
 import pandas as pd
 
 
 def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
-    """Create spatial maps of False Alarm Rate, Miss Rate, yearly MAE, and mean MAE across years."""
+    """Create spatial maps of False Alarm Rate, Miss Rate, yearly MAE, and mean MAE across years.
+
+    Parameters
+    ----------
+    metrics_df_dict : dict
+        Maps year to a per-grid-point metrics DataFrame (lat, lon, false_positive,
+        true_negative, false_negative, num_onset, mae_combined).
+    onset_da_dict : dict
+        Maps year to the observed onset DataArray; its grid defines the output
+        grid, and grid points with NaN onset in a year are skipped for that year.
+
+    Returns
+    -------
+    dict
+        'false_alarm_rate', 'miss_rate', 'mean_mae' and 'mae_<year>' lat/lon DataArrays.
+    """
     first_year = list(onset_da_dict.keys())[0]
     lats = onset_da_dict[first_year].lat.values
     lons = onset_da_dict[first_year].lon.values

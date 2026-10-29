@@ -35,7 +35,6 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 momp = ["params/config.in"]
-#momp = ["params/*.in", "demo/**/*"]
 
 [tool.setuptools.packages.find] 
 where = ["."]
@@ -43,8 +42,6 @@ where = ["."]
 
 [project.optional-dependencies]
 dev = [
-#  "pathlib",
-#  "argparse",
   "dask",
   "pytest",
   "jupyterlab",

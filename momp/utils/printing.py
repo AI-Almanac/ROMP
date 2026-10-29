@@ -1,3 +1,4 @@
+"""Helpers for formatting tuples as strings and printing banners, config values and data-file info."""
 from importlib.metadata import version as pkg_version
 
 def combi_to_str(combi, sep="_", tuple_sep="-", suffix=""):
@@ -17,6 +18,7 @@ def combi_to_str(combi, sep="_", tuple_sep="-", suffix=""):
 
 
 def tuple_to_str(item):
+    """Join the elements of a tuple with "-"."""
     return "-".join(map(str, item))
 
 
@@ -32,9 +34,8 @@ def tuple_to_str_range(item):
 
 
 def print_momp_banner(cfg):
-
+    """Print the ROMP start-up banner with package version, project name and start time."""
     version = pkg_version("momp")
-    #project_name = cfg.get("project_name")
     project_name = cfg.project_name
 
     banner = fr"""
@@ -78,29 +79,29 @@ def print_cfg(cfg, key_patterns):
 
 
 def print_data_info(data_dir, pattern="*.nc"):
+    """Print the file name, dimensions and variables of the first file in `data_dir` matching `pattern`."""
     import xarray as xr
 
     # List all .nc files
     nc_files = list(data_dir.glob(pattern))
     if not nc_files:
         raise FileNotFoundError(f"No .nc files found in {data_dir}")
-    
+
     # Pick the first file
     first_file = nc_files[0]
-    
+
     # Open with xarray
     ds = xr.open_dataset(first_file)
-    
+
     # Nicely print information
     print(f"\nFile: {first_file.name}")
     print("\nDimensions:")
-    #for dim, size in ds.dims.items():
     for dim, size in ds.sizes.items():
         print(f"  {dim}: {size}")
-    
+
     print("\nVariables:")
     for var in ds.data_vars:
         print(f"  {var}")
-    
+
     # Optional: close dataset if you don't need it open
     ds.close()

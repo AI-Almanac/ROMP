@@ -53,10 +53,12 @@ from pathlib import Path
 
 
 class ConfigError(ValueError):
+    """Raised when an environment variable is missing or has an invalid value."""
     pass
 
 
 def require(name: str) -> str:
+    """Return the value of a required environment variable, raising ConfigError if it is unset or empty."""
     val = os.environ.get(name)
     if not val:
         raise ConfigError(f"required environment variable {name} is not set")
@@ -64,10 +66,12 @@ def require(name: str) -> str:
 
 
 def opt(name: str, default: str) -> str:
+    """Return the value of an optional environment variable, or `default` if it is unset."""
     return os.environ.get(name, default)
 
 
 def _parsed(name: str, default: str, parse):
+    """Read an environment variable (or `default`) and apply `parse`, wrapping parse errors in ConfigError."""
     raw = opt(name, default)
     try:
         return parse(raw.strip())
@@ -76,11 +80,13 @@ def _parsed(name: str, default: str, parse):
 
 
 def parse_date(val: str) -> tuple:
+    """Parse a YYYY-MM-DD string into a (year, month, day) tuple."""
     dt = datetime.strptime(val, "%Y-%m-%d")
     return (dt.year, dt.month, dt.day)
 
 
 def parse_number(val: str) -> int | float:
+    """Parse a finite number, as an int if possible, otherwise as a float."""
     try:
         return int(val)
     except ValueError:
@@ -91,6 +97,7 @@ def parse_number(val: str) -> int | float:
 
 
 def parse_bool(val: str) -> bool:
+    """Parse true/1/yes or false/0/no (case-insensitive) into a bool."""
     lowered = val.lower()
     if lowered in ("true", "1", "yes"):
         return True
@@ -100,6 +107,7 @@ def parse_bool(val: str) -> bool:
 
 
 def parse_int_tuple(val: str) -> tuple:
+    """Parse a comma-separated list of integers into a non-empty tuple."""
     values = tuple(int(part) for part in val.split(",") if part.strip())
     if not values:
         raise ValueError("must list at least one integer")
@@ -107,14 +115,17 @@ def parse_int_tuple(val: str) -> tuple:
 
 
 def parse_members(val: str) -> str | tuple:
+    """Parse ensemble members as "All" or a tuple of integers."""
     return "All" if val.lower() == "all" else parse_int_tuple(val)
 
 
 def optional_path(val: str) -> str | None:
+    """Return the string, or None if it is empty."""
     return val or None
 
 
 def optional_number(val: str) -> int | float | None:
+    """Parse a number, or return None if the string is empty."""
     return parse_number(val) if val else None
 
 
@@ -122,6 +133,7 @@ MODEL_DIM_NAMES = frozenset({"init_time", "step", "member", "lat", "lon"})
 
 
 def parse_model_dims(val: str) -> dict | None:
+    """Parse a JSON object mapping canonical dim names to file dim names, or None if empty."""
     if not val:
         return None
     dims = json.loads(val)
@@ -136,6 +148,7 @@ def parse_model_dims(val: str) -> dict | None:
 
 
 def config_values() -> dict:
+    """Build the config dictionary from environment variables, applying the documented defaults."""
     obs_dir = require("ROMP_OBS_DIR")
     model_dir = require("ROMP_MODEL_DIR")
     model_name = require("ROMP_MODEL_NAME")
@@ -223,10 +236,12 @@ def config_values() -> dict:
 
 
 def render_config(values: dict) -> str:
+    """Render the config dictionary as `key = repr(value)` lines of Python source."""
     return "".join(f"{key} = {value!r}\n" for key, value in values.items())
 
 
 def main():
+    """Write the generated config file and exit with status 1 on invalid configuration."""
     try:
         config = render_config(config_values())
     except ConfigError as exc:

@@ -1,11 +1,10 @@
+"""Masking helpers: polygon, land-sea, country-shapefile and NetCDF masks, plus polygon/outline plotting."""
 import numpy as np
 from matplotlib.path import Path
-#from pathlib import Path
 from typing import Union
 import regionmask
 import xarray as xr
 from momp.params.region_def import polygon_boundary
-from matplotlib.patches import Polygon
 from momp.utils.standard import dim_fmt
 
 
@@ -26,17 +25,9 @@ def points_inside_polygon(polygon_lon, polygon_lat, grid_lons, grid_lats):
     inside_lats: latitude coordinates of points inside polygon
     """
 
-    #print("\n polygon_lon = ", polygon_lon)
-    #print("\n grid_lons = ", grid_lons)
-    #print(type(polygon_lon))
-
     # Create polygon path
-    #polygon_path = Path(list(zip(polygon_lon, polygon_lat)))
     polygon_vertices = np.column_stack((polygon_lon, polygon_lat))
-    #print("\npolygon_vertices = ", polygon_vertices)
     polygon_path = Path(polygon_vertices)
-
-    #print("\npolygon_path = ", polygon_path)
 
     # Create meshgrid if needed
     if grid_lons.ndim == 1 and grid_lats.ndim == 1:
@@ -69,9 +60,9 @@ def polygon_mask(da_model):
 
     inside_mask, inside_lons, inside_lats = points_inside_polygon(polygon1_lon, polygon1_lat, orig_lon, orig_lat)
 
-    #da_model_slice = da_model.sel(lat=inside_lats, lon=inside_lons) # result in different dim size
+    # Selecting with sel(lat=inside_lats, lon=inside_lons) would not work:
     # xarray matches all lats in inside_lats with all lons in inside_lons, forming a cartesian product.
-    # so output values are repeated multiple times — every selected latitude is paired with 
+    # so output values are repeated multiple times — every selected latitude is paired with
     # every selected longitude.
 
     da_model_slice = da_model.where(inside_mask)
@@ -82,16 +73,15 @@ def polygon_mask(da_model):
 
 def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
     """ add polygon boundary to basemap """
-    #from matplotlib.patches import Polygon
     import cartopy.crs as ccrs
     from shapely.geometry import Polygon as ShapelyPolygon
     from cartopy.feature import ShapelyFeature
-    
+
     # Cartopy gridlines create a separate layer that can cover patches added with ax.add_patch()
-    # use a ShapelyFeature and add it with ax.add_feature() with a higher zorder 
+    # use a ShapelyFeature and add it with ax.add_feature() with a higher zorder
     # so it appears above gridlines and map features
     poly_geom = ShapelyPolygon(list(zip(polygon1_lon, polygon1_lat)))
-    
+
     # wrap as a Cartopy feature
     poly_feature = ShapelyFeature(
         [poly_geom],
@@ -100,25 +90,19 @@ def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
         facecolor='none',
         linewidth=linewidth
     )
-    
+
     # add to axes above gridlines
     ax.add_feature(poly_feature, zorder=10)
-
-
-    # the code below doesn't work with gridline set
-    # Cartopy gridlines create a separate layer that can cover patches added with ax.add_patch()
-    #polygon_lines = Polygon(list(zip(polygon1_lon, polygon1_lat)),
-    #                 fill=False, edgecolor='black', linewidth=linewidth, transform=ccrs.PlateCarree())
-    #ax.add_patch(polygon_lines)
 
     return ax
 
 
 
 def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
-    #from matplotlib.patches import Polygon
-    #from momp.params.region_def import polygon_boundary
+    """Draw the polygon boundary for `da` on `ax` when `polygon` is truthy and a boundary is defined.
 
+    Returns `ax`, or (ax, polygon_lat, polygon_lon, polygon_defined) if `return_polygon` is True.
+    """
     polygon_defined = False
 
     if polygon:
@@ -129,10 +113,6 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
 
     # Add CMZ polygon only if defined
     if polygon_defined:
-
-        #polygon_lines = Polygon(list(zip(polygon1_lon, polygon1_lat)),
-        #                 fill=False, edgecolor='black', linewidth=linewidth)
-        #ax.add_patch(polygon_lines)
 
         ax = polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=linewidth)
 
@@ -174,7 +154,7 @@ def create_land_sea_mask(
     as_boolean: bool = False,
 ) -> xr.DataArray:
     """Generate a land-sea mask (1 for land, 0 for sea) for a given xarray Dataset or DataArray.
-    stemed from pcmdi_metrics.utils.land_sea_mask 
+    stemed from pcmdi_metrics.utils.land_sea_mask
 
     Parameters
     ----------
@@ -256,7 +236,7 @@ def get_shp(region='Ethiopia', resolution='10m', category='cultural', name='admi
             return region_geom
 
 
-def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name='admin_0_countries', 
+def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name='admin_0_countries',
              return_mask=False, **kwargs):
     """ Create mask based on country boundaries"""
     from shapely.vectorized import contains
@@ -278,8 +258,6 @@ def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name=
     # Apply mask to data
     da_masked = da.where(mask_da)
 
-    #return da_masked, mask_da
-
     if return_mask:
         return da_masked, mask_da
     else:
@@ -299,15 +277,6 @@ def shp_outline(ax, region='Ethiopia', resolution='10m', category='cultural', na
         print("WARNING - specified region is not in cartopy.io.shapereader")
         return ax
 
-    # Plot boundary
-#    ax.add_geometries(
-#        [region_geom],
-#        crs=ccrs.PlateCarree(),
-#        facecolor="none",
-#        edgecolor="black",
-#        linewidth=1.5
-#    )
-    
     if hasattr(ax, "add_geometries"):
         # Cartopy GeoAxes
         ax.add_geometries(
@@ -356,14 +325,9 @@ def apply_nc_mask(ds, nc_mask, mask_var=None, keep_value=1):
     """
 
     mask_ds = xr.open_dataset(nc_mask)
-    #print("mask_ds = ", mask_ds)
     mask_ds = dim_fmt(mask_ds)
-    #print("\nmask_ds = ", mask_ds)
 
     mask_ds = mask_ds.sel(lat=ds.lat, lon=ds.lon, method="nearest")
-
-    # subset mask_ds according to ds region bounds
-    #mask_ds, _ = xr.align(mask_ds, ds, join="inner")
 
     try:
         # pick mask variable
@@ -382,32 +346,14 @@ def apply_nc_mask(ds, nc_mask, mask_var=None, keep_value=1):
             mask_bool = mask
         else:
             mask_bool = (mask == keep_value)
-        
-        #print("\n mask_bool = ", mask_bool)
-        #print("\n ds = ", ds)
 
         # align to prevent accidental broadcasting (and catch mismatched grids)
         mask_bool, ds_aligned = xr.align(mask_bool, ds, join="exact")
-
-        #print("\n mask_bool = ", mask_bool)
-        #print("\n ds_aligned = ", ds_aligned)
-
-        #ds_aligned = ds_aligned#.compute()
-        #mask_bool = mask_bool#.compute()
-
-        #ds_aligned = ds_aligned.chunk(mask_bool.chunksizes)
-        #ds_masked = ds_aligned.where(mask_bool).persist()
-
-        #indices = np.where(mask_bool.values)[0]
-        #ds_masked = ds_aligned.isel(time=indices)
-
-        #ds_masked = ds_aligned.copy(deep=True)
 
         for var in ds_aligned.data_vars:
             # This uses numpy's broadcasting which is very fast
             ds_aligned[var].values = np.where(mask_bool.values, ds_aligned[var].values, np.nan)
 
-        #return ds_masked
         return ds_aligned
 
     finally:

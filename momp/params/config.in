@@ -124,6 +124,11 @@ onset_percentage_threshold = 0.5
 start_date = (2019, 5, 1)
 end_date = (2024, 7, 31)
 
+# Earliest date (Month, Day) an onset may occur; None for no date filter.
+# Observed onsets are searched from this date and forecast onsets before it are not
+# counted, e.g. (6, 2), the climatological monsoon onset over Kerala (MOK) for India.
+earliest_onset_date = (5, 15)
+
 # Start and end years for calculating long-term climatology.
 start_year_clim = 1998
 end_year_clim = 2024
@@ -205,9 +210,6 @@ debug = False # run ROMP in debug mode for developers
 # ------------------------------------------------------------------------------
 # PARAMS RESERVED FOR FUTURE VERSIONS, NOT VALID IN CURRENT PACKAGE VERSION
 # ------------------------------------------------------------------------------
-
-# Target date for "Rainy season Onset over a specific location e.g. Kerala" (Month, Day).
-mok = (5, 15) # set to None if not using date filter
 
 # Specific years to include in the forecast analysis.
 # Optional. to overide consecutive year list generated based on start_date and end_date

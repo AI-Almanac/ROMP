@@ -33,6 +33,7 @@ def _forecast(coord_order, member=None):
     ],
 )
 def test_lead_time_named_with_time_is_not_taken_for_the_start_date(coord_order):
+    """A lead-time coordinate whose name contains "time" is not mistaken for init_time, whatever the coordinate order."""
     ds = dim_fmt_model(_forecast(coord_order))
 
     assert pd.api.types.is_datetime64_any_dtype(ds["init_time"])
@@ -40,6 +41,7 @@ def test_lead_time_named_with_time_is_not_taken_for_the_start_date(coord_order):
 
 
 def test_explicit_dims_are_used_instead_of_name_inference():
+    """Explicit model_dims rename the named coordinates to init_time and step."""
     ds = _forecast(["time", "prediction_timedelta_daily", "lat", "lon"]).rename(
         {"time": "issued", "prediction_timedelta_daily": "lead"}
     )
@@ -51,6 +53,7 @@ def test_explicit_dims_are_used_instead_of_name_inference():
 
 
 def test_explicit_member_dim_is_renamed_for_ensembles():
+    """An explicit member dim is renamed to member for ensemble data."""
     ds = _forecast(["time", "prediction_timedelta_daily", "lat", "lon"], member="realization")
 
     ds = dim_fmt_model_ensemble(
@@ -61,6 +64,7 @@ def test_explicit_member_dim_is_renamed_for_ensembles():
 
 
 def test_explicit_dims_missing_from_the_file_raise():
+    """model_dims naming a coordinate absent from the file raises ValueError."""
     ds = _forecast(["time", "prediction_timedelta_daily", "lat", "lon"])
 
     with pytest.raises(ValueError, match="lead"):

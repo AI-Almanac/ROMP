@@ -1,3 +1,4 @@
+"""Helpers that rename dataset coordinates to ROMP's canonical names (lat, lon, time, init_time, step, member)."""
 import pandas as pd
 
 def dim_fmt(ds):
@@ -5,16 +6,10 @@ def dim_fmt(ds):
     coord_list = list(ds.coords.keys())
 
     if "lon" not in coord_list:
-        #print("lon NOT in coords  --> ")  # , model_name)
         lat_coords = [variable for variable in coord_list if "lat" in variable.lower()][0]
         lon_coords = [variable for variable in coord_list if "lon" in variable.lower()][0]
 
         ds = ds.rename({lat_coords: "lat", lon_coords: "lon"})
-
-#    if "time" not in coord_list:
-#        print("time NOT in coords --> ")  # , model_name)
-#        time_coords = [variable for variable in coord_list if "TIME" in variable][0]
-#        ds = ds.rename({time_coords: "time"})
 
     if set(ds.dims) == {"lat", "lon"} and len(ds.dims) == 2:
         return ds
@@ -64,7 +59,6 @@ def dim_fmt_model(ds, model_dims=None):
     coord_list = list(ds.coords.keys())
 
     if "lon" not in coord_list:
-        #print("lon NOT in coords  --> ")  # , model_name)
         lat_coords = [variable for variable in coord_list if "lat" in variable.lower()][0]
         lon_coords = [variable for variable in coord_list if "lon" in variable.lower()][0]
 
@@ -72,7 +66,6 @@ def dim_fmt_model(ds, model_dims=None):
         coord_list = list(ds.coords.keys())
 
     if "init_time" not in coord_list:
-        #print("init_time NOT in coords --> ")  # , model_name)
         ds = ds.rename({_init_time_coord(ds, coord_list): "init_time"})
         coord_list = list(ds.coords.keys())
 

@@ -16,17 +16,13 @@ import sys
 import traceback
 
 # Local Package Imports
-#from momp.lib.loader import cfg, setting
 from momp.lib.loader import get_cfg, get_setting
 from momp.app.bin_skill_score import skill_score_in_bins
 from momp.app.spatial_far_mr_mae import spatial_far_mr_mae_map
 from momp.utils.printing import print_momp_banner
 
 
-
-# Create a logs directory if it doesn't exist
 log_dir = "logs"
-#os.makedirs(log_dir, exist_ok=True)
 
 # Configure logging for professional status updates
 logging.basicConfig(
@@ -34,19 +30,19 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        #logging.FileHandler(f"{log_dir}/momp_run.log"), # Saves to file
         logging.StreamHandler()                        # Prints to terminal
     ]
 )
 
 logger = logging.getLogger(__name__)
 
+
 def run_momp(cfg=None, setting=None):
     """
     Executes the standard ROMP evaluation workflow.
 
     This function triggers the bin-based skill score calculations
-    or generates spatial maps for False Alarm Ratio (FAR),
+    or generates spatial maps for False Alarm Rate (FAR),
     Miss Rate (MR), and Mean Absolute Error (MAE).
 
     Args:
@@ -61,18 +57,13 @@ def run_momp(cfg=None, setting=None):
 
     print_momp_banner(cfg)
 
-#    print("\n\n\n cfg.max_forecast_day = ", cfg.max_forecast_day)
-#    print("\n\n\n cfg.model = ", cfg.model_list)
-
     logger.info("Starting ROMP Workflow...")
 
     try:
         # 1. Calculate and save Skill Scores in defined day bins
-        #logger.info("Calculating skill scores in bins...")
         skill_score_in_bins()
 
         # 2. Generate spatial metrics and maps
-        #logger.info("Generating spatial metric maps (FAR, MR, MAE)...")
         spatial_far_mr_mae_map()
 
         logger.info("ROMP Workflow completed successfully!")

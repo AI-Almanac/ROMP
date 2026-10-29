@@ -1,3 +1,4 @@
+"""Heatmap of forecast-bin Brier skill score and AUC for one model."""
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -5,17 +6,10 @@ import os
 
 from momp.stats.bins import get_target_bins
 from momp.utils.printing import tuple_to_str
-from momp.lib.control import filter_bins_in_window
 
 
-#def create_heatmap(score_results, *, model, max_forecast_day, dir_fig, show_plot=True, **kwargs):
 def create_heatmap(score_results, *, model, verification_window, day_bins, dir_fig, show_plot=True, **kwargs):
     """Create and save skill score heatmap"""
-
-#    # extract day_bins inside verification_window
-#    day_bins_filtered = filter_bins_in_window(day_bins, verification_window)
-#    day_bins_filtered_str = [f"{start}-{end}" for start, end in day_bins_filtered] # convert to str
-
     auc_forecast =score_results['AUC']
     auc_climatology = score_results['AUC_ref']
     brier_forecast =score_results['BS']
@@ -23,18 +17,6 @@ def create_heatmap(score_results, *, model, verification_window, day_bins, dir_f
     skill_results = score_results['skill_results']
 
     target_bins = get_target_bins(brier_forecast, brier_climatology)
-
-#    target_bins_all = get_target_bins(brier_forecast, brier_climatology)
-#    clean_bins = [b.replace("Days ", "") for b in target_bins_all]
-#    #target_clean_bins = [bin_str for bin_str in clean_bins if bin_str in day_bins_filtered_str]
-#
-#    # Filter target_bins_raw where the corresponding clean_bin is in day_bins_filtered_str
-#    keep_bins = set(day_bins_filtered_str) # Create a set for fast lookup
-#    target_bins = [
-#        target
-#        for target, clean in zip(target_bins_all, clean_bins)
-#        if clean in keep_bins
-#    ]
 
     # Prepare data
     bss_values = [skill_results['bin_fair_brier_skill_scores'].get(bin_name, np.nan) for bin_name in target_bins]
@@ -95,7 +77,6 @@ def create_heatmap(score_results, *, model, verification_window, day_bins, dir_f
 
     # Save with model name and forecast days
     window_str = tuple_to_str(verification_window)
-    #figure_filename = f'skill_scores_heatmap_{model}_{max_forecast_day}day.png'
     figure_filename = f'skill_scores_heatmap_{model}_{window_str}.png'
     figure_filename = os.path.join(dir_fig, figure_filename)
     plt.savefig(figure_filename, dpi=300, bbox_inches='tight')
@@ -106,4 +87,3 @@ def create_heatmap(score_results, *, model, verification_window, day_bins, dir_f
     plt.close()
 
     print(f"Figure saved as '{figure_filename}'")
-
