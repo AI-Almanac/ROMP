@@ -4,18 +4,14 @@ from momp.io.input import load_thresholds
 from momp.stats.detect import detect_observed_onset
 from momp.lib.loader import get_cfg, get_setting
 from momp.graphics.func_map import spatial_metrics_map
-from momp.utils.practical import restore_args
 
 
-def spatial_onset(year, *, obs_dir, obs_file_pattern, obs_var,
-                                  thresh_file, thresh_var, wet_threshold,
-                                  date_filter_year, init_days, start_date, end_date,
-                                  wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, fallback_date, earliest_onset_date,
-                                  members, onset_percentage_threshold, max_forecast_day, day_bins, **kwargs):
+def spatial_onset(year, **kwargs):
+    """Detect observed onset for a year, map it as day of year, and return the day-of-year DataArray.
 
-    """Detect observed onset for a year, map it as day of year, and return the day-of-year DataArray."""
-    kwargs = restore_args(spatial_onset, kwargs, locals())
-
+    kwargs is the run configuration, in definition mode (onset_definition, ...) or legacy mode (wet_init,
+    wet_spell, ... flat keys); the onset keys are resolved by detect_observed_onset, not named here.
+    """
     thresh_slice = load_thresholds(**kwargs)
 
     print("Loading observational rainfall data...")

@@ -9,17 +9,14 @@ import xarray as xr
 import pandas as pd
 
 
-def compute_climatological_onset(*, obs_dir, obs_file_pattern, obs_var, thresh_file, thresh_var, wet_threshold, 
-                                  wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, start_date, 
-                                 fallback_date, earliest_onset_date, years_clim,
+def compute_climatological_onset(*, years_clim,
                                  grid_point=False, lat_select=None, lon_select=None, **kwargs):
     """
     Compute climatological onset dates from all available IMD files.
 
     Parameters:
-    obs_dir: str, folder containing IMD NetCDF files
-    thresh_file: str, path to threshold file
-    earliest_onset_date: optional (month, day) tuple; if set, the onset search starts on that date instead of start_date (falsy = no filter)
+    years_clim: the years to average over
+    kwargs: the run configuration, in definition mode or with the old flat onset keys (obs_dir, obs_file_pattern, ... as for load_imd_rainfall and load_thresholds)
 
     Returns:
     climatological_onset_doy: xarray DataArray with climatological onset day of year

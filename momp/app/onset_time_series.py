@@ -4,15 +4,25 @@ from momp.io.input import load_imd_rainfall, load_thresholds
 from momp.stats.detect import detect_observed_onset
 from momp.lib.loader import get_cfg, get_setting
 from momp.graphics.rainfall_time_series import plot_rainfall_timeseries_with_onset_and_wetspell
-from momp.utils.practical import restore_args
 from momp.stats.climatology import compute_climatological_onset
 from momp.lib.control import years_tuple_clim
 import pandas as pd
+from momp.lib.onset_config import onset_setup
+
+
+def _season_window(kwargs):
+    """The ((month, day), (month, day)) window to plot: start_date/end_date in legacy mode, else the chosen season's fixed bounds; None (the whole record) for derived seasons."""
+    setup = onset_setup(kwargs)
+    if setup.legacy:
+        return tuple(kwargs["start_date"][1:]), tuple(kwargs["end_date"][1:])
+    if setup.derived_seasons:
+        return None
+    season = next(s for s in setup.definition.seasons if s.name == setup.season)
+    return (season.start.month, season.start.day), (season.end.month, season.end.day)
 
 
 def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwargs):
     """Detect observed onset for a year, plot the rainfall time series at the grid point nearest lat_select/lon_select, and return (rainfall within the season window, onset dates)."""
-    kwargs = restore_args(obs_onset_analysis, kwargs, locals())
     years_clim = years_tuple_clim(kwargs['start_year_clim'], kwargs['end_year_clim'])
     kwargs["years_clim"] = years_clim
 
@@ -26,20 +36,22 @@ def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwa
     da = load_imd_rainfall(year, **kwargs)
     onset_da = detect_observed_onset(da, thresh_da, year, **kwargs)
 
-    start_date = kwargs["start_date"][1:]
-    end_date = kwargs["end_date"][1:]
-
-    da_sub = da.where(
-        (
-            (da.time.dt.month > start_date[0]) |
-            ((da.time.dt.month == start_date[0]) & (da.time.dt.day >= start_date[1]))
-        ) &
-        (
-            (da.time.dt.month < end_date[0]) |
-            ((da.time.dt.month == end_date[0]) & (da.time.dt.day <= end_date[1]))
-        ),
-        drop=True
-    )
+    window = _season_window(kwargs)
+    if window is None:
+        da_sub = da
+    else:
+        start_date, end_date = window
+        da_sub = da.where(
+            (
+                (da.time.dt.month > start_date[0]) |
+                ((da.time.dt.month == start_date[0]) & (da.time.dt.day >= start_date[1]))
+            ) &
+            (
+                (da.time.dt.month < end_date[0]) |
+                ((da.time.dt.month == end_date[0]) & (da.time.dt.day <= end_date[1]))
+            ),
+            drop=True
+        )
 
     da_pr_clim_sub = None
     climatological_onset_datetime = None
