@@ -374,6 +374,26 @@ detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
   gives the median onset day of year per cell and season, from the observed
   detection.
 
+### 7.1 Conditional climatology (`momp.onset.climatology_kde`)
+
+The reference forecast `ref_model = "conditional_climatology"` is the
+probability that onset falls on lead k given no onset by the issue date,
+`P(onset on d + k | none by d) = (F(d + k) - F(d + k - 1)) / (1 - F(d))`.
+F is the CDF of a Gaussian KDE (Scott's bandwidth) of a cell's observed onset
+days, built as R's `density()` plus `approxfun(rule = 2)` do (512 grid points,
+end values held outside). Each row is floored at `MIN_PROB = 5e-7` while
+keeping its sum; a cell with fewer than 10 onsets has no forecast.
+`conditional_probabilities(onset_days_by_cell, issue_days, horizon, *,
+cv_years=None)` returns (cell, [year,] issue, lead) for leads 1..horizon;
+`unconditional_probabilities` adds lead 0 (onset already happened). With
+`cv_years` (ROMP: `climatology_cv = "leave_one_year_out"`) each test year's KDE
+is refitted without its own onset. ROMP trains on the observed onsets of
+`start_year_clim..end_year_clim` (the evaluation's own detection), with days
+counted from 1 January and no leap-day shift. Probabilistic pairs hold the
+bin probabilities (Before is zero when the bins start at lead 1) with infinite
+member counts, so the fair corrections vanish; the deterministic forecast is
+the first lead whose conditional CDF reaches 0.5 within `max_forecast_day`.
+
 ## 8. Temporal alignment (`momp.onset.alignment`)
 
 Datasets that use different day boundaries or lead labels are shifted

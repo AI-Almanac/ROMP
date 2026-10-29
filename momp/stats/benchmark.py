@@ -7,6 +7,8 @@ from momp.stats.detect import detect_observed_onset, compute_onset_for_determini
 from momp.stats.detect import check_alignment_once
 from momp.stats.climatology import compute_climatological_onset, compute_climatology_as_forecast
 from momp.stats.bins import counts_back_dated
+from momp.stats.climatology import compute_climatological_onset_dataset
+from momp.stats.conditional_climatology import CONDITIONAL_CLIMATOLOGY, compute_conditional_climatology_as_forecast
 from momp.utils.practical import restore_args
 
 import numpy as np
@@ -144,6 +146,12 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
     thresh_da = load_thresholds(**kwargs)
 
     ref_clim = (kwargs['model'] == 'climatology')
+    ref_cond = (kwargs['model'] == CONDITIONAL_CLIMATOLOGY)
+
+    # observed onsets of the climatology years, the conditional climatology's training data
+    if ref_cond:
+        print("Computing observed onsets of the climatology years for the conditional climatology")
+        clim_onset = compute_climatological_onset_dataset(**kwargs)
 
     # calculate obs climatology onset
     if ref_clim:
@@ -163,18 +171,26 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         onset_da = detect_observed_onset(imd, thresh_da, year, **kwargs)
         history = load_history(year, imd, **kwargs)
         # extract forecast at approporiate init dates
-        if probabilistic:
+        if ref_cond:
+            pass
+        elif probabilistic:
             print("Extracting ensemble forecast data ...")
             p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
         elif not ref_clim:
             print("Extracting model forecast data ...")
             p_model = get_forecast_deterministic_twice_weekly(year, **kwargs)
 
-        if probabilistic or not ref_clim:
+        if not ref_cond and (probabilistic or not ref_clim):
             check_alignment_once(imd, p_model, **kwargs)
 
         # detect onset dates
-        if probabilistic: # emsemble forecast onset
+        if ref_cond: # conditional climatology as forecast
+            print("Computing onset for conditional climatology as forecast ...")
+            onset_df = compute_conditional_climatology_as_forecast(
+                clim_onset, year, get_initialization_dates(year, **kwargs), onset_da, **kwargs
+            )
+
+        elif probabilistic: # emsemble forecast onset
             print("Computing onset for ensemble forecast ...")
             _, onset_df = compute_onset_for_all_members(
                 p_model, thresh_da, onset_da, history=history, **kwargs
@@ -233,6 +249,10 @@ def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
     thresh_da = load_thresholds(**kwargs)
 
     ref_clim = (kwargs['model'] == 'climatology')
+    ref_cond = (kwargs['model'] == CONDITIONAL_CLIMATOLOGY)
+
+    if ref_cond:
+        clim_onset = compute_climatological_onset_dataset(**kwargs)
 
     # calculate obs climatology onset
     if ref_clim:
@@ -251,7 +271,13 @@ def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
         history = load_history(year, imd, **kwargs)
 
         # extract forecast at approporiate init dates
-        if probabilistic and not ref_clim:
+        if ref_cond: # conditional climatology as forecast
+            print("-------Computing onset for conditional climatology as forecast ...")
+            onset_df = compute_conditional_climatology_as_forecast(
+                clim_onset, year, get_initialization_dates(year, **kwargs), onset_da, **kwargs
+            )
+
+        elif probabilistic and not ref_clim:
             print("-------Extracting ensemble forecast data ...")
             p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
             check_alignment_once(imd, p_model, **kwargs)

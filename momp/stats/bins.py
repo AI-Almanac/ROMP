@@ -7,16 +7,17 @@ from momp.io.input import get_forecast_probabilistic_twice_weekly
 from momp.io.input import load_imd_rainfall
 from momp.lib.onset_config import is_legacy, onset_setup
 from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
+from momp.stats.conditional_climatology import CLIMATOLOGY_REFERENCES
 from momp.utils.practical import restore_args
 
 
 def counts_back_dated(cfg):
     """Whether score outputs report back-dated forecast onsets: definition mode with forecast_history "observed".
 
-    Legacy configs and the climatology baseline (whose onsets come from no forecast) return False,
+    Legacy configs and the climatology baselines (whose onsets come from no forecast) return False,
     so their outputs stay exactly as before.
     """
-    if is_legacy(cfg) or cfg.get("model") == "climatology":
+    if is_legacy(cfg) or cfg.get("model") in CLIMATOLOGY_REFERENCES:
         return False
     return onset_setup(cfg).forecast_history == "observed"
 

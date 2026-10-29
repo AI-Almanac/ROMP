@@ -1,6 +1,9 @@
 """Compute forecast and reference-model BS, RPS, AUC and derived skill scores from forecast-observation pairs."""
 from momp.stats.climatology import compute_climatological_onset_dataset
 from momp.stats.bins import multi_year_forecast_obs_pairs, multi_year_climatological_forecast_obs_pairs
+from momp.stats.conditional_climatology import CLIMATOLOGY_REFERENCES, is_conditional_climatology
+from momp.stats.conditional_climatology import multi_year_conditional_climatological_forecast_obs_pairs
+from momp.stats.conditional_climatology import parallel_conditional_climatological_forecast_obs_pairs
 from momp.stats.score import calculate_brier_score, calculate_auc, calculate_rps, calculate_brier_score_climatology, calculate_auc_climatology, calculate_skill_scores
 from momp.utils.practical import restore_args
 from momp.io.dict import extract_pd_bins
@@ -24,6 +27,15 @@ def reference_model_kwargs(kwargs):
             'model_dims': kwargs.get('ref_model_dims')}
 
 
+def _climatology_pairs(clim_onset, **kwargs):
+    """Pair tables of the climatology reference (conditional or not) for all years, in parallel when kwargs["parallel"] is set."""
+    if is_conditional_climatology(kwargs["ref_model"]):
+        return (parallel_conditional_climatological_forecast_obs_pairs(clim_onset, **kwargs) if kwargs.get("parallel")
+                else multi_year_conditional_climatological_forecast_obs_pairs(clim_onset, **kwargs))
+    return (parallel_climatological_forecast_obs_pairs(clim_onset, **kwargs) if kwargs.get("parallel")
+            else multi_year_climatological_forecast_obs_pairs(clim_onset, **kwargs))
+
+
 def _pairs(**kwargs):
     """Forecast-observation pairs for all years, in parallel when kwargs["parallel"] is set."""
     return parallel_forecast_obs_pairs(**kwargs) if kwargs.get("parallel") else multi_year_forecast_obs_pairs(**kwargs)
@@ -34,7 +46,7 @@ def prepare_score_cache(**kwargs):
 
     Returns a dict with keys _forecast_obs_df_all, _ref_obs_df_all (reference
     model pairs, built from the reference model's own data; None for
-    climatology), _clim_onset and _climatology_obs_df_all, which
+    climatology and conditional_climatology), _clim_onset and _climatology_obs_df_all, which
     create_score_results reuses instead of recomputing.
     """
     parallel = kwargs.get('parallel')
@@ -50,20 +62,16 @@ def prepare_score_cache(**kwargs):
     climatology_obs_df_all = None
     ref_obs_df_all = None
 
-    if ref_model != "climatology":
+    if ref_model not in CLIMATOLOGY_REFERENCES:
         ref_obs_df_all = _pairs(**reference_model_kwargs(kwargs))
 
-    if ref_model == "climatology":
+    if ref_model in CLIMATOLOGY_REFERENCES:
         clim_onset = (
             parallel_climatological_onset_dataset(**kwargs)
             if parallel
             else compute_climatological_onset_dataset(**kwargs)
         )
-        climatology_obs_df_all = (
-            parallel_climatological_forecast_obs_pairs(clim_onset, **kwargs)
-            if parallel
-            else multi_year_climatological_forecast_obs_pairs(clim_onset, **kwargs)
-        )
+        climatology_obs_df_all = _climatology_pairs(clim_onset, **kwargs)
 
     return {
         "_forecast_obs_df_all": forecast_obs_df_all,
@@ -84,7 +92,9 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
     """Compute Brier score, RPS and AUC (as flagged by BS, RPS, AUC) for the forecast model and its reference, plus skill scores if skill_score is set.
 
     Uses cached pair tables from prepare_score_cache when present in kwargs. The
-    reference is climatology if ref_model is "climatology", otherwise another model.
+    reference is climatology if ref_model is "climatology", conditional climatology
+    (P(onset on lead k | no onset by the init), kwargs "climatology_cv") if it is
+    "conditional_climatology", otherwise another model.
     Returns a dict with forecast_obs_df, climatology_obs_df, BS, RPS, AUC, their
     *_ref counterparts, skill_score and (if skill_score) skill_results.
     """
@@ -123,7 +133,7 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
     results["BS_ref"], results["RPS_ref"], results["AUC_ref"] = None, None, None
     results['skill_score'] = None
 
-    if ref_model == "climatology":
+    if ref_model in CLIMATOLOGY_REFERENCES:
 
         clim_onset = kwargs.get("_clim_onset")
         if clim_onset is None:
@@ -137,10 +147,7 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
 
         climatology_obs_df_all = kwargs.get("_climatology_obs_df_all")
         if climatology_obs_df_all is None:
-            if parallel:
-                climatology_obs_df_all = parallel_climatological_forecast_obs_pairs(clim_onset, **kwargs)
-            else:
-                climatology_obs_df_all = multi_year_climatological_forecast_obs_pairs(clim_onset, **kwargs)
+            climatology_obs_df_all = _climatology_pairs(clim_onset, **{**kwargs, "ref_model": ref_model})
         climatology_obs_df = extract_pd_bins(climatology_obs_df_all, day_bins)
 
         end = time.perf_counter()
