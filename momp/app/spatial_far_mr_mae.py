@@ -12,7 +12,7 @@ from momp.lib.loader import get_cfg, get_setting
 from momp.graphics.maps import plot_spatial_metrics
 from momp.graphics.onset_map import plot_spatial_climatology_onset
 from momp.graphics.panel_portrait_error import panel_portrait_mae_far_mr
-from momp.io.output import save_metrics_to_netcdf
+from momp.io.output import add_back_dated_map, save_metrics_to_netcdf
 from momp.io.output import set_nested
 from momp.utils.printing import tuple_to_str_range
 from momp.stats.parallel import parallel_metrics_multiple_years
@@ -56,6 +56,7 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
 
         # Create spatial metrics
         spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)
+        add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict)
 
         # log case result into combined multi-case results dictionary
         results = set_nested(results, combi, spatial_metrics)
@@ -112,6 +113,7 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
 
         # Create spatial metrics
         spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)
+        add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict)
 
         # log case result into combined multi-case results dictionary
         results = set_nested(results, combi, spatial_metrics)

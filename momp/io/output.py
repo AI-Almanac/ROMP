@@ -31,6 +31,10 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
 
     # create dataframe and save as .csv
     overall_df = pd.DataFrame([overall_scores_nested])
+    share = back_dated_member_share(score_results.get('forecast_obs_df'))
+    if share is not None:
+        # definition mode with forecast_history "observed" only; legacy CSVs keep their columns
+        overall_df['back_dated_member_share'] = share
 
     window_str = tuple_to_str(verification_window)
     overall_filename = f'overall_skill_scores_{model}_{window_str}.csv'
@@ -64,6 +68,50 @@ def save_score_results(score_results, *, model, verification_window, dir_out, **
     print(binned_df)
 
     return binned_data, overall_scores_nested
+
+
+def back_dated_member_share(forecast_obs_df):
+    """Share of the scored member onsets dated on or before their init, or None when the table does not track them.
+
+    Reads the per-case `back_dated_members` and `onset_members` columns of the forecast-observation
+    table (present for definition runs with forecast_history "observed"); NaN when no member found an onset.
+    """
+    if forecast_obs_df is None or 'back_dated_members' not in forecast_obs_df.columns:
+        return None
+    cases = forecast_obs_df.drop_duplicates(['init_time', 'lat', 'lon'])
+    onsets = cases['onset_members'].sum()
+    return float(cases['back_dated_members'].sum() / onsets) if onsets else float('nan')
+
+
+def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
+    """Add the `n_back_dated` map (in place) from per-year metrics tables that carry an `n_back_dated` column.
+
+    Each cell holds the number of scored init cases, over the years with an observed onset there,
+    whose forecast onset was back-dated; a no-op for tables without the column (legacy runs).
+    Returns spatial_metrics.
+    """
+    tables = [df for df in metrics_df_dict.values() if 'n_back_dated' in df.columns]
+    if not tables:
+        return spatial_metrics
+    first = onset_da_dict[list(onset_da_dict)[0]]
+    lats, lons = first.lat.values, first.lon.values
+    grid = pd.MultiIndex.from_product([lats, lons])
+    counts = np.zeros((len(lats), len(lons)))
+    for year, df in metrics_df_dict.items():
+        if 'n_back_dated' not in df.columns or len(df) == 0:
+            continue
+        points = df.drop_duplicates(['lat', 'lon'])
+        flat = grid.get_indexer(pd.MultiIndex.from_frame(points[['lat', 'lon']]))
+        keep = flat >= 0
+        points, flat = points[keep], flat[keep]
+        has_onset = ~pd.isna(onset_da_dict[year].values).ravel()[flat]
+        i, j = np.unravel_index(flat[has_onset], counts.shape)
+        counts[i, j] += points['n_back_dated'].to_numpy()[has_onset]
+    spatial_metrics['n_back_dated'] = xr.DataArray(
+        counts, coords=[('lat', lats), ('lon', lons)], name='n_back_dated',
+        attrs={'description': 'Scored init cases whose forecast onset was back-dated (on or before the init, '
+                              'scored as the first lead); 0 unless the verification window starts at lead 1'})
+    return spatial_metrics
 
 
 def save_ref_score_results(results, filename):
@@ -134,6 +182,8 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
             clean_attrs[key] = val
 
     ds.attrs.update(clean_attrs)
+    if 'n_back_dated' in ds:
+        ds.attrs['n_back_dated_total'] = int(ds['n_back_dated'].sum())
 
     if desc_dict is not None:
         ds.attrs.update(desc_dict)

@@ -5,8 +5,20 @@ import numpy as np
 from momp.io.input import load_thresholds, load_history, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly
 from momp.io.input import load_imd_rainfall
+from momp.lib.onset_config import is_legacy, onset_setup
 from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
 from momp.utils.practical import restore_args
+
+
+def counts_back_dated(cfg):
+    """Whether score outputs report back-dated forecast onsets: definition mode with forecast_history "observed".
+
+    Legacy configs and the climatology baseline (whose onsets come from no forecast) return False,
+    so their outputs stay exactly as before.
+    """
+    if is_legacy(cfg) or cfg.get("model") == "climatology":
+        return False
+    return onset_setup(cfg).forecast_history == "observed"
 
 
 def extract_day_range(bin_label):
@@ -129,6 +141,17 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
             np.bincount(member_case, weights=member_in_bin, minlength=len(cases)).astype(np.int64)[kept])
         observed_onset.append(observed.astype(np.int64))
     members_with_onset = np.stack(members_in_bin, axis=1)
+    if counts_back_dated(kwargs):
+        # members of the scored cases whose onset is dated on or before the init (and all members with an onset)
+        in_kept = np.zeros(len(cases), dtype=bool)
+        in_kept[kept] = True
+        scored_member = in_kept[member_case]
+        back_dated_members = np.bincount(member_case, weights=scored_member & has_onset & (member_day <= 0),
+                                         minlength=len(cases)).astype(np.int64)[kept]
+        onset_members = np.bincount(member_case, weights=scored_member & has_onset,
+                                    minlength=len(cases)).astype(np.int64)[kept]
+    else:
+        back_dated_members = onset_members = None
     n_bins = len(extended_bins)
 
     def per_case(values):
@@ -150,6 +173,9 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
         'obs_onset_date': per_case(pd.DatetimeIndex(obs_date[kept]).strftime('%Y-%m-%d').to_numpy(dtype=object)),
         'bin_index': np.tile(np.arange(n_bins), len(kept)),
     })
+    if back_dated_members is not None:
+        forecast_obs_df['back_dated_members'] = per_case(back_dated_members)
+        forecast_obs_df['onset_members'] = per_case(onset_members)
 
     print(f"Generated {len(forecast_obs_df)} forecast-observation pairs")
     print(f"Total bins per forecast: {len(extended_bins)}")
