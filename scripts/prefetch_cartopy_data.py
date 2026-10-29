@@ -30,7 +30,14 @@ shpreader.natural_earth(resolution='50m', category='physical', name='coastline')
 print("  -> 50m cultural/admin_0_boundary_lines_land")
 shpreader.natural_earth(resolution='50m', category='cultural', name='admin_0_boundary_lines_land')
 
-# 4. Exercise cfeature.COASTLINE and cfeature.BORDERS via a throwaway figure
+# 4b. Region masks (momp.utils.mask: `mask.land`, `mask.country`) read land and admin_0_countries at the
+#     resolution `mask.resolution` (default 50m), so fetch all three resolutions of both layers.
+for _res in ("10m", "50m", "110m"):
+    for _category, _name in (("cultural", "admin_0_countries"), ("physical", "land")):
+        print(f"  -> {_res} {_category}/{_name}")
+        shpreader.natural_earth(resolution=_res, category=_category, name=_name)
+
+# 4c. Exercise cfeature.COASTLINE and cfeature.BORDERS via a throwaway figure
 #    so Cartopy's feature downloader also triggers and caches the geometries.
 print("  -> Exercising cfeature COASTLINE + BORDERS via throwaway plot")
 fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})

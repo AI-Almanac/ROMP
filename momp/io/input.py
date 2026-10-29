@@ -39,7 +39,7 @@ def load_thresh_file(*, thresh_file, thresh_var, wet_threshold, region, **kwargs
         thresh_ds = xr.open_dataset(thresh_file)
         thresh_da = thresh_ds[thresh_var]
 
-        thresh_da = region_select(thresh_da, region=region,  **kwargs)
+        thresh_da = region_select(thresh_da, region=region, **{**kwargs, "mask": None})
 
     else:
         thresh_da = wet_threshold
@@ -157,7 +157,7 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
         return thresholds
     for name, path, var in setup.threshold_files:
         with xr.open_dataset(path) as ds:
-            thresholds[name] = region_select(ds[var], region=region, **kwargs).load()
+            thresholds[name] = region_select(ds[var], region=region, **{**kwargs, "mask": None}).load()
     pending = [(name, spec) for name, spec in setup.definition.thresholds if name not in thresholds]
     if not pending and not setup.derived_seasons:
         return thresholds
@@ -240,7 +240,7 @@ def load_imd_rainfall(year, *, obs_dir, obs_file_pattern, obs_var, obs_unit_cvt,
     # Standardize dimension names
     ds = dim_fmt(ds)
 
-    ds = region_select(ds, region=region, **kwargs)
+    ds = region_select(ds, region=region, dataset_name=str(kwargs.get("obs") or "obs"), **kwargs)
 
     rainfall = ds[obs_var]
 
@@ -293,7 +293,7 @@ def get_forecast_deterministic_twice_weekly(year, *, model_dir, model_var, date_
         raise ValueError(f"No matching initialization times found for year {year}")
     ds = ds.sel(init_time=matching_times)
 
-    ds = region_select(ds, **kwargs)
+    ds = region_select(ds, dataset_name=str(kwargs.get("model") or "model"), **kwargs)
 
     # Check if 'step' dimension exists and conditionally slice
     if 'step' in ds.dims:
@@ -361,7 +361,7 @@ def get_forecast_probabilistic_twice_weekly(year, *, model_dir, model_var, date_
     if members:
         ds = ds.sel(member = list(members) )
 
-    ds = region_select(ds, **kwargs)
+    ds = region_select(ds, dataset_name=str(kwargs.get("model") or "model"), **kwargs)
 
     p_model = ds[model_var]  # in mm
 

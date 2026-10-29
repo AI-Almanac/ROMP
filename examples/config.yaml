@@ -7,6 +7,11 @@ project_name: Demo run with the sample data
 
 region: India
 
+# mask:                          # optional: limit the evaluated cells, on each dataset's own grid
+#   country: Ethiopia            # land, country, file, condition intersect; see README "Region masks"
+#   land: true
+#   cell_rule: centre            # or overlap_fraction (with overlap_fraction: 0.5)
+
 observations:
   path: demo/data/obs            # folder of the yearly files; ~ and ${ENV_VAR} work
   file_pattern: "{}.nc"          # {} is the year; quote it

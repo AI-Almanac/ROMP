@@ -128,12 +128,29 @@ def coords_fmt(ds_tag, *, region, **kwargs):
 
 
 
-def region_select(ds, *, region, nc_mask, land_only=True, shp_only=True, **kwargs):
-    """Subset `ds` to the region's lat/lon box, optionally applying a NetCDF mask, land mask and country-shapefile mask."""
+def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,
+                  dir_fig=None, **kwargs):
+    """Subset `ds` to the region's lat/lon box, then limit it to the cells of the run's mask.
+
+    With a `mask` mapping (the config's ``mask:`` section) the mask is built on this dataset's own grid by
+    momp.utils.mask (dataset_name labels it in messages, records and the PNG saved to dir_fig); it replaces
+    the implicit land and country masks below and cannot be combined with nc_mask. Without `mask` the old
+    behaviour is unchanged: the optional NetCDF mask nc_mask, then the land mask and the country-shapefile mask.
+    """
     lats, latn, lonw, lone, ds = coords_fmt(ds, region=region)
 
     ds_reg = ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
 
+    if mask:
+        if nc_mask:
+            from momp.utils.mask import MaskError
+
+            raise MaskError("both `mask` and `nc_mask` are set; use one. nc_mask: <file> is the same as "
+                            "mask: {file: <file>}, except that the old nc_mask also applies the land and country "
+                            "masks implicitly")
+        from momp.utils.mask import apply_region_mask
+
+        return apply_region_mask(ds_reg, mask, dataset_name or "data", dir_fig)
 
     if nc_mask:
         ds_reg = apply_nc_mask(ds_reg, nc_mask)
@@ -146,21 +163,3 @@ def region_select(ds, *, region, nc_mask, land_only=True, shp_only=True, **kwarg
         ds_reg = shp_mask(ds_reg, region=region)
 
     return ds_reg
-
-
-
-def domain_average(da, polygon=False, weighted=False, **kwargs):
-    """Average `da` over lat/lon, optionally within the polygon and with cos(lat) weights."""
-    if polygon:
-        da_slice = polygon_mask(da)
-    else:
-        da_slice = da
-
-    if weighted:
-        weights = np.cos(np.deg2rad(da_slice.lat))
-        weights.name = "weights"
-        domain_avg = da_slice.weighted(weights).mean(dim=("lat", "lon"), skipna=True)
-    else:
-        domain_avg = da_slice.mean(dim=("lat", "lon"), skipna=True)
-
-    return domain_avg

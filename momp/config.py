@@ -74,6 +74,32 @@ class Dataset:
                 if getattr(self, f.name) is not UNSET}
 
 
+@dataclasses.dataclass
+class Mask:
+    """The `mask:` of a run config: the cells to evaluate, built on each dataset's own grid (rainfall is never regridded).
+
+    Parts given intersect: land (Natural Earth land), country (a name or list of names), file (0/1 NetCDF with
+    variable and keep_value, or a shapefile / GeoJSON) and condition ({file, variable, above, below}).
+    cell_rule is 'centre' or 'overlap_fraction' (with overlap_fraction, default 0.5); resolution is the Natural
+    Earth resolution ('10m', '50m' (default) or '110m'). Unset keys are UNSET. See momp.utils.mask.
+    """
+
+    land: Any = UNSET
+    country: Any = UNSET
+    file: Any = UNSET
+    variable: Any = UNSET
+    keep_value: Any = UNSET
+    condition: Any = UNSET
+    cell_rule: Any = UNSET
+    overlap_fraction: Any = UNSET
+    resolution: Any = UNSET
+
+    def to_mapping(self) -> dict:
+        """The keys that are set, as a plain mapping."""
+        return {f.name: plain(getattr(self, f.name)) for f in dataclasses.fields(self)
+                if getattr(self, f.name) is not UNSET}
+
+
 def _section(name: str, extra=()):
     """Build the dataclass of one config section from the schema: an attribute per key, all UNSET by default."""
     names = [f.nested_name for f in schema.FIELDS if f.section == name] + list(extra)

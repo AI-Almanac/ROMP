@@ -111,6 +111,8 @@ class Setting:
 
     shpfile_dir: Optional[str] = field(default=None)
     nc_mask: Optional[str] = field(default=None)
+    # the run's region mask (momp.utils.mask): land, country, file, condition, cell_rule, ...
+    mask: Optional[dict] = field(default=None)
 
     obs_file_pattern: str = field(default="{}.nc")
     ref_model_file_pattern: Optional[str] = field(default="{}.nc")
