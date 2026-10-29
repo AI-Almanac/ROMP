@@ -22,6 +22,7 @@ from momp.app.bin_skill_score import skill_score_in_bins
 from momp.app.spatial_far_mr_mae import spatial_far_mr_mae_map
 from momp.lib.explain_cells import write_explain_cells
 from momp.lib.onset_config import onset_setup
+from momp.lib.resolved import definition_lines, write_resolved
 from momp.utils.printing import print_momp_banner
 
 
@@ -53,6 +54,12 @@ def run_momp(cfg=None, setting=None):
         setting: The environment and directory settings.
     """
 
+    if cfg is None and setting is None:
+        from momp.cli import handled_without_run
+
+        if handled_without_run(sys.argv[1:]):
+            return
+
     try:
         if cfg is None:
             cfg = get_cfg()
@@ -69,6 +76,17 @@ def run_momp(cfg=None, setting=None):
         print(f"  {line}")
     for line in getattr(cfg, "onset_lead_lines", ()):
         print(f"  {line}")
+
+    for line in getattr(cfg, "dataset_report", ()):
+        print(f"  {line}")
+    if not getattr(cfg, "onset_legacy", False):
+        for line in definition_lines(vars(cfg)):
+            print(f"  {line}")
+    try:
+        paths = write_resolved(vars(cfg))
+        print(f"  Resolved config  : {paths[0]}")
+    except OSError as exc:
+        logger.warning(f"could not write resolved_config.yaml: {exc}")
 
     write_explain_cells(cfg)
 

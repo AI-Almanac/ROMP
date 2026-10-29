@@ -1,4 +1,4 @@
-"""Load config.in, apply command-line overrides and expose the config and Setting objects."""
+"""Load the YAML run config, apply command-line overrides and expose the config and Setting objects."""
 import importlib.resources
 import os
 from pathlib import Path
@@ -27,7 +27,7 @@ def _get_config_path_pre_parse(cli_args=None):
     """Return the config path from -p/--param in cli_args, else the MOMP_CONFIG environment variable.
 
     A run must always say which config it uses; with neither set this raises,
-    explaining how to give one (the template is examples/config.in in the repository).
+    explaining how to give one (start one with `momp-run init`, or see examples/config.yaml).
     """
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("-p", "--param", default=None)
@@ -35,43 +35,24 @@ def _get_config_path_pre_parse(cli_args=None):
     path = args.param or os.environ.get("MOMP_CONFIG")
     if not path:
         raise ROMPConfigError(
-            "No config file given. Pass one with `momp-run -p path/to/config.in` (or set the "
-            "MOMP_CONFIG environment variable, e.g. in a notebook). Start from examples/config.in "
-            "in the ROMP repository.")
+            "No config file given. Pass one with `momp-run -p path/to/run.yaml` (or set the "
+            "MOMP_CONFIG environment variable). Start one with `momp-run init`; see `momp-run -h`.")
     return path
 
 
 def _read_config(config_path):
-    """Read and exec config.in into an isolated namespace, return config dict."""
-    config_item = set_dir(config_path)
+    """Read a YAML run config into the flat config dict (validated, datasets described, defaults resolved)."""
+    from momp.config import Config
+    from momp.lib.config_yaml import is_yaml_path
 
+    config_item = set_dir(config_path)
     if not config_item.exists():
         raise FileNotFoundError(f"Could not find config file: {config_path}")
-
-    if isinstance(config_item, Path):
-        with open(config_item, "r") as f:
-            params_in = f.read()
-    else:
-        with importlib.resources.as_file(config_item) as actual_path:
-            with open(actual_path, "r") as f:
-                params_in = f.read()
-
-    params_in = "\n".join(
-        line for line in params_in.splitlines() if not line.strip().startswith("#")
-    )
-
-    # Execute config into an isolated namespace rather than module globals
-    local_ns = {}
-    exec(params_in, {}, local_ns)
-
-    excluded = {"f", "config_file_path", "params_in"}
-    dic = {
-        k: v for k, v in local_ns.items()
-        if not k.startswith("__")
-        and not callable(v)
-        and k not in excluded
-    }
-    return dic
+    if not is_yaml_path(config_item):
+        raise ROMPConfigError(
+            f"{config_path} is not a YAML config. momp-run reads YAML only. Convert an old config.in with "
+            f"`momp-run convert {config_path} -o run.yaml`, or start a new one with `momp-run init`.")
+    return Config.from_yaml(config_item).to_flat(source=str(config_item))
 
 
 def _rename_deprecated_keys(dic):
@@ -126,7 +107,7 @@ def _resolve_threshold_ref(ref):
 
 
 def build_cfg(cli_args=None):
-    """Read config.in, resolve paths, create output dirs and apply CLI overrides; return the config dict."""
+    """Read the YAML run config, resolve paths, create output dirs and apply CLI overrides; return the config dict."""
     config_path = ensure_config_exists(_get_config_path_pre_parse(cli_args))
     dic = _read_config(config_path)
     dic = _rename_deprecated_keys(dic)

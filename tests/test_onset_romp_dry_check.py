@@ -99,13 +99,14 @@ def test_generate_config_env_var(tmp_path):
     script = Path(__file__).parents[1] / "scripts" / "generate_config.py"
     base = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_")}
     base.update(ROMP_OBS_DIR="o", ROMP_MODEL_DIR="m", ROMP_MODEL_NAME="x", ROMP_DIR_OUT="d", ROMP_DIR_FIG="f",
-                ROMP_CONFIG_PATH=str(tmp_path / "c.in"))
+                ROMP_CONFIG_PATH=str(tmp_path / "c.yaml"))
     for extra, expected in (({}, True), ({"ROMP_DRY_SPELL_CHECK": "False"}, False),
                             ({"ROMP_DRY_SPELL_CHECK": "False", "ROMP_ONSET_DEFINITION": "icpac"}, False)):
         assert subprocess.run([sys.executable, str(script)], env={**base, **extra}).returncode == 0
-        ns = {}
-        exec((tmp_path / "c.in").read_text(), {}, ns)
-        assert ns["dry_spell_check"] is expected
+        import yaml
+
+        ns = yaml.safe_load((tmp_path / "c.yaml").read_text())
+        assert ns["onset"]["dry_spell_check"] is expected
     bad = subprocess.run([sys.executable, str(script)], env={**base, "ROMP_DRY_SPELL_CHECK": "maybe"},
                          capture_output=True, text=True)
     assert bad.returncode == 1 and "ROMP_DRY_SPELL_CHECK" in bad.stderr

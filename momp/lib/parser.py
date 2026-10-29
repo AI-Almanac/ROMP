@@ -1,4 +1,4 @@
-"""Command-line parser that overrides config.in values, plus argparse type helpers."""
+"""Command-line parser that overrides run-config values, plus argparse type helpers."""
 import argparse
 import ast
 from pathlib import Path
@@ -223,5 +223,5 @@ def ensure_config_exists(param_path: str) -> Path:
     path = Path(param_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(
-            f"Config file not found: {path}. Start from examples/config.in in the ROMP repository.")
+            f"Config file not found: {path}. Start one with `momp-run init`.")
     return path

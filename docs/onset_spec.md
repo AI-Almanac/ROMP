@@ -300,6 +300,45 @@ init_dim=None, lead_dim=None, member_dim=None) -> ForecastRain`
   `lead` last. Lead k (1-based) is the k-th 24 h after the init.
 * `lead_label` is required: `"start"` labels lead k with the date
   init + k - 1, and `"end"` labels it init + k (ROMP's historical choice).
+* Accumulation (`accumulation="auto"|"daily"|"since_init"`, default auto):
+  * `daily`: each step is a per-interval amount. 24 h steps are the daily
+    totals; shorter steps (1, 3, 6, 12 h, any step dividing 24 h, all on a
+    complete grid) are summed per day.
+  * `since_init`: running total since the init. Day j total = acc(end of day j)
+    - acc(end of day j-1), acc(0) = 0, using the steps at the 24 h boundaries
+    (a missing one is an error naming it). Step 0 is ignored.
+  * Steps are timedeltas or numbers. Numbers use the coordinate's `units`
+    attribute (hours or days); without it, integers 1..n or below 24 are
+    days, else hours.
+  * Incomplete final days are dropped, with a note.
+  * `detect_accumulation(da, lead_dim) -> (kind, evidence)` (auto): `since_init`
+    if values are non-decreasing along lead (tolerance 0.1 % of the series
+    maximum) in >= 99 % of the non-constant finite series and the last lead's
+    mean is > 3x the first's; `daily` if clearly not; ambiguous cases (cumulative
+    without growth, or mostly cumulative) are an error asking to set it.
+    Constant data or a single lead count as daily.
+  * Auto always emits an `IngestInfo` warning (a `UserWarning` subclass, so
+    visible by default) such as `accumulation: since_init [non-decreasing along
+    lead in 99.8 % of series; mean 0.4 -> 38]; steps: 6-hourly`.
+    Explicit settings emit it only for sub-daily steps, a daily_boundary or drops.
+  * The result carries `ingest_info` (a `ForecastIngestInfo` with accumulation,
+    evidence, step_hours, resolution, offsets, notes) as a plain attribute;
+    `ForecastRain` is unchanged. `ingest_forecast_info` returns `(forecast, info)`.
+* `daily_boundary` (e.g. `"03 UTC"`, default None): by default days run 24 h
+  from the init. With it, days are cut at that UTC hour, so day j covers
+  (b + 24 (j-1), b + 24 j] where b is the first boundary after the init
+  (b = init if it is already on the boundary). The part before b is dropped,
+  and lead k is the k-th complete day after b. Init date labels move to the UTC
+  date b falls on, so `lead_label` keeps its meaning (a 12 UTC init with 00 UTC
+  days is labelled with the next date). Inits may be at different hours (each
+  gets its own cut, the common number of days is kept). If the steps cannot hit
+  b, the error names the nearest UTC hours that work; with
+  `boundary_tolerance_hours` >= the miss it snaps to the grid with a warning
+  giving the distance.
+* Units are also checked against magnitudes (`check_units=False` to skip): the
+  99.9th percentile of the daily totals below 0.5 contradicts `mm` (suggests
+  `units='m'`), and above 1 contradicts `m` (suggests `mm`).
+  `detect_units(da, accumulation_kind) -> (units, evidence)` gives the guess.
 * Every negative forecast value becomes 0, with a warning giving the count and
   the lowest value. Model rainfall dips below zero numerically (Aurora has 7 % of
   values below 0, GraphCast down to -20 mm), so treating these as missing would

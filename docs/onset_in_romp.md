@@ -4,18 +4,22 @@ ROMP detects onset with the `momp.onset` component (contract: `docs/onset_spec.m
 
 ## Quick start
 
-For a known region you need no onset settings at all. With `region = "Ethiopia"` in `examples/config.in`, ROMP uses ICPAC's definition, CHIRPS's day boundary and the region's threshold years, and prints each choice and where it came from at the start of the run.
+For a known region you need no onset settings at all. With `region: Ethiopia` in your run YAML (`examples/config.yaml`), ROMP uses ICPAC's definition, CHIRPS's day boundary and the region's threshold years, and prints each choice and where it came from at the start of the run.
 
 ```
-momp-run -p my_config.in
+momp-run -p run.yaml
 ```
 
-To choose yourself, set `onset_definition` (section 6):
+To choose yourself, set `onset:` in the run file:
 
+```yaml
+region: Ethiopia
+onset:
+  definition: icpac            # registry id, or the path of a YAML file
+  override: {wet_day: at least 2 mm}   # optional; merged like `extends`, same strict errors
 ```
-region = "Ethiopia"
-onset_definition = "icpac"     # registry id, or the path of a YAML file
-```
+
+or a complete definition inline under `onset: {rule: {...}}`. The run prints the definition's description, `icpac v1, overridden: wet_day` and the hash, and writes `resolved_definition.yaml` and `resolved_config.yaml` to `dir_out`.
 
 Look definitions up with the CLI:
 
@@ -26,15 +30,16 @@ python -m momp.onset regions              # regions with their defaults
 python -m momp.onset schematic icpac --png icpac.png
 ```
 
-A rule that differs a little goes in a YAML file with `extends: <id>` and only the changed keys (see the README); set `onset_definition` to its path. A region you define yourself in `params/region_def.py` has no defaults: set `onset_definition` and `obs_day_boundary`.
+A rule that differs a little goes in `onset.override`, or in a shared YAML file with `extends: <id>` (set `definition` to its path). A region you define yourself in `params/region_def.py` has no defaults: set `onset_definition` and `obs_day_boundary`.
 
-## Config keys (section 6)
+## Onset keys (the `onset:` section; flat names in brackets)
 
-Every key can stay `None`. Order of use: the config value, then the region's default, then an error naming the key. Region names are case-insensitive and may be aliases (`India`, `ethiopia`); a country inherits the defaults of the regions that contain it.
+Every key can stay unset. Names below are the flat keys; in YAML write them inside `onset:` without the `onset_` prefix (`definition`, `override`, `rule`, `season`, `backend`, `percentage_threshold`, `lead_label`), `obs_day_boundary` is `observations.day_boundary`, `model_lead_label` is `onset.lead_label`. Order of use: the config value, then the region's default, then an error naming the key. Region names are case-insensitive and may be aliases (`India`, `ethiopia`); a country inherits the defaults of the regions that contain it.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `onset_definition` | region default | Registry id or YAML path. |
+| `onset_override` / `onset_rule` | none | Changes merged into the definition, or a complete inline definition (not both with `onset_definition` for `rule`). |
 | `onset_season` | first | Season name for definitions with several; `"1"` or `"2"` for derived seasons (`dunning`). |
 | `threshold_years` | region default | `(first, last)` years of observations that thresholds are computed from. |
 | `thresholds` | `None` | `{name: "path.nc:variable"}`: precomputed thresholds instead of computing them. |
@@ -111,7 +116,7 @@ Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `"start
 
 ## Legacy mode
 
-A config with the old flat keys and no `onset_definition` runs as before and raises a `FutureWarning`. `scripts/generate_config.py` still writes such configs unless an onset environment variable is set. The keys are translated by `momp.onset.legacy.from_flat_config`. Lead k of a forecast is dated init + k (`"end"`). Day boundaries are only needed for the alignment check, which is skipped with a note when they are unknown.
+A YAML config with the old flat keys at the top level and no `onset.definition` runs as before and raises a `FutureWarning`; `momp-run convert old.in` produces such a YAML from an old config.in. `scripts/generate_config.py` writes such configs (YAML) unless an onset environment variable is set. The keys are translated by `momp.onset.legacy.from_flat_config`. Lead k of a forecast is dated init + k (`"end"`). Day boundaries are only needed for the alignment check, which is skipped with a note when they are unknown.
 
 Translation: a wet day has at least `wet_init` mm. The search runs from `earliest_onset_date` (or the month and day of `start_date`) to the month and day of `end_date` plus 47 days minus `wet_spell - 1`. A candidate needs all `wet_spell` days wet and a total above the threshold. With `dry_extent > wet_spell` and `dry_extent >= dry_spell`, a dry run of `dry_spell` days within days 2 to `dry_extent + 1` after the candidate cancels it.
 

@@ -48,6 +48,7 @@ class Case:
 
     file_pattern: str = field(default=None)
     unit_cvt: Optional[float] = field(default=None)
+    accumulation: str = field(default="auto")
     # Canonical name -> name in the model files, e.g. {"init_time": "time"}.
     model_dims: Optional[dict] = field(default=None)
 
@@ -76,6 +77,8 @@ class Setting:
     fallback_date: Optional[tuple[int, int]] = field(default=None)
 
     onset_definition: Optional[str] = field(default=None)
+    onset_override: Optional[dict] = field(default=None)
+    onset_rule: Optional[dict] = field(default=None)
     onset_season: Optional[str] = field(default=None)
     threshold_years: Optional[tuple[int, int]] = field(default=None)
     thresholds: Optional[dict] = field(default=None)

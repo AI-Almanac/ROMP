@@ -62,7 +62,7 @@ def _check_alignment(args) -> int:
     obs = ingest(_open(args.obs, args.obs_var), day_boundary=args.obs_day_boundary, units=args.obs_units,
                  source=args.obs)
     forecast = ingest_forecast(_open(args.model, args.model_var), day_boundary=f"00 UTC, labelled by {args.lead_label}",
-                               lead_label=args.lead_label, units=args.units, source=args.model)
+                               lead_label=args.lead_label, units=args.units, accumulation="daily", source=args.model)
     print(check_forecast_alignment(obs, forecast).summary())
     return 0
 

@@ -24,23 +24,29 @@ Check it: `python -c "import momp; print(momp.__file__)"` should print a path in
 
 ## Quick start
 
-1. Copy the template next to your project and edit it (paths, models, region, windows):
+One YAML file describes a run and is the single source of truth. Start one from your own data; ROMP detects the dataset details (variable, units, dims, members, file pattern, lead label) from the files and writes them with the evidence:
 
-   ```bash
-   cp examples/config.in my_config.in
-   ```
+```bash
+momp-run init --obs /path/to/obs --model /path/to/aifs --years 2019 2024 -o run.yaml
+```
 
-2. Run, always naming the config:
+Review `run.yaml` (look for `TODO`), then run it:
 
-   ```bash
-   momp-run -p my_config.in
-   ```
+```bash
+momp-run -p run.yaml          # or set MOMP_CONFIG=run.yaml, e.g. in a notebook
+momp-run datasets -p run.yaml # what each dataset resolves to, with detections, warnings, problems
+momp-run -p run.yaml -h       # lists the command-line overrides of config values
+```
 
-   In a notebook, set `MOMP_CONFIG=/path/to/my_config.in` instead. Without `-p` or `MOMP_CONFIG` ROMP stops with a message. Many config keys can also be overridden on the command line (`momp-run -p my_config.in -h` lists them).
+`momp-run -h` lists all commands. `examples/config.yaml` is a short commented example. `momp-run init` writes only what you must decide; the region supplies the onset definition, day boundary and climatology years, and schema defaults fill the rest. Defaults are resolved at run time and never copied into your file. The sections `observations`, `models`, `onset`, `evaluation`, `metrics` and `output` flatten to the flat keys the code uses; every key, type, default and help line is in `momp/lib/config_schema.py`. Unknown keys are errors with "did you mean" suggestions.
+
+Datasets are described inline (`path`, `variable`, `units: mm|m`, `dims`, `day_boundary` for observations, `lead_label` and `accumulation` for forecasts). Left-out keys are detected from the first file and reported; a key that cannot be detected reliably, or that the files contradict, is an error naming it. Paths may use `~` and `${ENV_VAR}`. `momp-run init --dataset-template obs|forecast` prints a blank entry; entries can also live in your own files listed under `dataset_files:` and be referenced with `dataset: <id>` (inline keys win).
+
+In a notebook use Python objects instead: `from momp.config import Config, Dataset, Onset`; `Config(...).to_flat()` gives the validated flat dict and `.to_yaml(path)` writes the file.
+
+Every run writes `resolved_config.yaml` (every value after defaults, region, detection and overrides, each with its source) and `resolved_definition.yaml` (with the hash) into `dir_out`; `momp-run -p resolved_config.yaml` reproduces the run. Old `config.in` files are no longer read: `momp-run convert old.in -o run.yaml` writes the equivalent YAML (same outputs).
 
 Each run loads the config, reads observations and forecasts, detects onset, scores the forecasts against the observed onset and a reference (climatology by default), then writes NetCDF/CSV results to `dir_out` and figures to `dir_fig`.
-
-`examples/config.in` is commented key by key; `docs/package_configuration.ipynb` walks through every section. Onset settings are in section 6 and need not be filled in for a known region: they default from `region`.
 
 ## Onset definitions
 
@@ -59,31 +65,19 @@ python -m momp.onset check-alignment --help   # are obs and forecast dates shift
 
 `explain` prints why one cell got its onset date (each candidate day, which condition failed). The `momp.onset.viz` package also has Python functions for comparing definitions, forecast-versus-truth plots and map drill-downs.
 
-Choose the definition in section 6 of the config:
-
-```python
-region = "Ethiopia"            # known region: its default definition and obs day boundary apply
-onset_definition = "icpac"     # optional: registry id or path to a YAML file
-```
-
-To change a rule slightly, write a YAML file that extends a registry definition and restates only what differs:
+Choose the definition in the `onset:` section of the run file, inline:
 
 ```yaml
-# my_icpac.yaml
-extends: icpac
-id: my_icpac
-version: 1
-title: ICPAC with a 25 mm trigger
-status: draft
+region: Ethiopia               # known region: its default definition and day boundary apply
 onset:
-  require:
-    - first day: wet
-    - total: more than 25 mm
+  definition: icpac            # optional: registry id or path to a definition YAML
+  override: {wet_day: at least 2 mm}   # optional: change part of it (same rules as `extends`)
+  # rule: {...}                # or a complete definition written inline
 ```
 
-then set `onset_definition = "my_icpac.yaml"`. Regions are YAML files in `momp/onset/regions/`. A custom region you define in `momp/params/region_def.py` has no default definition, so set `onset_definition` and `obs_day_boundary` yourself.
+`override` is merged like `extends` and validated with the same strict errors; the run prints the definition's description, "icpac v1, overridden: wet_day" and its hash, and records them in `resolved_definition.yaml`. `dry_spell_check: false` is an override too. A path to a shared definition file still works. Regions are YAML files in `momp/onset/regions/`. A custom region in `momp/params/region_def.py` has no default definition, so set `onset.definition` and `observations.day_boundary` yourself.
 
-Old configs with flat keys (`wet_init`, `wet_spell`, `dry_extent`, ...) still run in a legacy mode with a warning; they cannot be combined with `onset_definition`.
+Old flat onset keys (`wet_init`, `wet_spell`, `dry_extent`, ...) still run in a legacy mode with a warning (written at the top level of the YAML); they cannot be combined with `onset.definition`.
 
 More:
 
@@ -100,11 +94,13 @@ momp/
   stats/        ROMP's onset adapter, ensembles, climatology
   metrics/      error and skill scores
   io/           input and output
-  lib/          config loading, validation, lead windows
+  lib/          config schema, YAML loading, dataset detection, validation, lead windows
+  config.py     Config objects for notebooks
+  cli.py        the momp-run command
   graphics/     plots and maps
   params/       region_def.py (custom regions)
   utils/        helpers
-examples/config.in   config template
+examples/config.yaml  example run config
 docs/                guides and specification
 demo/                demo data and notebooks
 tests/
@@ -112,7 +108,7 @@ tests/
 
 ## Outputs
 
-* `dir_out`: spatial-metric NetCDFs, skill-score CSVs, and `.onset_cache/` (thresholds).
+* `dir_out`: spatial-metric NetCDFs, skill-score CSVs, `resolved_config.yaml`, `resolved_definition.yaml` and `.onset_cache/` (thresholds).
 * `dir_fig`: metric plots and maps; `explain/` holds anatomy plots for cells listed in `explain_cells`.
 
 ## Docs and demos

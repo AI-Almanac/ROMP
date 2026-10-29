@@ -1,4 +1,4 @@
-"""generate_config.py turns ROMP_* env vars into a config.in that ROMP exec()s."""
+"""generate_config.py turns ROMP_* env vars into a YAML run config."""
 
 import os
 import subprocess
@@ -19,7 +19,7 @@ def _generate(tmp_path: Path, **env: str) -> subprocess.CompletedProcess:
         "ROMP_MODEL_NAME": "fuxi",
         "ROMP_DIR_OUT": str(tmp_path / "out"),
         "ROMP_DIR_FIG": str(tmp_path / "fig"),
-        "ROMP_CONFIG_PATH": str(tmp_path / "config.in"),
+        "ROMP_CONFIG_PATH": str(tmp_path / "config.yaml"),
     }
     clean = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_")}
     return subprocess.run(
@@ -37,10 +37,12 @@ def _string_values(config: dict) -> set:
 
 
 def _exec_config(tmp_path: Path) -> dict:
-    """Exec the generated config.in and return the resulting namespace."""
-    namespace: dict = {}
-    exec((tmp_path / "config.in").read_text(), {}, namespace)
-    return namespace
+    """Load the generated YAML and return the flat config dict the pipeline would use."""
+    import yaml
+
+    from momp.lib.config_yaml import build_config
+
+    return build_config(yaml.safe_load((tmp_path / "config.yaml").read_text()))
 
 
 def test_defaults_produce_the_demo_config(tmp_path):
@@ -120,7 +122,7 @@ def test_non_text_settings_that_are_not_values_are_rejected(tmp_path, name):
 
     assert result.returncode == 1
     assert name in result.stderr
-    assert not (tmp_path / "config.in").exists()
+    assert not (tmp_path / "config.yaml").exists()
     assert not marker.exists()
 
 
@@ -148,7 +150,7 @@ def test_model_dims_default_to_name_inference(tmp_path):
     config = _exec_config(tmp_path)
 
     assert config["unit_cvt_list"] == (None,)
-    assert config["model_dims_list"] == (None,)
+    assert config.get("model_dims_list") in (None, (None,))
 
 
 @pytest.mark.parametrize(

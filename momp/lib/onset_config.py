@@ -53,6 +53,7 @@ class OnsetSetup:
     backend: str
     check_alignment: bool
     dry_check: str = "on"
+    overrides: tuple[str, ...] = field(default=(), compare=False)
     forecast_history: str = "none"
     threshold_source: str = "observations"
     sources: dict = field(default_factory=dict, compare=False)
@@ -86,7 +87,8 @@ class OnsetSetup:
         if self.legacy:
             out.append(f"Onset definition : legacy flat keys ({d.id}, deprecated)  [{src.get('definition')}]")
         else:
-            out.append(f"Onset definition : {d.id} v{d.version} ({d.status})  [{src.get('definition')}]")
+            changed = f", overridden: {', '.join(self.overrides)}" if self.overrides else ""
+            out.append(f"Onset definition : {d.id} v{d.version} ({d.status}){changed}  [{src.get('definition')}]")
         out.append(f"Season           : {self.season}  [{src.get('season')}]")
         years = f"{self.threshold_years[0]}-{self.threshold_years[1]}" if self.threshold_years else "not used"
         out.append(f"Threshold years  : {years}  [{src.get('threshold_years')}]")
@@ -207,7 +209,7 @@ def onset_setup(cfg, thresh_slice=None) -> OnsetSetup:
         return _legacy_setup(cfg, thresh_slice)
     keys = ("onset_definition", "onset_season", "threshold_years", "thresholds", "obs_day_boundary",
             "model_lead_label", "check_alignment", "onset_backend", "region", "dry_spell_check",
-            "forecast_history", "threshold_source")
+            "forecast_history", "threshold_source", "onset_override", "onset_rule")
     key = repr([cfg.get(k) for k in keys])
     if key not in _cache:
         _cache[key] = _definition_setup(cfg)
@@ -293,7 +295,39 @@ def _legacy_setup(cfg, thresh_slice) -> OnsetSetup:
                "lead_label": "legacy convention: lead k is init + k",
                "backend": note or "config onset_backend"}
     return OnsetSetup(True, definition, legacy.LEGACY_SEASON, None, (), boundary, "end", backend,
-                      bool(cfg.get("check_alignment", True)), dry_check, history, source, sources)
+                      bool(cfg.get("check_alignment", True)), dry_check, (), history, source, sources)
+
+
+def _changed_keys(changes: dict) -> list[str]:
+    """The keys an override changes: top-level names, or the names inside a changed block (e.g. 'reject if')."""
+    out = []
+    for key, value in changes.items():
+        out.extend(str(k) for k in value) if isinstance(value, dict) and value else out.append(str(key))
+    return out
+
+
+def _load_definition(cfg, ref, sources):
+    """Load the definition (registry id, file path or inline rule) and apply onset_override; returns it with
+    the list of changed keys."""
+    import yaml
+
+    try:
+        rule = cfg.get("onset_rule")
+        if rule is not None:
+            if not isinstance(rule, dict):
+                raise OnsetConfigError(f"onset.rule = {rule!r} must be a mapping holding a complete definition")
+            definition = definition_mod.loads(yaml.safe_dump(rule, sort_keys=False))
+        else:
+            definition = definition_mod.load(str(Path(str(ref)).expanduser())
+                                             if str(ref) not in definition_mod.registry_ids() else str(ref))
+        changes = cfg.get("onset_override")
+        if changes is None:
+            return definition, ()
+        if not isinstance(changes, dict):
+            raise OnsetConfigError(f"onset.override = {changes!r} must be a mapping of definition keys to change")
+        return definition_mod.override(definition, changes), tuple(_changed_keys(changes))
+    except definition_mod.DefinitionError as exc:
+        raise OnsetConfigError(f"onset_definition = {ref!r}: {exc}") from None
 
 
 def _definition_setup(cfg) -> OnsetSetup:
@@ -301,7 +335,12 @@ def _definition_setup(cfg) -> OnsetSetup:
     chain, region_problem = _chain(cfg)
     sources: dict = {}
     ref = cfg.get("onset_definition")
-    if ref is not None:
+    if cfg.get("onset_rule") is not None:
+        if ref is not None:
+            raise OnsetConfigError("onset.rule (a definition written inline) cannot be combined with "
+                                   "onset.definition. Fix: keep one; use onset.override to change a registry definition")
+        ref, sources["definition"] = "<inline>", "config onset.rule (inline definition)"
+    elif ref is not None:
         sources["definition"] = "config onset_definition"
     else:
         default = regions.definitions_for(chain[0].id)[0] if chain else None
@@ -311,11 +350,7 @@ def _definition_setup(cfg) -> OnsetSetup:
                 f"onset_definition is not set and there is no region default ({why}). "
                 "Fix: set onset_definition = \"icpac\" (an id from `python -m momp.onset list`) or the path of a YAML file")
         ref, sources["definition"] = default, f"region default ({chain[0].id})"
-    try:
-        definition = definition_mod.load(str(Path(str(ref)).expanduser()) if str(ref) not in definition_mod.registry_ids()
-                                         else str(ref))
-    except definition_mod.DefinitionError as exc:
-        raise OnsetConfigError(f"onset_definition = {ref!r}: {exc}") from None
+    definition, overrides = _load_definition(cfg, ref, sources)
     if chain:
         warning = regions.check_definition_region(definition, chain[0].id)
         if warning:
@@ -380,6 +415,8 @@ def _definition_setup(cfg) -> OnsetSetup:
             raise OnsetConfigError(f"model_lead_label = {label!r} must be \"start\" or \"end\"")
 
     definition, dry_check, sources["dry_check"] = _dry_check(definition, cfg)
+    if dry_check == "off":
+        overrides = (*overrides, "reject if (dry_spell_check = false)")
     history, sources["forecast_history"] = _choices(cfg, "forecast_history", ("observed", "none"), "observed", False)
     source, sources["threshold_source"] = _choices(cfg, "threshold_source", ("observations", "model"),
                                                    "observations", False)
@@ -393,7 +430,7 @@ def _definition_setup(cfg) -> OnsetSetup:
     backend, note = _backend(cfg.get("onset_backend") or "numba")
     sources["backend"] = note or "config onset_backend"
     return OnsetSetup(False, definition, season, years, files, boundary, label, backend,
-                      bool(cfg.get("check_alignment", True)), dry_check, history, source, sources)
+                      bool(cfg.get("check_alignment", True)), dry_check, tuple(overrides), history, source, sources)
 
 
 def check_config(dic: dict) -> None:

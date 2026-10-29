@@ -113,7 +113,7 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
         cube = cube.sel(member=list(members))
     order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
     forecast = ingest_forecast(cube.transpose(*order), day_boundary=setup.forecast_boundary,
-                               lead_label=setup.lead_label, units="mm", source="forecast")
+                               lead_label=setup.lead_label, units="mm", accumulation="daily", source="forecast")
     lat, lon = forecast.coords["lat"], forecast.coords["lon"]
     stitched = None
     if history is not None and not setup.legacy and setup.forecast_history == "observed":
@@ -330,7 +330,7 @@ def check_alignment_once(rain_slice, p_model, **kwargs):
             cube = cube.isel(member=slice(0, _ALIGNMENT_MAX_MEMBERS))
         obs = ingest(rain_slice, day_boundary=setup.obs_day_boundary, units="mm", source="observations")
         forecast = ingest_forecast(cube, day_boundary=setup.forecast_boundary, lead_label=setup.lead_label,
-                                   units="mm", source=str(kwargs.get("model", "forecast")))
+                                   units="mm", accumulation="daily", source=str(kwargs.get("model", "forecast")))
         report = check_forecast_alignment(obs, forecast, leads=(1, 2, 3))
     except Exception as exc:
         print(f"Alignment check could not run: {exc}")

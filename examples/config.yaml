@@ -1,0 +1,49 @@
+# ROMP run config (YAML). Run it with:  momp-run -p examples/config.yaml
+# Start your own with `momp-run init --obs /path/to/obs --model /path/to/model`, which fills in the dataset
+# values it detects from your files. Only what you must decide is here: the region supplies the onset
+# definition, day boundary and climatology years; unset keys take defaults (momp/lib/config_schema.py lists
+# every key). Each run writes resolved_config.yaml (all values and their sources) next to its outputs.
+project_name: Demo run with the sample data
+
+region: India
+
+observations:
+  path: demo/data/obs            # folder of the yearly files; ~ and ${ENV_VAR} work
+  file_pattern: "{}.nc"          # {} is the year; quote it
+  variable: RAINFALL
+  units: mm
+  # day_boundary: "03 UTC, labelled by end"   # the region's is used if left out
+
+models:
+  - name: AIFS
+    path: demo/data/aifs
+    variable: tp
+    units: mm                    # mm or m; read from the file's attribute if left out
+    lead_label: end              # the demo forecasts start at lead 0, so it cannot be detected here
+
+onset:
+  # definition: moron_robertson_mok      # the region's is used if left out
+  # override: {season: {from: 05-15}}    # change part of a definition
+  threshold_years: [2013, 2020]
+  forecast_history: none
+
+evaluation:
+  start_date: [2015, 5, 1]       # the years evaluated; month/day bound the forecast init dates
+  end_date: [2015, 6, 30]
+  init_days: [2, 5]              # weekdays, 0 = Monday
+  verification_windows: [[1, 15]]
+  tolerances: [3]
+  max_forecast_day: 15
+  day_bins: [[1, 5], [6, 10], [11, 15]]
+
+output:
+  data_dir: demo/output
+  figure_dir: demo/figure
+  plot_spatial_far_mr_mae: false
+  plot_heatmap_bss_auc: false
+  plot_reliability: false
+  plot_climatology_onset: false
+  plot_panel_heatmap_error: false
+  plot_panel_heatmap_skill: false
+  plot_bar_bss_rpss_auc: false
+  show_panel: false

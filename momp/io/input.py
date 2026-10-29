@@ -107,7 +107,7 @@ def _model_forecasts(setup, years, kwargs):
         found = True
         order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
         yield ingest_forecast(cube.transpose(*order), day_boundary=setup.forecast_boundary,
-                              lead_label=setup.lead_label, units="mm", source=str(kwargs.get("model")))
+                              lead_label=setup.lead_label, units="mm", accumulation="daily", source=str(kwargs.get("model")))
     if not found:
         raise FileNotFoundError(f"no forecast file of {kwargs.get('model')} for the years {years[0]}-{years[1]}")
 

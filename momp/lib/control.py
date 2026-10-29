@@ -153,7 +153,7 @@ def ref_cfg_layout(cfg, ref_model=None, verification_window=None):
     if ref_model:
         cfg_ref.ref_model = ref_model
 
-    if cfg.ref_model == 'climatology':
+    if cfg.ref_model in ('climatology', 'conditional_climatology'):
         cfg_ref.probabilistic = False
 
     cfg_ref.model_list = (cfg.ref_model,)

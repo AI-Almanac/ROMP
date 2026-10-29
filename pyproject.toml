@@ -57,5 +57,5 @@ gpu = [
 ]
 
 [project.scripts]
-momp-run = "momp.driver:run_momp"
+momp-run = "momp.cli:main"
 
