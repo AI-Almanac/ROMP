@@ -509,8 +509,36 @@ adds nothing.
 caller. The model climatology pools each cell's forecast days over the leads
 in the lead window, the inits of the reference years, and the valid dates
 within `during`. Only the mean-based kinds (`mean_total`, `mean_daily`)
-support it. One amount applies per job, whether a window lies in the history,
-in the forecast, or across both.
+support it. With the default observed climatology one amount applies per job,
+whether a window lies in the history, in the forecast, or across both.
+
+**Per-window thresholds.** With a model climatology, each verification window
+(ROMP's `verification_window_list`, after any lead-window shortening) gets its
+own threshold per cell, pooled from the model's forecast days at leads inside
+that window (same pooling over inits, members and `during` as above).
+`compute_thresholds_from_forecasts(..., windows=[(1, 15), (16, 30)])` returns
+thresholds with a leading `window` dim (coordinates `window_first`,
+`window_last`).
+
+* A candidate uses the column of the window its lead falls in. Its lead is
+  `day - split + 1` (the lead index plus 1 in forecast-only mode). A candidate
+  before lead 1 (stitched history) uses the first window. A span that crosses a
+  window boundary is judged by the candidate's own lead, never by the lead of the
+  days it covers.
+* Everything the candidate evaluates uses that column: total comparisons, the
+  wet-day amount (when it is a threshold), dry-window vetoes and the
+  first-wet-day report. A curve rule uses the window of its first candidate.
+  The history-only PRIOR search uses the first window. Observed detection, which
+  has no lead, also uses the first window. A NaN in any window makes the series
+  `INSUFFICIENT_DATA`.
+* Backends take amounts shaped `(S,)` or `(S, W)` plus
+  `amount_windows=[w_0, ..., w_{W-1}]`, the strictly increasing start leads of the
+  windows (`w_0` is taken as minus infinity). All backends and both `detect` and
+  `detect_stitched` give identical results; without windows nothing changes. A
+  job is cut at the window boundaries into segments, each run with its window's
+  `(S,)` amounts, and the first segment that is not `NOT_FOUND` decides it
+  (`Jobs.origin` keeps "season to date" spans anchored at the job's first
+  candidate). Traces are not available with per-window amounts.
 
 **Backend contract.**
 

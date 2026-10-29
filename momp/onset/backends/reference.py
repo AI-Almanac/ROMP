@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from momp.onset import plan as P
+from momp.onset.backends import windowed
 from momp.onset.model import Detection, Jobs, Status, StitchedJobs
 
 TRUE, FALSE, UNKNOWN = 1, 0, -1
@@ -20,8 +21,11 @@ BLOCK_CELLS = 2_000_000
 
 
 def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[str, np.ndarray],
-           jobs: Jobs, *, trace: bool = False) -> Detection:
+           jobs: Jobs, *, trace: bool = False, amount_windows=None) -> Detection:
     """Run every job and return the onset day index (-1 if none) and Status per job.
+
+    Amounts may be (S, W) with amount_windows the W window start leads; see
+    backends/windowed.py (traces are not available then).
 
     With trace=True, Detection.trace holds per-job, per-candidate arrays (padded
     to the longest window): "day" (candidate day index, -1 for padding), "valid",
@@ -29,10 +33,16 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
     (terms, jobs, candidates)), "state" (combined code) and "flags" (bit 1
     missing, bit 2 horizon). Curve plans trace "day", "valid", "cumulative".
     """
+    amounts, starts = windowed.prepare(amounts, amount_windows)
+    if starts is not None:
+        if trace:
+            raise NotImplementedError("traces are not available with per-window amounts")
+        return windowed.run(plan, amounts, starts, jobs, lambda j, a: detect(plan, tenths, missing, a, j))
     series = np.asarray(jobs.series, dtype=np.int64)
     start = np.asarray(jobs.start, dtype=np.int64)
     end = np.asarray(jobs.end, dtype=np.int64)
     data_end = np.asarray(jobs.data_end, dtype=np.int64)
+    origin = start if jobs.origin is None else np.asarray(jobs.origin, dtype=np.int64)
     n_jobs = len(series)
     tables = _Tables(plan, tenths, missing, amounts)
     day = np.full(n_jobs, -1, dtype=np.int64)
@@ -46,7 +56,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
         w = int(n_cand[sl].max()) if sl.stop > sl.start else 0
         if w == 0:
             continue
-        job = _Block(series[sl], start[sl], end[sl], data_end[sl], w)
+        job = _Block(series[sl], start[sl], end[sl], data_end[sl], w, origin[sl])
         if plan.family == P.CURVE:
             out = _curve_block(plan, tables, job)
         else:
@@ -69,21 +79,28 @@ def _lookback(plan: P.Plan) -> int:
 
 def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndarray, fc_tenths: np.ndarray,
                     fc_missing: np.ndarray, amounts: dict[str, np.ndarray], jobs: StitchedJobs, *,
-                    trace: bool = False) -> Detection:
+                    trace: bool = False, amount_windows=None) -> Detection:
     """Run stitched jobs (observed history, then forecast) and return day indices in stitched days.
 
     Equivalent to detect() on the explicit concatenation. Each job gets its own
     row holding only the stitched columns it can read, from its first candidate
     minus the plan's look-back (clipped at day 0) to its data end; history at or
     after the job's split is never copied. Trace arrays are as in detect(), with
-    candidate days in stitched days.
+    candidate days in stitched days. Per-window amounts work as in detect().
     """
+    amounts, starts = windowed.prepare(amounts, amount_windows)
+    if starts is not None:
+        if trace:
+            raise NotImplementedError("traces are not available with per-window amounts")
+        return windowed.run(plan, amounts, starts, jobs, lambda j, a: detect_stitched(
+            plan, hist_tenths, hist_missing, fc_tenths, fc_missing, a, j))
     cell = np.asarray(jobs.cell, dtype=np.int64)
     series = np.asarray(jobs.series, dtype=np.int64)
     split = np.asarray(jobs.split, dtype=np.int64)
     start = np.asarray(jobs.start, dtype=np.int64)
     end = np.asarray(jobs.end, dtype=np.int64)
     data_end = np.asarray(jobs.data_end, dtype=np.int64)
+    origin = start if jobs.origin is None else np.asarray(jobs.origin, dtype=np.int64)
     n_jobs = len(series)
     n_hist, n_fc = hist_tenths.shape[1], fc_tenths.shape[1]
     if n_jobs and (split.max() > n_hist or (data_end - split).max() > n_fc):
@@ -96,7 +113,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     active = np.nonzero(n_cand > 0)[0]
     if len(active) == 0:
         return Detection(day, status, tr)
-    low = np.maximum(start - _lookback(plan), 0)
+    low = np.maximum(np.minimum(start - _lookback(plan), origin), 0)
     row_width = int(np.maximum(data_end[active] - low[active], 1).max())
     per_block = max(1, 4 * BLOCK_CELLS // row_width)
     for lo in range(0, len(active), per_block):
@@ -112,7 +129,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
         x = np.where(miss, 0, x).astype(np.int32)
         rows = np.arange(len(idx), dtype=np.int64)
         sub_amounts = {key: value[series[idx]] for key, value in amounts.items()}
-        sub = Jobs(rows, start[idx] - low[idx], end[idx] - low[idx], data_end[idx] - low[idx])
+        sub = Jobs(rows, start[idx] - low[idx], end[idx] - low[idx], data_end[idx] - low[idx], origin[idx] - low[idx])
         out = detect(plan, x, miss, sub_amounts, sub, trace=trace)
         found = out.day >= 0
         day[idx] = np.where(found, out.day + low[idx], -1)
@@ -135,10 +152,11 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
 class _Block:
     """The jobs of one block plus their candidate grid (days d, validity mask)."""
 
-    def __init__(self, series, start, end, data_end, width):
+    def __init__(self, series, start, end, data_end, width, origin):
         """Build the (jobs, width) candidate day grid."""
         self.series = series[:, None]
         self.start = start[:, None]
+        self.origin = origin[:, None]
         self.end = end[:, None]
         self.data_end = data_end[:, None]
         self.width = width
@@ -220,7 +238,7 @@ def _observe(tables: _Tables, job: _Block, a: np.ndarray, b: np.ndarray) -> tupl
 
 def _span(job: _Block, first: int, last: int, since_start: bool) -> tuple[np.ndarray, np.ndarray]:
     """Absolute [a, b) of a span for every candidate of the block."""
-    a = job.start + 0 * job.d if since_start else job.d + first
+    a = job.origin + 0 * job.d if since_start else job.d + first
     return a, job.d + last
 
 
@@ -306,7 +324,7 @@ def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block) -> dict:
     if plan.report_first_wet and onset.any():
         first, last, since = plan.report_span
         series = job.series[:, 0]
-        a = job.start[:, 0] if since else pick_day + first
+        a = job.origin[:, 0] if since else pick_day + first
         b = pick_day + last
         lo_raw = np.maximum(a, 0)
         lo = np.minimum(lo_raw, tables.n_time - 1)

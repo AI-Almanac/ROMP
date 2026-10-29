@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -142,7 +142,8 @@ def _during_mask(forecast, spec: ThresholdSpec, years: tuple[int, int], first_le
 
 
 def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterable, years: tuple[int, int],
-                                      lead_window: tuple[int, int] = (1, 30)) -> dict[str, xr.DataArray]:
+                                      lead_window: tuple[int, int] = (1, 30),
+                                      windows: Sequence[tuple[int, int]] | None = None) -> dict[str, xr.DataArray]:
     """The model's own climatology: every threshold of the definition from forecast days, as DataArrays in mm.
 
     Streams through the forecasts (ForecastRain objects on one grid), summing per
@@ -152,7 +153,14 @@ def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterabl
     mean_daily the mean; quantile_total is not supported. A cell is NaN when more
     than 10 % of the expected days are missing. attrs record source
     "model:<source of the first forecast>", years, lead_window and the spec.
+
+    With `windows` (inclusive (first, last) lead pairs, each cut to lead_window)
+    every window is pooled separately and each DataArray gains a leading
+    "window" dim with coordinates window_first and window_last (spec section 13).
+    A window with no forecast days in it is NaN.
     """
+    spans = [(max(a, lead_window[0]), min(b, lead_window[1])) for a, b in (windows or [lead_window])]
+    n_win = len(spans)
     specs = definition.thresholds
     for name, spec in specs:
         if spec.kind not in ("mean_total", "mean_daily"):
@@ -160,43 +168,49 @@ def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterabl
                 f"threshold {name!r}: the model climatology supports only mean_total and mean_daily, not {spec.kind}")
     sums = {name: None for name, _ in specs}
     counts = {name: None for name, _ in specs}
-    expected = {name: 0 for name, _ in specs}
+    expected = {name: np.zeros(n_win, dtype=np.int64) for name, _ in specs}
     template = None
     for forecast in forecasts:
         if template is None:
             template = forecast
             shape = forecast.tenths.shape[2 if "member" in forecast.dims else 1:-1]
             for name, _ in specs:
-                sums[name], counts[name] = np.zeros(shape, dtype=np.int64), np.zeros(shape, dtype=np.int64)
+                sums[name] = np.zeros((n_win, *shape), dtype=np.int64)
+                counts[name] = np.zeros((n_win, *shape), dtype=np.int64)
         elif forecast.tenths.shape[1:-1] != template.tenths.shape[1:-1] or forecast.dims != template.dims:
             raise ValueError("forecasts must share dims and their member and spatial shape")
+        valid = (~forecast.missing).astype(np.int64)
+        x = np.where(forecast.missing, 0, forecast.tenths).astype(np.int64)
+        letters = "abcdefgh"[:forecast.tenths.ndim - 2]
+        kept = letters[1:] if "member" in forecast.dims else letters
+        n_member = forecast.tenths.shape[1] if "member" in forecast.dims else 1
         for name, spec in specs:
-            mask = _during_mask(forecast, spec, years, lead_window[0], lead_window[1]).astype(np.int64)
-            valid = (~forecast.missing).astype(np.int64)
-            x = np.where(forecast.missing, 0, forecast.tenths).astype(np.int64)
-            letters = "abcdefgh"[:forecast.tenths.ndim - 2]
-            kept = letters[1:] if "member" in forecast.dims else letters
-            sums[name] += np.einsum(f"i{letters}l,il->{kept}", x, mask)
-            counts[name] += np.einsum(f"i{letters}l,il->{kept}", valid, mask)
-            n_member = forecast.tenths.shape[1] if "member" in forecast.dims else 1
-            expected[name] += int(mask.sum()) * n_member
+            for w, (first, last) in enumerate(spans):
+                mask = _during_mask(forecast, spec, years, first, last).astype(np.int64)
+                sums[name][w] += np.einsum(f"i{letters}l,il->{kept}", x, mask)
+                counts[name][w] += np.einsum(f"i{letters}l,il->{kept}", valid, mask)
+                expected[name][w] += int(mask.sum()) * n_member
     if template is None:
         raise ValueError("no forecasts given")
     dims = tuple(d for d in template.dims if d not in ("init_time", "member", "lead"))
     out = {}
     for name, spec in specs:
-        n, valid_days = expected[name], counts[name]
+        n = expected[name].reshape((-1,) + (1,) * (sums[name].ndim - 1))
+        valid_days = counts[name]
         with np.errstate(invalid="ignore", divide="ignore"):
             mean = np.where(valid_days > 0, sums[name] / 10.0 / np.maximum(valid_days, 1), np.nan)
-        values = mean * spec.days if spec.kind == "mean_total" else mean
-        if n == 0:
-            values = np.full(values.shape, np.nan)
+            values = mean * spec.days if spec.kind == "mean_total" else mean
+            values = np.where(n == 0, np.nan, np.where((n - valid_days) / np.maximum(n, 1) > MAX_MISSING_FRACTION,
+                                                       np.nan, values))
+        coords = {d: template.coords[d] for d in dims if d in template.coords}
+        attrs = {"units": "mm", "source": f"model:{template.source}", "years": [int(years[0]), int(years[1])],
+                 "lead_window": [int(lead_window[0]), int(lead_window[1])], "spec": repr(spec)}
+        if windows is None:
+            out[name] = xr.DataArray(values[0], dims=dims, coords=coords, name=name, attrs=attrs)
         else:
-            values = np.where((n - valid_days) / n > MAX_MISSING_FRACTION, np.nan, values)
-        out[name] = xr.DataArray(
-            values, dims=dims, coords={d: template.coords[d] for d in dims if d in template.coords}, name=name,
-            attrs={"units": "mm", "source": f"model:{template.source}", "years": [int(years[0]), int(years[1])],
-                   "lead_window": [int(lead_window[0]), int(lead_window[1])], "spec": repr(spec)})
+            coords["window_first"] = ("window", np.array([a for a, _ in spans], dtype=np.int64))
+            coords["window_last"] = ("window", np.array([b for _, b in spans], dtype=np.int64))
+            out[name] = xr.DataArray(values, dims=("window", *dims), coords=coords, name=name, attrs=attrs)
     return out
 
 

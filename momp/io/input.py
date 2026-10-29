@@ -113,10 +113,17 @@ def _model_forecasts(setup, years, kwargs):
 
 
 def _model_thresholds(setup, pending, years, cache_dir, kwargs):
-    """The model's own climatology of the pending thresholds, read from or written to the cache directory."""
+    """The model's own climatology of the pending thresholds, read from or written to the cache directory.
+
+    Each verification window of the run (verification_window_list, already
+    shortened to the usable leads) gets its own threshold, pooled over the leads
+    in that window (spec section 13); without the list one threshold pools every lead.
+    """
     window = (1, int(kwargs["max_forecast_day"]))
+    windows = [(int(a), int(b)) for a, b in kwargs["verification_window_list"]] \
+        if kwargs.get("verification_window_list") else None
     key = json.dumps([str(kwargs.get("model")), str(kwargs.get("model_dir")), [int(years[0]), int(years[1])],
-                      list(window), definition_mod.definition_hash(setup.definition), [repr(p) for p in pending],
+                      list(window), windows, definition_mod.definition_hash(setup.definition), [repr(p) for p in pending],
                       setup.lead_label, [int(d) for d in kwargs.get("init_days", ())],
                       None if not kwargs.get("members") else [int(m) for m in kwargs["members"]]])
     digest = hashlib.sha256(key.encode()).hexdigest()[:16]
@@ -130,7 +137,7 @@ def _model_thresholds(setup, pending, years, cache_dir, kwargs):
     names = {name for name, _ in pending}
     from dataclasses import replace
     reduced = replace(setup.definition, thresholds=tuple((n, sp) for n, sp in setup.definition.thresholds if n in names))
-    computed = compute_thresholds_from_forecasts(reduced, _model_forecasts(setup, years, kwargs), years, window)
+    computed = compute_thresholds_from_forecasts(reduced, _model_forecasts(setup, years, kwargs), years, window, windows)
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
     for name, array in computed.items():
         array.to_netcdf(paths[name])
@@ -180,7 +187,7 @@ def load_thresholds(**kwargs):
     if is_legacy(kwargs):
         return load_thresh_file(**kwargs)
     setup = onset_setup(kwargs)
-    key = (id(setup), str(kwargs.get("model")), str(kwargs.get("max_forecast_day")), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
+    key = (id(setup), str(kwargs.get("model")), str(kwargs.get("max_forecast_day")), str(kwargs.get("verification_window_list")), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
            str(kwargs.get("region")))
     if key not in _loaded_thresholds:
         _loaded_thresholds[key] = load_onset_thresholds(setup, **kwargs)

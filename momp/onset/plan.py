@@ -155,7 +155,11 @@ def _offsets(span: model.Span) -> tuple[int, int, bool]:
 
 def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int | None = None
                     ) -> tuple[dict[str, np.ndarray], np.ndarray]:
-    """Return (amounts, invalid): int64 (S,) amounts for every key the plan reads, and a bool (S,) of series with a NaN amount.
+    """Return (amounts, invalid): int64 amounts for every key the plan reads, and a bool (S,) of series with a NaN amount.
+
+    A threshold given as (S, W) (one column per verification window, spec
+    section 13) gives (S, W) amounts; fixed amounts and (S,) thresholds stay (S,).
+    A NaN in any window column marks the whole series invalid.
 
     Thresholds are per-series values in mm. Named thresholds are rounded for
     their comparator (q = round(10 T, 6); ge and lt take ceil, gt and le take
@@ -163,7 +167,7 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
     infinite threshold marks the series invalid and its amount is set to 0.
     n_series is only needed when the plan uses no named threshold.
     """
-    sizes = {np.asarray(v).shape[0] for v in thresholds.values() if np.ndim(v) == 1}
+    sizes = {np.asarray(v).shape[0] for v in thresholds.values() if np.ndim(v) in (1, 2)}
     if n_series is None:
         if not sizes:
             raise ValueError("n_series is required when no threshold array is given")
@@ -176,7 +180,8 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
             continue
         if spec.name not in thresholds:
             raise KeyError(f"threshold {spec.name!r} is needed by the definition but was not supplied")
-        values = np.broadcast_to(np.asarray(thresholds[spec.name], dtype=np.float64), (n_series,))
+        raw = np.asarray(thresholds[spec.name], dtype=np.float64)
+        values = np.broadcast_to(raw, (n_series, *raw.shape[1:]) if raw.ndim == 2 else (n_series,))
         bad = ~np.isfinite(values)
         safe = np.where(bad, 0.0, values)
         if spec.kind == "baseline":
@@ -185,5 +190,5 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
             q = np.round(10.0 * safe, 6)
             converted = np.ceil(q) if spec.op in (GE, LT) else np.floor(q)
         amounts[spec.key] = converted.astype(np.int64)
-        invalid |= bad
+        invalid |= bad.any(axis=1) if bad.ndim == 2 else bad
     return amounts, invalid

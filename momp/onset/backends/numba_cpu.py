@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from momp.onset import plan as P
+from momp.onset.backends import windowed
 from momp.onset.model import Detection, Jobs, Status, StitchedJobs
 
 try:
@@ -108,12 +109,13 @@ if numba is not None:
                        c_kind, c_first, c_last, c_since, c_op, c_key, c_count,
                        v_kind, v_length, v_place, v_first, v_last,
                        report, r_first, r_last, r_since,
-                       series, start, end, data_end, day, status):
+                       series, start, end, data_end, origin, day, status):
         """Find the first candidate that is not False for every job (three-valued logic, early exit)."""
         n_time = pm.shape[1] - 1
         for j in prange(len(series)):
             s = series[j]
             st = start[j]
+            org = origin[j]
             e = min(data_end[j], n_time)
             pm_row = pm[s]
             day[j] = -1
@@ -123,7 +125,7 @@ if numba is not None:
                 unknown = False
                 uflags = 0
                 for c in range(len(c_kind)):
-                    a = st if c_since[c] else d + c_first[c]
+                    a = org if c_since[c] else d + c_first[c]
                     b = d + c_last[c]
                     fl = _flags(pm_row, a, b, e)
                     if fl != 0:
@@ -170,7 +172,7 @@ if numba is not None:
                 status[j] = _ONSET
                 day[j] = d
                 if report:
-                    a = st if r_since else d + r_first
+                    a = org if r_since else d + r_first
                     b = d + r_last
                     for t in range(max(a, 0), min(b, e)):
                         if pw[s, t + 1] - pw[s, t] > 0:
@@ -323,7 +325,7 @@ if numba is not None:
                          c_kind, c_first, c_last, c_since, c_op, c_key, c_count,
                          v_kind, v_length, v_place, v_first, v_last, v_op, v_key, v_off,
                          report, r_first, r_last, r_since,
-                         series, cell, split, wv, vv, start, end, data_end, day, status):
+                         series, cell, split, wv, vv, start, end, data_end, origin, day, status):
         """Stitched first passage: the same scan as _first_passage, with intervals split at each job's split."""
         n_fc = fpm.shape[1] - 1
         lmax = 1
@@ -335,6 +337,7 @@ if numba is not None:
             hw = wv[j]
             sp = split[j]
             st = start[j]
+            org = origin[j]
             n_time = sp + n_fc
             e = min(data_end[j], n_time)
             day[j] = -1
@@ -346,7 +349,7 @@ if numba is not None:
                 unknown = False
                 uflags = 0
                 for c in range(len(c_kind)):
-                    a = st if c_since[c] else d + c_first[c]
+                    a = org if c_since[c] else d + c_first[c]
                     b = d + c_last[c]
                     fl = _flags_s(hpm, fpm, hc, s, c0, sp, a, b, e)
                     if fl != 0:
@@ -399,7 +402,7 @@ if numba is not None:
                 status[j] = _ONSET
                 day[j] = d
                 if report:
-                    a = st if r_since else d + r_first
+                    a = org if r_since else d + r_first
                     b = d + r_last
                     wet_amount = amounts[wet_key, s]
                     for t in range(max(a, 0), min(b, e)):
@@ -446,16 +449,23 @@ if numba is not None:
 
 
 def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[str, np.ndarray],
-           jobs: Jobs, *, trace: bool = False) -> Detection:
-    """Run every job and return the onset day index (-1 if none) and Status per job, bit-identical to the reference backend."""
+           jobs: Jobs, *, trace: bool = False, amount_windows=None) -> Detection:
+    """Run every job and return the onset day index (-1 if none) and Status per job, bit-identical to the reference backend.
+
+    Amounts may be (S, W) with amount_windows the W window start leads (backends/windowed.py).
+    """
     if trace:
         raise NotImplementedError("use the reference backend for traces")
     if numba is None:
         raise ImportError("the numba backend needs numba")
+    amounts, starts = windowed.prepare(amounts, amount_windows)
+    if starts is not None:
+        return windowed.run(plan, amounts, starts, jobs, lambda j, a: detect(plan, tenths, missing, a, j))
     series = np.ascontiguousarray(jobs.series, dtype=np.int64)
     start = np.ascontiguousarray(jobs.start, dtype=np.int64)
     end = np.ascontiguousarray(jobs.end, dtype=np.int64)
     data_end = np.ascontiguousarray(jobs.data_end, dtype=np.int64)
+    origin = start if jobs.origin is None else np.ascontiguousarray(jobs.origin, dtype=np.int64)
     day = np.full(len(series), -1, dtype=np.int64)
     status = np.full(len(series), _NOT_FOUND, dtype=np.int8)
     if len(series) == 0:
@@ -505,7 +515,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
                    ints([v.kind for v in plan.vetoes]), ints([v.length for v in plan.vetoes]),
                    ints([v.placement for v in plan.vetoes]), ints([v.first for v in plan.vetoes]),
                    ints([v.last for v in plan.vetoes]),
-                   report, r_first, r_last, r_since, series, start, end, data_end, day, status)
+                   report, r_first, r_last, r_since, series, start, end, data_end, origin, day, status)
     return Detection(day, status, None)
 
 
@@ -517,7 +527,7 @@ def _variants(cell: np.ndarray, amount: np.ndarray) -> tuple[np.ndarray, np.ndar
             np.ascontiguousarray(inverse.reshape(-1), dtype=np.int64))
 
 
-def _first_column(plan: P.Plan, start: np.ndarray) -> int:
+def _first_column(plan: P.Plan, start: np.ndarray, origin: np.ndarray) -> int:
     """Earliest history day any candidate's spans can read (never negative)."""
     offsets = [0]
     for cond in plan.conditions:
@@ -525,12 +535,12 @@ def _first_column(plan: P.Plan, start: np.ndarray) -> int:
     offsets.extend(v.first for v in plan.vetoes)
     if plan.report_first_wet and plan.report_span is not None:
         offsets.append(0 if plan.report_span[2] else plan.report_span[0])
-    return max(0, int(start.min()) + min(offsets))
+    return max(0, min(int(start.min()) + min(offsets), int(origin.min())))
 
 
 def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndarray, fc_tenths: np.ndarray,
                     fc_missing: np.ndarray, amounts: dict[str, np.ndarray], jobs: StitchedJobs, *,
-                    trace: bool = False) -> Detection:
+                    trace: bool = False, amount_windows=None) -> Detection:
     """Run stitched jobs (history before each split, then a forecast row) without copying history into forecasts.
 
     History prefix tables are built once over the cells and columns the jobs can
@@ -540,11 +550,16 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     P_fc(t - split) for t past the split, and spells that start in history and end in
     the forecast come from a small per-job seam table. The result equals
     detect on the explicit concatenation and never reads history at or after a split.
+    Per-window amounts work as in detect().
     """
     if trace:
         raise NotImplementedError("use the reference backend for traces")
     if numba is None:
         raise ImportError("the numba backend needs numba")
+    amounts, starts = windowed.prepare(amounts, amount_windows)
+    if starts is not None:
+        return windowed.run(plan, amounts, starts, jobs, lambda j, a: detect_stitched(
+            plan, hist_tenths, hist_missing, fc_tenths, fc_missing, a, j))
     n_jobs = len(jobs.series)
     day = np.full(n_jobs, -1, dtype=np.int64)
     status = np.full(n_jobs, _NOT_FOUND, dtype=np.int8)
@@ -554,6 +569,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     start = np.ascontiguousarray(jobs.start, dtype=np.int64)
     end = np.ascontiguousarray(jobs.end, dtype=np.int64)
     data_end = np.ascontiguousarray(jobs.data_end, dtype=np.int64)
+    origin = start if jobs.origin is None else np.ascontiguousarray(jobs.origin, dtype=np.int64)
     active = end >= start
     if not active.any():
         return Detection(day, status, None)
@@ -574,7 +590,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     index = {k: i for i, k in enumerate(keys)}
 
     c1 = int(split[active].max())
-    c0 = min(_first_column(plan, start[active]), c1)
+    c0 = min(_first_column(plan, start[active], origin[active]), c1)
     cells, cell_idx = np.unique(cell, return_inverse=True)
     cell_idx = np.ascontiguousarray(cell_idx.reshape(-1), dtype=np.int64)
     hx = np.ascontiguousarray(hist_tenths[cells, c0:c1], dtype=np.int32)
@@ -637,6 +653,6 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
                      ints([v.kind for v in plan.vetoes]), ints([v.length for v in plan.vetoes]),
                      ints([v.placement for v in plan.vetoes]), ints([v.first for v in plan.vetoes]),
                      ints([v.last for v in plan.vetoes]), ints(v_op), ints(v_key), ints(offsets),
-                     report, r_first, r_last, r_since, series, cell_idx, split, wv, vv, start, end, data_end,
+                     report, r_first, r_last, r_since, series, cell_idx, split, wv, vv, start, end, data_end, origin,
                      day, status)
     return Detection(day, status, None)

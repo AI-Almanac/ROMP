@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from momp.onset import plan as P
+from momp.onset.backends import windowed
 from momp.onset.model import Detection, Jobs, Status, StitchedJobs
 
 try:
@@ -55,10 +56,16 @@ def _block_cells() -> int:
 
 
 def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[str, np.ndarray],
-           jobs: Jobs, *, trace: bool = False) -> Detection:
-    """Run every job on the GPU and return the onset day index (-1 if none) and Status per job (NumPy arrays)."""
+           jobs: Jobs, *, trace: bool = False, amount_windows=None) -> Detection:
+    """Run every job on the GPU and return the onset day index (-1 if none) and Status per job (NumPy arrays).
+
+    Amounts may be (S, W) with amount_windows the W window start leads (backends/windowed.py).
+    """
     if trace:
         raise NotImplementedError("use the reference backend for traces")
+    amounts, starts = windowed.prepare(amounts, amount_windows)
+    if starts is not None:
+        return windowed.run(plan, amounts, starts, jobs, lambda j, a: detect(plan, tenths, missing, a, j))
     n_jobs = len(jobs.series)
     day = np.full(n_jobs, -1, dtype=np.int64)
     status = np.full(n_jobs, int(Status.NOT_FOUND), dtype=np.int8)
@@ -68,6 +75,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
     start = cp.asarray(jobs.start, dtype=cp.int64)
     end = cp.asarray(jobs.end, dtype=cp.int64)
     data_end = cp.asarray(jobs.data_end, dtype=cp.int64)
+    origin = start if jobs.origin is None else cp.asarray(jobs.origin, dtype=cp.int64)
     n_cand = cp.maximum(end - start + 1, 0)
     width = int(n_cand.max())
     if width == 0:
@@ -81,7 +89,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
         w = int(n_cand[sl].max())
         if w == 0:
             continue
-        job = _Block(series[sl], start[sl], end[sl], data_end[sl], w)
+        job = _Block(series[sl], start[sl], end[sl], data_end[sl], w, origin[sl])
         if plan.family == P.CURVE:
             day_d[sl], status_d[sl] = _curve_block(plan, tables, job)
         else:
@@ -92,10 +100,11 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
 class _Block:
     """The jobs of one block plus their candidate grid (days d, validity mask)."""
 
-    def __init__(self, series, start, end, data_end, width):
+    def __init__(self, series, start, end, data_end, width, origin):
         """Build the (jobs, width) candidate day grid."""
         self.series = series[:, None]
         self.start = start[:, None]
+        self.origin = origin[:, None]
         self.end = end[:, None]
         self.data_end = data_end[:, None]
         self.width = width
@@ -187,7 +196,7 @@ def _observe(tables: _Tables, job: _Block, a, b):
 
 def _span(job: _Block, first: int, last: int, since_start: bool):
     """Absolute [a, b) of a span for every candidate of the block."""
-    a = job.start + 0 * job.d if since_start else job.d + first
+    a = job.origin + 0 * job.d if since_start else job.d + first
     return a, job.d + last
 
 
@@ -269,7 +278,7 @@ def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block):
     if plan.report_first_wet:
         first, last, since = plan.report_span
         series = job.series[:, 0]
-        a = job.start[:, 0] if since else pick_day + first
+        a = job.origin[:, 0] if since else pick_day + first
         b = pick_day + last
         lo_raw = cp.maximum(a, 0)
         lo = cp.minimum(lo_raw, tables.n_time - 1)
@@ -308,7 +317,7 @@ def _variants(cell: np.ndarray, amount: np.ndarray):
     return unique[:, 0].copy(), unique[:, 1].copy(), inverse.reshape(-1).astype(np.int64)
 
 
-def _first_column(plan: P.Plan, start: np.ndarray) -> int:
+def _first_column(plan: P.Plan, start: np.ndarray, origin: np.ndarray) -> int:
     """Earliest history day any candidate's spans can read (never negative)."""
     offsets = [0]
     for cond in plan.conditions:
@@ -316,12 +325,12 @@ def _first_column(plan: P.Plan, start: np.ndarray) -> int:
     offsets.extend(v.first for v in plan.vetoes)
     if plan.report_first_wet and plan.report_span is not None:
         offsets.append(0 if plan.report_span[2] else plan.report_span[0])
-    return max(0, int(start.min()) + min(offsets))
+    return max(0, min(int(start.min()) + min(offsets), int(origin.min())))
 
 
 def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndarray, fc_tenths: np.ndarray,
                     fc_missing: np.ndarray, amounts: dict[str, np.ndarray], jobs: StitchedJobs, *,
-                    trace: bool = False) -> Detection:
+                    trace: bool = False, amount_windows=None) -> Detection:
     """Run stitched jobs (history before each split, then a forecast row) on the GPU without copying history into forecasts.
 
     History prefix tables are built once over the cells and columns the jobs can
@@ -331,9 +340,14 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     P_fc(t - split) for t past the split, and spells that start in history and end in
     the forecast come from a small per-job seam table. The result equals
     detect on the explicit concatenation and never reads history at or after a split.
+    Per-window amounts work as in detect().
     """
     if trace:
         raise NotImplementedError("use the reference backend for traces")
+    amounts, starts = windowed.prepare(amounts, amount_windows)
+    if starts is not None:
+        return windowed.run(plan, amounts, starts, jobs, lambda j, a: detect_stitched(
+            plan, hist_tenths, hist_missing, fc_tenths, fc_missing, a, j))
     n_jobs = len(jobs.series)
     day = np.full(n_jobs, -1, dtype=np.int64)
     status = np.full(n_jobs, int(Status.NOT_FOUND), dtype=np.int8)
@@ -377,7 +391,9 @@ class _StitchedTables:
         if split_h[active].min() < 0 or split_h[active].max() > hist_tenths.shape[1]:
             raise ValueError("a job's split lies outside the history")
         c1 = int(split_h[active].max())
-        self.c0 = min(_first_column(plan, np.asarray(jobs.start, dtype=np.int64)[active]), c1)
+        start_h = np.asarray(jobs.start, dtype=np.int64)
+        origin_h = start_h if jobs.origin is None else np.asarray(jobs.origin, dtype=np.int64)
+        self.c0 = min(_first_column(plan, start_h[active], origin_h[active]), c1)
         self.width = c1 - self.c0
         cells, cell_idx = np.unique(cell_h, return_inverse=True)
         cell_idx = cell_idx.reshape(-1).astype(np.int64)
@@ -401,7 +417,8 @@ class _StitchedTables:
         self.cell = cp.asarray(cell_idx)
         self.series = cp.asarray(series_h)
         self.split = cp.asarray(split_h)
-        self.start = cp.asarray(np.asarray(jobs.start, dtype=np.int64))
+        self.start = cp.asarray(start_h)
+        self.origin = cp.asarray(origin_h)
         self.end = cp.asarray(np.asarray(jobs.end, dtype=np.int64))
         self.data_end = cp.minimum(cp.asarray(np.asarray(jobs.data_end, dtype=np.int64)), self.split + self.n_fc)
         self.wet_variant = cp.asarray(wv)
@@ -440,6 +457,7 @@ class _StitchedBlock:
         self.wet_variant = tables.wet_variant[sl][:, None]
         self.split = tables.split[sl][:, None]
         self.start = tables.start[sl][:, None]
+        self.origin = tables.origin[sl][:, None]
         self.end = tables.end[sl][:, None]
         self.data_end = tables.data_end[sl][:, None]
         self.n_time = self.split + tables.n_fc
@@ -548,7 +566,7 @@ def _veto_s(veto: P.VetoPlan, spell_prefix, variant, fc_prefix, tables: _Stitche
 def _first_wet_day_s(tables: _StitchedTables, job: _StitchedBlock, onset, pick_day, day, report_span):
     """Replace onset days by the first wet day in the report window (history part first, then the forecast)."""
     first, last, since = report_span
-    a = job.start[:, 0] if since else pick_day + first
+    a = job.origin[:, 0] if since else pick_day + first
     b = pick_day + last
     e = job.data_end[:, 0]
     split, series = job.split[:, 0], job.series[:, 0]

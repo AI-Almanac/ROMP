@@ -32,13 +32,21 @@ def _on_grid(da, lat, lon):
     return da.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE)
 
 
-def _thresholds(setup, thresh_slice, lat, lon):
-    """The thresholds for the engine: named per-cell DataArrays on the rainfall grid, or None for a fixed amount."""
+def _thresholds(setup, thresh_slice, lat, lon, per_window=True):
+    """The thresholds for the engine: named per-cell DataArrays on the rainfall grid, or None for a fixed amount.
+
+    Model-climatology thresholds carry a "window" dim (one per verification window). Forecast
+    detection keeps it; per_window=False (observed onsets, which have no lead) keeps the first window.
+    """
     if setup.legacy:
         if isinstance(thresh_slice, xr.DataArray) and thresh_slice.ndim:
             return {LEGACY_THRESHOLD: _on_grid(thresh_slice, lat, lon)}
         return None
-    return {name: _on_grid(value, lat, lon) for name, value in dict(thresh_slice or {}).items()}
+    out = {name: _on_grid(value, lat, lon) for name, value in dict(thresh_slice or {}).items()}
+    if not per_window:
+        out = {name: (value.isel(window=0, drop=True) if "window" in getattr(value, "dims", ()) else value)
+               for name, value in out.items()}
+    return out
 
 
 def _season_climatology(setup, thresh_slice, lat, lon):
@@ -65,7 +73,7 @@ def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):
     rain = ingest(rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations")
     lat, lon = rain.coords["lat"], rain.coords["lon"]
     result = engine.detect_observed(
-        setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, lat, lon), years=[year],
+        setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, lat, lon, per_window=False), years=[year],
         season_climatology=_season_climatology(setup, thresh_slice, lat, lon), backend=setup.backend)
     onset = result["onset_date"].sel(year=year, season=setup.season).transpose("lat", "lon")
     if not setup.legacy:

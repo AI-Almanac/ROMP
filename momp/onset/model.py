@@ -289,12 +289,16 @@ class Jobs:
 
     start and end are inclusive day indices of the first and last candidate;
     data_end is exclusive (the series has no usable data at or after it).
+    origin, when given, is the day "season to date" spans start from; it
+    defaults to start. Only the per-window threshold split sets it (spec
+    section 13).
     """
 
     series: np.ndarray
     start: np.ndarray
     end: np.ndarray
     data_end: np.ndarray
+    origin: np.ndarray | None = None
 
 
 @dataclass
@@ -314,6 +318,7 @@ class StitchedJobs:
     start: np.ndarray
     end: np.ndarray
     data_end: np.ndarray
+    origin: np.ndarray | None = None
 
 
 @dataclass

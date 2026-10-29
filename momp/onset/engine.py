@@ -61,9 +61,33 @@ def _load_backend(name: str):
         raise ImportError(f"backend {name!r} is not available ({module}): {exc}") from exc
 
 
+def _threshold_windows(plan: plan_mod.Plan, thresholds, threshold_windows) -> np.ndarray | None:
+    """Window start leads for thresholds that have a "window" dim (None when none do).
+
+    threshold_windows overrides the starts; otherwise they come from the
+    window_first coordinate that compute_thresholds_from_forecasts writes.
+    """
+    starts = None if threshold_windows is None else np.asarray(threshold_windows, dtype=np.int64)
+    for spec in plan.amount_specs:
+        value = (thresholds or {}).get(spec.name) if spec.kind != "fixed" else None
+        if isinstance(value, xr.DataArray) and "window" in value.dims:
+            found = starts if starts is not None else (
+                value["window_first"].values.astype(np.int64) if "window_first" in value.coords else None)
+            if found is None or len(found) != value.sizes["window"]:
+                raise ValueError("windowed thresholds need threshold_windows (one start lead per window)")
+            return found
+    return None
+
+
 def _series_thresholds(plan: plan_mod.Plan, thresholds, spatial_dims: tuple[str, ...],
-                       spatial_shape: tuple[int, ...], series_shape: tuple[int, ...]) -> dict[str, np.ndarray]:
-    """Per-series float arrays for the thresholds the plan needs, broadcast from per-cell values."""
+                       spatial_shape: tuple[int, ...], series_shape: tuple[int, ...],
+                       first_window_only: bool = False) -> dict[str, np.ndarray]:
+    """Per-series float arrays for the thresholds the plan needs, broadcast from per-cell values.
+
+    A threshold with a "window" dim becomes (series, W); first_window_only keeps
+    just its first column (used for history-only searches, whose candidates all
+    lie before lead 1).
+    """
     out = {}
     for spec in plan.amount_specs:
         if spec.kind == "fixed" or spec.name in out:
@@ -71,6 +95,14 @@ def _series_thresholds(plan: plan_mod.Plan, thresholds, spatial_dims: tuple[str,
         if not thresholds or spec.name not in thresholds:
             raise KeyError(f"threshold {spec.name!r} is needed by the definition but was not supplied")
         value = thresholds[spec.name]
+        if isinstance(value, xr.DataArray) and "window" in value.dims:
+            value = value.transpose(*spatial_dims, "window").values.astype(np.float64)
+            if first_window_only:
+                value = value[..., 0]
+            else:
+                n_win = value.shape[-1]
+                out[spec.name] = np.broadcast_to(value, (*series_shape, n_win)).reshape(-1, n_win)
+                continue
         if isinstance(value, xr.DataArray):
             if value.ndim and set(value.dims) == set(spatial_dims):
                 value = value.transpose(*spatial_dims)
@@ -85,8 +117,13 @@ def _series_thresholds(plan: plan_mod.Plan, thresholds, spatial_dims: tuple[str,
 
 
 def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, thresholds: dict[str, np.ndarray],
-         jobs: Jobs, preset: np.ndarray, backend: str) -> tuple[np.ndarray, np.ndarray]:
-    """Run the backend over the jobs that need a search, chunked over series; return (day, status) per job."""
+         jobs: Jobs, preset: np.ndarray, backend: str, windows: np.ndarray | None = None
+         ) -> tuple[np.ndarray, np.ndarray]:
+    """Run the backend over the jobs that need a search, chunked over series; return (day, status) per job.
+
+    windows are the start leads of (series, W) thresholds; a job's lead is its day index plus 1.
+    """
+    extra = {} if windows is None else {"amount_windows": windows}
     module = _load_backend(backend)
     amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=tenths.shape[0])
     n_jobs = len(jobs.series)
@@ -111,7 +148,7 @@ def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, threshold
         s0, s1 = edges[k], min(edges[k + 1], tenths.shape[0])
         sub = Jobs(jobs.series[sel] - s0, jobs.start[sel], jobs.end[sel], jobs.data_end[sel])
         sub_amounts = {key: value[s0:s1] for key, value in amounts.items()}
-        out = module.detect(plan, tenths[s0:s1], missing[s0:s1], sub_amounts, sub)
+        out = module.detect(plan, tenths[s0:s1], missing[s0:s1], sub_amounts, sub, **extra)
         day[sel] = out.day
         status[sel] = out.status
     return day, status
@@ -303,7 +340,8 @@ def detect_observed(definition: Definition, rain: DailyRain, *, thresholds=None,
     spatial_dims = rain.dims[:-1]
     spatial_shape = rain.tenths.shape[:-1]
     n_time = rain.tenths.shape[-1]
-    per_series = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape)
+    per_series = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape,
+                                    first_window_only=True)
     day, status = _run(plan, rain.tenths.reshape(layout.n_series, n_time),
                        rain.missing.reshape(layout.n_series, n_time), per_series, jobs, layout.preset, backend)
     out_shape = (len(years), len(layout.season_names), *spatial_shape)
@@ -537,13 +575,16 @@ def _prior_search(plan: plan_mod.Plan, history: DailyRain, jobs: StitchedJobs, l
 
 def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRain, thresholds: dict[str, np.ndarray],
                   per_cell: dict[str, np.ndarray], jobs: StitchedJobs, layout: StitchedLayout,
-                  backend: str) -> tuple[np.ndarray, np.ndarray]:
+                  backend: str, windows: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Decide PRIOR from the history alone, then run the stitched search for the other jobs; return (day, status) per job.
 
     The PRIOR search is skipped for curve rules, whose onset is a minimum over the whole
-    window and so can move when the window grows (spec section 13).
+    window and so can move when the window grows (spec section 13). per_cell holds
+    the history-only thresholds (first window); windows are the start leads of
+    (series, W) thresholds.
     """
     module = _load_backend(backend)
+    extra = {} if windows is None else {"amount_windows": windows}
     n_cell, n_time = layout.n_cell, history.tenths.shape[-1]
     n_leads = forecast.tenths.shape[-1]
     n_series = layout.n_series
@@ -581,7 +622,8 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
         sub = StitchedJobs(jobs.cell[sel], jobs.series[sel] - s0, jobs.split[sel], jobs.start[sel], jobs.end[sel],
                            jobs.data_end[sel])
         sub_amounts = {key: value[s0:s1] for key, value in amounts.items()}
-        out = module.detect_stitched(plan, flat_h[0], flat_h[1], flat_f[0][s0:s1], flat_f[1][s0:s1], sub_amounts, sub)
+        out = module.detect_stitched(plan, flat_h[0], flat_h[1], flat_f[0][s0:s1], flat_f[1][s0:s1], sub_amounts, sub,
+                                     **extra)
         day[sel] = out.day
         status[sel] = out.status
     return day, status
@@ -617,7 +659,7 @@ def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...
 def detect_forecast(definition: Definition, forecast: ForecastRain, *, thresholds=None,
                     lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True,
                     backend: str = "numba", attrs: dict | None = None,
-                    history: DailyRain | None = None) -> xr.Dataset:
+                    history: DailyRain | None = None, threshold_windows=None) -> xr.Dataset:
     """Detect onset in every (init, [member], season, cell) of a forecast.
 
     Returns dims (init_time, [member], season, *spatial) with onset_lead (float64:
@@ -633,6 +675,11 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     lead 1. Without it the forecast is searched alone and onset_lead is at least
     1. attrs["forecast_history"] is "observed" or "none". When the forecast has
     members, members_by_status and onset_probability summarise them per init.
+
+    A threshold with a "window" dim (compute_thresholds_from_forecasts with
+    windows) is applied per candidate by the window its lead falls in; the window
+    start leads come from threshold_windows or the threshold's window_first
+    coordinate (spec section 13).
     """
     plan = plan_mod.compile(definition)
     n_leads = forecast.tenths.shape[-1]
@@ -641,16 +688,18 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     n_lead_dims = 2 if "member" in series_dims else 1
     spatial_dims, spatial_shape = series_dims[n_lead_dims:], series_shape[n_lead_dims:]
     per_series = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, series_shape)
+    windows = _threshold_windows(plan, thresholds, threshold_windows)
     if history is None:
         jobs, layout = build_forecast_jobs(definition, forecast, lead_window, restrict_to_season)
         day, status = _run(plan, forecast.tenths.reshape(layout.n_series, n_leads),
-                           forecast.missing.reshape(layout.n_series, n_leads), per_series, jobs, layout.preset, backend)
+                           forecast.missing.reshape(layout.n_series, n_leads), per_series, jobs, layout.preset, backend, windows)
         split = np.zeros(len(day), dtype=np.int64)
         hist_labels = None
     else:
         jobs, layout = build_stitched_jobs(definition, history, forecast, lead_window, restrict_to_season)
-        per_cell = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape)
-        day, status = _run_stitched(plan, history, forecast, per_series, per_cell, jobs, layout, backend)
+        per_cell = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape,
+                                      first_window_only=True)
+        day, status = _run_stitched(plan, history, forecast, per_series, per_cell, jobs, layout, backend, windows)
         split = jobs.split
         hist_labels = (history.year, history.month, history.day)
     k = len(layout.season_names)
