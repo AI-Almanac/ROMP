@@ -1,0 +1,6 @@
+id: sahel
+title: Sahel
+kind: region
+part_of: [west_africa]
+definitions:
+  default: marteau

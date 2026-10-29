@@ -1,0 +1,6 @@
+id: amazon
+title: Amazon
+kind: region
+aliases: [Amazon Basin]
+definitions:
+  default: liebmann_marengo

@@ -1,0 +1,28 @@
+id: icpac
+version: 1
+title: ICPAC operational seasonal rainfall onset (JJAS season)
+citation: ICPAC operational seasonal rainfall onset forecasts (verify source document)
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  Citation details should be checked. ICPAC issues onset forecasts for several
+  seasons; this entry is the JJAS season, other seasons via extends. "Within the
+  next 21 days" is read as the 21 days after the onset day. "Dry spell of 7 or
+  more days" is read as a dry run (consecutive days below the wet-day amount).
+
+regions: [east_africa]
+
+wet_day: at least 1 mm
+
+season:
+  from: 05-01
+  to: 09-30
+
+onset:
+  window: 3 days
+  require:
+    - first day: wet
+    - total: more than 20 mm
+  reject if:
+    - dry run: at least 7 days
+      within: 21 days after onset

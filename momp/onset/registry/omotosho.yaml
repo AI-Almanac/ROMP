@@ -1,0 +1,28 @@
+id: omotosho
+version: 1
+title: Omotosho et al. West Africa rainy season onset (placeholder rule)
+citation: >
+  Omotosho, J. B., Balogun, A. A. and Ogunjobi, K. (2000) Predicting monthly and
+  seasonal rainfall, onset and cessation of the rainy season in West Africa using
+  only surface data. Int. J. Climatol., 20, 865-880.
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  RULE UNVERIFIED: placeholder; replace with the definition in Omotosho et al.
+  (2000). The rule below only exercises offset spans: 20 mm or more in days 1 to
+  10 and again in days 11 to 20. Citation details should be checked.
+
+regions: [west_africa]
+
+wet_day: at least 1 mm
+
+season:
+  from: 03-01
+  to: 07-31
+
+onset:
+  require:
+    - total: at least 20 mm
+      over: days 1 to 10
+    - total: at least 20 mm
+      over: days 11 to 20

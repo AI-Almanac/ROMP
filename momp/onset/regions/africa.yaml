@@ -1,0 +1,5 @@
+id: africa
+title: Africa
+kind: region
+definitions:
+  also: [dunning]

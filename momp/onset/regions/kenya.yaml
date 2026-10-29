@@ -1,0 +1,7 @@
+id: kenya
+title: Kenya
+kind: country
+iso: KEN
+aliases: [Kenya]
+part_of: [east_africa]
+notes: No definitions of its own; inherits those of East Africa.

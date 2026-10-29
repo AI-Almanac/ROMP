@@ -1,0 +1,39 @@
+id: moron_robertson
+version: 2
+title: Moron and Robertson local monsoon onset
+citation: >
+  Moron, V. and Robertson, A. W. (2014) Interannual variability of Indian summer
+  monsoon rainfall onset date at local scale. Int. J. Climatol., 34, 1050-1061.
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  Citation details should be checked. The search end is not specified in the
+  description we have; 10-31 is assumed. wet_spell_amount averages over 05-01 to
+  09-30 until the paper is checked (version 2; version 1 used 04-01 to 10-31):
+  that period matches ROMP's earlier threshold file (demo/data/mwset4x4.nc4,
+  MWmean) best, r = 0.93 with values about 7 % lower on 2013-2020 data, while
+  04-01 to 10-31 gives values about 16 % lower than the file. "Not followed by ... within
+  the subsequent 30 days" is read as the 30 days after the 5-day wet spell, with
+  the whole dry window inside them; "starting within" is the alternative reading.
+
+regions: [india]
+
+wet_day: at least 1 mm
+
+season:
+  from: 04-01
+  to: 10-31
+
+thresholds:
+  wet_spell_amount:
+    mean total over: 5 days
+    during: 05-01 to 09-30
+
+onset:
+  window: 5 days
+  require:
+    - first day: wet
+    - total: at least wet_spell_amount
+  reject if:
+    - dry window: 10 days with less than 5 mm
+      within: 30 days after window

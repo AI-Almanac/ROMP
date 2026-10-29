@@ -1,0 +1,29 @@
+id: sivakumar
+version: 1
+title: Sivakumar rainy season onset (Sahel and Sudanian zones)
+citation: >
+  Sivakumar, M. V. K. (1988) Predicting rainy season potential from the onset of
+  rains in Southern Sahelian and Sudanian climatic zones of West Africa. Agric.
+  For. Meteorol., 42, 295-305.
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  Citation details should be checked. Whether day 1 must be wet is not specified;
+  it is not required here. "A dry spell of more than 7 days" is read as a dry run
+  of at least 8 days within the 30 days after the onset day.
+
+regions: [west_africa]
+
+wet_day: at least 1 mm
+
+season:
+  from: 05-01
+  to: 10-31
+
+onset:
+  window: 3 days
+  require:
+    - total: at least 20 mm
+  reject if:
+    - dry run: more than 7 days
+      within: 30 days after onset

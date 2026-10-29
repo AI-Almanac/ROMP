@@ -1,0 +1,29 @@
+id: liebmann_marengo
+version: 1
+title: Liebmann and Marengo cumulative anomaly onset
+citation: >
+  Liebmann, B. and Marengo, J. A. (2001) Interannual variability of the rainy
+  season and rainfall in the Brazilian Amazon Basin. J. Climate, 14, 4308-4318.
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  Citation details should be checked. The accumulation should start in the
+  region's dry season; set the season per region (the whole calendar year is only
+  a default). Onset is the day after the minimum of the accumulated anomaly.
+
+regions: [amazon]
+
+wet_day: at least 1 mm
+
+season:
+  from: 01-01
+  to: 12-31
+
+thresholds:
+  mean_daily_rain:
+    mean daily rain: true
+    during: whole year
+
+curve:
+  accumulate: rain minus mean_daily_rain
+  onset: day after minimum

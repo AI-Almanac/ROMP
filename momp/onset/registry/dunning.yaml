@@ -1,0 +1,21 @@
+extends: liebmann_marengo
+id: dunning
+version: 1
+title: Dunning et al. onset from the cumulative anomaly, derived seasons
+citation: >
+  Dunning, C. M., Black, E. C. L. and Allan, R. P. (2016) The onset and cessation
+  of seasonal rainfall over Africa. J. Geophys. Res. Atmos., 121, 11405-11424.
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  Citation details should be checked. Draft reading of the method; verify against
+  the paper. The cumulative anomaly of Liebmann and Marengo is accumulated over
+  seasons found per cell by harmonic analysis, starting 50 days before the
+  climatological onset and ending at the climatological cessation.
+
+regions: [africa]
+
+seasons:
+  derive: harmonic regime
+  from: climatological onset - 50 days
+  to: climatological cessation

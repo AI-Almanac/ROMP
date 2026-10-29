@@ -1,0 +1,23 @@
+extends: moron_robertson
+id: moron_robertson_mok
+version: 2
+title: Moron and Robertson onset, searched from the median MOK date
+citation: >
+  Moron, V. and Robertson, A. W. (2014) Interannual variability of Indian summer
+  monsoon rainfall onset date at local scale. Int. J. Climatol., 34, 1050-1061.
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  Citation details should be checked. June 2 is the median date of monsoon onset
+  over Kerala (MOK), 1901-2024. It is used because the actual MOK date is unknown
+  when forecasting. The dry-spell check is dropped to avoid depending on
+  long-lead forecasts.
+
+regions: [india]
+
+season:
+  from: 06-02
+  to: 10-31
+
+onset:
+  reject if: []

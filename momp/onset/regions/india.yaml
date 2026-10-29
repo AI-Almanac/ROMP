@@ -1,0 +1,18 @@
+id: india
+title: India
+kind: country
+iso: IND
+aliases: [India]
+part_of: [south_asia]
+domain: {lat: [6.5, 38.5], lon: [66.5, 100]}
+observations:
+  dataset: IMD 0.25 deg gridded rainfall
+  day_boundary: 03 UTC, labelled by end
+climatology:
+  years: 1991-2020
+definitions:
+  default: moron_robertson_mok
+  also: [moron_robertson, liebmann_marengo]
+notes: >
+  The declared day boundary was confirmed empirically: AIFS_v2 2020 forecasts
+  correlate best with IMD when lead k is dated init + k.

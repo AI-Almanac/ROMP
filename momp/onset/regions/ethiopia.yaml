@@ -1,0 +1,21 @@
+id: ethiopia
+title: Ethiopia
+kind: country
+iso: ETH
+aliases: [Ethiopia]
+part_of: [east_africa]
+domain: {lat: [3, 15], lon: [33, 48]}
+observations:
+  dataset: CHIRPS v3
+  day_boundary: 00 UTC, labelled by start
+climatology:
+  years: 1998-2024
+definitions:
+  default: icpac
+  also: [sivakumar]
+notes: >
+  Climatology years are 1998-2024, every complete year of the available CHIRPS v3
+  archive (it starts in 1998, so the 1991-2020 standard normal is not possible
+  yet). The declared day boundary was
+  confirmed empirically: AIFS_v2 2020 forecasts correlate best with CHIRPS when
+  lead k is dated init + k - 1.

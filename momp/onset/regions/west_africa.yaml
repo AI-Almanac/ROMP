@@ -1,0 +1,8 @@
+id: west_africa
+title: West Africa
+kind: region
+part_of: [africa]
+aliases: [West Africa]
+definitions:
+  default: sivakumar
+  also: [marteau, omotosho, dunning]

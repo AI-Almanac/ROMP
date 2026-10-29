@@ -1,0 +1,9 @@
+id: east_africa
+title: East Africa
+kind: region
+part_of: [africa]
+aliases: [East Africa]
+definitions:
+  default: icpac
+  also: [dunning, liebmann_marengo]
+notes: ICPAC is the regional climate centre for the Greater Horn of Africa.

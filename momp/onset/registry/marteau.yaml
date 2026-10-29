@@ -1,0 +1,29 @@
+id: marteau
+version: 1
+title: Marteau et al. Sahel monsoon onset
+citation: >
+  Marteau, R., Moron, V. and Philippon, N. (2009) Spatial coherence of monsoon
+  onset over Western and Central Sahel (1950-2000). J. Climate, 22, 1313-1324.
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  Citation details should be checked. Verify whether the wet-day threshold is
+  more than or at least 1 mm. The dry window is read as lying wholly inside the
+  20 days after the 2-day wet spell.
+
+regions: [sahel]
+
+wet_day: at least 1 mm
+
+season:
+  from: 05-01
+  to: 09-30
+
+onset:
+  window: 2 days
+  require:
+    - all days: wet
+    - total: more than 20 mm
+  reject if:
+    - dry window: 7 days with less than 5 mm
+      within: 20 days after window
