@@ -1,4 +1,6 @@
-"""Run independent years in worker processes and give back the results in year order.
+"""Run independent items (years, files, folds, climatologies) in worker processes; results come back in item order.
+
+`start_items` is the general function; `start_years`/`map_years`/`concat_years` are its year-keyed callers.
 
 ``parallel: false`` in the config keeps everything in this process. Otherwise the years of a task (pair tables,
 onset tables, climatology pairs) are spread over `worker_count` processes (``parallel: {workers: N}``; default the
@@ -9,7 +11,7 @@ cores available, never more than the years):
   years share (thresholds, masks; see the `prewarm` argument), so each is read, built and logged once, here, and
   then travels to the workers as one small snapshot. The pool is kept for the run (see `shutdown`), so the next
   stage (the climatology pairs after the model pairs) reuses the booted workers, and this process is free to do
-  work of its own (the climatological onsets) while the workers run: `start_years` returns at once with a
+  work of its own (the climatological onsets) while the workers run: `start_items` returns at once with a
   `Pending` whose `results()` waits.
 * Workers receive file paths and settings, never data cubes: each reads its own year. What a worker detects or
   builds is sent back and absorbed here in year order, so the observed-onset cache on disk is written once, by this
@@ -106,23 +108,17 @@ def _warm() -> int:
     return os.getpid()
 
 
-def _run_chunk(func, args, kwargs, years, state, token, skip):
-    """Worker entry: install the snapshot, run func on the years; returns (result or None, what was found)."""
+def _run_item(func, item, args, kwargs, state, token, label):
+    """Worker entry: install the snapshot, run func(item, *args, **kwargs); returns (result, what was found)."""
     install(state, token)
-    logs.set_worker_year(years[0] if len(years) == 1 else None)
-    try:
-        result = func(*args, **{**kwargs, "years": list(years)})
-    except ValueError as exc:
-        if not skip or not str(exc).startswith(skip):
-            raise
-        result = None
-    return result, collect()
+    logs.set_worker_year(label)
+    return func(item, *args, **kwargs), collect()
 
 
-def _run_here(func, args, kwargs, years, skip):
-    """Run func on the years in this process; None where it raises the "no data" ValueError of a skipped year."""
+def _year_call(year, func, args, kwargs, skip):
+    """func(*args, **kwargs with years=[year]); None where it raises the "no data" ValueError of a skipped year."""
     try:
-        return func(*args, **{**kwargs, "years": list(years)})
+        return func(*args, **{**kwargs, "years": [year]})
     except ValueError as exc:
         if not skip or not str(exc).startswith(skip):
             raise
@@ -180,7 +176,7 @@ def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
 
 
 class Pending:
-    """Work started by start_years / start_concat: `result()` waits for it (once) and gives the value."""
+    """Work started by start_items / start_years / start_concat: `result()` waits for it (once) and gives the value."""
 
     def __init__(self, collect: Callable[[], Any], jobs=()):
         """`collect` produces the value when called; `jobs` are the futures to cancel if it fails."""
@@ -210,29 +206,30 @@ class Pending:
         return self._value
 
 
-def start_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA,
-                prewarm: Callable[[dict], None] | None = None) -> Pending:
-    """Start func(*args, **kwargs with years=[year]) for each year; the Pending gives the results in year order.
+def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, config: dict | None = None,
+                workers: int | None = None, label: Callable[[Any], Any] | None = None,
+                prewarm: Callable[[], None] | None = None) -> Pending:
+    """Start func(item, *args, **kwargs) for each item; the Pending gives the results in item order.
 
-    Runs in worker processes when kwargs["parallel"] is on and there is more than one year, all of them in workers
-    (see the module text); `prewarm(kwargs)`, if given, is called here once before the jobs are sent, to read or
-    build what every year needs. Otherwise the years run here, one after the other, before this returns. `skip` is
-    the start of the ValueError message that means "this year had no data" (a missing file): that year's result is
-    None rather than an error, as the multi-year functions skip such years.
+    Runs in worker processes of the run's pool when there are `workers` > 1 (default: worker_count of `config`, which
+    is `kwargs` when not given, for the number of items), all items in workers (see the module text); a failure
+    cancels the items still queued. `prewarm()`, if given, is called here once before the jobs are sent, to read or
+    build what every item needs. `label(item)` names the item in the log lines a worker forwards. With one worker the
+    items run here, one after the other, before this returns. func must be a module-level function (workers are spawned).
     """
-    years = list(years)
-    workers = worker_count(kwargs, len(years))
+    items, kwargs = list(items), kwargs or {}
+    workers = worker_count(config if config is not None else kwargs, len(items)) if workers is None else workers
     if workers <= 1:
-        return Pending.finished([_run_here(func, args, kwargs, [year], skip) for year in years])
-    kwargs = {k: v for k, v in kwargs.items() if k != "years"}
+        return Pending.finished([func(item, *args, **kwargs) for item in items])
     executor = _pool_for(workers, max(1, cores() // workers))
     if prewarm is not None:
-        prewarm({**kwargs, "years": years})
+        prewarm()
     state, token = snapshot(), next(_tokens)
-    jobs = [executor.submit(_run_chunk, func, args, kwargs, [year], state, token, skip) for year in years]
+    jobs = [executor.submit(_run_item, func, item, args, kwargs, state, token, None if label is None else label(item))
+            for item in items]
 
-    def collect():
-        """Wait for the jobs in year order, absorbing what each found."""
+    def collect_results():
+        """Wait for the jobs in item order, absorbing what each found."""
         results = []
         for job in jobs:
             result, found = job.result()
@@ -240,7 +237,22 @@ def start_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = 
             results.append(result)
         return results
 
-    return Pending(collect, jobs)
+    return Pending(collect_results, jobs)
+
+
+def start_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA,
+                prewarm: Callable[[dict], None] | None = None) -> Pending:
+    """Start func(*args, **kwargs with years=[year]) for each year; the Pending gives the results in year order.
+
+    start_items over the years (all in workers when kwargs["parallel"] is on and there is more than one year);
+    `prewarm(kwargs)`, if given, is called here once with all the years before the jobs are sent. `skip` is the start
+    of the ValueError message that means "this year had no data" (a missing file): that year's result is None
+    rather than an error, as the multi-year functions skip such years.
+    """
+    years = list(years)
+    kwargs = {k: v for k, v in kwargs.items() if k != "years"}
+    return start_items(_year_call, years, (func, args, kwargs, skip), config=kwargs, label=int,
+                       prewarm=None if prewarm is None else lambda: prewarm({**kwargs, "years": years}))
 
 
 def map_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA,
@@ -250,6 +262,11 @@ def map_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO
     start_years, waited for at once; see there for the arguments.
     """
     return start_years(func, years, kwargs, args, skip, prewarm).result()
+
+
+def map_items(func, items, args: tuple = (), kwargs: dict | None = None, **options) -> list:
+    """func(item, *args, **kwargs) for each item, results in item order (start_items, waited for at once)."""
+    return start_items(func, items, args, kwargs, **options).result()
 
 
 def start_concat(func, kwargs: dict, args: tuple = (), prewarm: Callable[[dict], None] | None = None) -> Pending:
