@@ -2,82 +2,70 @@
 
 Observed onsets depend only on the observations, how they are read, the evaluated cells, the onset definition,
 the thresholds (and season climatology) and the years, so one detection serves all models, verification windows,
-the reference and later runs. The entry is keyed by a *fingerprint* of those six parts; the backend, models,
-windows and reference are not in it. While a run is active (``activate``), ``momp.stats.detect.detect_observed_onset``
+the reference and later runs. The entry is keyed by a *fingerprint* of those six parts (see momp.cache.Store, which
+keeps the entries and reports hits and misses); the backend, models, windows and reference are not in it. While a run is active (``activate``), ``momp.stats.detect.detect_observed_onset``
 asks ``lookup`` first and calls ``store`` after detecting, so each year is detected once per fingerprint.
 
 On disk (``<cache_dir>/observed_onsets/<fingerprint>/``): ``parts.json`` (the hash of each part) and ``onsets.nc``
-(``onset_date`` over year, lat, lon). The first use of a fingerprint in a run logs a hit, a partial hit or a miss;
-on a miss it names the parts that differ from the nearest cached entry. Without a cache folder the cache is in
-memory for the run only. A failure of the cache never stops a run: the onsets are then simply detected.
+(``onset_date`` over year, lat, lon). Without a cache folder the cache is in memory for the run only. A failure of the cache never stops a run: the onsets are then simply detected.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import os
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
 
+from momp.cache import Codec, Store, file_identity, part_hash
+
 log = logging.getLogger(__name__)
 
-PARTS = ("obs_files", "obs_ingest", "cells", "definition", "thresholds", "years")
-"""The parts of a fingerprint, in the order they are reported."""
 SUBFOLDER = "observed_onsets"
-_state = {"on": False, "dir": None, "worker": False}
+_state = {"on": False, "dir": None, "worker": False, "store": None}
 _tables: dict = {}
 _new: list = []
-_announced: set = set()
 _memo: dict = {}
+
+
+def _read(path: Path) -> dict | None:
+    """Read a cached entry: {"years": {year: values}, "lat": ..., "lon": ...}."""
+    with xr.open_dataset(path) as ds:
+        years = {int(y): ds["onset_date"].sel(year=y).values.astype("datetime64[ns]") for y in ds["year"].values}
+        return {"years": years, "lat": ds["lat"].values.copy(), "lon": ds["lon"].values.copy()}
+
+
+def _write(path: Path, table: dict) -> None:
+    """Write an entry: onset_date over year, lat, lon."""
+    years = sorted(table["years"])
+    ds = xr.Dataset({"onset_date": (("year", "lat", "lon"), np.stack([table["years"][y] for y in years]))},
+                    coords={"year": years, "lat": table["lat"], "lon": table["lon"]})
+    ds.to_netcdf(path)
+
+
+def _new_store(root) -> Store:
+    """The observed-onset store of a cache folder (None: in memory)."""
+    return Store(SUBFOLDER, root, codec=Codec("onsets.nc", _read, _write), prefix="obs", label="Observed onsets",
+                 describe=lambda table: f"{len(table['years'])} years cached",
+                 miss_note="; detecting once for all models, windows and references")
 
 
 def activate(cache_dir=None) -> None:
     """Start using the cache for this run; cache_dir None keeps it in memory. Clears what an earlier run left."""
     reset()
-    _state.update(on=True, dir=Path(cache_dir) if cache_dir else None)
+    _state.update(on=True, dir=Path(cache_dir) if cache_dir else None, store=_new_store(cache_dir))
 
 
 def reset() -> None:
     """Stop using the cache and forget the in-memory tables, announcements and memoised parts."""
-    _state.update(on=False, dir=None, worker=False)
+    _state.update(on=False, dir=None, worker=False, store=None)
     _new.clear()
     _tables.clear()
-    _announced.clear()
     _memo.clear()
     from momp.io.input import clear_obs_cache
 
     clear_obs_cache()
-
-
-def _digest(*chunks) -> str:
-    """A 12-hex-character hash of the given text or bytes."""
-    h = hashlib.sha256()
-    for chunk in chunks:
-        h.update(chunk if isinstance(chunk, bytes) else str(chunk).encode())
-        h.update(b"\0")
-    return h.hexdigest()[:12]
-
-
-def _file_id(path) -> list:
-    """Name, size and modification time of a file, or just the name when it is missing."""
-    try:
-        stat = os.stat(path)
-        return [str(path), stat.st_size, stat.st_mtime_ns]
-    except OSError:
-        return [str(path), None, None]
-
-
-def _array_bytes(value) -> bytes:
-    """The bytes of an array-like (names and dims included), for hashing."""
-    if value is None:
-        return b"none"
-    if isinstance(value, (int, float, np.number)):
-        return repr(float(value)).encode()
-    da = value if isinstance(value, xr.DataArray) else xr.DataArray(np.asarray(value))
-    return (repr(da.dims) + repr(da.shape)).encode() + np.ascontiguousarray(da.values).tobytes()
 
 
 def _threshold_hash(thresh) -> str:
@@ -85,17 +73,11 @@ def _threshold_hash(thresh) -> str:
     cached = _memo.get(("thresh", id(thresh)))
     if cached is not None and cached[0] is thresh:
         return cached[1]
-    chunks = []
     if isinstance(thresh, dict):
-        for name in sorted(thresh):
-            chunks += [name, _array_bytes(thresh[name])]
         season = getattr(thresh, "season_climatology", None)
-        if season is not None:
-            for name in sorted(season.data_vars):
-                chunks += [name, _array_bytes(season[name])]
+        result = part_hash(dict(thresh), None if season is None else {n: season[n] for n in season.data_vars})
     else:
-        chunks.append(_array_bytes(thresh))
-    result = _digest(*chunks)
+        result = part_hash(thresh)
     _memo[("thresh", id(thresh))] = (thresh, result)
     return result
 
@@ -110,26 +92,29 @@ def _years(kwargs) -> list[int]:
     return sorted(years)
 
 
+def obs_files(kwargs, years) -> list:
+    """The identity (name, size, mtime) of the observation file of every year (or of the zarr store, with the years)."""
+    from momp.io.input import is_zarr
+
+    if is_zarr(kwargs["obs_dir"]):
+        return [file_identity(kwargs["obs_dir"]), list(years)]
+    found = []
+    for year in years:
+        for pattern in kwargs.get("obs_file_pattern") or ():
+            path = Path(str(kwargs["obs_dir"])) / pattern.format(year)
+            if path.exists():
+                found.append(file_identity(path))
+                break
+        else:
+            found.append([f"missing {year}"])
+    return found
+
+
 def _obs_files_hash(kwargs, years) -> str:
-    """Hash of the identity (name, size, mtime) of the observation file of every needed year."""
+    """Hash of obs_files, memoised for the run."""
     key = ("files", str(kwargs.get("obs_dir")), str(kwargs.get("obs_file_pattern")), tuple(years))
     if key not in _memo:
-        found = []
-        from momp.io.input import is_zarr
-
-        if is_zarr(kwargs["obs_dir"]):
-            store = Path(str(kwargs["obs_dir"]))
-            found = [_file_id(store / name) for name in ("zarr.json", ".zmetadata", ".zgroup")] + [list(years)]
-            years = ()
-        for year in years:
-            for pattern in kwargs.get("obs_file_pattern") or ():
-                path = Path(str(kwargs["obs_dir"])) / pattern.format(year)
-                if path.exists():
-                    found.append(_file_id(path))
-                    break
-            else:
-                found.append([f"missing {year}"])
-        _memo[key] = _digest(json.dumps(found))
+        _memo[key] = part_hash(obs_files(kwargs, years))
     return _memo[key]
 
 
@@ -140,7 +125,7 @@ def _mask_files(kwargs) -> list:
     if isinstance(mask, dict):
         paths += [mask.get("file"), (mask.get("condition") or {}).get("file")]
     paths += [kwargs.get("nc_mask"), kwargs.get("shpfile_dir")]
-    return [_file_id(p) for p in paths if p]
+    return [file_identity(p) for p in paths if p]
 
 
 def fingerprint_parts(rain, thresh, kwargs) -> dict:
@@ -154,98 +139,30 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
                 for name in ("lat", "lon"))   # rain is a DataArray, or an ingested DailyRain
     return {
         "obs_files": _obs_files_hash(kwargs, years),
-        "obs_ingest": _digest(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.ingest_boundary,
-                              kwargs.get("obs_file_pattern")),
-        "cells": _digest(kwargs.get("region"), json.dumps(kwargs.get("mask"), sort_keys=True, default=str),
-                         json.dumps(_mask_files(kwargs)), bool(kwargs.get("polygon")), bool(kwargs.get("grid_point")),
-                         kwargs.get("lat_select") if kwargs.get("grid_point") else None,
-                         kwargs.get("lon_select") if kwargs.get("grid_point") else None, lat.tobytes(), lon.tobytes()),
-        "definition": _digest(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check,
-                              setup.legacy),
+        "obs_ingest": part_hash(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.ingest_boundary,
+                                kwargs.get("obs_file_pattern")),
+        "cells": part_hash(kwargs.get("region"), json.dumps(kwargs.get("mask"), sort_keys=True, default=str),
+                           _mask_files(kwargs), bool(kwargs.get("polygon")), bool(kwargs.get("grid_point")),
+                           kwargs.get("lat_select") if kwargs.get("grid_point") else None,
+                           kwargs.get("lon_select") if kwargs.get("grid_point") else None, lat, lon),
+        "definition": part_hash(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check,
+                                setup.legacy),
         "thresholds": _threshold_hash(thresh),
-        "years": _digest(json.dumps(years)),
+        "years": part_hash(years),
     }
 
 
 def fingerprint(parts: dict) -> str:
     """The fingerprint (``obs-`` and 12 hex characters) of a dict of part hashes."""
-    return "obs-" + _digest(json.dumps(parts, sort_keys=True))
+    return _new_store(None).fingerprint(parts)
 
 
-def _entry_dir(fp: str) -> Path | None:
-    """The disk folder of a fingerprint, or None for an in-memory cache."""
-    return _state["dir"] / SUBFOLDER / fp if _state["dir"] is not None else None
-
-
-def _read(folder: Path) -> dict | None:
-    """Read a cached entry: {"years": {year: values}, "lat": ..., "lon": ...}, or None if unreadable."""
-    try:
-        with xr.open_dataset(folder / "onsets.nc") as ds:
-            years = {int(y): ds["onset_date"].sel(year=y).values.astype("datetime64[ns]") for y in ds["year"].values}
-            return {"years": years, "lat": ds["lat"].values.copy(), "lon": ds["lon"].values.copy()}
-    except Exception as exc:  # noqa: BLE001 - a damaged entry is recomputed
-        log.debug("observed-onset cache entry %s unreadable (%s)", folder, exc)
-        return None
-
-
-def _write(fp: str, parts: dict, table: dict) -> None:
-    """Write an entry (atomically, so parallel workers cannot leave a half file)."""
-    folder = _entry_dir(fp)
-    if folder is None or not table["years"]:
-        return
-    folder.mkdir(parents=True, exist_ok=True)
-    years = sorted(table["years"])
-    ds = xr.Dataset({"onset_date": (("year", "lat", "lon"), np.stack([table["years"][y] for y in years]))},
-                    coords={"year": years, "lat": table["lat"], "lon": table["lon"]})
-    temp = folder / f"onsets.{os.getpid()}.tmp"
-    ds.to_netcdf(temp)
-    os.replace(temp, folder / "onsets.nc")
-    (folder / "parts.json").write_text(json.dumps({"fingerprint": fp, "parts": parts}, indent=1))
-
-
-def _nearest(fp: str, parts: dict) -> tuple[str, list[str]] | None:
-    """The cached entry sharing most parts with these, and the names of the parts that differ."""
-    root = _state["dir"] / SUBFOLDER if _state["dir"] is not None else None
-    if root is None or not root.is_dir():
-        return None
-    best = None
-    for folder in root.iterdir():
-        try:
-            other = json.loads((folder / "parts.json").read_text())["parts"]
-        except (OSError, ValueError, KeyError):
-            continue
-        if folder.name == fp:
-            continue
-        differ = [name for name in PARTS if other.get(name) != parts.get(name)]
-        if best is None or len(differ) < len(best[1]):
-            best = (folder.name, differ)
-    return best
-
-
-def _table(fp: str, parts: dict) -> dict:
-    """The in-memory table of a fingerprint, read from disk the first time; the first use is announced."""
-    if fp in _tables:
-        return _tables[fp]
-    table = {"years": {}, "lat": None, "lon": None}
-    folder = _entry_dir(fp)
-    stored = _read(folder) if folder is not None and (folder / "onsets.nc").exists() else None
-    if stored:
-        table = stored
-    _tables[fp] = table
-    if fp not in _announced:
-        _announced.add(fp)
-        where = "in memory" if _state["dir"] is None else str(_state["dir"] / SUBFOLDER)
-        if stored:
-            log.info("Observed onsets: cache hit %s (%d years cached, %s)", fp, len(stored["years"]), where)
-        else:
-            near = _nearest(fp, parts)
-            if near is None:
-                log.info("Observed onsets: cache miss %s (no earlier entry in %s); detecting once for all "
-                         "models, windows and references", fp, where)
-            else:
-                log.info("Observed onsets: cache miss %s; nearest cached entry %s differs in: %s", fp, near[0],
-                         ", ".join(near[1]))
-    return table
+def _table(parts: dict) -> dict:
+    """The in-memory table of these parts, read from the cache the first time (which logs a hit or a miss)."""
+    fp = _state["store"].fingerprint(parts)
+    if fp not in _tables:
+        _tables[fp] = _state["store"].get(parts) or {"years": {}, "lat": None, "lon": None}
+    return _tables[fp]
 
 
 def lookup(rain, thresh, year, kwargs):
@@ -254,7 +171,7 @@ def lookup(rain, thresh, year, kwargs):
         return None
     try:
         parts = fingerprint_parts(rain, thresh, kwargs)
-        table = _table(fingerprint(parts), parts)
+        table = _table(parts)
         values = table["years"].get(int(year))
         if values is None:
             return None
@@ -270,14 +187,14 @@ def store(rain, thresh, year, kwargs, onset) -> None:
         return
     try:
         parts = fingerprint_parts(rain, thresh, kwargs)
-        fp = fingerprint(parts)
-        table = _table(fp, parts)
+        fp = _state["store"].fingerprint(parts)
+        table = _table(parts)
         table["years"][int(year)] = np.asarray(onset.values).astype("datetime64[ns]")
         table["lat"], table["lon"] = np.asarray(onset["lat"].values), np.asarray(onset["lon"].values)
         if _state["worker"]:   # a worker process: the parent writes the entry (see absorb)
             _new.append((fp, parts, int(year), table["years"][int(year)], table["lat"], table["lon"]))
         else:
-            _write(fp, parts, table)
+            _state["store"].put(parts, table)
     except Exception as exc:  # noqa: BLE001 - the cache must never break a run
         log.debug("observed-onset cache store failed (%s)", exc)
 
@@ -289,15 +206,15 @@ def current() -> dict:
 
 def export_state() -> dict:
     """The cache as worker processes need it: its folder, the tables read or detected so far and which were announced."""
-    return {"dir": _state["dir"], "tables": dict(_tables), "announced": set(_announced)}
+    return {"dir": _state["dir"], "tables": dict(_tables), "announced": set(_state["store"].announced if _state["store"] else ())}
 
 
 def install_state(state: dict) -> None:
     """Start a worker process's cache from the parent's state: reads the same folder, never writes to it."""
     reset()
-    _state.update(on=True, dir=state["dir"], worker=True)
+    _state.update(on=True, dir=state["dir"], worker=True, store=_new_store(state["dir"]))
     _tables.update(state["tables"])
-    _announced.update(state["announced"])
+    _state["store"].announced.update(state["announced"])
 
 
 def drain_new() -> list:
@@ -312,7 +229,7 @@ def absorb(records: list) -> None:
     if not _state["on"]:
         return
     for fp, parts, year, values, lat, lon in records:
-        table = _table(fp, parts)
+        table = _table(parts)
         table["years"][year] = values
         table["lat"], table["lon"] = lat, lon
-        _write(fp, parts, table)
+        _state["store"].put(parts, table)

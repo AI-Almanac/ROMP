@@ -1,14 +1,12 @@
 """Reference-climatology products: per-cell thresholds, harmonic season analysis and a threshold cache."""
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Iterable, Sequence
-from pathlib import Path
 
 import numpy as np
 import xarray as xr
 
+from momp.cache import NETCDF, Store
 from momp.onset.calendar import fixed_bounds, label_keys
 from momp.onset.model import Definition, ThresholdSpec
 
@@ -327,34 +325,25 @@ def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.D
 
 
 class ThresholdCache:
-    """Stores computed threshold fields as NetCDF files so each is computed once.
+    """Stores computed threshold fields (a momp.cache.Store of kind "thresholds") so each is computed once.
 
-    The key is the sha256 of the data source, reference years, the spec's repr and
-    the grid coordinates, so an empty `source` risks collisions between datasets
-    on the same grid; give ingested data a source.
+    A field is keyed by its name, the spec, the reference years, the data source label, the grid coordinates
+    (unit ids by value) and `files`, the identities (momp.cache.file_identity) of the files the reference is read
+    from, so changed data under the same `source` is recomputed. Give ingested data a source.
     """
 
-    def __init__(self, directory):
-        """Use `directory` (created on first write) for the cache files."""
-        self.directory = Path(directory)
+    def __init__(self, directory, files=()):
+        """Use `directory` for the entries (created on first write); `files` identify the data read."""
+        self.store = Store("thresholds", directory, codec=NETCDF, label="Thresholds")
+        self.files = list(files)
 
-    @staticmethod
-    def key(spec: ThresholdSpec, rain, years: tuple[int, int]) -> str:
-        """Hex digest identifying one threshold computation."""
-        grid = hashlib.sha256()
-        for dim in rain.dims[:-1]:
-            grid.update(dim.encode())
-            grid.update(np.ascontiguousarray(rain.coords[dim]).tobytes())
-        payload = json.dumps([rain.source, [int(years[0]), int(years[1])], repr(spec), grid.hexdigest()])
-        return hashlib.sha256(payload.encode()).hexdigest()
+    def parts(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str = "") -> dict:
+        """The parts that identify one threshold computation."""
+        return {"name": name, "source": rain.source, "years": [int(years[0]), int(years[1])], "spec": repr(spec),
+                "grid": {dim: rain.coords[dim] for dim in rain.dims[:-1]}, "files": self.files}
 
     def get_or_compute(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str) -> xr.DataArray:
         """Return the stored threshold if present, else compute and store it."""
-        path = self.directory / f"{name}_{self.key(spec, rain, years)[:16]}.nc"
-        if path.exists():
-            with xr.open_dataarray(path) as stored:
-                return stored.load()
-        result = _threshold_array(name, compute_threshold(spec, rain, years), spec, rain, years)
-        self.directory.mkdir(parents=True, exist_ok=True)
-        result.to_netcdf(path)
-        return result
+        return self.store.get_or_compute(
+            self.parts(spec, rain, years, name),
+            lambda: _threshold_array(name, compute_threshold(spec, rain, years), spec, rain, years))

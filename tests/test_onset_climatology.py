@@ -173,7 +173,7 @@ def test_cache_returns_stored_field_without_recomputing(tmp_path, monkeypatch):
     assert len(calls) == 1
     xr.testing.assert_allclose(first, second)
     assert float(second[0, 0]) == pytest.approx(2.0) and second.attrs["source"] == "syn"
-    assert len(list((tmp_path / "cache").glob("*.nc"))) == 1
+    assert len(list((tmp_path / "cache" / "thresholds").glob("*/value.nc"))) == 1
     cache.get_or_compute(spec, rain, (2001, 2002), "mean_daily_rain")
     cache.get_or_compute(ThresholdSpec("mean_total", days=2), rain, (2001, 2003), "mean_daily_rain")
     assert len(calls) == 3
@@ -185,6 +185,8 @@ def test_cache_key_depends_on_source_and_grid():
     a = make_rain(lambda i, t, c: 1.0, source="a")
     b = make_rain(lambda i, t, c: 1.0, source="b")
     c = make_rain(lambda i, t, c: 1.0, source="a", n_cells=3)
-    keys = {ThresholdCache.key(spec, r, (2001, 2003)) for r in (a, b, c)}
-    assert len(keys) == 3
-    assert ThresholdCache.key(spec, a, (2001, 2003)) == ThresholdCache.key(spec, a, (2001, 2003))
+    cache = ThresholdCache(None)
+    fp = lambda cache, rain: cache.store.fingerprint(cache.parts(spec, rain, (2001, 2003)))
+    assert len({fp(cache, r) for r in (a, b, c)}) == 3
+    assert fp(cache, a) == fp(cache, a)
+    assert fp(ThresholdCache(None, [["f.nc", 1, 2]]), a) != fp(cache, a)

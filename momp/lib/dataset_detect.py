@@ -27,9 +27,7 @@ What is detected, and how:
 from __future__ import annotations
 
 import glob
-import hashlib
 import os
-import pickle
 import re
 import warnings
 from collections import Counter
@@ -40,6 +38,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from momp.cache import Store, file_identity
 from momp.lib.dataset_schema import DatasetError, expand_path, parse_dataset
 from momp.onset import ingest
 
@@ -344,57 +343,34 @@ def cache_dir() -> Path:
     return Path(base) / "detect"
 
 
-def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> str | None:
-    """A hash of what detection depends on: the user's keys, and the paths, sizes and mtimes of the dataset's files.
+def _store() -> Store:
+    """The detection cache: a momp.cache.Store of kind "detect" in cache_dir (fresh copies, nothing kept in memory)."""
+    return Store("detect", cache_dir().parent, label="Dataset detection", memory=False)
 
-    None when the folder cannot be listed (nothing to cache against).
+
+def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> dict | None:
+    """What detection depends on: the user's keys, and the identity (path, size, mtime) of the dataset's files.
+
+    None when the folder cannot be listed or a file read (nothing to cache against).
     """
     try:
         folder = Path(expand_path(entry["path"]))
-        if is_zarr_store(folder):
-            from momp.lib.align_sample import _signature
-
-            files = []
-            stats = _signature(folder, None)
-            if not stats:
-                return None
-        else:
-            files = sorted(p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
-            stats = []
+        files = [folder] if is_zarr_store(folder) else sorted(
+            p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
     except (KeyError, DatasetError, OSError):
         return None
-    for path in files:
-        try:
-            st = path.stat()
-            stats.append((str(path), st.st_size, st.st_mtime_ns))
-        except OSError:
-            return None
-    text = repr((_CACHE_VERSION, kind, lead_label_default, sorted((k, repr(v)) for k, v in entry.items()),
-                 sorted((k, repr(v)) for k, v in (sources or {}).items()), stats))
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
-def _cache_load(key: str) -> Resolution | None:
-    """The cached Resolution for a fingerprint, or None (also when the cache file is unreadable)."""
-    try:
-        with open(cache_dir() / f"{key}.pkl", "rb") as fh:
-            res = pickle.load(fh)
-    except Exception:  # noqa: BLE001 - a missing or corrupt cache entry is just a miss
+    identities = [file_identity(path) for path in files]
+    if not identities or any(i[1] is None for i in identities):
         return None
-    return res if isinstance(res, Resolution) else None
+    return {"version": _CACHE_VERSION, "kind": kind, "lead_label_default": lead_label_default,
+            "entry": {k: repr(v) for k, v in entry.items()}, "sources": {k: repr(v) for k, v in (sources or {}).items()},
+            "files": identities}
 
 
-def _cache_store(key: str, res: Resolution) -> None:
-    """Write a Resolution to the cache; failures (read-only home, full disk) are ignored."""
-    try:
-        folder = cache_dir()
-        folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / f"{key}.{os.getpid()}.tmp"
-        with open(tmp, "wb") as fh:
-            pickle.dump(res, fh)
-        os.replace(tmp, folder / f"{key}.pkl")
-    except Exception:  # noqa: BLE001
-        pass
+def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> str | None:
+    """The cache fingerprint of a dataset's detection (see _parts), or None when it cannot be cached."""
+    parts = _parts(entry, kind, lead_label_default, sources)
+    return None if parts is None else _store().fingerprint(parts)
 
 
 def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: dict | None = None,
@@ -406,10 +382,10 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
     alignment (it depends on the observations) is not cached. See resolve_entry_uncached for the keys.
     """
     runs_alignment = kind == "forecast" and detect_lead_label and "lead_label" not in entry
-    key = _fingerprint(entry, kind, lead_label_default, sources) if use_cache and not runs_alignment else None
-    if key:
-        hit = _cache_load(key)
-        if hit is not None:
+    parts = _parts(entry, kind, lead_label_default, sources) if use_cache and not runs_alignment else None
+    if parts:
+        hit = _store().get(parts, quiet=True)
+        if isinstance(hit, Resolution):
             for line in hit.lines:
                 if line.how == "detected":
                     line.how = "detected (cached)"
@@ -417,8 +393,8 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
             return hit
     res = resolve_entry_uncached(entry, kind, sources=sources, obs=obs, detect_lead_label=detect_lead_label,
                                  lead_label_default=lead_label_default)
-    if key and res.checked:
-        _cache_store(key, res)
+    if parts and res.checked:
+        _store().put(parts, res)
     return res
 
 

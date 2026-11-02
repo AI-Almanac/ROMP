@@ -246,7 +246,7 @@ def test_romp_model_thresholds_are_per_verification_window_and_cached_by_windows
     assert amount.values[0].tolist() == [[10.0, 10.0]] * 2 and amount.values[1].tolist() == [[30.0, 30.0]] * 2
     assert amount["window_first"].values.tolist() == [1, 6]
     cache = tmp_path / "out" / ".onset_cache"
-    assert len(list(cache.glob("model_wet_spell_amount_*.nc"))) == 1
+    assert len(list((cache / "model_thresholds").glob("*/value.nc"))) == 1
 
     romp_input._loaded_thresholds.clear()
     monkeypatch.setattr(romp_input, "get_forecast_deterministic_twice_weekly",

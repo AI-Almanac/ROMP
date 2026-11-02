@@ -237,7 +237,7 @@ def test_model_thresholds_are_computed_from_the_forecast_archive_and_cached(tmp_
     thresholds = romp_input.load_thresholds(**kwargs)
     amount = thresholds["wet_spell_amount"]
     assert np.allclose(amount.values, 10.0) and amount.attrs["source"].startswith("model:")
-    assert list((tmp_path / "out" / ".onset_cache").glob("model_wet_spell_amount_*.nc"))
+    assert list((tmp_path / "out" / ".onset_cache" / "model_thresholds").glob("*/value.nc"))
     romp_input._loaded_thresholds.clear()
     monkeypatch.setattr(romp_input, "get_forecast_deterministic_twice_weekly",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("cache not used")))

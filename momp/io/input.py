@@ -4,7 +4,6 @@ Loaders read only what the run needs: the year's inits, the leads the onset rule
 the region's box are selected on the lazy array before any data is decoded; the cell mask and the unit
 conversion are then applied in place on the one array that was read.
 """
-import hashlib
 import json
 import os
 import threading
@@ -14,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
+from momp.cache import NETCDF, NETCDF_GROUPS, Store, file_identity
+from momp.stats import observed_cache
 from momp.utils.workers import ordered_prefetch, worker_count
 from momp.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, is_legacy, onset_setup, setup_key
 from momp.onset import definition as definition_mod
@@ -284,21 +285,12 @@ def _reference_rain(setup, years, kwargs):
         day_boundary=setup.obs_day_boundary, units="mm", source=source)
 
 
-def _harmonic_cached(cache_dir, rain, years):
+def _harmonic_cached(cache_dir, rain, years, files=()):
     """The harmonic season analysis of the reference years, read from or written to the cache directory."""
-    grid = hashlib.sha256()
-    for dim in rain.dims[:-1]:
-        grid.update(dim.encode())
-        grid.update(np.ascontiguousarray(rain.coords[dim]).tobytes())
-    payload = json.dumps(["harmonic", rain.source, [int(years[0]), int(years[1])], grid.hexdigest()])
-    path = Path(cache_dir) / f"harmonic_{hashlib.sha256(payload.encode()).hexdigest()[:16]}.nc"
-    if path.exists():
-        with xr.open_dataset(path) as stored:
-            return stored.load()
-    result = harmonic_seasons(rain, years)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    result.to_netcdf(path)
-    return result
+    parts = {"source": rain.source, "years": [int(years[0]), int(years[1])], "files": list(files),
+             "grid": {dim: rain.coords[dim] for dim in rain.dims[:-1]}}
+    return Store("harmonic_seasons", cache_dir, codec=NETCDF, label="Harmonic seasons").get_or_compute(
+        parts, lambda: harmonic_seasons(rain, years))
 
 
 def _model_forecasts(setup, years, kwargs):
@@ -329,27 +321,21 @@ def _model_thresholds(setup, pending, years, cache_dir, kwargs):
     window = (1, int(kwargs["max_forecast_day"]))
     windows = [(int(a), int(b)) for a, b in kwargs["verification_window_list"]] \
         if kwargs.get("verification_window_list") else None
-    key = json.dumps([str(kwargs.get("model")), str(kwargs.get("model_dir")), [int(years[0]), int(years[1])],
-                      list(window), windows, definition_mod.definition_hash(setup.definition), [repr(p) for p in pending],
-                      setup.lead_label, [int(d) for d in kwargs.get("init_days", ())],
-                      None if not kwargs.get("members") else [int(m) for m in kwargs["members"]]])
-    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
-    paths = {name: Path(cache_dir) / f"model_{name}_{digest}.nc" for name, _ in pending}
-    out = {}
-    if all(path.exists() for path in paths.values()):
-        for name, path in paths.items():
-            with xr.open_dataarray(path) as stored:
-                out[name] = stored.load()
-        return out
+    parts = {"model": str(kwargs.get("model")), "model_files": file_identity(kwargs["model_dir"]) if kwargs.get("model_dir") else None,
+             "years": [int(years[0]), int(years[1])], "window": list(window), "windows": windows,
+             "definition": definition_mod.definition_hash(setup.definition), "pending": [repr(p) for p in pending],
+             "lead_label": setup.lead_label, "init_days": [int(d) for d in kwargs.get("init_days", ())],
+             "members": None if not kwargs.get("members") else [int(m) for m in kwargs["members"]]}
     names = {name for name, _ in pending}
-    from dataclasses import replace
-    reduced = replace(setup.definition, thresholds=tuple((n, sp) for n, sp in setup.definition.thresholds if n in names))
-    computed = compute_thresholds_from_forecasts(reduced, _model_forecasts(setup, years, kwargs), years, window, windows)
-    Path(cache_dir).mkdir(parents=True, exist_ok=True)
-    for name, array in computed.items():
-        array.to_netcdf(paths[name])
-        out[name] = array
-    return out
+
+    def compute():
+        from dataclasses import replace
+        reduced = replace(setup.definition,
+                          thresholds=tuple((n, sp) for n, sp in setup.definition.thresholds if n in names))
+        return compute_thresholds_from_forecasts(reduced, _model_forecasts(setup, years, kwargs), years, window, windows)
+
+    store = Store("model_thresholds", cache_dir, codec=NETCDF_GROUPS, label="Model thresholds")
+    return store.get_or_compute(parts, compute)
 
 
 def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
@@ -379,11 +365,12 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
             return thresholds
     probe = _reference_rain(setup, (years[0], years[0]), {"dir_out": dir_out, "region": region, **kwargs})
     full = _LazyRain(probe, lambda: _reference_rain(setup, years, {"region": region, **kwargs}))
-    cache = ThresholdCache(cache_dir)
+    files = observed_cache.obs_files(kwargs, range(years[0], years[1] + 1))
+    cache = ThresholdCache(cache_dir, files)
     for name, spec in pending:
         thresholds[name] = cache.get_or_compute(spec, full, years, name)
     if setup.derived_seasons:
-        thresholds.season_climatology = _harmonic_cached(cache_dir, full, years)
+        thresholds.season_climatology = _harmonic_cached(cache_dir, full, years, files)
     return thresholds
 
 
