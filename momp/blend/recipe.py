@@ -1,11 +1,11 @@
-"""The blend-specific settings of a run: what the future `blend:` section holds, and nothing ROMP's config has.
+"""The blend-specific settings of a run: what the `blend:` section of the run YAML holds, and nothing ROMP's config has.
 
 ROMP's resolved run config (`momp.config`, `momp.lib.config_schema`, `momp.lib.onset_config.OnsetSetup`) already says
 where the observations and forecasts are (obs_*, model_* keys, `dataset_schema` entries), the onset definition and its
 run options (onset_definition / onset_rule, rain_resolution, missing, negatives, gaps, onset_horizon), the backend,
 years and workers. A `Recipe` is used *together with* that config: it holds only what blending adds, each field naming
-its BlendConfig origin. The test-side translator (tests/blend/_recipes.py) returns the pair (flat ROMP config dict,
-Recipe) for a BlendConfig; the report of the split is there too.
+its BlendConfig origin. `recipe_from_config(flat)` builds it from the flat config's `blend_*` keys (the `blend:` section
+of the YAML; `momp-run convert` writes that section from a BlendConfig or a legacy spec set).
 
 Pure data with validation: no file is read, no YAML parsed. Rules that need the onset definition (rain-window tokens,
 the formulas' feature names) are checked by `Recipe.check(definition)`. The derived names (feature columns,
@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+from momp.lib.dataset_schema import DatasetError, parse_years, suggest
+
 from momp.blend.design import Formula, WindowVariant
 from momp.blend.random_forest import Params as ForestParams
 from momp.onset.model import Definition
@@ -26,7 +28,7 @@ from momp.stats.bins import LeadBins
 __all__ = [
     "Baselines", "ClimatologySpec", "Evaluation", "ExternalPrediction", "Features",
     "ForecastScoring", "Mme", "MmeSource", "Model", "OnsetExtras", "Outputs", "RainHorizon", "RainPredictor", "Recipe",
-    "RecipeError", "ReferenceSpec", "Years",
+    "RecipeError", "ReferenceSpec", "Years", "recipe_from_config",
 ]
 
 CLIMATOLOGY_FEATURE = "prob_clim"
@@ -624,3 +626,330 @@ def _check_rain_transform(value, path: str, problems: list[str]) -> None:
     if text in _RAIN_TRANSFORMS or re.fullmatch(r"power:\s*-?\d+(\.\d+)?", text):
         return
     problems.append(f"{path}: {value!r} is not identity, sqrt, fourth_root, log1p or power:<p>")
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The Recipe of a run config: the `blend:` section
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def _strict(value, allowed, where: str, problems: list[str]) -> dict:
+    """A mapping with only the keys allowed; others are problems with a 'did you mean'."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        problems.append(f"{where}: expected a mapping of {', '.join(allowed)}, got {value!r}")
+        return {}
+    for key in value:
+        if key not in allowed:
+            problems.append(f"{where}.{key}: unknown key.{suggest(key, allowed)} Keys: {', '.join(allowed)}")
+    return {k: v for k, v in value.items() if k in allowed}
+
+
+def _list(value, where: str, problems: list[str]) -> list:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        problems.append(f"{where}: expected a list, got {value!r}")
+        return []
+    return list(value)
+
+
+def _check_type(value, kind: str, where: str, problems: list[str]):
+    """value if it is of the kind ('int', 'number', 'bool', 'str'), else a problem and None."""
+    ok = {"int": isinstance(value, int) and not isinstance(value, bool),
+          "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+          "bool": isinstance(value, bool), "str": isinstance(value, str)}[kind]
+    if not ok:
+        what = {"int": "a whole number", "number": "a number", "bool": "true or false", "str": "text"}[kind]
+        problems.append(f"{where}: expected {what}, got {value!r}")
+        return None
+    return float(value) if kind == "number" else value
+
+
+def _choice(value, choices, where: str, problems: list[str]):
+    if value not in choices:
+        problems.append(f"{where}: {value!r} is not one of {', '.join(map(repr, choices))}.{suggest(value, choices)}")
+        return None
+    return value
+
+
+def years_of(value, where: str, problems: list[str]) -> tuple[int, ...]:
+    """Years from a list, a year or text like '2000:2024,2026' (sorted, each once)."""
+    if value is None:
+        return ()
+    try:
+        items = value if isinstance(value, (list, tuple)) else [value]
+        years = [y for item in items for y in parse_years(item, where)]
+    except DatasetError as error:
+        problems.append(str(error))
+        return ()
+    return tuple(sorted(dict.fromkeys(years)))
+
+
+def year_window(value, where: str, problems: list[str]) -> tuple[int, int] | None:
+    years = years_of(value, where, problems)
+    if not years:
+        problems.append(f"{where}: expected a first and last year")
+        return None
+    return years[0], years[-1]
+
+
+def year_windows(value, where: str, problems: list[str]) -> tuple[tuple[int, int], ...]:
+    windows = [year_window(item, f"{where}[{i}]", problems) for i, item in enumerate(_list(value, where, problems))]
+    return tuple(w for w in windows if w is not None)
+
+
+def _rain_model(name: str, value, problems: list[str]) -> Model:
+    where = f"blend.models.{name}"
+    node = _strict(value, ("lead_days", "max_member", "rain_horizon", "rain_predictors", "rain_transform"), where,
+                   problems)
+    lead = node.get("lead_days", (1, 45))
+    if isinstance(lead, dict):
+        lead = _strict(lead, ("min", "max"), f"{where}.lead_days", problems)
+        lead = (lead.get("min", 1), lead.get("max", 45))
+    if (not isinstance(lead, (list, tuple)) or len(lead) != 2
+            or not all(isinstance(x, int) and not isinstance(x, bool) for x in lead)):
+        problems.append(f"{where}.lead_days: expected [min, max] (whole numbers) or {{min, max}}, got {lead!r}")
+        lead = (1, 45)
+    horizon = _strict(node.get("rain_horizon"), ("max_day", "policy"), f"{where}.rain_horizon", problems)
+    if horizon.get("max_day") is not None:
+        _check_type(horizon["max_day"], "int", f"{where}.rain_horizon.max_day", problems)
+    if horizon.get("policy") is not None:
+        _choice(horizon["policy"], ("legacy", "exact", "truncate"), f"{where}.rain_horizon.policy", problems)
+    predictors = []
+    for index, item in enumerate(_list(node.get("rain_predictors"), f"{where}.rain_predictors", problems)):
+        at = f"{where}.rain_predictors[{index}]"
+        item = _strict(item, ("agg", "window"), at, problems)
+        if "agg" not in item:
+            problems.append(f"{at}.agg: required (diff, max or min)")
+            continue
+        window = item.get("window", "trigger")
+        if not isinstance(window, str) and not (isinstance(window, int) and not isinstance(window, bool)):
+            problems.append(f"{at}.window: expected days or one of {', '.join(WINDOW_TOKENS)}, got {window!r}")
+            continue
+        agg = _choice(item["agg"], ("diff", "max", "min"), f"{at}.agg", problems)
+        if agg is not None:
+            predictors.append(RainPredictor(agg, window))
+    max_member = node.get("max_member")
+    if max_member is not None:
+        _check_type(max_member, "int", f"{where}.max_member", problems)
+    return Model(name=name, lead_days=(lead[0], lead[1]), max_member=max_member,
+                 rain_horizon=RainHorizon(horizon.get("max_day"), horizon.get("policy")),
+                 rain_predictors=tuple(predictors), rain_transform=node.get("rain_transform"))
+
+
+def _reference(value, problems: list[str]) -> ReferenceSpec | None:
+    if value is None:
+        return None
+    where = "blend.reference_onset"
+    node = _strict(value, ("month_day", "file", "date_col", "year_col", "day_col", "base_date", "unit_col"), where,
+                   problems)
+    for key in ("month_day", "base_date"):
+        if node.get(key) is not None:
+            node[key] = str(node[key]).strip()
+            if not _MONTH_DAY.match(node[key]):
+                problems.append(f"{where}.{key}: expected a month-day like '05-01', got {node[key]!r}")
+    try:
+        return ReferenceSpec(**node)
+    except RecipeError as error:
+        problems.extend(f"{where}: {p.split(': ', 1)[-1]}" for p in error.problems)
+        return None
+
+
+def _climatology(value, problems: list[str]) -> ClimatologySpec:
+    where = "blend.climatology"
+    node = _strict(value, ("issue_end", "forecast_window", "horizons", "cv_by_year", "min_onset_years", "train_years",
+                           "test_years", "windows", "workers"), where, problems)
+    out: dict = {}
+    if "issue_end" in node:
+        out["issue_end"] = str(node["issue_end"]).strip()
+    for key, kind in (("forecast_window", "int"), ("min_onset_years", "int"), ("workers", "int"),
+                      ("cv_by_year", "bool")):
+        if node.get(key) is not None:
+            out[key] = _check_type(node[key], kind, f"{where}.{key}", problems)
+    horizons = []
+    for index, item in enumerate(_list(node.get("horizons"), f"{where}.horizons", problems)):
+        at = f"{where}.horizons[{index}]"
+        item = _strict(item, ("start", "end", "forecast_window"), at, problems)
+        if "start" not in item or "end" not in item:
+            problems.append(f"{at}: start and end month-days are required")
+            continue
+        for key in ("start", "end"):
+            if not _MONTH_DAY.match(str(item[key]).strip()):
+                problems.append(f"{at}.{key}: expected a month-day like '05-01', got {item[key]!r}")
+        horizons.append((str(item["start"]).strip(), str(item["end"]).strip(), item.get("forecast_window", 0)))
+    out["horizons"] = tuple(horizons)
+    for key in ("train_years", "test_years"):
+        if node.get(key) is not None:
+            out[key] = year_window(node[key], f"{where}.{key}", problems)
+    out["windows"] = year_windows(node.get("windows"), f"{where}.windows", problems)
+    return ClimatologySpec(**out)
+
+
+def _features(cfg: dict, problems: list[str]) -> Features:
+    bins = _strict(cfg.get("blend_bins"), ("count", "days"), "blend.bins", problems)
+    count, days = bins.get("count", 4), bins.get("days", 7)
+    out: dict = {}
+    if all(isinstance(x, int) and not isinstance(x, bool) and x >= 1 for x in (count, days)):
+        out["bins"] = LeadBins.uniform(count, days)
+    else:
+        problems.append("blend.bins: count and days must be positive whole numbers")
+    for key in ("probability_days", "trim_after_true_onset", "rain_transform"):
+        if cfg.get(f"blend_{key}") is not None:
+            out[key] = cfg[f"blend_{key}"]
+    return Features(**out)
+
+
+def _forest(value, days: int, problems: list[str]) -> ForestParams | None:
+    if value is None:
+        return None
+    where = "blend.random_forest"
+    node = _strict(value, ("name", "trees", "min_samples_leaf", "max_depth", "max_samples", "max_features",
+                           "random_state", "max_day", "missing_onset", "years_per_fold"), where, problems)
+    if node.get("max_features", "sqrt") not in ("sqrt", "all"):
+        problems.append(f"{where}.max_features: {node['max_features']!r} is not 'sqrt' or 'all'")
+    if node.get("missing_onset", "after_week4") not in ("after_week4", "drop"):
+        problems.append(f"{where}.missing_onset: {node['missing_onset']!r} is not 'after_week4' or 'drop'")
+    kinds = {"name": "str", "trees": "int", "min_samples_leaf": "int", "max_depth": "int", "max_samples": "number",
+             "random_state": "int", "max_day": "int", "years_per_fold": "int"}
+    for key, kind in kinds.items():
+        if node.get(key) is not None:
+            _check_type(node[key], kind, f"{where}.{key}", problems)
+    max_features = None if node.get("max_features", "sqrt") == "all" else node.get("max_features", "sqrt")
+    try:
+        return ForestParams(**{**{k: v for k, v in node.items() if k != "max_features"}, "max_features": max_features,
+                               "days_per_week": days})
+    except TypeError as error:
+        problems.append(f"{where}: {error}")
+        return None
+
+
+def _evaluation(cfg: dict, bins_days: int, problems: list[str]) -> Evaluation:
+    years = _strict(cfg.get("blend_years"), ("training", "cv_holdout", "true_holdout"), "blend.years", problems)
+    if cfg.get("blend_years") is None:
+        problems.append("blend.years: required (training and cv_holdout and/or true_holdout years)")
+    out: dict = {"years": Years(*(years_of(years.get(k), f"blend.years.{k}", problems)
+                                  for k in ("training", "cv_holdout", "true_holdout")))}
+    if cfg.get("blend_cutoff_mode") is not None:
+        out["cutoff_mode"] = cfg["blend_cutoff_mode"]
+    if cfg.get("blend_cv_methods") is not None:
+        out["cv_methods"] = tuple(_choice(m, CV_METHODS, "blend.cv_methods", problems) for m in cfg["blend_cv_methods"])
+    for key in ("cluster_var", "final_formula"):
+        if cfg.get(f"blend_{key}") is not None:
+            out[key] = cfg[f"blend_{key}"]
+    formulas = cfg.get("blend_formulas") or {}
+    if not isinstance(formulas, dict):
+        problems.append(f"blend.formulas: expected a mapping of name to formula text, got {formulas!r}")
+        formulas = {}
+    parsed = []
+    for name, item in formulas.items():
+        at = f"blend.formulas.{name}"
+        if isinstance(item, str):
+            parsed.append((str(name), Formula(text=item)))
+            continue
+        item = _strict(item, ("text", "enabled"), at, problems)
+        if not isinstance(item.get("text"), str):
+            problems.append(f"{at}.text: required (the formula text)")
+            continue
+        parsed.append((str(name), Formula(text=item["text"], enabled=item.get("enabled", True))))
+    out["formulas"] = tuple(parsed)
+    variants = []
+    for index, item in enumerate(_list(cfg.get("blend_window_variants"), "blend.window_variants", problems)):
+        at = f"blend.window_variants[{index}]"
+        item = _strict(item, ("base", "windows", "replace", "only_if_cutoff_mode"), at, problems)
+        if not isinstance(item.get("base"), str):
+            problems.append(f"{at}.base: required (the formula to vary)")
+            continue
+        variants.append(WindowVariant(base=item["base"], windows=year_windows(item.get("windows"),
+                        f"{at}.windows", problems), replace=item.get("replace", "prob_clim"),
+                        only_if_cutoff_mode=item.get("only_if_cutoff_mode")))
+    out["window_variants"] = tuple(variants)
+    base = _strict(cfg.get("blend_baselines"), ("unconditional", "conditional", "windows"), "blend.baselines", problems)
+    out["baselines"] = Baselines(base.get("unconditional", True), base.get("conditional", True),
+                                 year_windows(base.get("windows"), "blend.baselines.windows", problems))
+    if cfg.get("blend_forecasts") is not None:
+        scoring = []
+        for index, item in enumerate(_list(cfg["blend_forecasts"], "blend.forecasts", problems)):
+            at = f"blend.forecasts[{index}]"
+            item = _strict(item, ("model", "variant", "raw", "calibrated", "platt_weights"), at, problems)
+            if "model" not in item:
+                problems.append(f"{at}.model: required")
+                continue
+            if item.get("variant") is not None:
+                _choice(item["variant"], VARIANTS, f"{at}.variant", problems)
+            scoring.append(ForecastScoring(**item))
+        out["forecasts"] = tuple(scoring)
+    mme = _strict(cfg.get("blend_mme"), ("enabled", "variants", "sources", "optimize", "weights_year_tag"), "blend.mme",
+                  problems)
+    sources = []
+    for index, item in enumerate(_list(mme.get("sources"), "blend.mme.sources", problems)):
+        at = f"blend.mme.sources[{index}]"
+        item = _strict(item, ("name", "source", "cal_variant"), at, problems)
+        if "name" not in item:
+            problems.append(f"{at}.name: required")
+            continue
+        if "source" in item:
+            _choice(item["source"], ("clim", "forecast"), f"{at}.source", problems)
+        if "cal_variant" in item:
+            _choice(item["cal_variant"], VARIANTS, f"{at}.cal_variant", problems)
+        sources.append(MmeSource(**item))
+    if "optimize" in mme:
+        _choice(mme["optimize"], ("auto", "always", "never"), "blend.mme.optimize", problems)
+    out["mme"] = Mme(**{**{k: v for k, v in mme.items() if k not in ("sources", "variants")},
+                        "sources": tuple(sources),
+                        **({"variants": tuple(mme["variants"])} if "variants" in mme else {})})
+    external = []
+    for index, item in enumerate(_list(cfg.get("blend_external_predictions"), "blend.external_predictions", problems)):
+        at = f"blend.external_predictions[{index}]"
+        item = _strict(item, ("name", "file", "method"), at, problems)
+        if "name" not in item or "file" not in item:
+            problems.append(f"{at}: name and file are required")
+            continue
+        external.append(ExternalPrediction(**item))
+    out["external_predictions"] = tuple(external)
+    out["random_forest"] = _forest(cfg.get("blend_random_forest"), bins_days, problems)
+    return Evaluation(**out)
+
+
+def recipe_from_config(cfg: dict, setup=None) -> Recipe:
+    """The Recipe a resolved run config asks for: its `blend:` section (the flat `blend_*` keys), with the model names of
+    `model_list` and the run's `project_name`. Every problem found is reported together as one RecipeError, nested keys
+    with a 'did you mean'; unset keys take the defaults of the dataclasses above (blending's own).
+
+    With `setup` (the run's OnsetSetup) the rules that need the onset definition are checked too (`Recipe.check`).
+    """
+    problems: list[str] = []
+    names = tuple(cfg.get("model_list") or ())
+    settings = cfg.get("blend_models")
+    if settings is None:
+        settings = {}
+    elif not isinstance(settings, dict):
+        problems.append(f"blend.models: expected a mapping of model name to settings, got {settings!r}")
+        settings = {}
+    for key in settings:
+        if key not in names:
+            problems.append(f"blend.models.{key}: not one of the models.{suggest(key, names)} Models: "
+                            f"{', '.join(names)}")
+    models = tuple(_rain_model(name, settings.get(name), problems) for name in names)
+    features = _features(cfg, problems)
+    evaluation = _evaluation(cfg, features.bins.inner[0][1] - features.bins.inner[0][0] + 1, problems)
+    extras: dict = {}
+    if cfg.get("blend_fixed_cutoff") is not None:
+        extras["fixed_cutoff"] = str(cfg["blend_fixed_cutoff"]).strip()
+    outputs = _strict(cfg.get("blend_outputs"), ("dir", "intermediates", "pickles"), "blend.outputs", problems)
+    intermediates = tuple(_list(outputs.get("intermediates"), "blend.outputs.intermediates", problems))
+    for item in intermediates:
+        _choice(item, ("observations", "forecasts", "climatology", "features"), "blend.outputs.intermediates",
+                problems)
+    reference = _reference(cfg.get("blend_reference_onset"), problems)
+    climatology = _climatology(cfg.get("blend_climatology"), problems)
+    if problems:
+        raise RecipeError(problems)
+    recipe = Recipe(name=str(cfg.get("project_name") or "blend"), models=models,
+                    onset=OnsetExtras(reference=reference, **extras), climatology=climatology, features=features,
+                    evaluation=evaluation,
+                    outputs=Outputs(outputs.get("dir"), intermediates, bool(outputs.get("pickles", False))))
+    if setup is not None:
+        recipe.check(setup.definition)
+    return recipe

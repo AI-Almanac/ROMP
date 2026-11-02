@@ -3,9 +3,9 @@
 A YAML config is a mapping whose keys are either the flat config keys (the names used in
 config.in, e.g. ``obs_dir``) or sections that group them for readability::
 
-    observations:  dataset, name, path, file_pattern, variable, units, dims, day_boundary
+    observations:  dataset, name, path, paths, years, file_pattern, variable, units, unit_cvt, dims, day_boundary
     reference:     dataset, model, path, file_pattern, variable, units, dims, climatology_cv
-    models:        a list of {dataset, name, path, file_pattern, variable, units, dims,
+    models:        a list of {dataset, name, path, paths, years, file_pattern, variable, units, unit_cvt, dims,
                    lead_label, accumulation, daily_boundary, members}
     onset:         definition, override, rule, season, threshold_years, thresholds, threshold_scale,
                    threshold_table, threshold_max_missing, threshold_partial_years, rain_resolution, missing,
@@ -15,6 +15,10 @@ config.in, e.g. ``obs_dir``) or sections that group them for readability::
     units:         mode, shapefile, unit_id_col, unit_name_col, parent_col, weights, centroids, centroid_id_col,
                    dissemination, dissemination_id_col, dissemination_scope, box, outline, boundary, id_digits,
                    id_format (evaluation units instead of grid cells; extends the region's `units:`)
+    blend:         years, cutoff_mode, cv_methods, cluster_var, formulas, final_formula, window_variants,
+                   baselines, forecasts, mme, external_predictions, random_forest, fixed_cutoff, reference_onset,
+                   bins, probability_days, trim_after_true_onset, rain_transform, climatology, models, outputs
+                   (train an onset blend: momp.blend; see `momp-run convert` for blending configs)
     evaluation:    start_date, end_date, start_year_clim, end_year_clim, init_days, date_filter_year,
                    verification_windows, tolerances, max_forecast_day, day_bins, probabilistic, members
     metrics:       FAR, MAE, MR, BS, RPS, AUC, Reliability, skill_score
@@ -36,14 +40,15 @@ from typing import Any, Callable
 from momp.lib.assertion import ROMPConfigError
 from momp.lib.dataset_schema import expand_env, suggest
 
-DIM_NAMES = ("init_time", "step", "member", "lat", "lon")
-"""Canonical forecast dimension names that ``dims`` may rename."""
+DIM_NAMES = ("init_time", "step", "member", "lat", "lon", "unit")
+"""Canonical dimension names that ``dims`` may rename (``unit``: the dimension of evaluation units)."""
 SECTIONS = {
     "observations": "the observation dataset",
     "reference": "the reference model of the skill scores (climatology by default)",
     "models": "the forecast models, a list",
     "onset": "what counts as onset and how it is searched",
     "units": "evaluation units (admin units, weighted cells) instead of grid cells; extends the region's units",
+    "blend": "train an onset blend (cross-validated logit or forest over climatology and forecast onset features)",
     "evaluation": "the period, lead windows and metrics settings",
     "metrics": "which metrics to compute",
     "output": "output folders and which files and figures to write",
@@ -257,6 +262,13 @@ def _dims(value):
     return dict(value)
 
 
+def _paths_list(value):
+    """A list with one list of paths per model, returned as a tuple of tuples."""
+    if not isinstance(value, (list, tuple)):
+        raise ValueError
+    return tuple(_paths(v) for v in value)
+
+
 def _dims_list(value):
     """A list with one dims mapping (or null) per model, returned as a tuple."""
     if not isinstance(value, (list, tuple)):
@@ -375,6 +387,19 @@ def _mask(value):
     return out
 
 
+UNIT_MODES = ("cells", "regrid", "cell_transform")
+"""How rain reaches the units (`units.mode`)."""
+
+
+def _unit_mode(value):
+    """One of 'cells', 'regrid', 'cell_transform', or a mapping of source name ('observations', a model's name, '*') to one."""
+    if isinstance(value, str) and value in UNIT_MODES:
+        return value
+    if isinstance(value, dict) and value and all(isinstance(k, str) and v in UNIT_MODES for k, v in value.items()):
+        return dict(value)
+    raise ValueError
+
+
 def _anything(value):
     """Any value."""
     return value
@@ -397,8 +422,9 @@ KINDS: dict[str, tuple[str, Callable]] = {
     "paths": ("a list of paths", _paths),
     "patterns": ("a file pattern such as '{}.nc' (quote it), or a list of them", _patterns),
     "numbers_or_null": ("a list of numbers or null", _numbers_or_null),
-    "dims": ("a mapping from init_time, step, member, lat, lon to the file's dimension names", _dims),
+    "dims": ("a mapping from init_time, step, member, lat, lon (or unit) to the file's dimension names", _dims),
     "dims_list": ("a list of dims mappings or null, one per model", _dims_list),
+    "paths_list": ("a list with one list of paths per model", _paths_list),
     "members": ("'All', a range like '0-9', or a list of whole numbers", _members),
     "cells": ("a list of [lat, lon] pairs, e.g. [[9.0, 38.75]]", _cells),
     "thresholds": ("a mapping of threshold names to 'path.nc:variable' (a grid), a table file (by unit id) or a "
@@ -406,6 +432,8 @@ KINDS: dict[str, tuple[str, Callable]] = {
     "years": ("'All' or a list of years", _years),
     "mask": ("a mapping of land, country, file, variable, keep_value, condition, cell_rule, overlap_fraction, "
              "resolution", _mask),
+    "unit_mode": ("one of 'cells', 'regrid', 'cell_transform', or a mapping of source name to one of them",
+                  _unit_mode),
     "any": ("any value", _anything),
 }
 """Value kinds: a description of the form expected and the function that checks and normalises a value."""
@@ -447,7 +475,8 @@ def _fields() -> tuple[Field, ...]:
         Field("layout", "strs", "dimensions of the processed cases; leave as is", ("model", "verification_window")),
         Field("dataset_files", "paths", "YAML files describing your datasets, referenced by id with `dataset:`", ()),
         Field("catalog_dirs", "paths", "folders of <id>.yaml dataset files, referenced by id with `dataset:`", ()),
-        Field("region", "str", "target region id or alias, see `python -m momp.onset regions`", REQUIRED),
+        Field("region", "str", "target region id or alias, see `python -m momp.onset regions`; null: no region (no box, "
+              "no region defaults; what a converted onset_blending config uses)", REQUIRED, nullable=True),
         Field("nc_mask", "path", "NetCDF mask of 1s and 0s limiting the evaluated cells", None, nullable=True),
         Field("mask", "mask", "cells to evaluate, on each dataset's own grid; the parts given intersect: "
               + "; ".join(f"{k}: {h}" for k, (_, h) in MASK_KEYS.items()), None, nullable=True, fill=False),
@@ -470,6 +499,8 @@ def _fields() -> tuple[Field, ...]:
         Field("accumulation_list", "strs", "accumulation of each model (from models[].accumulation)", fill=False, internal=True),
         Field("daily_boundary_list", "strs", "daily boundary of each model, or null (from models[].daily_boundary)", fill=False, internal=True),
         Field("file_pattern_list", "strs", "file pattern of each model", REQUIRED, internal=True),
+        Field("model_paths_list", "paths_list", "the files of each model, resolved from models[].paths and years "
+              "(a blend reads every file of each model)", fill=False, internal=True),
         Field("model_dims_list", "dims_list", "dimension names of each model's files", None, fill=False, internal=True),
         # old flat onset keys (legacy mode; they cannot be combined with onset.definition)
         Field("wet_init", "number", "legacy: rain (mm) of the first potential wet day", fill=False, nullable=True),
@@ -485,11 +516,16 @@ def _fields() -> tuple[Field, ...]:
     obs = [
         Field("obs", "str", "observation dataset name (default: 'obs')", "obs",
               "observations", "name"),
-        Field("obs_dir", "path", "folder of the observation files", REQUIRED, "observations", "path"),
+        Field("obs_dir", "path", "folder of the observation files (or the base of observations.paths)", REQUIRED,
+              "observations", "path"),
         Field("obs_file_pattern", "patterns", "file pattern, {} is the year", ("{}.nc",), "observations",
               "file_pattern"),
         Field("obs_var", "str", "rainfall variable in the files", REQUIRED, "observations", "variable"),
         Field("obs_unit_cvt", "number", "multiplier to mm (derived from units)", None, nullable=True,
+              internal=True),
+        Field("obs_paths", "paths", "the observation files, resolved from observations.paths and years (any number "
+              "per year; instead of obs_dir and obs_file_pattern)", fill=False, internal=True),
+        Field("obs_dims", "dims", "dimension names of the observation files", None, nullable=True, fill=False,
               internal=True),
         Field("obs_day_boundary", "str", "when the day starts and which date labels it, e.g. "
               "'00 UTC, labelled by start' (null: the region's)", None, "observations", "day_boundary",
@@ -567,7 +603,7 @@ def _fields() -> tuple[Field, ...]:
               nullable=True),
     ]
     units = [
-        Field("units_mode", "str", "how rain reaches the units: 'cells' (the file's own cells or units), 'regrid' (weights from the file's grid; unit factors after averaging) or 'cell_transform' (a source-to-unit weights table; factors before averaging, missing rain judged on the source cells); null: cells, or regrid with a shapefile or weights", None, "units", "mode", choices=("cells", "regrid", "cell_transform"), nullable=True, fill=False),
+        Field("units_mode", "unit_mode", "how rain reaches the units (one mode, or a mapping by source: 'observations', a model's name, '*'): 'cells' (the file's own cells or units), 'regrid' (weights from the file's grid; unit factors after averaging) or 'cell_transform' (a source-to-unit weights table; factors before averaging, missing rain judged on the source cells); null: cells, or regrid with a shapefile or weights", None, "units", "mode", nullable=True, fill=False),
         Field("units_shapefile", "path", "polygons of the units (with unit_id_col)", None, "units", "shapefile", nullable=True, fill=False),
         Field("units_unit_id_col", "str", "id column of the shapefile", None, "units", "unit_id_col", nullable=True, fill=False),
         Field("units_unit_name_col", "str", "name column of the shapefile", None, "units", "unit_name_col", nullable=True, fill=False),
@@ -583,6 +619,67 @@ def _fields() -> tuple[Field, ...]:
         Field("units_boundary", "str", "a centroid on the outline's edge is 'contains' (left out) or 'intersects' (kept)", None, "units", "boundary", choices=("contains", "intersects"), nullable=True, fill=False),
         Field("units_id_digits", "int", "decimal digits of grid unit ids (null: established or inferred)", None, "units", "id_digits", nullable=True, fill=False),
         Field("units_id_format", "str", "grid ids 'trimmed' of trailing zeros or 'fixed'", None, "units", "id_format", choices=("trimmed", "fixed"), nullable=True, fill=False),
+    ]
+    blend = [
+        Field("blend_years", "any", "years of the blend, a mapping of training (fit on these), cv_holdout (scored by "
+              "leave-out cross-validation) and true_holdout (scored, never fitted; optional); each a list of years or "
+              "text like '2000:2024,2026'. Required to train a blend", None, "blend", "years", nullable=True,
+              fill=False),
+        Field("blend_cutoff_mode", "str", "which issue dates are scored: 'fixed_cutoff' (the issue on or after "
+              "fixed_cutoff), 'ref_onset' (the issue on or after the reference onset) or 'no_ref_filter' "
+              "(default 'fixed_cutoff')", None, "blend", "cutoff_mode", choices=("fixed_cutoff", "ref_onset",
+              "no_ref_filter"), nullable=True, fill=False),
+        Field("blend_cv_methods", "strs", "cross-validation methods: 'global', 'local' (one fit per unit) and/or "
+              "'clusters' (default ['global'])", None, "blend", "cv_methods", nullable=True, fill=False),
+        Field("blend_cluster_var", "str", "grouping column of the 'clusters' method (default 'cluster')", None,
+              "blend", "cluster_var", nullable=True, fill=False),
+        Field("blend_formulas", "any", "the blend models: a mapping of name to a formula text "
+              "('outcome ~ prob_clim_qx + diff_AIFS_qx') or to {text, enabled}; features are <base>_qx or "
+              "<base>_week<n>", None, "blend", "formulas", nullable=True, fill=False),
+        Field("blend_final_formula", "str", "the formula fitted on every training year for operations (default: the "
+              "only enabled formula)", None, "blend", "final_formula", nullable=True, fill=False),
+        Field("blend_window_variants", "any", "formula variants that swap a feature for its windowed climatology: a "
+              "list of {base, windows: [[2000, 2010]], replace: prob_clim, only_if_cutoff_mode}", None, "blend",
+              "window_variants", nullable=True, fill=False),
+        Field("blend_baselines", "any", "climatology baselines scored: {unconditional: true, conditional: true, "
+              "windows: [[2000, 2010]]} (unconditional is the skill baseline and cannot be turned off)", None,
+              "blend", "baselines", nullable=True, fill=False),
+        Field("blend_forecasts", "any", "raw and calibrated scoring of each model's own probabilities: a list of "
+              "{model, variant: base|fixed_cutoff|ref_onset, raw: true, calibrated: true, platt_weights: false} "
+              "(default: every model, raw and calibrated)", None, "blend", "forecasts", nullable=True, fill=False),
+        Field("blend_mme", "any", "multi-model ensemble with RPS-optimised weights: {enabled, variants, sources: "
+              "[{name, source: clim|forecast, cal_variant}], optimize: auto|always|never, weights_year_tag}", None,
+              "blend", "mme", nullable=True, fill=False),
+        Field("blend_external_predictions", "any", "cross-validated predictions made elsewhere, scored with the "
+              "rest: a list of {name, file, method}", None, "blend", "external_predictions", nullable=True,
+              fill=False),
+        Field("blend_random_forest", "any", "also blend with the CRPS random forest: {name, trees, min_samples_leaf, "
+              "max_depth, max_samples, max_features: sqrt|all, random_state, max_day, missing_onset: "
+              "after_week4|drop, years_per_fold}", None, "blend", "random_forest", nullable=True, fill=False),
+        Field("blend_fixed_cutoff", "str", "start of the fixed_cutoff forecast probabilities, 'MM-DD' (default "
+              "'06-02')", None, "blend", "fixed_cutoff", nullable=True, fill=False),
+        Field("blend_reference_onset", "any", "the reference (climatological) onset: {month_day: 'MM-DD'} every year, "
+              "or {file, date_col | year_col + day_col + base_date, unit_col} a table of dates", None, "blend",
+              "reference_onset", nullable=True, fill=False),
+        Field("blend_bins", "any", "the weekly outcome bins: {count: 4, days: 7} (outcomes week1..weekN, later)", None,
+              "blend", "bins", nullable=True, fill=False),
+        Field("blend_probability_days", "int", "lead days of onset probability summed into the bins (default 28)",
+              None, "blend", "probability_days", nullable=True, fill=False),
+        Field("blend_trim_after_true_onset", "bool", "drop issue dates after the observed onset (default true)", None,
+              "blend", "trim_after_true_onset", nullable=True, fill=False),
+        Field("blend_rain_transform", "any", "transform of the rain features: identity, sqrt, fourth_root, log1p, "
+              "power:<p> or a number (default identity)", None, "blend", "rain_transform", nullable=True,
+              fill=False),
+        Field("blend_climatology", "any", "the KDE climatology: {issue_end: '07-31', forecast_window | horizons: "
+              "[{start, end, forecast_window}], cv_by_year: true, min_onset_years: 10, train_years, test_years, "
+              "windows: [[2000, 2010]], workers}", None, "blend", "climatology", nullable=True, fill=False),
+        Field("blend_models", "any", "per forecast model (by its name in `models:`): {lead_days: [1, 45] or "
+              "{min, max}, max_member, rain_horizon: {max_day, policy: legacy|exact|truncate}, rain_predictors: "
+              "[{agg: diff|max|min, window: days or a token of the definition}], rain_transform}", None, "blend",
+              "models", nullable=True, fill=False),
+        Field("blend_outputs", "any", "what a blend run writes besides its artifacts: {dir (where "
+              "external_predictions files are read from), intermediates: [observations, forecasts, climatology, "
+              "features], pickles: false}", None, "blend", "outputs", nullable=True, fill=False),
     ]
     evaluation = [
         Field("start_date", "date", "first date; its month/day start the forecast init dates", REQUIRED,
@@ -613,18 +710,28 @@ def _fields() -> tuple[Field, ...]:
     ] + [Field(name, "bool", text, default, "output") for name, text, default in _TOGGLES] + [
         Field("plot_portrait", "bool", "portrait plots", False, "output", fill=False),
     ]
-    return tuple(top + obs + ref + onset + units + evaluation + metrics + output)
+    return tuple(top + obs + ref + onset + units + blend + evaluation + metrics + output)
 
 
 FIELDS = _fields()
 """Every config key, in documentation order."""
 BY_KEY = {f.key: f for f in FIELDS}
 BY_PATH = {(f.section, f.nested_name): f for f in FIELDS if f.section}
-SPECIAL_SUBKEYS = {"observations": ("dataset", "units", "dims"), "reference": ("dataset", "units")}
-"""Section entries that are not config keys: the dataset file entry to take values from, units, dims."""
-MODEL_ENTRY_KEYS = ("dataset", "name", "path", "file_pattern", "variable", "units", "dims", "lead_label",
-                    "accumulation", "daily_boundary", "members")
+SPECIAL_SUBKEYS = {"observations": ("dataset", "units", "unit_cvt", "dims", "paths", "years"),
+                   "reference": ("dataset", "units")}
+"""Section entries that are not config keys: the dataset file entry to take values from, units, dims, listed files."""
+MODEL_ENTRY_KEYS = ("dataset", "name", "path", "paths", "years", "file_pattern", "variable", "units", "unit_cvt", "dims",
+                    "lead_label", "accumulation", "daily_boundary", "members")
 """Keys of one entry of the `models:` list."""
+
+
+BLEND_KEYS = tuple(f.key for f in FIELDS if f.section == "blend")
+"""The flat keys of the `blend:` section; a config that sets any of them trains a blend."""
+
+
+def has_blend(config) -> bool:
+    """Whether a flat config (or any mapping of flat keys) has a `blend:` section, i.e. sets any of its keys."""
+    return any(config.get(key) is not None for key in BLEND_KEYS)
 
 
 def section_names(section: str) -> list[str]:

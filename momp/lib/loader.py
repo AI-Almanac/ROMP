@@ -144,9 +144,14 @@ def plan_run(dic, config_file=None, write=True):
     from momp.lib import run_folder
 
     if "lead_window" not in dic:
-        from momp.lib.lead_window import apply_lead_window
+        from momp.lib import config_schema as schema
 
-        apply_lead_window(dic)
+        if schema.has_blend(dic):   # a blend reads each model's leads itself (lead_days), not ROMP's benchmark window
+            dic["lead_window"], dic["onset_lead_lines"] = (1, dic["max_forecast_day"]), ()
+        else:
+            from momp.lib.lead_window import apply_lead_window
+
+            apply_lead_window(dic)
     return run_folder.apply(dic, run_folder.plan(dic, config_file, write))
 
 

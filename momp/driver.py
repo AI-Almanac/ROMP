@@ -7,6 +7,7 @@ or the generation of spatial performance maps.
 
 Usage:
     momp-run -p run.yaml [--check] [--overwrite] [--quiet | --verbose]
+    momp-run -p a.yaml -p b.yaml     (or -p 'runs/*.yaml'): several run files, one after another
     or
     python -m momp.driver -p run.yaml
 
@@ -15,7 +16,9 @@ itself is momp.api.execute, which ``momp.run`` (notebooks) shares.
 """
 
 import argparse
+import glob
 import logging
+import os
 import sys
 import traceback
 from types import SimpleNamespace
@@ -35,13 +38,41 @@ def _flags(argv):
     return parser.parse_known_args(argv)[0]
 
 
-def _check(flags) -> int:
+def config_paths(argv) -> list[str]:
+    """The run files named by -p/--param in argv (repeatable; a glob names every file it matches), else MOMP_CONFIG."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("-p", "--param", action="append", default=[])
+    given = parser.parse_known_args(argv)[0].param or ([os.environ["MOMP_CONFIG"]] if os.environ.get("MOMP_CONFIG") else [])
+    found: list[str] = []
+    for item in given:
+        text = os.path.expanduser(item)
+        hits = sorted(glob.glob(text)) if any(c in text for c in "*?[") else [text]
+        if not hits:
+            raise ROMPConfigError(f"no run file matches '{item}'")
+        found.extend(h for h in hits if h not in found)
+    return found
+
+
+def _argv_for(argv, path: str) -> list[str]:
+    """argv with every -p/--param replaced by the one run file `path` (the other arguments are kept)."""
+    out, skip = [], False
+    for arg in argv:
+        if skip:
+            skip = False
+        elif arg in ("-p", "--param"):
+            skip = True
+        elif not arg.startswith("--param="):
+            out.append(arg)
+    return [*out, "-p", path]
+
+
+def _check(flags, cli_args=None) -> int:
     """`--check`: print the plan of the run (or why the config cannot be resolved); return the exit code."""
     from momp.lib.check import build_report
     from momp.lib.loader import load_run_config
 
     try:
-        dic = load_run_config()
+        dic = load_run_config(cli_args)
     except ConfigSchemaError as exc:
         print("\n".join(getattr(exc, "report", ())) or "(no datasets described)")
         print(f"\n{exc}\n\ncheck: the config cannot be resolved; nothing was run")
@@ -57,36 +88,16 @@ def _check(flags) -> int:
     return 0 if report.ok else 1
 
 
-def run_momp(cfg=None, setting=None):
-    """
-    Executes the standard ROMP evaluation workflow.
-
-    This function triggers the bin-based skill score calculations
-    or generates spatial maps for False Alarm Rate (FAR),
-    Miss Rate (MR), and Mean Absolute Error (MAE). It reads the config named by -p (or MOMP_CONFIG),
-    writes the run folder (or the config's data_dir) and exits with status 1 on any failure.
-
-    Args:
-        cfg: A loaded configuration (dict or namespace) to run instead of reading one from the command line.
-        setting: Unused; kept for compatibility (the Setting is built from the config).
-    """
+def _run(cfg, flags, cli_args=None) -> int:
+    """Load (or take) a config and run it; the exit code: 0, or 1 after printing why it failed."""
     from momp.api import execute
     from momp.lib import loader
     from momp.lib.assertion import ROMPValidator
     from momp.lib.run_folder import RunExistsError
 
-    if cfg is None and setting is None:
-        from momp.cli import handled_without_run
-
-        if handled_without_run(sys.argv[1:]):
-            return
-
-    flags = _flags(sys.argv[1:])
-    if cfg is None and flags.check:
-        sys.exit(_check(flags))
     try:
         if cfg is None:
-            dic = loader.load_run_config()
+            dic = loader.load_run_config(cli_args)
         else:
             dic = dict(vars(cfg)) if isinstance(cfg, SimpleNamespace) else dict(cfg)
             if "run_paths" not in dic:
@@ -94,17 +105,69 @@ def run_momp(cfg=None, setting=None):
             ROMPValidator(dic).validate()
     except (ROMPConfigError, FileNotFoundError) as e:
         print(f"Error: {e}")
-        sys.exit(1)
+        return 1
 
     try:
         execute(dic, write=True, overwrite=flags.overwrite, verbosity=logs.verbosity_from(flags.quiet, flags.verbose))
-    except RunExistsError as e:
+    except (RunExistsError, ROMPConfigError) as e:
         print(f"Error: {e}")
-        sys.exit(1)
+        return 1
     except Exception as e:
         print(f"Error: ROMP failed during execution: {e}", file=sys.stderr)
         traceback.print_exc()
-        sys.exit(1)
+        return 1
+    return 0
+
+
+def _batch(paths, argv, flags) -> int:
+    """Run (or check) several run files one after another, one region per file; a failing file does not stop the
+    others. The exit code is 1 when any failed."""
+    failed = []
+    for index, path in enumerate(paths, 1):
+        print(f"\n=== {path} ({index} of {len(paths)}) ===", flush=True)
+        cli_args = _argv_for(argv, path)
+        code = _check(flags, cli_args) if flags.check else _run(None, flags, cli_args)
+        if code:
+            failed.append(path)
+    print(f"\n{len(paths) - len(failed)} of {len(paths)} run files {'checked' if flags.check else 'finished'}"
+          + (f"; failed: {', '.join(failed)}" if failed else ""))
+    return 1 if failed else 0
+
+
+def run_momp(cfg=None, setting=None):
+    """
+    Executes the standard ROMP evaluation workflow.
+
+    This function triggers the bin-based skill score calculations
+    or generates spatial maps for False Alarm Rate (FAR),
+    Miss Rate (MR), and Mean Absolute Error (MAE); a config with a `blend:` section trains the blend instead. It reads
+    the config named by -p (or MOMP_CONFIG; several -p run them one after another), writes the run folder (or the
+    config's data_dir) and exits with status 1 on any failure.
+
+    Args:
+        cfg: A loaded configuration (dict or namespace) to run instead of reading one from the command line.
+        setting: Unused; kept for compatibility (the Setting is built from the config).
+    """
+    if cfg is None and setting is None:
+        from momp.cli import handled_without_run
+
+        if handled_without_run(sys.argv[1:]):
+            return
+
+    flags = _flags(sys.argv[1:])
+    if cfg is None:
+        try:
+            paths = config_paths(sys.argv[1:])
+        except ROMPConfigError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        if len(paths) > 1:
+            sys.exit(_batch(paths, sys.argv[1:], flags))
+    if cfg is None and flags.check:
+        sys.exit(_check(flags))
+    code = _run(cfg, flags)
+    if code:
+        sys.exit(code)
 
 
 # ------------------------------------------------------------------------------

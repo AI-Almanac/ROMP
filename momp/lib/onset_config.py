@@ -213,7 +213,7 @@ _cache: dict = {}
 
 _SETUP_KEYS = ("onset_definition", "onset_season", "threshold_years", "thresholds", "obs_day_boundary",
                "model_lead_label", "check_alignment", "onset_backend", "region", "dry_spell_check",
-               "forecast_history", "threshold_source", "onset_override", "onset_rule")
+               "forecast_history", "threshold_source", "onset_override", "onset_rule", "rain_resolution")
 """The config keys the onset setup (definition mode) is resolved from."""
 
 
@@ -331,21 +331,23 @@ def _load_definition(cfg, ref, sources):
     the list of changed keys."""
     import yaml
 
+    fine = cfg.get("rain_resolution") == "exact"   # exact rain lets a definition state amounts finer than 0.1 mm
     try:
         rule = cfg.get("onset_rule")
         if rule is not None:
             if not isinstance(rule, dict):
                 raise OnsetConfigError(f"onset.rule = {rule!r} must be a mapping holding a complete definition")
-            definition = definition_mod.loads(yaml.safe_dump(rule, sort_keys=False))
+            definition = definition_mod.loads(yaml.safe_dump(rule, sort_keys=False), fine_amounts=fine)
         else:
             definition = definition_mod.load(str(Path(str(ref)).expanduser())
-                                             if str(ref) not in definition_mod.registry_ids() else str(ref))
+                                             if str(ref) not in definition_mod.registry_ids() else str(ref),
+                                             fine_amounts=fine)
         changes = cfg.get("onset_override")
         if changes is None:
             return definition, ()
         if not isinstance(changes, dict):
             raise OnsetConfigError(f"onset.override = {changes!r} must be a mapping of definition keys to change")
-        return definition_mod.override(definition, changes), tuple(_changed_keys(changes))
+        return definition_mod.override(definition, changes, fine_amounts=fine), tuple(_changed_keys(changes))
     except definition_mod.DefinitionError as exc:
         raise OnsetConfigError(f"onset_definition = {ref!r}: {exc}") from None
 

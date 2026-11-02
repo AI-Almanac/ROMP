@@ -1,7 +1,7 @@
 """Small blending configs for the evaluation and training tests, as momp's recipe and the legacy oracle's spec.
 
 `blend_config` is onset_blending's tests/_configs.py (a BlendConfig whose models have a diff rain predictor and whose
-files are never read); `recipe_of` is the momp Recipe it stands for (tests/blend/_recipes.py); `legacy_spec` the legacy
+files are never read); `recipe_of` is the momp Recipe it converts to (tests/blend/_recipes.py); `legacy_spec` the legacy
 stage spec the oracle script reads. `dissemination_ids` reads a unit table as momp reads a dissemination list.
 """
 import tempfile
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from _recipes import blending_config, oracle, translate
+from _recipes import blending_config, oracle, recipe_of  # noqa: F401
 
 from momp.spatial.units import read_id_list
 
@@ -35,10 +35,6 @@ def blend_config(evaluation: dict, *, models=("fc",), bins: int = 2, windows=(),
         "features": {"bins": {"count": bins}},
         "evaluation": evaluation,
     })
-
-
-def recipe_of(config):
-    return translate(config, strict=False).recipe
 
 
 def legacy_spec(config) -> dict:

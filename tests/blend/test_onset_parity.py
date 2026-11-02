@@ -14,11 +14,27 @@ import pytest
 
 from _oracle import legacy_onset_utils as legacy
 from _oracle.onset_rule import OnsetRule, find_onsets
-from _recipes import HEAD, definition_yaml
+from momp.lib.convert_specs import rule_body
 from momp.onset import definition as D
 from momp.onset import plan as P
 from momp.onset.backends import numba_cpu, reference
 from momp.onset.model import Jobs, Status
+
+HEAD = """id: parity
+version: 1
+title: t
+citation: t
+wording: t
+status: draft
+notes: t
+season: {from: 01-01, to: 12-31}
+"""
+
+
+def definition_yaml(r, fixed_total: float | None = None, threshold: tuple | None = None) -> str:
+    """The momp definition text of a blending rule (what `momp-run convert` writes, with this header)."""
+    return HEAD + rule_body(r, fixed_total, threshold)
+
 
 def _backends():
     out = [pytest.param(reference, id="reference")]

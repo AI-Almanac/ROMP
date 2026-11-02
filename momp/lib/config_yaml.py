@@ -21,7 +21,8 @@ import yaml
 from momp.lib import config_schema as schema
 from momp.lib import dataset_detect as detect
 from momp.lib.config_schema import ConfigSchemaError
-from momp.lib.dataset_schema import Dataset, DatasetError, expand_path, get_dataset, load_datasets, suggest
+from momp.lib.dataset_schema import (Dataset, DatasetError, expand_path, file_year, get_dataset, load_datasets,
+                                      suggest)
 
 YAML_SUFFIXES = (".yaml", ".yml")
 """File suffixes loaded as YAML."""
@@ -44,6 +45,19 @@ def load_yaml_config(path) -> dict:
     except yaml.YAMLError as exc:
         raise ConfigSchemaError(f"Invalid config {path}: not valid YAML: {exc}") from None
     return build_config(raw, source=str(path))
+
+
+def _listed_files(values: dict, blend: bool) -> tuple[str, ...]:
+    """The files of a dataset given as ``paths``; for a blend (which reads every file of a source) also the yearly files
+    of ``path`` and ``file_pattern``. Empty when there is nothing to list."""
+    if values.get("paths"):
+        return tuple(str(f) for f in detect.dataset_files(values))
+    if blend and values.get("path") and values.get("file_pattern") and "{}" in values["file_pattern"]:
+        import glob
+
+        found = glob.glob(str(Path(expand_path(values["path"])) / values["file_pattern"].replace("{}", "[0-9][0-9][0-9][0-9]")))
+        return tuple(sorted(found, key=lambda f: (file_year(f) or 0, f)))
+    return ()
 
 
 def _entry_from_dataset(ds: Dataset) -> tuple[dict, dict]:
@@ -111,7 +125,7 @@ def _resolve_observations(config, sources, given_block, datasets, report, errors
     given = {entry_key: config[flat] for flat, entry_key in _OBS_KEYS.items() if flat in config}
     if "file_pattern" in given:
         given["file_pattern"] = given["file_pattern"][0]
-    for key in ("units", "dims"):
+    for key in ("units", "unit_cvt", "dims", "paths", "years"):
         if key in given_block:
             given[key] = given_block[key]
     if not given and "dataset" not in given_block:
@@ -125,14 +139,22 @@ def _resolve_observations(config, sources, given_block, datasets, report, errors
 def _finish_observations(res, config, sources, errors):
     """Write the resolved observation values to the flat keys (after the region fallback for day_boundary)."""
     values = detect.finalize_units(res.values)
-    flat = {"obs": values.get("name"), "obs_dir": expand_path(values["path"]) if "path" in values else None,
+    flat = {"obs": values.get("name"), "obs_dir": expand_path(values["path"]) if values.get("path") else None,
             "obs_var": values.get("variable"), "obs_unit_cvt": values.get("unit_cvt"),
             "obs_day_boundary": values.get("day_boundary")}
+    listed = _listed_files(values, schema.has_blend(config))
+    if listed:   # listed files: any number per year, the years filter applied
+        flat["obs_paths"] = listed
+        flat["obs_dir"] = flat["obs_dir"] or ""
+    if values.get("dims") and any(l.key == "dims" and not l.how.startswith("detected") for l in res.lines):
+        flat["obs_dims"] = dict(values["dims"])   # only dims the user (or a dataset file) gave rename anything
     pattern = config.get("obs_file_pattern") or ((values["file_pattern"],) if "file_pattern" in values else None)
     if pattern:
         flat["obs_file_pattern"] = tuple(pattern)
     for key, value in flat.items():
-        if key in ("obs", "obs_dir", "obs_var", "obs_file_pattern") and value is None:
+        if key in ("obs", "obs_var", "obs_file_pattern") and value is None:
+            continue
+        if key == "obs_dir" and value is None:
             continue
         if key == "obs_unit_cvt" and "unit_cvt" not in values:
             continue
@@ -189,7 +211,7 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
         values["_accumulation_detected"] = any(l.key == "accumulation" and l.how.startswith("detected") for l in res.lines)
         for key in ("name", "path", "variable"):
             if key not in values:
-                values[key] = None
+                values[key] = "" if key == "path" and values.get("paths") else None
         rows.append(values)
         if values.get("lead_label"):
             labels.append((values.get("name"), values["lead_label"]))
@@ -199,15 +221,19 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
     if len(rows) != len(models) or any(r["name"] is None or r["path"] is None for r in rows):
         return
     config["model_list"] = tuple(r["name"] for r in rows)
-    config["model_dir_list"] = tuple(expand_path(r["path"]) for r in rows)
+    config["model_dir_list"] = tuple(expand_path(r["path"]) if r["path"] else "" for r in rows)
     config["model_var_list"] = tuple(r["variable"] for r in rows)
     config["unit_cvt_list"] = tuple(r.get("unit_cvt") for r in rows)
     config["file_pattern_list"] = tuple(r.get("file_pattern", "{}.nc") for r in rows)
     config["accumulation_list"] = tuple(r.get("accumulation", "auto") for r in rows)
     config["daily_boundary_list"] = tuple(r.get("daily_boundary") for r in rows)
     config["accumulation_detected"] = tuple(bool(r.get("_accumulation_detected")) for r in rows)
-    if any(r.get("dims") for r in rows):
+    if any(r.get("dims") for r in rows) or schema.has_blend(config):
         config["model_dims_list"] = tuple(r.get("dims") for r in rows)
+    listed = [_listed_files(r, schema.has_blend(config)) for r in rows]
+    if any(listed):   # listed files, any number per year (a blend reads every file of a model)
+        config["model_paths_list"] = tuple(listed)
+        sources["model_paths_list"] = "models"
     for key in _MODEL_LISTS + ("accumulation_list", "daily_boundary_list", "accumulation_detected"):
         sources[key] = "models"
     if "model_lead_label" not in config:
@@ -241,6 +267,18 @@ def _resolve_reference(config, sources, block, datasets, errors):
             config["ref_model_unit_cvt"] = unit_factor(block["units"], "reference.units")
         except DatasetError as exc:
             errors.append(str(exc))
+
+
+def _check_blend(config, errors):
+    """Build the blend Recipe from the section as far as the config says, so its problems are reported with the rest."""
+    if not schema.has_blend(config) or "model_list" not in config:
+        return
+    from momp.blend.recipe import RecipeError, recipe_from_config
+
+    try:
+        recipe_from_config(config)
+    except RecipeError as exc:
+        errors.extend(f"blend: {problem}" for problem in exc.problems)
 
 
 def _derive(config, sources, errors):
@@ -309,7 +347,7 @@ def build_config(raw, source="<config>") -> dict:
     config = schema.normalise(flat, origin, errors)
     sources = {key: "run config" for key in config}
     report: list[str] = []
-    for key, kind in (("dataset", "str"), ("units", "str"), ("dims", "dims")):
+    for key, kind in (("dataset", "str"), ("units", "str"), ("unit_cvt", "number"), ("dims", "dims")):
         for block in ("observations", "reference"):
             if key in special[block]:
                 field = schema.Field(key, kind, key)
@@ -351,6 +389,7 @@ def build_config(raw, source="<config>") -> dict:
         errors.append("'mask' and 'nc_mask' are both set. Fix: use one; `nc_mask: file.nc` is the old flat key "
                       "(it also applies the land and country masks implicitly), `mask: {file: file.nc}` the new section")
     _derive(config, sources, errors)
+    _check_blend(config, errors)
     skip = _MODEL_LISTS if any(e.startswith(("'models", "missing required key 'models'")) for e in errors) else ()
     filled = schema.apply_defaults(config, errors, skip=skip)
     for key in filled:

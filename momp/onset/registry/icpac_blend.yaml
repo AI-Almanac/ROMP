@@ -1,0 +1,29 @@
+id: icpac_blend
+version: 1
+title: ICPAC-style onset, as onset_blending reads it
+citation: ICPAC operational seasonal rainfall onset forecasts (verify source document)
+wording: TODO paste the original definition text
+status: draft
+notes: >
+  onset_blending's reading of the ICPAC onset, kept apart from icpac: 20 mm or more
+  over 5 days (icpac: more than 20 mm over 3 days), starting on a rain day (at least
+  1 mm) with at least 3 rain days in the 5, and no dry-spell test at all
+  (icpac: no 7-day dry run within the next 21 days). The search runs to the end of the
+  data (season 05-01 to 12-31). Used by `momp-run convert` for configs with this
+  definition.
+
+regions: [east_africa]
+
+wet_day: at least 1 mm
+
+season:
+  from: 05-01
+  to: 12-31
+
+onset:
+  window: 5 days
+  require:
+    - first day: wet
+    - wet days: at least 3
+    - total: at least 20 mm
+  reject if: []

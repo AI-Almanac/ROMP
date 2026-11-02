@@ -12,7 +12,9 @@ Two modes, decided by the config:
   which clears that folder first. Inside: ``run.yaml`` (the resolved config), ``definition.yaml``, ``run.log``
   and the subfolders ``onsets/``, ``scores/`` and ``figures/``, each only when it would hold more than one
   file (else its files sit in the run folder); file names are short (``spatial_AIFS_1-15.nc``,
-  ``onsets/observed.nc``). ``runs/.cache/`` is shared by all runs (thresholds, observed onsets).
+  ``onsets/observed.nc``). ``runs/.cache/`` is shared by all runs (thresholds, observed onsets). A run with a
+``blend:`` section writes the blend's artifacts (summary CSVs, ``trained.blend``, ...) under their own names into the
+``blend/`` subfolder, and nothing else besides ``run.yaml``, ``definition.yaml`` and ``run.log``.
 
 ``plan`` builds a ``RunPaths`` without touching the disk; ``prepare`` creates (or clears) the folder.
 """
@@ -25,6 +27,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from momp.lib import config_schema as schema
+
 MAX_NAME = 40
 RUN_FILE = "run.yaml"
 DEFINITION_FILE = "definition.yaml"
@@ -36,6 +40,8 @@ _NOT_IN_FINGERPRINT = {
     "save_onsets", "plot_spatial_far_mr_mae", "plot_heatmap_bss_auc", "plot_reliability", "plot_climatology_onset",
     "plot_panel_heatmap_error", "plot_panel_heatmap_skill", "plot_bar_bss_rpss_auc", "plot_portrait", "explain_cells",
     "lead_window"}
+_BLEND_NOT_IN_FINGERPRINT = {"blend_climatology": ("workers",), "blend_outputs": ("intermediates", "pickles")}
+"""Keys inside blend sections that do not define the results."""
 _CLIMATOLOGY_REFERENCES = ("climatology", "conditional_climatology")
 
 
@@ -63,6 +69,11 @@ class RunPaths:
     def log_file(self) -> Path:
         """The run's log file."""
         return self.root / LOG_FILE
+
+    @property
+    def blend(self) -> Path:
+        """Where a blend run writes its artifacts (their contract names are kept)."""
+        return self.root / "blend"
 
     @property
     def config_name(self) -> str:
@@ -94,13 +105,16 @@ def _plain(value):
 def fingerprint(dic: dict) -> str:
     """A 16-hex-character hash of everything in the flat config that defines the results.
 
-    Left out: output folders and switches, plotting, project name, parallel, the backend and the reports the
-    loader adds. The onset definition's own hash is included, so editing a definition file changes it.
+    Left out: output folders and switches, plotting, project name, parallel, the backend, the blend's worker count and
+    debug outputs, and the reports the loader adds. The onset definition's own hash is included, so editing a definition file changes it.
     """
     from momp.lib.onset_config import onset_setup
     from momp.onset import definition as definition_mod
 
     body = {k: _plain(v) for k, v in dic.items() if k not in _NOT_IN_FINGERPRINT}
+    for key, left_out in _BLEND_NOT_IN_FINGERPRINT.items():   # the blend's worker count and debug outputs
+        if isinstance(dic.get(key), dict):
+            body[key] = _plain({k: v for k, v in dic[key].items() if k not in left_out})
     try:
         body["_definition_hash"] = definition_mod.definition_hash(onset_setup(dic).definition)
     except Exception:  # noqa: BLE001 - a broken config is reported elsewhere; the hash just omits the definition
@@ -121,7 +135,7 @@ def run_name(dic: dict, digest: str) -> str:
     try:
         region = regions.load_region(str(dic.get("region"))).id
     except Exception:  # noqa: BLE001 - an unknown region is reported by the config checks
-        region = _clean(dic.get("region"))
+        region = _clean(dic.get("region") if dic.get("region") is not None else dic.get("project_name"))
     try:
         setup = onset_setup(dic)
         definition = "legacy" if setup.legacy else setup.definition.id
@@ -189,9 +203,10 @@ def plan(dic: dict, config_file=None, write: bool = True) -> RunPaths:
     runs_dir = base / "runs"
     name = run_name(dic, digest)
     root = runs_dir / name
-    scores = root / "scores" if _count_scores(dic) > 1 else root
-    figures = root / "figures" if _count_figures(dic) > 1 else root
-    onsets = root / "onsets" if count_onsets(dic) > 1 else root
+    blend = schema.has_blend(dic)   # a blend writes into blend/ only: no scores, figures or onsets folders
+    scores = root / "scores" if _count_scores(dic) > 1 and not blend else root
+    figures = root / "figures" if _count_figures(dic) > 1 and not blend else root
+    onsets = root / "onsets" if count_onsets(dic) > 1 and not blend else root
     return RunPaths(False, root, name, digest, scores, Path(dic["dir_fig"]) if explicit_fig else figures, onsets,
                     runs_dir / ".cache", runs_dir, True, write)
 

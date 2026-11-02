@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+from momp.lib.config_schema import has_blend
 from momp.lib.control import years_tuple_clim, years_tuple_model
 from momp.lib.onset_config import onset_setup
 
@@ -122,6 +123,7 @@ def _settings(dic: dict, report: CheckReport) -> None:
     report.add(f"models          : {', '.join(dic['model_list'])}")
     for line in onset_setup(dic).lines():
         report.add(line)
+    report.add(f"region box      : {_box_text(dic)}")
     mask = dic.get("mask")
     if mask:
         report.add("mask            : " + ", ".join(f"{k}={v}" for k, v in mask.items()) + f"  {_source(dic, 'mask')}")
@@ -129,6 +131,25 @@ def _settings(dic: dict, report: CheckReport) -> None:
         report.add(f"mask            : nc_mask {dic['nc_mask']} (old key; land and country masks also apply)")
     else:
         report.add("mask            : none (the region's box with the land and country masks of the old behaviour)")
+
+
+def _box_text(dic: dict) -> str:
+    """The box of the region a run selects cells with, and which one it is (a region's `legacy_domains` entry counts when
+    the region is written exactly as it)."""
+    from momp.onset import regions
+
+    name = dic.get("region")
+    if name is None:
+        return "none (no region: the whole domain of the data)"
+    box = _box(dic)
+    if box is None:
+        return f"unknown (region {name!r} is not in the registry)"
+    key = str(name).strip()
+    legacy = next((n for n, _, _ in regions.load_region(key).legacy_boxes if n == key), None)
+    which = (f"the legacy domain '{legacy}' of region {regions.load_region(key).id} (written exactly so; "
+             "any other spelling takes the region's domain)" if legacy else f"the domain of region "
+             f"{regions.load_region(key).id}")
+    return f"lat {box[0]:g} to {box[1]:g}, lon {box[2]:g} to {box[3]:g}  [{which}]"
 
 
 def _datasets(dic: dict, report: CheckReport) -> None:
@@ -163,6 +184,8 @@ def _files(dic: dict, report: CheckReport) -> dict:
             True for _ in (*setup.threshold_files, *setup.threshold_constants)):
         obs_years |= set(range(setup.threshold_years[0], setup.threshold_years[1] + 1))
     samples = {}
+    if dic.get("obs_paths") or dic.get("model_paths_list"):
+        return _listed_files(dic, report)
     patterns = tuple(dic.get("obs_file_pattern") or ("{}.nc",))
     found = {y: _find(dic["obs_dir"], patterns, y) for y in sorted(obs_years)}
     missing = [y for y, p in found.items() if p is None]
@@ -191,12 +214,37 @@ def _files(dic: dict, report: CheckReport) -> dict:
     return samples
 
 
+def _listed_files(dic: dict, report: CheckReport) -> dict:
+    """The files of datasets given as lists (`paths`): how many exist, over which years; a missing one is an error."""
+    from momp.lib.dataset_schema import file_year
+
+    samples = {}
+
+    def one(label, files):
+        files = [Path(f) for f in files]
+        gone = [f for f in files if not f.exists()]
+        years = sorted({file_year(f) for f in files} - {None})
+        span = f", years {years[0]}-{years[-1]}" if years else ""
+        report.add(f"{label}: {len(files) - len(gone)} of {len(files)} listed file(s) found{span}")
+        if gone:
+            report.error(f"{label} files missing: {_short(gone)}")
+        samples[label] = next((f for f in files if f.exists()), None)
+
+    if dic.get("obs_paths"):
+        one("observations", dic["obs_paths"])
+    for i, model in enumerate(dic["model_list"]):
+        listed = (dic.get("model_paths_list") or [()] * (i + 1))[i]
+        if listed:
+            one(model, listed)
+    return samples
+
+
 def _grid(path, dims=None, forecast=False):
     """(lat, lon, variable-lat-order) of the first file: the coordinate arrays after the usual renames."""
-    from momp.utils.standard import dim_fmt, dim_fmt_model
+    from momp.utils.standard import dim_fmt, dim_fmt_model, rename_model_dims
 
     with _open(path) as ds:
-        ds = dim_fmt_model(ds, dims) if forecast else dim_fmt(ds)
+        ds = dim_fmt_model(ds, dims) if forecast else dim_fmt(rename_model_dims(ds, dims))
         return np.asarray(ds["lat"].values, float), np.asarray(ds["lon"].values, float)
 
 
@@ -240,7 +288,11 @@ def _grids(dic: dict, report: CheckReport, samples: dict) -> None:
     if obs_path is None:
         report.add("(no observation file to read)")
         return
-    obs_lat, obs_lon = _grid(obs_path)
+    try:
+        obs_lat, obs_lon = _grid(obs_path, (dic.get("obs_dims") or None))
+    except Exception:  # noqa: BLE001 - observations on evaluation units (a "unit" dimension) have no grid
+        report.add("(the observations are not on a lat/lon grid: evaluation units; see Units)")
+        return
     obs_in = _in_box(obs_lat, obs_lon, box)
     report.add(f"observations: {len(obs_lat)} lats x {len(obs_lon)} lons in the file, {len(obs_in[0])} x "
                f"{len(obs_in[1])} inside the region box")
@@ -294,6 +346,91 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
         report.error(f"the mask could not be built: {exc}")
     finally:
         mask_mod.reset()
+
+
+def _units(dic: dict, report: CheckReport) -> None:
+    """The evaluation units each source is read onto (the `units:` section and the region's): mode, tables, restriction;
+    a named file that is not there is an error."""
+    from momp.io.input import units_spec
+    from momp.spatial.units import UnitsSpecError
+
+    sources = ["observations", *dic["model_list"]]
+    try:
+        specs = {name: units_spec(dic, name) for name in sources}
+    except UnitsSpecError as exc:
+        report.section("Units")
+        report.error(f"units: {exc}")
+        return
+    if all(spec is None for spec in specs.values()):
+        return
+    report.section("Units")
+    for name, spec in specs.items():
+        if spec is None:
+            report.add(f"{name}: grid cells")
+            continue
+        parts = [f"{spec.how}"]
+        for label in ("shapefile", "weights", "centroids", "dissemination", "outline"):
+            value = getattr(spec, label)
+            if value:
+                where = spec.resolve_path(value)
+                parts.append(f"{label} {where}")
+                if not where.is_file():
+                    report.error(f"{name}: the units' {label} file is missing: {where}")
+        if spec.unit_id_col:
+            parts.append(f"id column {spec.unit_id_col}")
+        if spec.box:
+            parts.append("box " + ", ".join(f"{k} {v:g}" for k, v in spec.box))
+        if spec.dissemination:
+            parts.append(f"dissemination scope {spec.dissemination_scope}")
+        if spec.how == "cells" or spec.id_digits is not None:
+            parts.append(f"grid ids {spec.id_format}" + (f" with {spec.id_digits} decimals" if spec.id_digits is not None else ""))
+        report.add(f"{name}: " + "; ".join(parts))
+
+
+def _blend(dic: dict, report: CheckReport) -> None:
+    """The `blend:` section as the run reads it: models, years, bins, formulas, scoring, and the artifacts' folder; every
+    problem of the section (and the rules that need the onset definition) is an error."""
+    from momp.blend.recipe import RecipeError, recipe_from_config
+
+    report.section("Blend")
+    try:
+        recipe = recipe_from_config(dic, onset_setup(dic))
+    except RecipeError as exc:
+        for problem in exc.problems:
+            report.error(f"blend: {problem}")
+        return
+    except Exception as exc:  # noqa: BLE001 - the onset settings failing is reported with the rest of the check
+        report.error(f"blend: {exc}")
+        return
+    ev, ft = recipe.evaluation, recipe.features
+    report.add(f"blend           : {recipe.name}; outcomes {', '.join(recipe.outcome_labels())}; "
+               f"{ft.count} bins of {ft.days} days from {ft.probability_days} probability days")
+    for model in recipe.models:
+        horizon = model.rain_horizon
+        predictors = ", ".join(f"{p.agg}({p.window})" for p in model.rain_predictors) or "none"
+        member = "" if model.max_member is None else f", members up to {model.max_member}"
+        report.add(f"  {model.name:<14}: leads {model.lead_days[0]}-{model.lead_days[1]}{member}; rain horizon "
+                   f"{f'to day {horizon.max_day}, ' if horizon.max_day is not None else ''}{horizon.resolved_policy}; "
+                   f"rain predictors {predictors}")
+    report.add(f"years           : training {_short(ev.years.training)}; cv holdout {_short(ev.years.cv_holdout)}; "
+               f"true holdout {_short(ev.years.true_holdout) or 'none'}")
+    report.add(f"cutoff / cv     : {ev.cutoff_mode}; {', '.join(ev.cv_methods)}; fixed cutoff {recipe.onset.fixed_cutoff}"
+               + (f"; reference onset {ref.month_day or ref.file}" if (ref := recipe.onset.reference) else ""))
+    for name, formula in ev.formulas:
+        mark = "" if formula.enabled else " (disabled)"
+        final = " (final)" if name == recipe.final_formula() else ""
+        report.add(f"formula {name}{final}{mark}: {formula.text}")
+    report.add(f"scored          : {', '.join(recipe.climatology_baseline_names())}"
+               + (f"; forest {ev.random_forest.name}" if ev.random_forest else "")
+               + ("; MME" if ev.mme.enabled else "") + f"; output tag '{recipe.output_tag()}'")
+    clim = recipe.climatology
+    report.add(f"climatology     : issues to {clim.issue_end}, {recipe.climatology_forecast_window()} lead days, "
+               f"{'leave-one-year-out' if clim.cv_by_year else 'no CV'}, at least {clim.min_onset_years} onset years")
+    paths = dic.get("run_paths")
+    if paths is not None:
+        report.add(f"artifacts       : {paths.blend}")
+    report.add("note            : a run with a blend section trains the blend; the benchmark of the other sections "
+               "is not run")
 
 
 def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
@@ -434,6 +571,9 @@ def _cache(dic: dict, report: CheckReport) -> None:
     folder = Path(dic["cache_dir"]) if dic.get("cache_dir") else Path(dic["dir_out"]) / ".onset_cache"
     entries = sorted((folder / observed_cache.SUBFOLDER).glob("obs-*")) if folder.is_dir() else []
     report.add(f"cache folder: {folder} ({len(entries)} observed-onset entries)")
+    if has_blend(dic):
+        report.add("observed onsets: a blend run detects them itself (search starts, thresholds and units are its own)")
+        return
     setup = onset_setup(dic)
     if paths is None:
         return
@@ -470,11 +610,14 @@ def build_report(dic: dict, overwrite: bool = False) -> CheckReport:
     _settings(dic, report)
     _datasets(dic, report)
     samples = _files(dic, report)
+    _units(dic, report)
     _grids(dic, report, samples)
     _mask_summary(dic, report, samples)
     _leads(dic, report, samples)
     _alignment(dic, report)
     _short_climatology(dic, report)
+    if has_blend(dic):
+        _blend(dic, report)
     _run_folder(dic, report, overwrite)
     _cache(dic, report)
     report.section("Summary")

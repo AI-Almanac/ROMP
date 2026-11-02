@@ -1,4 +1,4 @@
-"""onset_blending's `train(config).save(dir)` and momp's `train(*translate(config)).save(dir)` write the same artifacts
+"""onset_blending's `train(config).save(dir)` and momp's `train(*converted(config)).save(dir)` write the same artifacts
 on the same synthetic files and configs (tests/blend/differential_training.py): CSV and JSON byte for byte, NetCDF
 variable for variable. The oracle is imported from its checkout and run in ROMP's environment (exact), and in its own
 environment when that exists (identical but for the last bit of the Pietra index, which depends on the scipy version).

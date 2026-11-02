@@ -172,22 +172,30 @@ def file_year(path) -> int | None:
 
 
 def parse_years(value, origin: str = "years") -> tuple[int, ...]:
-    """A years filter: a list of years, one year, or text such as "2010:2013" (both ends included)."""
+    """A years filter: a list of years, one year, or text such as "2010:2013" or "2000:2010,2015" (ends included)."""
     try:
         if isinstance(value, bool):
             raise ValueError
         if isinstance(value, int):
             return (value,)
         if isinstance(value, str):
-            parts = [p for p in re.split(r"\s*[:\-]\s*", value.strip()) if p]
-            if len(parts) == 2:
-                first, last = int(parts[0]), int(parts[1])
-                if last < first:
+            years: list[int] = []
+            for item in (p.strip() for p in value.split(",")):   # '2000:2010,2015': ranges and single years
+                if not item:
+                    continue
+                parts = [p for p in re.split(r"\s*(?::|\.\.|-|to)\s*", item) if p]
+                if len(parts) == 2:
+                    first, last = int(parts[0]), int(parts[1])
+                    if last < first:
+                        raise ValueError
+                    years.extend(range(first, last + 1))
+                elif len(parts) == 1:
+                    years.append(int(parts[0]))
+                else:
                     raise ValueError
-                return tuple(range(first, last + 1))
-            if len(parts) == 1:
-                return (int(parts[0]),)
-            raise ValueError
+            if not years:
+                raise ValueError
+            return tuple(years)
         years = tuple(int(y) for y in value)
         if not years or any(isinstance(y, bool) for y in value):
             raise ValueError

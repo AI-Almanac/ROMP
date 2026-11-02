@@ -2,13 +2,17 @@
 
     import momp
     result = momp.run("run.yaml", max_forecast_day=15)       # a YAML path, a momp.config.Config or a mapping
-    result.observed          # xarray.Dataset: observed onset dates (year, lat, lon), from the observed-onset cache
+    result.observed          # xarray.Dataset: observed onset dates (year, lat, lon; year, unit on evaluation units)
     result.scores            # {"spatial": {(model, window): Dataset}, "summary": DataFrame}  (deterministic)
                              # {"overall": DataFrame, "binned": DataFrame}                    (ensemble)
     result.forecasts         # {source: Dataset}: gridded onset dates of each model and climatology (computed on use)
     result.folder            # the run folder (None when nothing was written)
 
     plan = momp.check("run.yaml")                              # the same report as `momp-run -p run.yaml --check`
+
+A config with a ``blend:`` section trains the blend instead of benchmarking: ``result.blend`` is the
+``momp.blend.training.TrainingResult`` (evaluation tables and the trained blend; ``write=True`` saves its artifacts under
+their own names into ``<run folder>/blend/``), and ``observed`` and ``scores`` are empty.
 
 ``write`` chooses whether files are written. The default is ``write=False``: scores, figures and onset files are
 not written and nothing is created on disk (temporary folders hold what the pipeline needs and are deleted;
@@ -50,6 +54,7 @@ class RunResult:
     observed is an xarray.Dataset (variable onset_date over year, lat, lon; attribute fingerprint) or None.
     scores holds pandas / xarray objects (see the module text). folder is the run folder, or None when
     write=False. config is the resolved flat config dict. forecasts is computed the first time it is read.
+    blend is the TrainingResult of a run with a `blend:` section (None otherwise).
     """
 
     observed: xr.Dataset | None
@@ -57,6 +62,7 @@ class RunResult:
     folder: Path | None
     config: dict = field(repr=False, default_factory=dict)
     _forecasts: dict | None = field(default=None, repr=False)
+    blend: object | None = None
 
     @property
     def forecasts(self) -> dict:
@@ -152,8 +158,9 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _observed_dataset() -> xr.Dataset | None:
+def _observed_dataset(dic: dict) -> xr.Dataset | None:
     """The observed onsets of this run (from the observed-onset cache) as one Dataset, or None."""
+    from momp.io.output import with_unit_labels
     from momp.stats import observed_cache
 
     tables = [(fp, t) for fp, t in observed_cache.current().items() if t["years"]]
@@ -163,11 +170,12 @@ def _observed_dataset() -> xr.Dataset | None:
     years = sorted(table["years"])
     import numpy as np
 
-    ds = xr.Dataset({"onset_date": (("year", "lat", "lon"), np.stack([table["years"][y] for y in years]))},
-                    coords={"year": years, "lat": table["lat"], "lon": table["lon"]})
+    dims = tuple(table["dims"])
+    ds = xr.Dataset({"onset_date": (("year", *dims), np.stack([table["years"][y] for y in years]))},
+                    coords={"year": years, **{d: table["coords"][d] for d in dims}})
     ds["onset_date"].attrs["long_name"] = "observed rainy-season onset date"
     ds.attrs["fingerprint"] = fp
-    return ds
+    return with_unit_labels(ds, dic)
 
 
 def _scores(results, probabilistic_tables) -> dict:
@@ -187,6 +195,65 @@ def _scores(results, probabilistic_tables) -> dict:
     return out
 
 
+def _trainer():
+    """`momp.blend.training.train`, or a clear error when the training module is not in this checkout."""
+    from momp.lib.assertion import ROMPConfigError
+
+    try:
+        from momp.blend.training import train
+    except ImportError as exc:
+        raise ROMPConfigError(f"this config has a `blend:` section, but blend training is not available "
+                              f"(momp.blend.training could not be imported: {exc}). Fix: install the packages of the "
+                              "blend extras, or update momp") from None
+    return train
+
+
+def _execute_blend(dic: dict, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
+    """Train the blend a config's `blend:` section describes (`momp.blend.training.train(cfg, recipe, setup)`).
+
+    The run folder is prepared as for a benchmark (refused when it exists unless overwrite), run.log and the resolved config
+    are written, and the TrainingResult is saved into the run folder's blend/ subfolder (artifact names are kept).
+    """
+    from momp.blend.recipe import recipe_from_config
+    from momp.lib import run_folder
+    from momp.lib.onset_config import onset_setup
+    from momp.lib.resolved import definition_lines, write_resolved
+    from momp.utils.printing import print_momp_banner
+
+    train = _trainer()
+    paths = dic["run_paths"]
+    setup = onset_setup(dic)
+    recipe = recipe_from_config(dic, setup)
+    if write:
+        run_folder.prepare(paths, overwrite)
+    with logs.session(verbosity, paths.log_file if write else None):
+        print_momp_banner(SimpleNamespace(**dic))
+        log.info("Blend: %s (%s); models %s", recipe.name, "writes into " + str(paths.blend) if write else "nothing is written",
+                 ", ".join(recipe.model_names))
+        for line in (*onset_setup(dic).lines(), *dic.get("dataset_report", ()), *definition_lines(dic)):
+            log.info(f"  {line}")
+        if write:
+            try:
+                log.info(f"  Resolved config  : {write_resolved(dic)[0]}")
+            except OSError as exc:
+                log.warning(f"could not write {paths.config_name}: {exc}")
+        try:
+            result = train(dic, recipe, setup)
+            if write:
+                chosen = {"observations": "observed", "features": "weekly"}   # the recipe's debug outputs that exist
+                extra = {"intermediates": tuple(chosen[n] for n in recipe.outputs.intermediates if n in chosen)} \
+                    if recipe.outputs.intermediates else {}
+                result.save(paths.blend, **extra)
+                log.info(f"  Blend artifacts  : {paths.blend}")
+        finally:
+            from momp.stats import observed_cache, parallel
+
+            parallel.shutdown()
+            observed_cache.reset()
+        log.info("ROMP blend completed successfully!")
+    return RunResult(observed=None, scores={}, folder=paths.root if write else None, config=dic, blend=result)
+
+
 def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NORMAL) -> RunResult:
     """Run the benchmark for a finished flat config (see _prepare) and return the RunResult.
 
@@ -194,6 +261,10 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
     one), attach run.log, print the settings, write the resolved config, optionally explain cells and export the
     onsets, activate the observed-onset cache, then score.
     """
+    from momp.lib.config_schema import has_blend
+
+    if has_blend(dic):
+        return _execute_blend(dic, write=write, overwrite=overwrite, verbosity=verbosity)
     from momp.app.bin_skill_score import skill_score_in_bins
     from momp.app.spatial_far_mr_mae import spatial_far_mr_mae_map
     from momp.lib import run_folder
@@ -261,7 +332,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
                     except OSError as exc:
                         log.warning(f"could not update {paths.config_name} with the masks: {exc}")
                 log.info("ROMP Workflow completed successfully!")
-            observed = _observed_dataset()
+            observed = _observed_dataset(dic)
         finally:
             parallel.shutdown()
             observed_cache.reset()

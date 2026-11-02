@@ -271,7 +271,7 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
         if is_zarr_store(sample) or not obs.get("paths") and is_zarr_store(expand_path(obs["path"])):
             return None, "the sampled check does not read datasets given by paths. Fix: set lead_label"
         try:
-            listed = _dataset_files(obs) if obs.get("paths") else sorted(Path(expand_path(obs["path"])).glob(
+            listed = dataset_files(obs) if obs.get("paths") else sorted(Path(expand_path(obs["path"])).glob(
                 obs["file_pattern"].replace("{}", str(year) if year else "*")))
         except DatasetError as exc:
             return None, str(exc)
@@ -357,7 +357,7 @@ def _store() -> Store:
     return Store("detect", cache_dir().parent, label="Dataset detection", memory=False)
 
 
-def _dataset_files(entry: dict) -> list[Path]:
+def dataset_files(entry: dict) -> list[Path]:
     """The files a dataset entry reads: its ``paths`` (see resolve_paths), the zarr store, or the NetCDF files in its folder."""
     base = expand_path(entry["path"]) if entry.get("path") else None
     if entry.get("paths"):
@@ -373,7 +373,7 @@ def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | Non
     None when the folder cannot be listed or a file read (nothing to cache against).
     """
     try:
-        files = _dataset_files(entry)
+        files = dataset_files(entry)
     except (KeyError, DatasetError, OSError):
         return None
     identities = [file_identity(path) for path in files]
@@ -509,7 +509,7 @@ def _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_lab
     for key in ("paths", "years"):
         specified(key)
     try:
-        files = _dataset_files(values)
+        files = dataset_files(values)
     except DatasetError as exc:
         problems["paths"] = str(exc)
         return res

@@ -63,8 +63,25 @@ def _entry_lines(res: detect.Resolution, placeholders, indent: str, first: str =
     return lines
 
 
-def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None) -> str:
-    """The text of a starting run config; obs and models are folders (or None for placeholders)."""
+def _blend_lines(names, years) -> list[str]:
+    """The `blend:` skeleton of a starting config: years, one formula and the models' rain features, as
+    `momp-run convert` writes them from an onset_blending config."""
+    lead = names[0] if names else "MODEL"
+    lines = ["blend:  # trains an onset blend instead of benchmarking; `momp-run convert blend.yml` writes one from an "
+             "onset_blending config",
+             f"  years: {{training: '{years[0]}:{years[1] - 1}', cv_holdout: '{years[0]}:{years[1] - 1}', "
+             f"true_holdout: {years[1]}}}  # TODO: the years to fit, to cross-validate and to hold out",
+             f"  formulas: {{blended_model: 'outcome ~ prob_clim_qx + diff_{lead}_qx'}}  # features: prob_clim_qx, "
+             "<model>_p_onset_qx, diff_<model>_qx, max_<model>_<n>day_qx ...",
+             "  models:  # per model: lead days read, member limit, rain horizon, rain predictors",
+             ] + [f"    {name}: {{lead_days: [1, 40], rain_predictors: [{{agg: diff}}]}}" for name in names or [lead]]
+    return lines
+
+
+def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None, blend=False) -> str:
+    """The text of a starting run config; obs and models are folders (or None for placeholders).
+
+    blend adds a `blend:` section skeleton."""
     notes = []
     obs_res = None
     obs_lines: list[str]
@@ -127,6 +144,8 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         f"  end_date: [{years[1]}, {end[0]}, {end[1]}]"]
     if probabilistic:
         out.append("  probabilistic: true  # ensemble forecasts detected")
+    if blend:
+        out += [""] + _blend_lines([Path(expand_path(m)).name if m else "MODEL" for m in models] or ["MODEL"], years)
     return "\n".join(out) + "\n"
 
 

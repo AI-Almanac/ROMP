@@ -5,8 +5,9 @@ import glob
 
 import pytest
 
-from _recipes import ORACLE_SRC, load_blending_config, translate
+from _recipes import ORACLE_SRC, blending_dict, partial
 from momp.blend import recipe as R
+from momp.lib.convert_specs import convert_blend
 from momp.stats.bins import LeadBins
 
 CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
@@ -15,17 +16,18 @@ CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
 @pytest.mark.skipif(not CONFIGS, reason="onset_blending's configs are not available")
 @pytest.mark.parametrize("path", CONFIGS)
 def test_the_shipped_configs_translate(path):
-    config = load_blending_config(path)
-    t = translate(config, strict=False)
-    assert t.recipe.name == config.name and t.setup.definition.windows()["trigger"] == config.onset.definition.window
+    data = blending_dict(path)
+    t = partial(convert_blend(data))
+    window = (data["onset"].get("definition") or {}).get("window", 5)
+    count = ((data.get("features") or {}).get("bins") or {}).get("count", 4)
+    assert t.recipe.name == data["name"] and t.setup.definition.windows()["trigger"] == window
     assert t.cfg["onset_legacy"] is False and t.cfg["rain_resolution"] == "exact"
-    assert t.recipe.outcome_labels() == [*(f"week{w}" for w in range(1, config.features.bins.count + 1)), "later"]
+    assert t.recipe.outcome_labels() == [*(f"week{w}" for w in range(1, count + 1)), "later"]
 
 
 @pytest.fixture(scope="module")
 def recipe():
-    config = load_blending_config(CONFIGS[1])
-    return translate(config, strict=False)
+    return partial(convert_blend(blending_dict(CONFIGS[1])))
 
 
 def test_rain_windows_are_read_from_the_definition(recipe):

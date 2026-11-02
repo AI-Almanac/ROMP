@@ -50,18 +50,23 @@ UNSET = _Unset()
 class Dataset:
     """An observation or forecast dataset: where it is and how to read it.
 
-    Set only what you know: path (required); file_pattern, variable, units (mm or m), dims, members, accumulation, daily_boundary and
+    Set only what you know: path (required, unless paths lists the files: names or globs, relative to path, any
+    number per year, years keeping those of some years); unit_cvt is the multiplier to mm of files that declare no
+    units. file_pattern, variable, units (mm or m), dims, members, accumulation, daily_boundary and
     lead_label (forecasts) or day_boundary (observations) are detected from the files when left UNSET, with
     the evidence reported. ``dataset`` names an entry of a dataset file (dataset_files in the config).
     name is the model name used in output files (models only).
     """
 
     path: Any = UNSET
+    paths: Any = UNSET
+    years: Any = UNSET
     name: Any = UNSET
     dataset: Any = UNSET
     file_pattern: Any = UNSET
     variable: Any = UNSET
     units: Any = UNSET
+    unit_cvt: Any = UNSET
     dims: Any = UNSET
     day_boundary: Any = UNSET
     lead_label: Any = UNSET
@@ -116,11 +121,13 @@ def _section(name: str, extra=()):
 
 Reference = _section("reference", extra=("dataset", "units"))
 Onset = _section("onset")
+Units = _section("units")
+Blend = _section("blend")
 Evaluation = _section("evaluation")
 Metrics = _section("metrics")
 Output = _section("output")
-_SECTION_CLASSES = {"reference": Reference, "onset": Onset, "evaluation": Evaluation, "metrics": Metrics,
-                    "output": Output}
+_SECTION_CLASSES = {"reference": Reference, "onset": Onset, "units": Units, "blend": Blend,
+                    "evaluation": Evaluation, "metrics": Metrics, "output": Output}
 _TOP_KEYS = [f.key for f in schema.FIELDS if f.section is None and not f.key.endswith("_list")]
 
 
@@ -197,12 +204,13 @@ Config = dataclasses.make_dataclass(
     [(key, Any, dataclasses.field(default=UNSET)) for key in _TOP_KEYS]
     + [("observations", Any, dataclasses.field(default=UNSET)), ("reference", Any, dataclasses.field(default=UNSET)),
        ("models", Any, dataclasses.field(default=UNSET)), ("onset", Any, dataclasses.field(default=UNSET)),
+       ("units", Any, dataclasses.field(default=UNSET)), ("blend", Any, dataclasses.field(default=UNSET)),
        ("evaluation", Any, dataclasses.field(default=UNSET)), ("metrics", Any, dataclasses.field(default=UNSET)),
        ("output", Any, dataclasses.field(default=UNSET))],
     bases=(_ConfigMethods,),
     namespace={"__doc__": "A ROMP run config. Attributes: " + ", ".join(_TOP_KEYS) +
                ", and the sections observations (a Dataset), reference, models (a list of Dataset), onset, "
-               "evaluation, metrics, output. Unset keys are UNSET and take their default (or the region's, or "
+               "units, blend, evaluation, metrics, output. Unset keys are UNSET and take their default (or the region's, or "
                "are detected from the files) when resolved by to_flat()."})
 Config.__module__ = __name__
 

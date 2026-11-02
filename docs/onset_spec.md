@@ -493,7 +493,9 @@ golden station series are placeholders until checked against the sources.
 |---|---|---|
 | `moron_robertson` | first passage | From 1 Apr: first wet day of a 5-day spell totalling at least the local mean 5-day amount, with no 10-day dry window (< 5 mm) in the next 30 days |
 | `moron_robertson_mok` | first passage | Same trigger with no veto, searching from 2 Jun (the median MOK date) |
+| `moron_robertson_blend` | first passage | onset_blending's reading: first wet day (more than 1 mm) of 5 days totalling more than the local mean amount, with no 10-day dry window (< 5 mm) in days 1 to 31 from the onset day; search to the end of the data |
 | `icpac` | first passage | First wet day of 3 days totalling more than 20 mm, with no dry run of at least 7 days in the next 21 days |
+| `icpac_blend` | first passage | onset_blending's reading: first wet day of 5 days totalling at least 20 mm with at least 3 wet days, no dry-spell test; search to the end of the data |
 | `sivakumar` | first passage | After 1 May: 3 days totalling at least 20 mm, with no dry run of more than 7 days in the next 30 days |
 | `marteau` | first passage | First of 2 consecutive wet days totalling more than 20 mm, with no 7-day dry window (< 5 mm) in the next 20 days |
 | `omotosho` | first passage | Rule needs checking against the paper |

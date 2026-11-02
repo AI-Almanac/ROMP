@@ -418,12 +418,12 @@ def test_hash_tracks_thresholds():
 def test_registry_entries_load():
     """Every registry entry loads, is a draft, and has the id of its file."""
     ids = dfn.registry_ids()
-    assert ids == sorted(["moron_robertson", "moron_robertson_mok", "icpac", "sivakumar", "marteau",
-                          "omotosho", "liebmann_marengo", "dunning"])
+    assert ids == sorted(["moron_robertson", "moron_robertson_mok", "moron_robertson_blend", "icpac", "icpac_blend",
+                          "sivakumar", "marteau", "omotosho", "liebmann_marengo", "dunning"])
     for ident in ids:
         d = dfn.load(ident)
         assert d.id == ident and d.status == "draft"
-        assert d.version == (2 if ident.startswith("moron_robertson") else 1)
+        assert d.version == (2 if ident in ("moron_robertson", "moron_robertson_mok") else 1)
         assert d.wording == "TODO paste the original definition text"
         assert d.source_yaml and len(dfn.definition_hash(d)) == 64
         assert dfn.loads(d.source_yaml).rule == d.rule

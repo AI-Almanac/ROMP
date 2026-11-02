@@ -143,12 +143,12 @@ def run_onset_blending(config_dict) -> dict:
 
 
 def run_momp(config_dict) -> dict:
-    from _recipes import blending_config, translate
+    from _recipes import converted
 
     from momp.blend import features
     from momp.io.input import load_thresholds
 
-    t = translate(blending_config(config_dict))
+    t = converted(config_dict)
     cfg, recipe, setup = t.cfg, t.recipe, t.setup
     thresholds = load_thresholds(**cfg)
     reference = features.reference_onset(recipe)

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-from _recipes import blending_config, translate
+from _recipes import converted
 
 from momp.blend import logit
 from momp.blend.predictions import Predictions
@@ -79,7 +79,7 @@ def region(tmp_path_factory):
     root = tmp_path_factory.mktemp("region")
     write_observations(root / "obs")
     write_forecasts(root / "ens")
-    translation = translate(blending_config(config_dict(root)), cache_dir=root / "cache")
+    translation = converted(config_dict(root), cache_dir=root / "cache")
     return root, translation, train(translation.cfg, translation.recipe, translation.setup)
 
 
@@ -156,8 +156,7 @@ def test_saving_is_all_or_nothing_and_keeps_chosen_intermediates(region, tmp_pat
 
 def test_the_random_forest_blend_is_scored_and_fitted(region):
     root, _, _ = region
-    translation = translate(blending_config(config_dict(root, random_forest={"trees": 5, "min_samples_leaf": 5})),
-                            cache_dir=root / "cache")
+    translation = converted(config_dict(root, random_forest={"trees": 5, "min_samples_leaf": 5}), cache_dir=root / "cache")
 
     result = train(translation.cfg, translation.recipe, translation.setup)
 

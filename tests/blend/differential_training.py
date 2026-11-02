@@ -1,4 +1,4 @@
-"""Differential check: onset_blending's `train(config).save(dir)` against momp's `train(*translate(config)).save(dir)`
+"""Differential check: onset_blending's `train(config).save(dir)` against momp's `train(*converted(config)).save(dir)`
 on the same synthetic files and configs.
 
     python tests/blend/differential_training.py dump momp OUTDIR [WORKERS]                 # in ROMP's env
@@ -98,11 +98,11 @@ def run_onset_blending(config_dict, directory: Path, workers: int) -> None:
 
 
 def run_momp(config_dict, directory: Path, workers: int) -> None:
-    from _recipes import blending_config, translate
+    from _recipes import converted
 
     from momp.blend.training import train
 
-    t = translate(blending_config(config_dict))
+    t = converted(config_dict)
     train({**t.cfg, "parallel_workers": workers}, t.recipe, t.setup).save(directory)
 
 

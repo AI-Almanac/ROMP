@@ -17,14 +17,15 @@ from momp.lib import config_schema as schema
 from momp.lib.config_schema import ConfigSchemaError
 from momp.lib.dataset_schema import suggest
 
-SECTION_ORDER = ("observations", "reference", "models", "onset", "evaluation", "metrics", "output")
+SECTION_ORDER = ("observations", "reference", "models", "onset", "units", "blend", "evaluation", "metrics", "output")
 INTERNAL_KEYS = ("dataset_report", "config_sources", "onset_legacy", "lead_window", "onset_lead_lines", "run_paths",
                  "config_file", "cache_dir", "short_names", "run_overrides", "accumulation_detected")
 """Keys the loader adds; they are not part of a run config."""
 _MODEL_LISTS = ("model_list", "model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list",
-                "model_dims_list")
+                "model_dims_list", "model_paths_list")
 _LEGACY_RENAMES = {"mok": "earliest_onset_date"}
 _UNIT_KEYS = ("obs_unit_cvt", "ref_model_unit_cvt")
+_OBS_LISTED = {"obs_paths": "paths", "obs_dims": "dims"}
 _MODEL_EXTRA = ("accumulation_list", "daily_boundary_list", "accumulation_detected")
 
 
@@ -86,6 +87,12 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
             continue
         if key in _UNIT_KEYS or key in _MODEL_EXTRA:
             continue
+        if (key == "obs_dir" and not value) or (key == "obs_file_pattern" and flat.get("obs_paths")):
+            continue   # observations given as listed files have neither a folder nor a pattern
+        if key in _OBS_LISTED:   # the listed files and dims of the observations, written in the observations section
+            if value:
+                sections["observations"][_OBS_LISTED[key]] = plain(value)
+            continue
         field = schema.BY_KEY.get(key)
         if field is None:
             errors.append(f"unknown key '{key}'.{suggest(key, schema.BY_KEY)}")
@@ -97,12 +104,24 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
         comments[(field.section, field.nested_name) if field.section else (key,)] = sources.get(key)
     if errors:
         raise ConfigSchemaError("Cannot write this config as YAML:\n" + "\n".join(f"  • {e}" for e in errors))
+    blend = schema.has_blend(flat)
     if "model_list" in flat:
         entries = []
         for i, name in enumerate(flat["model_list"]):
-            entry = {"name": name, "path": plain(flat["model_dir_list"][i]), "variable": flat["model_var_list"][i],
-                     "units": units_from_cvt(flat["unit_cvt_list"][i], f"unit_cvt_list[{i}]"),
-                     "file_pattern": flat["file_pattern_list"][i]}
+            cvt = flat["unit_cvt_list"][i]
+            entry = {"name": name}
+            if flat["model_dir_list"][i]:
+                entry["path"] = plain(flat["model_dir_list"][i])
+            entry["variable"] = flat["model_var_list"][i]
+            if blend:   # a blend keeps its own multiplier (declared units still win)
+                entry["unit_cvt"] = 1.0 if cvt is None else cvt
+            else:
+                entry["units"] = units_from_cvt(cvt, f"unit_cvt_list[{i}]")
+            listed = (flat.get("model_paths_list") or [()] * (i + 1))[i]
+            if listed:
+                entry["paths"] = plain(listed)
+            else:
+                entry["file_pattern"] = flat["file_pattern_list"][i]
             accumulation = (flat.get("accumulation_list") or ["auto"] * (i + 1))[i]
             detected = (flat.get("accumulation_detected") or [False] * (i + 1))[i]
             if accumulation != "auto" and not detected:   # a detected value is re-detected on the next run
@@ -116,7 +135,11 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
             entries.append(entry)
         sections["models"] = entries
     if "obs_dir" in flat:
-        sections["observations"]["units"] = units_from_cvt(flat.get("obs_unit_cvt"), "obs_unit_cvt")
+        cvt = flat.get("obs_unit_cvt")
+        if blend:
+            sections["observations"]["unit_cvt"] = 1.0 if cvt is None else cvt
+        else:
+            sections["observations"]["units"] = units_from_cvt(cvt, "obs_unit_cvt")
     if "ref_model" in flat and "ref_model_dir" in flat:
         sections["reference"]["units"] = units_from_cvt(flat.get("ref_model_unit_cvt"), "ref_model_unit_cvt")
     mapping = dict(top)
