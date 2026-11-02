@@ -919,6 +919,15 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
     return day, status
 
 
+def lead_counts(lead: np.ndarray, max_lead: int, axis: int = 0) -> np.ndarray:
+    """How many of the leads equal each lead 0..max_lead along `axis` (that axis is replaced by the lead axis, last).
+
+    Leads at or below 0 count at lead 0 and NaN counts nowhere; this is the engine's `onset_count` of an ensemble.
+    """
+    leads = np.arange(max_lead + 1)
+    return (np.maximum(np.asarray(lead, dtype=float), 0)[..., None] == leads).sum(axis=axis)
+
+
 def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...], coords: dict,
                       max_lead: int, onset_count: bool = False) -> dict[str, xr.DataArray]:
     """members_by_status and onset_probability from (init, member, season, [start], *spatial) lead and status arrays.
@@ -949,7 +958,7 @@ def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...
                           "stay in it and never count as reached"})
     out = {"members_by_status": by_status, "onset_probability": probability}
     if onset_count:
-        on_lead = np.moveaxis((np.maximum(lead, 0)[..., None] == leads).sum(axis=1), -1, head - 1)
+        on_lead = np.moveaxis(lead_counts(lead, max_lead, axis=1), -1, head - 1)
         out["onset_count"] = xr.DataArray(
             on_lead.astype(np.int64), dims=probability.dims, coords={"lead": leads, **shared},
             attrs={"long_name": "number of members whose onset is on this lead",

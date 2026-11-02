@@ -7,9 +7,14 @@ config.in, e.g. ``obs_dir``) or sections that group them for readability::
     reference:     dataset, model, path, file_pattern, variable, units, dims, climatology_cv
     models:        a list of {dataset, name, path, file_pattern, variable, units, dims,
                    lead_label, accumulation, daily_boundary, members}
-    onset:         definition, override, rule, season, threshold_years, thresholds, lead_label, check_alignment,
+    onset:         definition, override, rule, season, threshold_years, thresholds, threshold_scale,
+                   threshold_table, threshold_max_missing, threshold_partial_years, rain_resolution, missing,
+                   negatives, gaps, horizon, lead_label, check_alignment,
                    dry_spell_check, forecast_history, threshold_source, backend,
                    percentage_threshold, explain_cells
+    units:         mode, shapefile, unit_id_col, unit_name_col, parent_col, weights, centroids, centroid_id_col,
+                   dissemination, dissemination_id_col, dissemination_scope, box, outline, boundary, id_digits,
+                   id_format (evaluation units instead of grid cells; extends the region's `units:`)
     evaluation:    start_date, end_date, start_year_clim, end_year_clim, init_days, date_filter_year,
                    verification_windows, tolerances, max_forecast_day, day_bins, probabilistic, members
     metrics:       FAR, MAE, MR, BS, RPS, AUC, Reliability, skill_score
@@ -38,6 +43,7 @@ SECTIONS = {
     "reference": "the reference model of the skill scores (climatology by default)",
     "models": "the forecast models, a list",
     "onset": "what counts as onset and how it is searched",
+    "units": "evaluation units (admin units, weighted cells) instead of grid cells; extends the region's units",
     "evaluation": "the period, lead windows and metrics settings",
     "metrics": "which metrics to compute",
     "output": "output folders and which files and figures to write",
@@ -276,8 +282,9 @@ def _cells(value):
 
 
 def _thresholds(value):
-    """A mapping of threshold names to 'path.nc:variable' text."""
-    if not isinstance(value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
+    """A mapping of threshold names to 'path.nc:variable' text, a table file, or a number of mm."""
+    if not isinstance(value, dict) or not all(isinstance(k, str) and (isinstance(v, str) or _is_number(v))
+                                              for k, v in value.items()):
         raise ValueError
     return dict(value)
 
@@ -394,7 +401,8 @@ KINDS: dict[str, tuple[str, Callable]] = {
     "dims_list": ("a list of dims mappings or null, one per model", _dims_list),
     "members": ("'All', a range like '0-9', or a list of whole numbers", _members),
     "cells": ("a list of [lat, lon] pairs, e.g. [[9.0, 38.75]]", _cells),
-    "thresholds": ("a mapping of threshold names to 'path.nc:variable'", _thresholds),
+    "thresholds": ("a mapping of threshold names to 'path.nc:variable' (a grid), a table file (by unit id) or a "
+                   "number of mm", _thresholds),
     "years": ("'All' or a list of years", _years),
     "mask": ("a mapping of land, country, file, variable, keep_value, condition, cell_rule, overlap_fraction, "
              "resolution", _mask),
@@ -529,12 +537,52 @@ def _fields() -> tuple[Field, ...]:
               "(null: observed)", None, "onset", choices=("observed", "none"), nullable=True, fill=False),
         Field("threshold_source", "str", "thresholds from 'observations' or the 'model' climatology "
               "(null: observations)", None, "onset", choices=("observations", "model"), nullable=True, fill=False),
+        Field("rain_resolution", "str", "'tenths' (ROMP: rain rounded to 0.1 mm) or 'exact' (float millimetres, as "
+              "onset_blending reads them; null: tenths)", None, "onset", choices=("tenths", "exact"), nullable=True,
+              fill=False),
+        Field("missing", "str", "missing-rain policy: flag, keep, zero or drop (null: flag)", None, "onset",
+              choices=("flag", "keep", "zero", "drop"), nullable=True, fill=False),
+        Field("negatives", "str", "'default' flags negative observations and zeroes negative forecasts, 'keep' leaves "
+              "them (null: default)", None, "onset", choices=("default", "keep"), nullable=True, fill=False),
+        Field("gaps", "str", "days missing inside a year of observations: 'fill' them or 'refuse' (null: fill)", None,
+              "onset", choices=("fill", "refuse"), nullable=True, fill=False),
+        Field("onset_horizon", "str", "a follow-up past the end of the data: 'censor' the search, 'truncate' the "
+              "follow-up or 'reject' the onset (null: censor)", None, "onset", "horizon",
+              choices=("censor", "truncate", "reject"), nullable=True, fill=False),
+        Field("threshold_scale", "any", "clip(t * factor + offset, min, max) applied to tables, grids and computed "
+              "thresholds: a mapping of factor, offset, min, max (null: none)", None, "onset", nullable=True,
+              fill=False),
+        Field("threshold_table", "any", "how a threshold table is read: a mapping of id_col, value_col, lat_col, "
+              "lon_col, lat_var, lon_var, value_var, mat_lat_name, mat_lon_name, mat_value_name", None, "onset",
+              nullable=True, fill=False),
+        Field("threshold_max_missing", "number", "computed thresholds: the share of missing reference days above "
+              "which a series has none (null: 0.10; 1 never drops one)", None, "onset", nullable=True, fill=False),
+        Field("threshold_partial_years", "bool", "computed thresholds: count the days of a year only partly in the "
+              "data (null: false, such a year is skipped)", None, "onset", nullable=True, fill=False),
         Field("onset_backend", "str", "detection engine", "numba", "onset", "backend",
               choices=("numba", "reference", "gpu")),
         Field("onset_percentage_threshold", "number", "share of members (0-1) that must have an onset", 0.5,
               "onset", "percentage_threshold"),
         Field("explain_cells", "cells", "cells to explain, [[lat, lon]] (null: off)", None, "onset",
               nullable=True),
+    ]
+    units = [
+        Field("units_mode", "str", "how rain reaches the units: 'cells' (the file's own cells or units), 'regrid' (weights from the file's grid; unit factors after averaging) or 'cell_transform' (a source-to-unit weights table; factors before averaging, missing rain judged on the source cells); null: cells, or regrid with a shapefile or weights", None, "units", "mode", choices=("cells", "regrid", "cell_transform"), nullable=True, fill=False),
+        Field("units_shapefile", "path", "polygons of the units (with unit_id_col)", None, "units", "shapefile", nullable=True, fill=False),
+        Field("units_unit_id_col", "str", "id column of the shapefile", None, "units", "unit_id_col", nullable=True, fill=False),
+        Field("units_unit_name_col", "str", "name column of the shapefile", None, "units", "unit_name_col", nullable=True, fill=False),
+        Field("units_parent_col", "str", "parent column of the shapefile", None, "units", "parent_col", nullable=True, fill=False),
+        Field("units_weights", "any", "weights table (source_id, target_id, weight), or a mapping of source name ('observations' or a model's name) to its own table", None, "units", "weights", nullable=True, fill=False),
+        Field("units_centroids", "path", "CSV of unit centroids (id, lat, lon)", None, "units", "centroids", nullable=True, fill=False),
+        Field("units_centroid_id_col", "str", "id column of the centroids", None, "units", "centroid_id_col", nullable=True, fill=False),
+        Field("units_dissemination", "path", "CSV list of the dissemination units", None, "units", "dissemination", nullable=True, fill=False),
+        Field("units_dissemination_id_col", "str", "id column of the dissemination list", None, "units", "dissemination_id_col", nullable=True, fill=False),
+        Field("units_dissemination_scope", "str", "'inputs' reads only the dissemination units, 'training' marks them as the subset 'dissemination'", None, "units", "dissemination_scope", choices=("inputs", "training"), nullable=True, fill=False),
+        Field("units_box", "any", "only units whose centroid is inside: a mapping of lat_min, lat_max, lon_min, lon_max", None, "units", "box", nullable=True, fill=False),
+        Field("units_outline", "path", "only units whose centroid is inside this GeoJSON or shapefile", None, "units", "outline", nullable=True, fill=False),
+        Field("units_boundary", "str", "a centroid on the outline's edge is 'contains' (left out) or 'intersects' (kept)", None, "units", "boundary", choices=("contains", "intersects"), nullable=True, fill=False),
+        Field("units_id_digits", "int", "decimal digits of grid unit ids (null: established or inferred)", None, "units", "id_digits", nullable=True, fill=False),
+        Field("units_id_format", "str", "grid ids 'trimmed' of trailing zeros or 'fixed'", None, "units", "id_format", choices=("trimmed", "fixed"), nullable=True, fill=False),
     ]
     evaluation = [
         Field("start_date", "date", "first date; its month/day start the forecast init dates", REQUIRED,
@@ -565,7 +613,7 @@ def _fields() -> tuple[Field, ...]:
     ] + [Field(name, "bool", text, default, "output") for name, text, default in _TOGGLES] + [
         Field("plot_portrait", "bool", "portrait plots", False, "output", fill=False),
     ]
-    return tuple(top + obs + ref + onset + evaluation + metrics + output)
+    return tuple(top + obs + ref + onset + units + evaluation + metrics + output)
 
 
 FIELDS = _fields()

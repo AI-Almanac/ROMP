@@ -1,7 +1,7 @@
 """The CRPS random forest blend: daily onset probabilities from each model's
 daily rainfall and the climatology.
 
-Its samples are the weekly samples (samples.WeeklySamples), and its inputs per
+Its samples are the weekly samples (samples.Weekly), and its inputs per
 sample (samples.DailyInputs) are the unit's lat and lon, each model's
 ensemble-mean rainfall for every lead day, and the conditional climatology's
 onset probability for lead days 1..max_day. It learns the observed onset's
@@ -26,7 +26,7 @@ import numpy as np
 from momp.utils import workers as pool
 
 from ._crps_tree import CRPSForest
-from .samples import DailyInputs, WeeklySamples
+from .samples import DailyInputs, Weekly
 
 __all__ = ["FittedForest", "Params", "cross_validate", "feature_matrix", "fit", "folds", "predict", "weekly_from_daily"]
 
@@ -59,7 +59,7 @@ def feature_names(inputs: DailyInputs, model_names) -> list[str]:
     return names
 
 
-def feature_matrix(weekly: WeeklySamples, inputs: DailyInputs, rows: np.ndarray, model_names) -> np.ndarray:
+def feature_matrix(weekly: Weekly, inputs: DailyInputs, rows: np.ndarray, model_names) -> np.ndarray:
     """The samples' features (rows, feature_names), float64, NaN where missing."""
     if not np.array_equal(inputs.data["time"].values, weekly["time"]):
         raise ValueError("the forest's inputs are not for these weekly samples")

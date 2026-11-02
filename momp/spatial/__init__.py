@@ -5,6 +5,6 @@
 """
 from .ids import GridIdConvention
 from .regrid import SparseTransform
-from .units import AreaError, EvaluationUnits
+from .units import AreaError, EvaluationUnits, UnitsSpec, UnitsSpecError
 
-__all__ = ["AreaError", "EvaluationUnits", "GridIdConvention", "SparseTransform"]
+__all__ = ["AreaError", "EvaluationUnits", "GridIdConvention", "SparseTransform", "UnitsSpec", "UnitsSpecError"]

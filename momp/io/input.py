@@ -13,6 +13,7 @@ import json
 import os
 import threading
 import warnings
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 import numpy as np
@@ -25,9 +26,10 @@ from momp.lib.onset_config import Thresholds, forecast_reach, history_needs_prev
 from momp.onset import definition as definition_mod
 from momp.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
 from momp.lib.dataset_schema import DatasetError, file_year, resolve_paths
-from momp.onset.thresholds import read_threshold_grid
-from momp.onset.ingest import IngestInfo, ingest, ingest_forecast_info
-from momp.utils.standard import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble
+from momp.onset.thresholds import ThresholdScale, read_threshold_grid, read_threshold_table, scale_values
+from momp.onset.ingest import IngestInfo, ingest, ingest_forecast_info, observation_shift_days, unit_scale
+from momp.spatial.units import UnitsSpec
+from momp.utils.standard import (dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim, rename_model_dims)
 from momp.utils.region import load_blocks, region_box, region_select
 from momp.utils.practical import restore_args
 import logging
@@ -188,7 +190,11 @@ def ingest_options(kwargs, forecast=False) -> dict:
     what no key gives.
     """
     keys = _FORECAST_INGEST_KEYS if forecast else _OBS_INGEST_KEYS
-    return {key: kwargs[key] for key in keys if kwargs.get(key) is not None}
+    options = {key: kwargs[key] for key in keys if kwargs.get(key) is not None}
+    spec = None if forecast else units_spec(kwargs, "observations")
+    if spec is not None and spec.how == "cell_transform":
+        options["missing"] = "keep"  # a cell transform applies the policy to the source cells, as it reads them
+    return options
 
 
 def ingest_model_forecast(cube, setup, kwargs, source=None):
@@ -219,9 +225,16 @@ def ingest_model_forecast(cube, setup, kwargs, source=None):
 
 
 def _obs_source_label(kwargs):
-    """The text that labels the reference observations as a data source (dataset, folder, pattern, variable, unit factor)."""
-    return (f"{kwargs.get('obs')}:{kwargs.get('obs_dir')}:{kwargs.get('obs_file_pattern')}:"
-            f"{kwargs.get('obs_var')}:cvt={kwargs.get('obs_unit_cvt')}")
+    """The text that labels the reference observations as a data source (dataset, folder, pattern, variable, unit
+    factor, and for units what turns the files into series)."""
+    label = (f"{kwargs.get('obs')}:{kwargs.get('obs_dir')}:{kwargs.get('obs_file_pattern')}:"
+             f"{kwargs.get('obs_var')}:cvt={kwargs.get('obs_unit_cvt')}")
+    spec = units_spec(kwargs)
+    if spec is not None:
+        setup = onset_setup(kwargs)
+        label += (f":units={spec!r}:options={sorted(ingest_options(kwargs).items())}:dims={kwargs.get('obs_dims')}"
+                  f":labels={setup.ingest_boundary}/{setup.lead_label}")
+    return label
 
 
 def _run_years(kwargs):
@@ -280,7 +293,8 @@ def _stream_reference(setup, years, kwargs, source):
 def _reference_year(year, kwargs, keep=None):
     """One reference year's rainfall: held for the run if the run evaluates that year, else read and not kept."""
     keep = _run_years(kwargs) if keep is None else keep
-    return load_imd_rainfall(year, **kwargs) if year in keep else _read_obs_uncached(year, kwargs)
+    rain = load_imd_rainfall(year, **kwargs) if year in keep else _read_obs_uncached(year, kwargs)
+    return rain.drop_vars("present") if "present" in rain.coords else rain  # which units have a series, not rain
 
 
 def _reference_rain(setup, years, kwargs):
@@ -367,9 +381,17 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
     thresholds = Thresholds()
     if not setup.uses_thresholds:
         return thresholds
+    scale = ThresholdScale(**kwargs["threshold_scale"]) if kwargs.get("threshold_scale") else None
     for name, path, var in setup.threshold_files:
-        thresholds[name] = read_threshold_grid(
-            path, var, select=lambda da: region_select(da, region=region, **{**kwargs, "mask": None}))
+        if var is None:   # a table by unit id
+            options = {k: v for k, v in (kwargs.get("threshold_table") or {}).items() if v is not None}
+            thresholds[name] = read_threshold_table(path, scale=scale, **options)
+        else:
+            thresholds[name] = read_threshold_grid(
+                path, var, select=lambda da: region_select(da, region=region, **{**kwargs, "mask": None}),
+                scale=scale)
+    for name, mm in setup.threshold_constants:
+        thresholds[name] = mm
     pending = [(name, spec) for name, spec in setup.definition.thresholds if name not in thresholds]
     if not pending and not setup.derived_seasons:
         return thresholds
@@ -384,15 +406,24 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
     probe = _reference_rain(setup, (years[0], years[0]), {"dir_out": dir_out, "region": region, **kwargs})
     full = _LazyRain(probe, lambda: _reference_rain(setup, years, {"region": region, **kwargs}))
     files = observed_cache.obs_files(kwargs, range(years[0], years[1] + 1))
-    cache = ThresholdCache(cache_dir, files)
+    options = {key: kwargs[flat] for key, flat in (("max_missing_fraction", "threshold_max_missing"),
+                                                   ("partial_years", "threshold_partial_years"))
+               if kwargs.get(flat) is not None}
+    cache = ThresholdCache(cache_dir, files + units_files(kwargs))
     for name, spec in pending:
-        thresholds[name] = cache.get_or_compute(spec, full, years, name)
+        thresholds[name] = scale_values(cache.get_or_compute(spec, full, years, name, **options), scale)
     if setup.derived_seasons:
         thresholds.season_climatology = _harmonic_cached(cache_dir, full, years, files)
     return thresholds
 
 
 _loaded_thresholds = {}
+
+def _thresholds_key(kwargs) -> str:
+    """What else the loaded thresholds depend on: how they are computed and which observations on which units."""
+    keys = ("threshold_scale", "threshold_table", "threshold_max_missing", "threshold_partial_years", "obs_paths",
+            "obs_files_years", "obs_dims", "obs_day_boundary", "model_lead_label", *_OBS_INGEST_KEYS, *_UNITS_KEYS)
+    return repr([(k, kwargs.get(k)) for k in keys if kwargs.get(k) is not None])
 
 
 def load_thresholds(**kwargs):
@@ -401,7 +432,7 @@ def load_thresholds(**kwargs):
         return load_thresh_file(**kwargs)
     setup = onset_setup(kwargs)
     key = (setup_key(kwargs), str(kwargs.get("model")), str(kwargs.get("max_forecast_day")), str(kwargs.get("verification_window_list")), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
-           str(kwargs.get("region")))
+           str(kwargs.get("region")), _thresholds_key(kwargs))
     if key not in _loaded_thresholds:
         _loaded_thresholds[key] = load_onset_thresholds(setup, **kwargs)
     return _loaded_thresholds[key]
@@ -677,13 +708,29 @@ def _read_obs_year(year, store, path, obs_var, obs_unit_cvt, region, kwargs):
         if ds.sizes["time"] == 0:
             raise FileNotFoundError(f"No observations for year {year} in {store}")
     else:
-        ds = dim_fmt(xr.open_dataset(path))
+        ds = dim_fmt(rename_model_dims(xr.open_dataset(path), kwargs.get("obs_dims")))
+    spec = units_spec({**kwargs, "region": region}, "observations")
+    if spec is not None:
+        try:
+            return _read_obs_units(ds[obs_var], spec, obs_unit_cvt, {**kwargs, "region": region})
+        finally:
+            if path is not None:
+                ds.close()
     da = region_select(ds[[obs_var]], read_by="time", **{**kwargs, "region": region,
                                                          "dataset_name": str(kwargs.get("obs") or "obs")})[obs_var]
     da = _in_memory(da)
     if path is not None:
         ds.close()
     return _scale_in_place(da, obs_unit_cvt)
+
+
+def _units_key(kwargs, region) -> tuple:
+    """What reading observations onto units adds to the key of a held year (nothing for grid cells)."""
+    spec = units_spec({**kwargs, "region": region}, "observations")
+    if spec is None:
+        return ()
+    return (repr(spec), repr(units_files(kwargs)), kwargs.get("missing"), repr(sorted(kwargs.get("keep_unit_ids") or ())),
+            repr(kwargs.get("obs_dims")), str(kwargs.get("obs_day_boundary")), str(kwargs.get("model_lead_label")))
 
 
 def _obs_key(year, store, path, obs_var, obs_unit_cvt, region, kwargs):
@@ -697,7 +744,7 @@ def _obs_key(year, store, path, obs_var, obs_unit_cvt, region, kwargs):
         ident = None
     return (year, str(source), ident, obs_var, obs_unit_cvt, str(region), kwargs.get("land_only", True),
             kwargs.get("shp_only", True), str(kwargs.get("nc_mask")), str(kwargs.get("obs") or "obs"),
-            json.dumps(kwargs.get("mask"), sort_keys=True, default=str))
+            json.dumps(kwargs.get("mask"), sort_keys=True, default=str)) + _units_key(kwargs, region)
 
 
 def load_imd_rainfall(year, *, obs_var, obs_unit_cvt, region, obs_dir=None, obs_file_pattern=None,
@@ -771,15 +818,29 @@ def _forecast_sources(year, model_dir, file_pattern, paths=None, years_filter=No
     return [file_path]
 
 
+def _fix_dims_for(ensemble):
+    """The function that standardises a forecast's dimension names: members required (True), absent (False) or optional
+    (None, as the units pipeline reads files with or without them)."""
+    if ensemble is None:
+        def optional_member(ds, model_dims=None):
+            ds = dim_fmt_model(ds, model_dims)
+            member = find_dim(list(ds.coords), "member", fuzzy=True)
+            return ds if member in (None, "member") else ds.rename({member: "member"})
+        return optional_member
+    return dim_fmt_model_ensemble if ensemble else dim_fmt_model
+
+
 def _open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered_dates_yr, file_path=None, multi=False):
     """Open the year's forecasts lazily and select its inits; returns (Dataset, close function).
+
+    filtered_dates_yr None keeps every init of the file (the units pipeline reads whole files).
 
     A model_dir that is a zarr store holds all years: the inits of the year are picked by time. Otherwise the
     year's NetCDF file file_pattern.format(year), or `file_path` when the caller names it, is opened. Raises
     FileNotFoundError when the year is absent. With `multi` (one of several files of the year) a file without a
     wanted init gives None instead of an error.
     """
-    fix = dim_fmt_model_ensemble if ensemble else dim_fmt_model
+    fix = _fix_dims_for(ensemble)
     if file_path is None and is_zarr(model_dir):
         ds = fix(open_store(model_dir), model_dims)
         close = lambda: None  # noqa: E731 - the store handle is shared
@@ -789,6 +850,8 @@ def _open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered
             raise FileNotFoundError(f"File not found: {file_path}")
         ds = fix(xr.open_dataset(file_path), model_dims)
         close = ds.close
+    if filtered_dates_yr is None:
+        return ds, close
     available_init_times = pd.to_datetime(ds.init_time.values)
     matching_times = available_init_times[available_init_times.isin(filtered_dates_yr)]
     if len(matching_times) == 0:
@@ -820,15 +883,10 @@ def _load_forecast(year, *, model_dir, model_var, unit_cvt, file_pattern, region
         try:
             if 'step' not in ds.dims:
                 raise KeyError("'step' dimension not found in dataset")
-            # Check if the first value of 'step' is 0, then slice to exclude it
-            if ds['step'][0].values == 0:
-                ds = ds.sel(step=slice(1, None))
             # Onset detection reads no further than this lead day, so loading the rest only costs memory.
-            steps_needed = onset_steps_needed(**kwargs)
-            if steps_needed is not None:
-                ds = ds.sel(step=slice(None, steps_needed))
+            ds = select_leads(ds, None, onset_steps_needed(**kwargs))
             if ensemble and members:
-                ds = ds.sel(member=list(members))
+                ds = select_members(ds, members)
             da = region_select(ds[[model_var]], read_by="init_time",
                                **{**kwargs, "region": region, "dataset_name": str(kwargs.get("model") or "model")})[model_var]
             parts.append(_in_memory(da))
@@ -1058,3 +1116,299 @@ def read_unit_dim(da, *, block_dim, ids=None, scale=None):
     keep[wanted] = True
     loaded = load_blocks(da, block_dim, keep=keep, keep_dims=("unit",))
     return _scale_in_place(loaded.isel(unit=wanted), scale)  # isel with positions copies: nothing of the caller's is scaled
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Evaluation units: the config's `units:` section, reading a file onto units, lead and member selection
+# ---------------------------------------------------------------------------------------------------------
+
+_UNITS_KEYS = {"units_mode": "mode", "units_shapefile": "shapefile", "units_unit_id_col": "unit_id_col",
+               "units_unit_name_col": "unit_name_col", "units_parent_col": "parent_col",
+               "units_weights": "weights", "units_centroids": "centroids",
+               "units_centroid_id_col": "centroid_id_col", "units_dissemination": "dissemination",
+               "units_dissemination_id_col": "dissemination_id_col",
+               "units_dissemination_scope": "dissemination_scope", "units_box": "box", "units_outline": "outline",
+               "units_boundary": "boundary", "units_id_digits": "id_digits", "units_id_format": "id_format"}
+"""The flat config keys of the `units:` section and the UnitsSpec field each sets."""
+_PER_SOURCE = ("units_mode", "units_weights")
+"""Keys that may be a mapping from a source ("observations" or a model's name; "*" for the rest) to its own value."""
+
+
+def units_spec(kwargs, source: str = "observations") -> UnitsSpec | None:
+    """The evaluation units of a source, or None when the config has no `units:` keys (the grid cells are used).
+
+    The keys given extend the region's declared units (its shapefile or weights, replaced when the config names the
+    other): a config with only `units_box` still reads the region's polygons. units_mode and units_weights may be
+    mappings by source, as models on different grids have their own weights (the source is "observations" or a
+    model's name).
+    """
+    given = {}
+    for key, field in _UNITS_KEYS.items():
+        value = kwargs.get(key)
+        if isinstance(value, dict) and key in _PER_SOURCE:
+            value = value.get(source, value.get("*"))
+        if value is not None:
+            given[field] = value
+    if not given:
+        return None
+    if "weights" in given:   # a source with its own weights table does not use the shared shapefile
+        for field in ("shapefile", "unit_id_col", "unit_name_col", "parent_col"):
+            given.pop(field, None)
+    base = None
+    if kwargs.get("region"):
+        from momp.onset import regions
+
+        try:
+            base = regions.units_spec(str(kwargs["region"]))
+        except regions.RegionError:
+            base = None
+    if base is None:
+        return UnitsSpec(**given)
+    if "weights" in given:
+        base = replace(base, shapefile=None, unit_id_col=None, unit_name_col=None, parent_col=None)
+    elif "shapefile" in given:
+        base = replace(base, weights=None)
+    return replace(base, **given)
+
+
+def units_files(kwargs, source: str = "observations") -> list:
+    """The identities (path, size, time) of the files the source's units specification names; none without units."""
+    spec = units_spec(kwargs, source)
+    return [] if spec is None else [file_identity(p) for p in spec.files()]
+
+
+def declared_scale(da, unit_cvt) -> float | None:
+    """Millimetres per unit of the array's rainfall: its declared `units` attribute, else unit_cvt; None for 1."""
+    declared = da.attrs.get("units")
+    declared = str(declared).strip() if declared is not None and str(declared).strip() else None
+    scale = unit_scale(declared) if declared is not None else (unit_cvt or 1.0)
+    return None if scale == 1.0 else float(scale)
+
+
+def select_units(da, spec: UnitsSpec, keep_ids=None):
+    """(units, positions of those used, ordered by id) for an array with lat and lon, or a "unit", dimension."""
+    if "unit" in da.dims:
+        return spec.select(ids=np.asarray(da["unit"].values), keep_ids=keep_ids)
+    return spec.select(lat=da["lat"].values, lon=da["lon"].values, keep_ids=keep_ids)
+
+
+def read_units(da, spec: UnitsSpec, units, positions, *, block_dim, scale=None, missing="flag", support=False):
+    """The array's rain on the used units, dims (the others, "unit"): float64 for averaged units, the file's dtype for
+    its own cells or units. A regrid scales after averaging, a cell transform before (see UnitsSpec); with `support`
+    a cell transform also returns which units have a source each year and the years."""
+    if "unit" in da.dims:
+        return read_unit_dim(da, block_dim=block_dim, ids=units.ids[positions], scale=scale)
+    kwargs = dict(block_dim=block_dim, positions=positions, convention=spec.convention, missing=missing,
+                  support=support)
+    if spec.how == "regrid":
+        return read_on_units(da, units, post_scale=scale, **kwargs)
+    out = read_on_units(da, units, scale=scale, **kwargs)
+    return out.astype(da.dtype, copy=False) if spec.how == "cells" else out
+
+
+def _read_obs_units(da, spec: UnitsSpec, unit_cvt, kwargs):
+    """One year of observations on the units, dims (time, unit), float64 millimetres, dates moved onto the forecasts'
+    labels. The coordinate `present` says which units have a series this year (a cell transform without a source, or a
+    missing day under the "drop" policy, leave a unit out)."""
+    da = da.transpose("time", ...)
+    stamps = pd.DatetimeIndex(da["time"].values)
+    years = np.unique(stamps.year.to_numpy())
+    if len(years) != 1:
+        raise ValueError(f"observations on units are read a year per file; this one holds the years {years.tolist()}")
+    units, positions = select_units(da, spec, kwargs.get("keep_unit_ids"))
+    scale, policy = declared_scale(da, unit_cvt), kwargs.get("missing") or "flag"
+    present = np.ones(len(positions), dtype=bool)
+    if spec.how == "cell_transform" and "unit" not in da.dims:
+        series, supported, _ = read_units(da, spec, units, positions, block_dim="time", scale=scale, missing=policy,
+                                          support=True)
+        present, policy = np.asarray(supported)[:, 0].copy(), "keep"  # the policy was applied to the source cells
+    else:
+        series = read_units(da, spec, units, positions, block_dim="time", scale=scale)
+    ids = units.ids[positions]
+    if len(set(ids.tolist())) != len(ids):
+        raise ValueError("points share the unit ids")
+    values = np.asarray(series.transpose("time", "unit").values, dtype=float)
+    if policy == "drop":
+        present &= ~np.isnan(values).any(axis=0)
+    setup = onset_setup(kwargs)
+    shift = observation_shift_days(setup.ingest_boundary, setup.lead_label)
+    dates = (stamps.normalize() + pd.Timedelta(days=shift)).to_numpy()
+    return xr.DataArray(values, dims=("time", "unit"), coords={"time": dates, "unit": ids.astype(str),
+                                                               "present": ("unit", present)}, attrs={"units": "mm"})
+
+
+def select_leads(ds, first=None, last=None, *, strict=False, rain_horizon=None, where="forecast"):
+    """The lead days of a dataset or array with a `step` dimension, `first`..`last` (None: from the first positive
+    step, to the last).
+
+    Without `strict` this is ROMP's reading: a step 0 is dropped and the steps up to `last` kept as they come. With
+    `strict` (onset_blending's) the days must be whole, distinct and consecutive; they are put in ascending order and
+    the step labels become 1..n, the days themselves a `lead_day` coordinate. `rain_horizon` (max_day, policy) checks
+    first that the file holds the lead days 1..max_day, exactly ("exact") or with later days permitted ("truncate").
+    """
+    if not strict and rain_horizon is None:
+        if first is None:
+            if ds["step"][0].values == 0:
+                ds = ds.sel(step=slice(1, None))
+        else:
+            ds = ds.sel(step=slice(first, None))
+        return ds if last is None else ds.sel(step=slice(None, last))
+    values = np.asarray(ds["step"].values).reshape(-1)
+    numbers = []
+    for v in values:
+        try:
+            numbers.append(int(v))
+        except (TypeError, ValueError):
+            numbers.append(None)
+    if rain_horizon is not None and rain_horizon[0] is not None:
+        _check_rain_horizon([v for v, d in zip(values, numbers) if d is not None and (first is None or d >= first)],
+                            int(rain_horizon[0]), where, allow_extra=str(rain_horizon[1] or "exact").lower() == "truncate")
+    keep = np.array([d is not None and (first is None or d >= first) and (last is None or d <= last) for d in numbers])
+    if not keep.any():
+        raise ValueError(f"Day filtering removed all columns for: {where}")
+    positions = np.flatnonzero(keep)
+    days = np.asarray([numbers[p] for p in positions])
+    order = np.argsort(days, kind="stable")
+    positions, days = positions[order], days[order]
+    if len(set(days.tolist())) != len(days) or any(b - a != 1 for a, b in zip(days, days[1:])):
+        raise ValueError(f"{where}: lead days must be consecutive and distinct, got {days[:8].tolist()}")
+    out = ds.isel(step=positions)
+    return out.assign_coords(lead_day=("step", days)).assign_coords(step=np.arange(1, len(days) + 1))
+
+
+def _whole_day(value) -> int | None:
+    """A lead day as a whole number, None for anything else."""
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(numeric) if np.isfinite(numeric) and numeric.is_integer() else None
+
+
+def _check_rain_horizon(day_values, rain_day_max: int, where: str, *, allow_extra: bool) -> None:
+    """A strict rain horizon needs the lead days 1..rain_day_max exactly (later days too, with allow_extra)."""
+    parsed = [_whole_day(v) for v in day_values]
+    invalid = [repr(v) for v, d in zip(day_values, parsed) if d is None]
+    valid = [d for d in parsed if d is not None]
+    duplicates = sorted({d for d in valid if valid.count(d) > 1})
+    actual, required = set(valid), set(range(1, rain_day_max + 1))
+    missing, extra = sorted(required - actual), sorted(actual - required)
+    problems = []
+    if invalid:
+        problems.append(f"non-integer day values={invalid[:10]}")
+    if duplicates:
+        problems.append(f"duplicate days={duplicates[:10]}")
+    if missing:
+        problems.append(f"missing days={missing[:10]}")
+    if [d for d in extra if d < 1]:
+        problems.append(f"nonpositive days={[d for d in extra if d < 1][:10]}")
+    if [d for d in extra if d > rain_day_max] and not allow_extra:
+        problems.append(f"extra days={[d for d in extra if d > rain_day_max][:10]}")
+    if problems:
+        requirement = (f"days 1..{rain_day_max}, with later days permitted" if allow_extra
+                       else f"exactly days 1..{rain_day_max}")
+        raise ValueError(f"{where}: strict rainfall horizon requires {requirement}; " + "; ".join(problems))
+
+
+def select_members(ds, members=None, *, at_most=None, among=None, where="forecast"):
+    """The members of a dataset or array with a `member` dimension.
+
+    `members` (ROMP's run setting) names members that must exist. `at_most` and `among` (onset_blending's) keep the
+    members present whose number is at most that and among those; none left is an error.
+    """
+    if members:
+        return ds.sel(member=list(members))
+    numbers = np.asarray(ds["member"].values).astype(int)
+    keep = np.ones(len(numbers), dtype=bool)
+    if at_most is not None:
+        keep &= numbers <= at_most
+    if among is not None:
+        keep &= np.isin(numbers, among)
+    if not keep.any():
+        raise ValueError(f"{where}: none of its members are read")
+    return ds if keep.all() else ds.isel(member=np.flatnonzero(keep))
+
+
+_RUN_VALUES = 1 << 23
+"""Values (members x units x lead days) of the issues one run of a forecast file holds at most."""
+
+
+class UnitForecast:
+    """One forecast file read onto evaluation units, a run of issues at a time (memory stays one run).
+
+    Opens the file lazily as `_load_forecast` does (dimension names, lead days, members), keeps every issue, and puts
+    the units of `spec` (those among `keep_ids`) in id order. `issues`, `ids`, `days` (the lead days kept, their step
+    labels renumbered 1..n) and `members` describe it; `runs()` yields (first, stop, rain) with rain over (init_time,
+    member, unit, step) in the file's dtype for cells and float64 for averaged units.
+    When the first lead day kept is d (steps are renumbered 1..n) init_time is the issue plus d - 1 days, so every step
+    has its true date.
+    """
+
+    def __init__(self, path, kwargs, spec: UnitsSpec, *, keep_ids=None):
+        self.path, name = path, Path(path).name
+        variable = kwargs["model_var"]
+        ds, self._close = _open_forecast(None, None, None, None, kwargs.get("model_dims"), None, file_path=str(path))
+        try:
+            if variable not in ds.variables:
+                raise ValueError(f"{name} has no {variable!r} variable (it has: {', '.join(map(str, ds.variables))})")
+            da = ds[[variable]][variable]
+            if "step" not in da.dims or "init_time" not in da.dims:
+                raise ValueError(f"{name}: no {variable!r} variable over issue time, lead day, optional member and "
+                                 "spatial dimensions only")
+            self.scale = declared_scale(da, kwargs.get("unit_cvt"))
+            da = select_leads(da, kwargs.get("first_lead"), kwargs.get("last_lead"), strict=True,
+                              rain_horizon=kwargs.get("rain_horizon"), where=f"NetCDF file {name}")
+            self.days = np.asarray(da["lead_day"].values)
+            if "member" not in da.dims:
+                da = da.expand_dims(member=[0])
+            elif kwargs.get("max_member") is not None or kwargs.get("member_ids") is not None:
+                da = select_members(da, at_most=kwargs.get("max_member"), among=kwargs.get("member_ids"), where=name)
+            self.issues = pd.DatetimeIndex(da["init_time"].values).normalize().to_numpy()
+            spatial = [d for d in da.dims if d not in ("init_time", "member", "step")]
+            self.da = da.transpose("init_time", "member", "step", *spatial)
+            self.spec = spec
+            self.units, self.positions = select_units(self.da, spec, keep_ids)
+            self.ids = self.units.ids[self.positions]
+            self.members = np.asarray(self.da["member"].values)
+        except BaseException:
+            self._close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._close()
+
+    def runs(self):
+        """(first, stop, rain) for each run of issues (whole storage chunks along init_time)."""
+        da = self.da
+        per_issue = max(1, da.sizes["member"] * len(self.ids) * len(self.days))
+        rows = max(1, _RUN_VALUES // per_issue)
+        chunks = da.encoding.get("chunksizes") or da.encoding.get("chunks")
+        if chunks and len(chunks) == da.ndim:
+            stored = int(chunks[da.dims.index("init_time")])
+            rows = max(1, -(-rows // stored)) * stored
+        n_issue = len(self.issues)
+        for start in range(0, n_issue, min(rows, n_issue)):
+            stop = min(n_issue, start + rows)
+            rain = read_units(da.isel(init_time=slice(start, stop)), self.spec, self.units, self.positions,
+                              block_dim="init_time", scale=self.scale)
+            labelled = self.issues[start:stop] + np.timedelta64(int(self.days[0]) - 1, "D")
+            yield start, stop, rain.transpose("init_time", "member", "unit", "step").assign_coords(init_time=labelled)
+
+
+def unit_forecast_bytes(path, variable) -> int:
+    """Peak memory to process one forecast file on units: one run of issues and its working copies."""
+    import math
+
+    import netCDF4
+
+    with netCDF4.Dataset(path) as ds:
+        var = ds.variables.get(variable)
+        if var is None:
+            return 512 * 2**20
+        values = math.prod(var.shape)
+    return int(min(values, _RUN_VALUES * 4) * 30) + 512 * 2**20

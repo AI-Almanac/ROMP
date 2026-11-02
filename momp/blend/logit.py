@@ -52,7 +52,7 @@ from momp.utils import workers as pool
 
 from . import design
 from .design import Plan
-from .samples import WeeklySamples
+from .samples import Weekly
 
 __all__ = [
     "FittedModel", "cluster_cv", "design_matrix", "fit", "fit_samples", "fold_coefficients", "fold_models",
@@ -352,7 +352,7 @@ def log_fit(used: int, rows: int, classes, features) -> None:
     log.info("  Feature columns    : %d", len(features))
 
 
-def fit_samples(formula: str, weekly: WeeklySamples, rows: np.ndarray) -> FittedModel:
+def fit_samples(formula: str, weekly: Weekly, rows: np.ndarray) -> FittedModel:
     """`fit` on samples of the weekly features (positions), from the arrays
     when the formula has a design plan, with the same numerics."""
     plan = design.plan(formula, weekly.column_dtypes())
@@ -412,7 +412,7 @@ def global_cv(plan: Plan, values, rows: np.ndarray, trainable: np.ndarray, year:
     return results, final
 
 
-def global_cv_frames(formula: str, weekly: WeeklySamples, rows: np.ndarray, trainable: np.ndarray, *,
+def global_cv_frames(formula: str, weekly: Weekly, rows: np.ndarray, trainable: np.ndarray, *,
                      holdout_years, training_years, true_holdout_years=(), required_classes=None):
     """global_cv for a formula without a design plan: each fold builds its
     Patsy design from its own training rows. Returns the folds as global_cv does."""
@@ -586,7 +586,7 @@ def _predict(clf, X: np.ndarray) -> np.ndarray:
 # -- local and cluster CV ------------------------------------------------------
 
 
-def local_cv(formula: str, weekly: WeeklySamples, rows: np.ndarray, holdout_years):
+def local_cv(formula: str, weekly: Weekly, rows: np.ndarray, holdout_years):
     """Each unit's own leave-one-year-out CV (compute_cv_local): for each unit
     and each holdout year it has, a fit on its other years' samples predicts
     that year's. rows are the evaluation's samples, in every unit and year.
@@ -611,7 +611,7 @@ def local_cv(formula: str, weekly: WeeklySamples, rows: np.ndarray, holdout_year
     return out
 
 
-def cluster_cv(formula: str, weekly: WeeklySamples, rows: np.ndarray, holdout_years, cluster_var: str):
+def cluster_cv(formula: str, weekly: Weekly, rows: np.ndarray, holdout_years, cluster_var: str):
     """Leave-one-year-out CV within clusters (compute_cv_clusters): a unit's
     holdout year is predicted by the fit on the other years' samples of
     every unit in its cluster (its first sample's `cluster_var`). The fit is
@@ -638,7 +638,7 @@ def cluster_cv(formula: str, weekly: WeeklySamples, rows: np.ndarray, holdout_ye
     return out
 
 
-def _by_unit(weekly: WeeklySamples, rows: np.ndarray):
+def _by_unit(weekly: Weekly, rows: np.ndarray):
     """Positions into rows of each unit's samples, units in order of first appearance."""
     codes, units = pd.factorize(weekly.take("id", rows))
     order = np.argsort(codes, kind="stable")
@@ -651,7 +651,7 @@ class _Fits:
     has a design plan and with Patsy designs otherwise, as
     _fit_predict_multinom fitted them."""
 
-    def __init__(self, formula: str, weekly: WeeklySamples, rows: np.ndarray, outcome: np.ndarray):
+    def __init__(self, formula: str, weekly: Weekly, rows: np.ndarray, outcome: np.ndarray):
         self.formula, self.weekly, self.rows, self.outcome = formula, weekly, rows, outcome
         self.plan = design.plan(formula, weekly.column_dtypes())
         self.columns = None if self.plan is not None else _frame_columns(formula, weekly)
@@ -678,7 +678,7 @@ class _Fits:
         return _predict(clf, X), tuple(clf.classes_)
 
 
-def _frame_columns(formula: str, weekly: WeeklySamples) -> list[str]:
+def _frame_columns(formula: str, weekly: Weekly) -> list[str]:
     """The weekly columns a Patsy design of the formula may read."""
     return [c for c in dict.fromkeys(design.formula_columns(formula)) if c in weekly.columns]
 

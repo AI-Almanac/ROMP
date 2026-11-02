@@ -19,6 +19,7 @@ from collections.abc import Iterator
 import numpy as np
 from joblib import Parallel, delayed
 from numba import njit
+from momp.onset.engine import lead_counts
 
 
 def _jit(**options):
@@ -297,12 +298,12 @@ def _route_to_leaves(
 
 
 def lead_day_histogram(members: np.ndarray, max_day: int) -> np.ndarray:
-    """Counts of members equal to each lead day 1..max_day, then a count of members > max_day."""
+    """Counts of members equal to each lead day 1..max_day, then a count of members > max_day: the engine's lead
+    counts (`engine.lead_counts`, the layout of `onset_count`) without lead 0, and the rest as "later"."""
     members = np.asarray(members, dtype=np.float64)
-    days = np.arange(1, max_day + 1, dtype=np.float64)
-    per_day = (members[:, None] == days[None, :]).sum(axis=0)
+    counts = lead_counts(members, max_day, axis=0)
     later = np.count_nonzero(members > max_day)
-    return np.append(per_day, later).astype(np.float64)
+    return np.append(counts[1:], later).astype(np.float64)
 
 
 def _normalize_rows(counts: np.ndarray) -> np.ndarray:

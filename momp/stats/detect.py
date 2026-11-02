@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from momp.io.input import ingest_model_forecast, onset_steps_needed
+from momp.io.input import ingest_model_forecast, ingest_options, onset_steps_needed
 from momp.lib.onset_config import onset_setup
 from momp.onset import engine
 from momp.stats import observed_cache
@@ -19,6 +19,7 @@ from momp.onset.alignment import check_forecast_alignment
 from momp.onset.ingest import ingest
 from momp.onset.legacy import LEGACY_THRESHOLD
 from momp.onset.model import DailyRain, Status
+from momp.onset.thresholds import unit_thresholds
 import logging
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,12 @@ _ALIGNMENT_MAX_MEMBERS = 10
 _alignment_done = set()
 
 
+def engine_options(kwargs, forecast=False) -> dict:
+    """The run options of the engine a config holds (horizon and missing-rain policy); none given is ROMP's own."""
+    return {"horizon": kwargs.get("onset_horizon") or "censor",
+            "missing": ingest_options(kwargs, forecast=forecast).get("missing")}
+
+
 def _on_grid(da, lat, lon):
     """Put a per-cell DataArray (or dataset) on the lat/lon grid of the rainfall; cells it lacks become NaN."""
     if "lat" not in da.dims or "lon" not in da.dims:
@@ -36,24 +43,39 @@ def _on_grid(da, lat, lon):
     return da.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE)
 
 
-def _thresholds(setup, thresh_slice, lat, lon, per_window=True):
-    """The thresholds for the engine: named per-cell DataArrays on the rainfall grid, or None for a fixed amount.
+def _on_units(value, ids, convention=None):
+    """A threshold over the units of the rainfall, joined by unit id: a number of mm, a table of (id, onset_thresh)
+    or an array over "unit"; a table must cover the units (see momp.onset.thresholds.unit_thresholds)."""
+    return xr.DataArray(unit_thresholds(value, np.asarray(ids).astype(str), convention), dims=("unit",),
+                        coords={"unit": np.asarray(ids).astype(str)})
 
-    Model-climatology thresholds carry a "window" dim (one per verification window). Forecast
-    detection keeps it; per_window=False (observed onsets, which have no lead) keeps the first window.
+
+def _field(value, coords, convention=None):
+    """One threshold on the rainfall's own spatial axes (cells of the grid, or units)."""
+    if "unit" in coords:
+        return _on_units(value, coords["unit"], convention)
+    return _on_grid(value, coords["lat"], coords["lon"]) if isinstance(value, xr.DataArray) else value
+
+
+def _thresholds(setup, thresh_slice, coords, per_window=True, convention=None):
+    """The thresholds for the engine: named arrays on the rainfall's cells or units, or None for a fixed amount.
+
+    coords are the rainfall's spatial coordinates (lat and lon, or unit). Model-climatology thresholds carry a "window"
+    dim (one per verification window). Forecast detection keeps it; per_window=False (observed onsets, which have no
+    lead) keeps the first window.
     """
     if setup.legacy:
         if isinstance(thresh_slice, xr.DataArray) and thresh_slice.ndim:
-            return {LEGACY_THRESHOLD: _on_grid(thresh_slice, lat, lon)}
+            return {LEGACY_THRESHOLD: _on_grid(thresh_slice, coords["lat"], coords["lon"])}
         return None
-    out = {name: _on_grid(value, lat, lon) for name, value in dict(thresh_slice or {}).items()}
+    out = {name: _field(value, coords, convention) for name, value in dict(thresh_slice or {}).items()}
     if not per_window:
         out = {name: (value.isel(window=0, drop=True) if "window" in getattr(value, "dims", ()) else value)
                for name, value in out.items()}
     return out
 
 
-def _season_climatology(setup, thresh_slice, lat, lon):
+def _season_climatology(setup, thresh_slice, coords):
     """The harmonic season analysis on the rainfall grid, for derived seasons only."""
     if not setup.derived_seasons:
         return None
@@ -61,24 +83,41 @@ def _season_climatology(setup, thresh_slice, lat, lon):
     if climatology is None:
         raise ValueError("this definition has derived seasons but no season climatology was loaded; "
                          "pass the thresholds returned by momp.io.input.load_thresholds")
-    return _on_grid(climatology, lat, lon)
+    if "lat" not in coords:
+        raise ValueError("derived seasons are analysed on a grid; evaluation units do not support them")
+    return _on_grid(climatology, coords["lat"], coords["lon"])
+
+
+def _convention(kwargs):
+    """The grid-id convention of the run's units (None: established or inferred)."""
+    from momp.io.input import units_spec
+
+    spec = units_spec(kwargs)
+    return None if spec is None else spec.convention
 
 
 def detect_observed_result(rain_slice, thresh_slice, year, **kwargs):
     """Run the engine on one year of observed rainfall; return (engine Dataset, OnsetSetup).
 
-    The Dataset has dims (year, season, lat, lon) with one year and the selected season (both kept as
-    length-1 dims) and the variables onset_date, onset_index and status of momp.onset.engine.detect_observed;
-    its "calendar" attribute is the calendar of the dates. detect_observed_onset and the NetCDF export
-    (momp.export) both read their values from here, so they cannot disagree.
+    The Dataset has dims (year, season, *spatial) (lat and lon, or unit) with one year and the selected season (both kept
+    as length-1 dims) and the variables onset_date, onset_index and status of momp.onset.engine.detect_observed; its
+    "calendar" attribute is the calendar of the dates. detect_observed_onset and the NetCDF export (momp.export) both
+    read their values from here, so they cannot disagree. A `reference_onset` in kwargs (a ReferenceOnset, for
+    evaluation units) starts each search no earlier than that date.
     """
     setup = onset_setup(kwargs, thresh_slice)
     rain = rain_slice if isinstance(rain_slice, DailyRain) else ingest(
-        rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations")
-    lat, lon = rain.coords["lat"], rain.coords["lon"]
+        rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations", **ingest_options(kwargs))
+    coords = {d: rain.coords[d] for d in rain.dims[:-1]}
+    reference = kwargs.get("reference_onset")
+    search = None if reference is None else {"reference": reference.search_start([int(year)], coords["unit"])}
     result = engine.detect_observed(
-        setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, lat, lon, per_window=False), years=[year],
-        season_climatology=_season_climatology(setup, thresh_slice, lat, lon), backend=setup.backend)
+        setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, coords, per_window=False,
+                                                       convention=_convention(kwargs)), years=[year],
+        season_climatology=_season_climatology(setup, thresh_slice, coords), backend=setup.backend,
+        search_start=search, **engine_options(kwargs))
+    if search:
+        result = result.isel(start=1)
     result = result.sel(year=[year], season=[setup.season])
     result.attrs["calendar"] = rain.calendar
     return result, setup
@@ -87,25 +126,37 @@ def detect_observed_result(rain_slice, thresh_slice, year, **kwargs):
 def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):
     """Detect observed onset dates for a given year.
 
-    rain_slice is daily rainfall in mm with dims (time, lat, lon), or that rainfall already ingested as a DailyRain
-    (the climatology years the thresholds were computed from); thresh_slice is
-    the threshold from momp.io.input.load_thresholds (a number of mm or a 2-D
-    DataArray for the old flat keys, else the definition's named thresholds).
-    Returns a (lat, lon) DataArray of datetime64 onset dates, NaT where the cell
-    has no onset. While a run has the observed-onset cache active (momp.stats.observed_cache) the dates of a
-    year already detected under the same fingerprint are returned without detecting again.
+    rain_slice is daily rainfall in mm with dims (time, lat, lon), or (time, unit) for evaluation units (the reader's
+    `present` coordinate says which units have a series), or that rainfall already ingested as a DailyRain (the
+    climatology years the thresholds were computed from); for units it may also be a function that reads it, called only
+    when the onsets are not cached. thresh_slice is the threshold from momp.io.input.load_thresholds (a number of mm
+    or a 2-D DataArray for the old flat keys, else the definition's named thresholds).
+    Returns a (lat, lon) or (unit) DataArray of datetime64 onset dates, NaT where there is no onset. For units it carries
+    the coordinates `present` and `onset_index` (the 1-based day of the onset in the year's series, NaN without one).
+    While a run has the observed-onset cache active (momp.stats.observed_cache) the dates of a year already detected
+    under the same fingerprint are returned without detecting again.
     """
-    cached = observed_cache.lookup(rain_slice, thresh_slice, year, kwargs)
+    reader = rain_slice if callable(rain_slice) else None
+    cached = observed_cache.lookup(None if reader else rain_slice, thresh_slice, year, kwargs)
     if cached is not None:
         return cached
+    if reader is not None:
+        rain_slice = reader()
     result, setup = detect_observed_result(rain_slice, thresh_slice, year, **kwargs)
-    lat, lon = result["lat"].values, result["lon"].values
-    onset = result["onset_date"].isel(year=0, season=0).transpose("lat", "lon")
+    spatial = ("lat", "lon") if "lat" in result["onset_date"].dims else tuple(result["onset_date"].dims[2:])
+    onset = result["onset_date"].isel(year=0, season=0).transpose(*spatial)
+    status = result["status"].isel(year=0, season=0).transpose(*spatial)
     if not setup.legacy:
-        status = result["status"].isel(year=0, season=0)
         counts = {s.name: int((status == s).sum()) for s in Status}
         log.debug(f"Observed onset {year}, cells by status: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v))
-    out = xr.DataArray(onset.values.astype("datetime64[ns]"), coords=[("lat", lat), ("lon", lon)], name="onset_date")
+    values = onset.values.astype("datetime64[ns]")
+    out = xr.DataArray(values, coords=[(d, result[d].values) for d in spatial], name="onset_date")
+    if isinstance(rain_slice, xr.DataArray) and "present" in rain_slice.coords:
+        present = np.asarray(rain_slice["present"].values, dtype=bool)
+        found = (status.values == int(Status.ONSET)) & present
+        index = result["onset_index"].isel(year=0, season=0).transpose(*spatial).values
+        out = out.copy(data=np.where(found, values, np.datetime64("NaT"))).assign_coords(
+            present=(spatial, present), onset_index=(spatial, np.where(found, index + 1, np.nan)))
     observed_cache.store(rain_slice, thresh_slice, year, kwargs, out)
     return out
 
@@ -132,6 +183,12 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     (init before the observed onset) and the observed onset dates (init_time, lat, lon). "result" is the engine
     Dataset these arrays come from (season kept as a length-1 dim, with the ensemble summary for members) and
     "calendar" the calendar of its dates; the NetCDF export (momp.export) reads them.
+
+    The cube may be over evaluation units instead of lat and lon ((init_time, member, unit, step)). kwargs may then
+    hold `search_start` (variants that start the search later, see momp.onset.engine.detect_forecast),
+    `restrict_to_season` (False: one season covering every lead) and `onset_count` (the member onset counts of
+    `member_onset_counts`); with onset_count there is no observed onset to line up with (onset_da is None) and the
+    dict holds "counts" (init_time, start, unit, lead) instead of the day, date and status arrays.
     """
     setup = onset_setup(kwargs, thresh_slice)
     max_forecast_day = kwargs["max_forecast_day"]
@@ -141,38 +198,62 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     cube = p_model.sel(step=slice(1, steps_needed))
     if "member" in cube.dims and members and list(cube["member"].values) != list(members):
         cube = cube.sel(member=list(members))  # the loader already took them; selecting again would copy the cube
-    order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + ("lat", "lon", "step")
+    spatial = ("lat", "lon") if "lat" in cube.dims else tuple(d for d in cube.dims if d not in ("init_time", "member", "step"))
+    order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + spatial + ("step",)
     forecast = ingest_model_forecast(cube.transpose(*order), setup, kwargs, "forecast")
-    lat, lon = forecast.coords["lat"], forecast.coords["lon"]
+    coords = {d: forecast.coords[d] for d in spatial}
     stitched = None
     if history is not None and not setup.legacy and setup.forecast_history == "observed":
-        on_grid = _on_grid(history, lat, lon).transpose("lat", "lon", ...)
+        on_grid = _on_grid(history, coords["lat"], coords["lon"]).transpose("lat", "lon", ...)
         stitched = ingest(on_grid, day_boundary=setup.ingest_boundary, units="mm", source="observed history")
+    count = bool(kwargs.get("onset_count"))
     result = engine.detect_forecast(
-        setup.definition, forecast, thresholds=_thresholds(setup, thresh_slice, lat, lon),
+        setup.definition, forecast, thresholds=_thresholds(setup, thresh_slice, coords, convention=_convention(kwargs)),
         lead_window=(1, max_forecast_day), backend=setup.backend, history=stitched,
-        season_climatology=_season_climatology(setup, thresh_slice, lat, lon))
-    export_result = result.sel(season=[setup.season])
-    result = result.sel(season=setup.season)
-    if not setup.legacy and bool((result["status"] == Status.CENSORED).any()):
+        season_climatology=_season_climatology(setup, thresh_slice, coords),
+        restrict_to_season=kwargs.get("restrict_to_season", True), search_start=kwargs.get("search_start"),
+        onset_count=count, **engine_options(kwargs, forecast=True))
+    season = setup.season
+    if not kwargs.get("restrict_to_season", True):   # one season covering every lead, named for itself
+        season = result["season"].values[0]
+    export_result = result.sel(season=[season])
+    result = result.sel(season=season)
+    if not setup.legacy and not count and bool((result["status"] == Status.CENSORED).any()):
         warnings.warn("some forecast searches are CENSORED although the lead window was shortened to fit the rule; "
                       "they are reported as no onset. Is max_forecast_day larger than the loaded leads allow?",
                       UserWarning)
-    lead_dims = ("init_time", "member", "lat", "lon") if "member" in forecast.dims else ("init_time", "lat", "lon")
+    init = np.asarray(forecast.coords["init_time"])
+    if count:
+        counts = result["onset_count"].transpose("init_time", "start", *spatial, "lead")
+        return {"setup": setup, "result": export_result, "calendar": forecast.calendar, "init": init,
+                "counts": counts, "start": [str(s) for s in counts["start"].values]}
+    lead_dims = (("init_time", "member") if "member" in forecast.dims else ("init_time",)) + spatial
     dates = result["onset_date"].transpose(*lead_dims).values
     status = result["status"].transpose(*lead_dims).values
-    init = np.asarray(forecast.coords["init_time"])
-    obs = onset_da.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE).transpose("lat", "lon")
+    obs = onset_da.reindex(lat=coords["lat"], lon=coords["lon"], method="nearest",
+                           tolerance=_GRID_TOLERANCE).transpose("lat", "lon")
     obs_values = obs.values.astype("datetime64[ns]")
     valid = ~np.isnat(obs_values)[None] & (init.astype("datetime64[ns]")[:, None, None] < obs_values[None])
     found = status == Status.ONSET
     init_day = init.astype("datetime64[D]").reshape((-1,) + (1,) * (dates.ndim - 1))
     days_after_init = (dates.astype("datetime64[D]") - init_day) / np.timedelta64(1, "D")
     return {"setup": setup, "result": export_result, "calendar": forecast.calendar,
-            "init": init, "lat": np.asarray(lat), "lon": np.asarray(lon),
+            "init": init, "lat": np.asarray(coords["lat"]), "lon": np.asarray(coords["lon"]),
             "member": np.asarray(forecast.coords["member"]) if "member" in forecast.dims else None,
             "day": np.where(found, days_after_init, np.nan), "date": dates, "status": status,
             "valid": valid, "obs": obs_values, "totals": (int(obs.size * len(init)), int((~np.isnat(obs_values)).sum()))}
+
+
+def member_onset_counts(cube, thresh_slice, **kwargs):
+    """For an ensemble forecast on evaluation units: (counts, start names, init times).
+
+    cube has dims (init_time, member, unit, step) in mm, its steps 1..n; kwargs is the run config with
+    max_forecast_day = n. counts is an (init_time, start, unit, lead) DataArray: the number of members whose onset falls on
+    each lead day 0..n, from the search that starts at lead 1 ("base" first) and from each variant of
+    kwargs["search_start"] (the fixed cutoff date, the reference onset); "start" names them in that order.
+    """
+    out = _detect_forecast(cube, thresh_slice, None, {**kwargs, "onset_count": True, "restrict_to_season": False})
+    return out["counts"], out["start"], out["init"]
 
 
 def _date_strings(values):

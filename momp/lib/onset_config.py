@@ -57,6 +57,8 @@ class OnsetSetup:
     forecast_history: str = "none"
     threshold_source: str = "observations"
     sources: dict = field(default_factory=dict, compare=False)
+    threshold_constants: tuple[tuple[str, float], ...] = ()
+    """Thresholds given as a number of mm: (name, mm). `threshold_files` entries without a variable are tables."""
 
     @property
     def uses_thresholds(self) -> bool:
@@ -158,23 +160,33 @@ def _years(value, key: str) -> tuple[int, int]:
     return first, last
 
 
-def _threshold_files(value, definition: Definition) -> tuple[tuple[str, str, str], ...]:
-    """Validate the thresholds mapping {name: "path.nc:variable"} against the definition."""
+def _threshold_files(value, definition: Definition):
+    """Validate the thresholds mapping against the definition: (files, constants).
+
+    A value is "path.nc:variable" (a grid), a table file without a variable (by unit id), or a number of mm.
+    files are (name, path, variable or None for a table); constants are (name, mm).
+    """
     if not value:
-        return ()
+        return (), ()
     if not isinstance(value, dict):
         raise OnsetConfigError(f"thresholds = {value!r} must be a mapping like {{'name': 'path.nc:variable'}}")
     known = {name for name, _ in definition.thresholds}
-    out = []
+    out, constants = [], []
     for name, ref in value.items():
         if name not in known:
             raise OnsetConfigError(f"thresholds names '{name}', which definition '{definition.id}' does not use "
                                    f"(it uses: {', '.join(sorted(known)) or 'no thresholds'})")
-        path, sep, var = str(ref).rpartition(":")
-        if not sep or not path or not var:
+        if not isinstance(ref, str):
+            constants.append((name, float(ref)))
+            continue
+        path, sep, var = ref.rpartition(":")
+        if not sep:
+            out.append((name, ref, None))
+        elif not path or not var:
             raise OnsetConfigError(f"thresholds['{name}'] = {ref!r} must look like 'path.nc:variable'")
-        out.append((name, path, var))
-    return tuple(out)
+        else:
+            out.append((name, path, var))
+    return tuple(out), tuple(constants)
 
 
 def _backend(requested):
@@ -380,7 +392,7 @@ def _definition_setup(cfg) -> OnsetSetup:
             raise OnsetConfigError(f"onset_season = {season!r} is not a season of '{definition.id}' "
                                    f"(its seasons: {', '.join(names)})")
 
-    files = _threshold_files(cfg.get("thresholds"), definition)
+    files, constants = _threshold_files(cfg.get("thresholds"), definition)
     years = cfg.get("threshold_years")
     if years is not None:
         years, sources["threshold_years"] = _years(years, "threshold_years"), "config threshold_years"
@@ -388,7 +400,7 @@ def _definition_setup(cfg) -> OnsetSetup:
         value, region_id = _region_value(chain, "climatology_years")
         if value is not None:
             years, sources["threshold_years"] = tuple(value), f"region default ({region_id})"
-    covered = {name for name, _, _ in files}
+    covered = {name for name, _, _ in files} | {name for name, _ in constants}
     needs_years = isinstance(seasons, DerivedSeasons) or any(n not in covered for n, _ in definition.thresholds)
     if years is None:
         if needs_years:
@@ -438,7 +450,8 @@ def _definition_setup(cfg) -> OnsetSetup:
     backend, note = _backend(cfg.get("onset_backend") or "numba")
     sources["backend"] = note or "config onset_backend"
     return OnsetSetup(False, definition, season, years, files, boundary, label, backend,
-                      bool(cfg.get("check_alignment", False)), dry_check, tuple(overrides), history, source, sources)
+                      bool(cfg.get("check_alignment", False)), dry_check, tuple(overrides), history, source, sources,
+                      constants)
 
 
 def check_config(dic: dict) -> None:

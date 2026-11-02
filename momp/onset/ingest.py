@@ -18,9 +18,13 @@ import xarray as xr
 from momp.onset.model import MISSING_POLICIES, RESOLUTIONS, DailyRain, ForecastRain
 from momp.utils.standard import ROLE_ALIASES, find_dim
 
-_UNITS_MM = {"mm", "mm/day", "mm/d", "mm day-1", "mm d-1", "mm day**-1", "kg m-2", "kg m-2 day-1",
-             "kg m-2 d-1", "kg/m2", "kg/m2/day"}
-_UNITS_M = {"m", "metres", "meters", "m/day", "m/d", "m day-1", "m d-1"}
+MM_PER_UNIT = {
+    **{name: 1.0 for name in ("mm", "mm/day", "mm/d", "mm day-1", "mm d-1", "mm day**-1", "kg m-2", "kg m**-2",
+                              "kg m-2 day-1", "kg m-2 d-1", "kg/m2", "kg/m2/day")},
+    **{name: 1000.0 for name in ("m", "metres", "meters", "m/day", "m/d", "m day-1", "m d-1")},
+}
+"""Millimetres per unit of a rainfall total's declared units, by lower-case name with single spaces (the one table;
+the CF spellings of onset_blending included)."""
 
 # Offsets from UTC in hours for the zone names day boundaries may use.
 _ZONES = {"UTC": 0.0, "GMT": 0.0, "Z": 0.0, "IST": 5.5, "EAT": 3.0, "CAT": 2.0, "WAT": 1.0,
@@ -52,15 +56,19 @@ def parse_day_boundary(text: str) -> tuple[float, str]:
     return (hour + minute / 60.0 - _ZONES[zone]) % 24.0, label
 
 
-def _unit_scale(units: str | None) -> float:
-    """Return the factor taking the given rainfall units to mm, or raise for missing/unknown units."""
+def observation_shift_days(obs_boundary: str, lead_label: str) -> int:
+    """Days that move the observations' dates onto the forecasts' labels: 1 for observations labelled by their start
+    against forecast leads labelled by their end (as onset_blending reads them), else 0."""
+    return 1 if parse_day_boundary(obs_boundary)[1] == "start" and lead_label == "end" else 0
+
+
+def unit_scale(units: str | None) -> float:
+    """Return the factor taking the given rainfall units to mm (see MM_PER_UNIT), or raise for missing/unknown units."""
     if units is None:
         raise ValueError("No rainfall units: pass units=... or set the 'units' attribute on the data")
     key = " ".join(str(units).lower().split())
-    if key in _UNITS_MM:
-        return 1.0
-    if key in _UNITS_M:
-        return 1000.0
+    if key in MM_PER_UNIT:
+        return MM_PER_UNIT[key]
     raise ValueError(f"Unsupported rainfall units {units!r}; supported: mm, mm/day, kg m-2, m, m/day")
 
 
@@ -339,7 +347,7 @@ def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, sou
     if gaps not in GAPS:
         raise ValueError(f"gaps must be one of {GAPS}, got {gaps!r}")
     parse_day_boundary(day_boundary)
-    scale = _unit_scale(units if units is not None else da.attrs.get("units"))
+    scale = unit_scale(units if units is not None else da.attrs.get("units"))
     time_dim = _find_dim(da, "time", None)
     if time_dim not in da.coords:
         raise ValueError(f"The time dim {time_dim!r} has no coordinate values")
@@ -677,7 +685,7 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
     if accumulation not in ("auto", "daily", "since_init"):
         raise ValueError(f"accumulation must be 'auto', 'daily' or 'since_init', got {accumulation!r}")
     declared = units if units is not None else da.attrs.get("units")
-    scale = _unit_scale(declared)
+    scale = unit_scale(declared)
     lead = _find_dim(da, "step", lead_dim, "lead")
     init = _find_dim(da, "init_time", init_dim, "init", exclude=(lead,))
     member = _find_dim(da, "member", member_dim, "member", required=False, exclude=(lead, init))

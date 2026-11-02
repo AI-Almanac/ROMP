@@ -52,7 +52,7 @@ class Predictions:
     @classmethod
     def of_samples(cls, weekly, rows: np.ndarray, probabilities: np.ndarray, labels, *,
                    earlier: np.ndarray | None = None, daily: np.ndarray | None = None) -> Predictions:
-        """Predictions for weekly samples (samples.WeeklySamples; rows are positions)."""
+        """Predictions for weekly samples (samples.Weekly; rows are positions)."""
         rows = np.asarray(rows, dtype=np.int64)
         coords = {
             "id": ("sample", weekly.take("id", rows).astype(str)),

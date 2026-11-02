@@ -176,7 +176,7 @@ def test_a_string_unit_dimension_is_read_as_unit(tmp_path):
 
 @pytest.mark.parametrize("text, factor", [("metres", 1000.0), ("Meters", 1000.0), ("m", 1000.0), ("mm", 1.0)])
 def test_metres_and_meters_are_units(text, factor):
-    assert ing._unit_scale(text) == factor
+    assert ing.unit_scale(text) == factor
     assert detect._units_from_attr(text) == ("m" if factor == 1000.0 else "mm")
 
 

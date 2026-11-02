@@ -128,7 +128,8 @@ def _read_csv(path: str, id_col: str | None, value_col: str, lat_col: str, lon_c
 
 
 def unit_thresholds(thresholds, unit_ids, explicit: ids.GridIdConvention | None = None) -> np.ndarray:
-    """Each unit's threshold (NaN without one): `thresholds` is None, a constant or a table, joined by unit id.
+    """Each unit's threshold (NaN without one): `thresholds` is None, a constant, a table or an array over "unit",
+    joined by unit id.
 
     A table keyed by lat/lon is read under the units' grid-id convention and must cover them; ids are normalised
     (stripped text); one id with two values, or a unit the table lacks, is an error.
@@ -136,6 +137,9 @@ def unit_thresholds(thresholds, unit_ids, explicit: ids.GridIdConvention | None 
     unit_ids = np.asarray(unit_ids)
     if thresholds is None:
         return np.full(len(unit_ids), np.nan)
+    if isinstance(thresholds, xr.DataArray) and "unit" in thresholds.dims:
+        thresholds = pd.DataFrame({"id": np.asarray(thresholds["unit"].values).astype(str),
+                                   "onset_thresh": np.asarray(thresholds.values, dtype=float)})
     if not isinstance(thresholds, pd.DataFrame):
         return np.full(len(unit_ids), float(thresholds))
     convention = ids.resolve(explicit, authoritative_ids=pd.Series(unit_ids, dtype=str),

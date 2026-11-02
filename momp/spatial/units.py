@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -42,6 +44,10 @@ _LON_NAMES = ("lon", "center_lon", "longitude")
 
 class AreaError(ValueError):
     """No unit falls inside the area of interest."""
+
+
+class UnitsSpecError(ValueError):
+    """A units specification that cannot be used (an unset environment variable in a path, no source for a mode)."""
 
 
 def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
@@ -432,3 +438,145 @@ class EvaluationUnits:
     def clear_transforms(self) -> None:
         """Forget the compiled transforms (they are kept per source grid)."""
         self._transforms.clear()
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Where the units come from: one specification for a region's `units:` block and a run's `units:` section
+# ---------------------------------------------------------------------------------------------------------------
+
+MODES = ("cells", "regrid", "cell_transform")
+BOUNDARIES = ("contains", "intersects")
+DISSEMINATION_SCOPES = ("inputs", "training")
+
+
+@dataclass(frozen=True)
+class UnitsSpec:
+    """How a source's cells (or pre-aggregated units) become evaluation units, and which of them are used.
+
+    Source of the units: a `shapefile` (polygons, with `unit_id_col`; names and parents optional) or a `weights` table
+    (units named by its targets, with optional `centroids`), else the cells of the source grid. `mode` says how rain
+    reaches them: "cells" (the file's own cells, or its own units when it has a "unit" dimension), "regrid" (weights
+    from the source grid; millimetre factors applied after averaging, missing rain judged on the units) or
+    "cell_transform" (a source-to-unit weights table; factors applied before averaging, missing rain judged on the
+    source cells); None is "cells" without a shapefile or weights, else "regrid".
+
+    The rest restricts or labels the units: `box` (sorted (key, value) pairs of lat_min / lat_max / lon_min / lon_max)
+    or an `outline` (`boundary` "contains" leaves out a centroid on the edge, "intersects" keeps it), the
+    `dissemination` list (`dissemination_scope` "inputs" restricts the units read to it, "training" only marks it as the
+    subset `dissemination`), and how grid ids are written (`id_digits`, `id_format`).
+
+    Paths are as written; `resolve_path` expands ${ENV} and ~ and anchors a relative one at `base` (the folder of
+    the YAML that wrote it).
+    """
+
+    base: Path = Path(".")
+    shapefile: str | None = None
+    unit_id_col: str | None = None
+    unit_name_col: str | None = None
+    parent_col: str | None = None
+    weights: str | None = None
+    centroids: str | None = None
+    centroid_id_col: str | None = None
+    dissemination: str | None = None
+    dissemination_id_col: str | None = None
+    mode: str | None = None
+    box: tuple | None = None
+    outline: str | None = None
+    boundary: str = "contains"
+    dissemination_scope: str = "inputs"
+    id_digits: int | None = None
+    id_format: str = "trimmed"
+
+    def __post_init__(self):
+        if self.mode is not None and self.mode not in MODES:
+            raise UnitsSpecError(f"units mode must be one of {MODES}, got {self.mode!r}")
+        if self.boundary not in BOUNDARIES:
+            raise UnitsSpecError(f"units boundary must be one of {BOUNDARIES}, got {self.boundary!r}")
+        if self.dissemination_scope not in DISSEMINATION_SCOPES:
+            raise UnitsSpecError(f"units dissemination_scope must be one of {DISSEMINATION_SCOPES}, "
+                                 f"got {self.dissemination_scope!r}")
+        if self.shapefile and self.weights:
+            raise UnitsSpecError("units name a shapefile or a weights table, not both")
+        if self.how == "cells" and (self.shapefile or self.weights):
+            raise UnitsSpecError("units mode 'cells' reads the file's own cells; it takes no shapefile or weights")
+        if self.how != "cells" and not (self.shapefile or self.weights):
+            raise UnitsSpecError(f"units mode {self.how!r} needs a shapefile or a weights table")
+        if self.shapefile and not self.unit_id_col:
+            raise UnitsSpecError("units with a shapefile need unit_id_col")
+        if isinstance(self.box, dict):
+            object.__setattr__(self, "box", tuple(sorted((k, float(v)) for k, v in self.box.items() if v is not None)))
+
+    @property
+    def how(self) -> str:
+        """The mode in force: "cells", "regrid" or "cell_transform"."""
+        if self.mode is not None:
+            return self.mode
+        return "regrid" if (self.shapefile or self.weights) else "cells"
+
+    @property
+    def convention(self):
+        """The configured grid-id convention, or None (established or inferred per table)."""
+        return unit_ids.configured(self.id_digits, self.id_format)
+
+    def resolve_path(self, value: str) -> Path:
+        """The path with ${ENV} and ~ expanded, relative to `base`; an unset variable is an error."""
+        expanded = os.path.expanduser(os.path.expandvars(str(value)))
+        if re.search(r"\$\{?\w+\}?", expanded):
+            raise UnitsSpecError(f"units path '{value}' uses an environment variable that is not set. "
+                                 "Fix: export it or write the path out")
+        return Path(self.base) / expanded if not os.path.isabs(expanded) else Path(expanded)
+
+    def files(self) -> list[Path]:
+        """The files this specification names that exist (what a cache key must follow)."""
+        named = [self.shapefile, self.weights, self.centroids, self.dissemination, self.outline]
+        found = [self.resolve_path(n) for n in named if n]
+        return sorted(p for p in found if p.is_file())
+
+    def with_weights(self, weights) -> "UnitsSpec":
+        """The same specification with another weights table (one source's own, as a model on its own grid has)."""
+        return self if weights is None else replace(self, weights=str(weights), shapefile=None)
+
+    def build(self, lat=None, lon=None, ids=None) -> EvaluationUnits:
+        """The units of a source: of the file's `ids` when it has a "unit" dimension (centroids from the spec's table),
+        else of the source grid (`lat`, `lon`) in "cells" mode, else the shapefile's or the weights' units. The
+        dissemination list is a boolean subset of that name."""
+        convention = self.convention
+        if ids is not None:
+            table = pd.DataFrame({"id": np.asarray(ids).astype(str)})
+            if self.centroids:
+                table = table.merge(read_centroids(self.resolve_path(self.centroids), self.centroid_id_col),
+                                    on="id", how="left")
+            units = EvaluationUnits(table, "polygon")
+        elif self.how == "cells":
+            units = EvaluationUnits.from_grid(lat, lon, explicit=convention)
+        elif self.shapefile:
+            units = EvaluationUnits.from_shapefile(self.resolve_path(self.shapefile), self.unit_id_col,
+                                                   self.unit_name_col, self.parent_col)
+        else:
+            centroids = self.resolve_path(self.centroids) if self.centroids else None
+            units = EvaluationUnits.from_weights(self.resolve_path(self.weights), centroids,
+                                                 centroid_id_col=self.centroid_id_col)
+        if self.dissemination:
+            units = units.subset_from_csv("dissemination", self.resolve_path(self.dissemination),
+                                          self.dissemination_id_col, explicit=convention)
+        return units
+
+    def kept(self, units: EvaluationUnits, keep_ids=None) -> np.ndarray:
+        """Positions of the units used, ordered by id: inside the box or outline, in the dissemination list (scope
+        "inputs") and among `keep_ids` (None keeps every id)."""
+        keep = units.in_area(box=None if self.box is None else dict(self.box),
+                             outline=None if self.outline is None else self.resolve_path(self.outline),
+                             boundary=self.boundary)
+        if self.dissemination and self.dissemination_scope == "inputs":
+            keep = keep & units.subsets["dissemination"]
+        if keep_ids is not None:
+            keep = keep & np.isin(units.ids, np.asarray(sorted(keep_ids), dtype=str))
+        positions = np.flatnonzero(keep)
+        if not len(positions):
+            raise ValueError("No unit of the file is kept")
+        return positions[np.argsort(units.ids[positions], kind="stable")]
+
+    def select(self, lat=None, lon=None, ids=None, keep_ids=None) -> tuple[EvaluationUnits, np.ndarray]:
+        """(units, positions of those used): `build` then `kept`."""
+        units = self.build(lat, lon, ids)
+        return units, self.kept(units, keep_ids)

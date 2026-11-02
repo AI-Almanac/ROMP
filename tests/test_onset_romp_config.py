@@ -75,7 +75,11 @@ def test_precomputed_thresholds_replace_threshold_years():
     with pytest.raises(OnsetConfigError, match="does not use"):
         onset_setup({**cfg, "thresholds": {"nope": "t.nc:v"}})
     with pytest.raises(OnsetConfigError, match="path.nc:variable"):
-        onset_setup({**cfg, "thresholds": {"wet_spell_amount": "t.nc"}})
+        onset_setup({**cfg, "thresholds": {"wet_spell_amount": "t.nc:"}})
+    table = onset_setup({**cfg, "thresholds": {"wet_spell_amount": "t.csv"}})   # without a variable: a table by unit id
+    assert table.threshold_files == (("wet_spell_amount", "t.csv", None),)
+    constant = onset_setup({**cfg, "thresholds": {"wet_spell_amount": 20}})
+    assert constant.threshold_constants == (("wet_spell_amount", 20.0),)
 
 
 def test_several_seasons_need_onset_season(tmp_path):

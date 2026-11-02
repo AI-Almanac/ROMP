@@ -14,21 +14,11 @@ import pytest
 
 from _oracle import legacy_onset_utils as legacy
 from _oracle.onset_rule import OnsetRule, find_onsets
+from _recipes import HEAD, definition_yaml
 from momp.onset import definition as D
 from momp.onset import plan as P
 from momp.onset.backends import numba_cpu, reference
 from momp.onset.model import Jobs, Status
-
-HEAD = """id: parity
-version: 1
-title: t
-citation: t
-wording: t
-status: draft
-notes: t
-season: {from: 01-01, to: 12-31}
-"""
-
 
 def _backends():
     out = [pytest.param(reference, id="reference")]
@@ -52,33 +42,6 @@ def rule(**kw) -> OnsetRule:
                 dry_day_min_mm=1.0, dry_run_contained=False, sum_window=10, sum_min_mm=5.0)
     base.update(kw)
     return OnsetRule(**base)
-
-
-def definition_yaml(r: OnsetRule, fixed_total: float | None = None) -> str:
-    """The momp definition text of a blending rule (a fixed total amount instead of the thr threshold if given)."""
-    wet = f"{'at least' if r.wet_day_comparison == 'gte' else 'more than'} {r.wet_day_min_mm} mm"
-    cmp_ = "at least" if r.threshold_comparison == "gte" else "more than"
-    total = f"{cmp_} {fixed_total} mm" if fixed_total is not None else f"{cmp_} thr"
-    require = ["{all days: wet}"] if r.trigger_rule == "all_days_wet" else ["{first day: wet}"]
-    if r.min_wet_days is not None:
-        require.append(f"{{wet days: at least {r.min_wet_days}}}")
-    require.append(f"{{total: {total}}}")
-    if r.followup_anchor == "after_trigger":
-        span = f"{r.follow_days} days after window"
-    else:
-        span = f"days 1 to {r.follow_days + 1}"
-    length = r.min_dry_days if r.mode == "consecutive_dry" else r.sum_window
-    contained = r.mode == "window_sum" or r.dry_run_contained
-    if r.follow_days == 0 or (contained and r.follow_days < length):
-        veto = "[]"
-    elif r.mode == "window_sum":
-        veto = f"[{{dry window: {r.sum_window} days with less than {r.sum_min_mm} mm, within: {span}}}]"
-    else:
-        place = "within" if r.dry_run_contained else "beginning within"
-        veto = f"[{{dry run: at least {r.min_dry_days} days, {place}: {span}}}]"
-    thresholds = "thresholds: {thr: {mean total over: %d days}}\n" % r.window
-    return (HEAD + f"wet_day: {wet}\ndry_day: less than {r.dry_day_min_mm} mm\n{thresholds}"
-            f"onset:\n  window: {r.window} days\n  require: [{', '.join(require)}]\n  reject if: {veto}\n")
 
 
 def run_momp(r: OnsetRule, series, thresholds, starts, backend, *, horizon, missing="keep", fixed_total=None):

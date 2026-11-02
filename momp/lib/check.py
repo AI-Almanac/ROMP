@@ -160,7 +160,7 @@ def _files(dic: dict, report: CheckReport) -> dict:
     needs_clim = dic.get("ref_model") in ("climatology", "conditional_climatology")
     obs_years = set(years) | (set(clim) if needs_clim else set())
     if setup.uses_thresholds and setup.threshold_source == "observations" and setup.threshold_years and not any(
-            True for _ in setup.threshold_files):
+            True for _ in (*setup.threshold_files, *setup.threshold_constants)):
         obs_years |= set(range(setup.threshold_years[0], setup.threshold_years[1] + 1))
     samples = {}
     patterns = tuple(dic.get("obs_file_pattern") or ("{}.nc",))
@@ -437,7 +437,7 @@ def _cache(dic: dict, report: CheckReport) -> None:
     setup = onset_setup(dic)
     if paths is None:
         return
-    if setup.uses_thresholds and not setup.threshold_files:
+    if setup.uses_thresholds and not setup.threshold_files and not setup.threshold_constants:
         report.add("observed onsets: the thresholds are computed from the observations (or cached) when the run "
                    "starts, so hit or miss is reported by the run; an earlier run with the same observations, "
                    "definition, cells and years is a hit")

@@ -216,11 +216,8 @@ def _sample(da: xr.DataArray, roles: dict) -> np.ndarray:
 def _units_from_attr(text) -> str | None:
     """'mm' or 'm' for a units attribute ROMP can convert, else None."""
     key = " ".join(str(text).lower().split())
-    if key in ingest._UNITS_MM:
-        return "mm"
-    if key in ingest._UNITS_M:
-        return "m"
-    return None
+    factor = ingest.MM_PER_UNIT.get(key)
+    return None if factor is None else ("mm" if factor == 1.0 else "m")
 
 
 def _check_magnitude(values: np.ndarray, implied: str | None) -> str | None:

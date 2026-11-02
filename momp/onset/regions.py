@@ -7,7 +7,6 @@ the definitions of the regions that contain it.
 from __future__ import annotations
 
 import functools
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +16,7 @@ import yaml
 from momp.onset.definition import registry_ids as definition_ids
 from momp.onset.ingest import parse_day_boundary
 from momp.onset.model import Definition
+from momp.spatial.units import UnitsSpec, UnitsSpecError
 
 REGIONS_DIR = Path(__file__).parent / "regions"
 
@@ -29,34 +29,6 @@ _ID_RE = re.compile(r"^[a-z0-9_]+$")
 
 class RegionError(ValueError):
     """A malformed region entry or an unknown region; the message names the YAML path and the fix."""
-
-
-@dataclass(frozen=True)
-class UnitsSpec:
-    """Where a region's evaluation units come from: a shapefile or a weights table, plus an optional list.
-
-    Paths are as written in the YAML; `resolve_path` expands ${ENV} and ~ and anchors a relative one at `base`
-    (the folder of the YAML).
-    """
-
-    base: Path
-    shapefile: str | None = None
-    unit_id_col: str | None = None
-    unit_name_col: str | None = None
-    parent_col: str | None = None
-    weights: str | None = None
-    centroids: str | None = None
-    centroid_id_col: str | None = None
-    dissemination: str | None = None
-    dissemination_id_col: str | None = None
-
-    def resolve_path(self, value: str) -> Path:
-        """The path with ${ENV} and ~ expanded, relative to the YAML's folder; an unset variable is an error."""
-        expanded = os.path.expanduser(os.path.expandvars(value))
-        if re.search(r"\$\{?\w+\}?", expanded):
-            raise RegionError(f"units path '{value}' uses an environment variable that is not set. "
-                              "Fix: export it or write the path out")
-        return self.base / expanded if not os.path.isabs(expanded) else Path(expanded)
 
 
 @dataclass(frozen=True)
@@ -216,7 +188,10 @@ def _parse_units(value, origin: str, base: Path | None) -> UnitsSpec:
     if wrong:
         _fail(origin, f"units.{wrong[0]}", "does not go with this source. Fix: shapefile takes unit_*_col and "
                                            "parent_col, weights takes centroids and centroid_id_col")
-    return UnitsSpec(base=base or REGIONS_DIR, **block)
+    try:
+        return UnitsSpec(base=base or REGIONS_DIR, **block)
+    except UnitsSpecError as exc:
+        _fail(origin, "units", str(exc))
 
 
 def region_ids() -> list[str]:
@@ -338,14 +313,7 @@ def units_for(name: str, lat=None, lon=None, *, mask=None, label: str = "data"):
                               "Fix: pass the grid or add 'units:' to the region entry")
         units = EvaluationUnits.from_mask(mask, lat, lon, label=label)
         return units.restrict(units.in_area(box=str(name)))
-    if spec.shapefile:
-        units = EvaluationUnits.from_shapefile(spec.resolve_path(spec.shapefile), spec.unit_id_col,
-                                               spec.unit_name_col, spec.parent_col)
-    else:
-        centroids = spec.resolve_path(spec.centroids) if spec.centroids else None
-        units = EvaluationUnits.from_weights(spec.resolve_path(spec.weights), centroids,
-                                             centroid_id_col=spec.centroid_id_col)
-    if spec.dissemination:
-        units = units.subset_from_csv("dissemination", spec.resolve_path(spec.dissemination),
-                                      spec.dissemination_id_col)
-    return units
+    try:
+        return spec.build()
+    except UnitsSpecError as exc:
+        raise RegionError(str(exc)) from None
