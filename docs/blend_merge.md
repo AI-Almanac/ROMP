@@ -77,8 +77,12 @@ Wave 2
   crossing 1 January.
 
 Wave 3
-- W3a blend features, onsets glue, evaluation, training.
-- W3b trained/forecast/signature, old `trained.blend` loading.
+- W3a blend-only settings (`Recipe`, alongside ROMP's resolved config) and weekly features. Onset
+  detection for blends goes through ROMP's one adapter (`momp/stats/detect.py`, the observed-onset
+  cache, `momp/io/input.py`), extended with units, search-start variants, onset counts and
+  blending's threshold sources; there is no separate blend onset module.
+- W3b evaluation, training.
+- W3c trained/forecast/signature, old `trained.blend` loading.
 
 Wave 4
 - W4a config schema, CLI, API, run folders, convert (BlendConfig, specs), registry ids for
