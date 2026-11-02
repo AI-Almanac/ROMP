@@ -105,8 +105,8 @@ def _vetoing_spells(a: Anatomy) -> list[tuple[int, int, int]]:
     """Distinct dry spells (first, last, length) that ruled out candidates, in date order."""
     seen = {}
     for c in a.candidates:
-        if c.state == "F" and c.checks[c.decisive].role == "veto":
-            spell = c.checks[c.decisive].spell
+        spell = c.checks[c.decisive].spell if c.state == "F" and c.checks[c.decisive].role == "veto" else None
+        if spell is not None:
             seen.setdefault((spell.first, spell.last), spell.length)
     return sorted((f, l, n) for (f, l), n in seen.items())
 

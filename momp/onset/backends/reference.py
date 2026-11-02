@@ -7,6 +7,8 @@ False decides the job.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from momp.onset import plan as P
@@ -44,7 +46,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
     data_end = np.asarray(jobs.data_end, dtype=np.int64)
     origin = start if jobs.origin is None else np.asarray(jobs.origin, dtype=np.int64)
     n_jobs = len(series)
-    tables = _Tables(plan, tenths, missing, amounts)
+    tables = Tables(plan, tenths, missing, amounts)
     day = np.full(n_jobs, -1, dtype=np.int64)
     status = np.full(n_jobs, Status.NOT_FOUND, dtype=np.int8)
     n_cand = np.maximum(end - start + 1, 0)
@@ -165,13 +167,14 @@ class _Block:
         self.valid = self.d <= end[:, None]
 
 
-class _Tables:
+class Tables:
     """Prefix tables over the series, built once per detect call."""
 
     def __init__(self, plan, tenths, missing, amounts):
         """Build prefix sums of rain, missing days, wet days and dry days, and the per-veto spell tables.
 
-        Rain is int64 tenths, or float64 mm (summed in time order from day 0) for exact resolution.
+        Rain is int64 tenths, or float64 mm (summed in time order from day 0) for exact resolution; per_mm is
+        the number of rain units in a mm (10, or 1 when exact).
         """
         self.amounts = amounts
         self.n_time = tenths.shape[1]
@@ -179,6 +182,7 @@ class _Tables:
         missing = self.missing = np.asarray(missing, dtype=bool)
         x = np.where(missing, 0, tenths).astype(np.float64 if np.asarray(tenths).dtype.kind == "f" else np.int64)
         self.x = x
+        self.per_mm = 1 if x.dtype.kind == "f" else 10
         wet_amount = amounts[plan.wet.key][:, None]
         self.wet = ~missing & _compare(plan.wet.op, x, wet_amount)
         if plan.dry is None:
@@ -236,7 +240,7 @@ def _gather(table: np.ndarray, series: np.ndarray, index: np.ndarray) -> np.ndar
     return table[series, np.clip(index, 0, table.shape[1] - 1)]
 
 
-def _observe(tables: _Tables, job: _Block, a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _observe(tables: Tables, job: _Block, a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Observability of [a, b): (observable, flags) where flags carry the missing and horizon bits."""
     e = job.data_end
     lo = np.clip(a, 0, e)
@@ -252,8 +256,34 @@ def _span(job: _Block, first: int, last: int, since_start: bool) -> tuple[np.nda
     return a, job.d + last
 
 
-def _condition(plan_cond: P.CondPlan, tables: _Tables, job: _Block) -> tuple[np.ndarray, np.ndarray]:
-    """Three-valued code and flags of a Total or WetDays requirement."""
+@dataclass
+class CondFacts:
+    """A requirement over every candidate of a block: code and flags (see detect), the span [first, last) and the
+    value compared (the span's rain sum in tenths, or mm when exact, or its wet-day count)."""
+
+    code: np.ndarray
+    flags: np.ndarray
+    first: np.ndarray
+    last: np.ndarray
+    value: np.ndarray
+
+
+@dataclass
+class VetoFacts:
+    """A veto over every candidate of a block: code and flags, the span [first, last), the end `need_last`
+    (exclusive) of the days it needs observable, and [lo, hi) the start days of spells it looked at."""
+
+    code: np.ndarray
+    flags: np.ndarray
+    first: np.ndarray
+    last: np.ndarray
+    need_last: np.ndarray
+    lo: np.ndarray
+    hi: np.ndarray
+
+
+def _condition(plan_cond: P.CondPlan, tables: Tables, job: _Block) -> CondFacts:
+    """Three-valued code and flags of a Total or WetDays requirement, with the span and value behind them."""
     a, b = _span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
     ok, flags = _observe(tables, job, a, b)
     if plan_cond.kind == P.TOTAL:
@@ -264,22 +294,23 @@ def _condition(plan_cond: P.CondPlan, tables: _Tables, job: _Block) -> tuple[np.
         value = _gather(tables.pw, job.series, b) - _gather(tables.pw, job.series, a)
         result = _compare(plan_cond.op, value, plan_cond.count)
     code = np.where(ok, np.where(result, TRUE, FALSE), UNKNOWN).astype(np.int8)
-    return code, np.where(ok, 0, flags).astype(np.int8)
+    return CondFacts(code, np.where(ok, 0, flags).astype(np.int8), a, b, value)
 
 
-def _veto(veto: P.VetoPlan, spell_prefix: np.ndarray, tables: _Tables, job: _Block
-          ) -> tuple[np.ndarray, np.ndarray]:
+def _veto(veto: P.VetoPlan, spell_prefix: np.ndarray, tables: Tables, job: _Block) -> VetoFacts:
     """Code and flags of a veto: TRUE means a spell was confirmed, so the candidate is rejected."""
     a, b = _span(job, veto.first, veto.last, False)
     length = veto.length
     if veto.placement == P.INSIDE:
         if veto.last - veto.first < length:
-            return np.zeros(a.shape, dtype=np.int8), np.zeros(a.shape, dtype=np.int8)
+            zeros = np.zeros(a.shape, dtype=np.int8)
+            return VetoFacts(zeros, zeros.copy(), a, b, b, a, a)
         u_last = b - length
-        ok, flags = _observe(tables, job, a, b)
+        need_last = b
     else:
         u_last = b - 1
-        ok, flags = _observe(tables, job, a, b + length - 1)
+        need_last = b + length - 1
+    ok, flags = _observe(tables, job, a, need_last)
     u_last = np.minimum(u_last, job.data_end - length)
     n_table = spell_prefix.shape[1]
     lo = np.clip(a, 0, n_table - 1)
@@ -293,7 +324,7 @@ def _veto(veto: P.VetoPlan, spell_prefix: np.ndarray, tables: _Tables, job: _Blo
         if tables.horizon == "reject":
             code = np.where(b > job.data_end, TRUE, code).astype(np.int8)
             flags = np.where(code == UNKNOWN, flags, 0).astype(np.int8)
-    return code, flags
+    return VetoFacts(code, flags, a, b, need_last, lo, hi)
 
 
 def _status_from_flags(flags: np.ndarray) -> np.ndarray:
@@ -301,27 +332,101 @@ def _status_from_flags(flags: np.ndarray) -> np.ndarray:
     return np.where(flags == HORIZON_FLAG, Status.CENSORED, Status.INSUFFICIENT_DATA).astype(np.int8)
 
 
-def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block) -> dict:
+@dataclass
+class Evaluation:
+    """Every fact of a first-passage evaluation of a block of jobs, candidate by candidate.
+
+    conditions and vetoes hold one CondFacts / VetoFacts per requirement / veto of the plan, each shaped
+    (jobs, candidates) like day (candidate day index, -1 for padding), valid, state (the combined code),
+    flags (bit 1 missing, bit 2 horizon, only where the state is Unknown) and day_missing (the candidate's own
+    day is missing under the "keep" policy, which rejects it). onset (reported day index, -1 for
+    none) and status give each job's decision as detect returns it. The helper methods read the same tables the
+    rule was decided on.
+    """
+
+    tables: Tables
+    plan: P.Plan
+    block: _Block
+    day: np.ndarray
+    valid: np.ndarray
+    state: np.ndarray
+    flags: np.ndarray
+    day_missing: np.ndarray
+    conditions: list
+    vetoes: list
+    onset: np.ndarray
+    status: np.ndarray
+
+    def missing_days(self, job: int, first: int, last: int) -> tuple:
+        """Day indices of the missing days inside the observed part of [first, last) for one job."""
+        end = int(self.block.data_end[job, 0])
+        lo = min(max(first, 0), end)
+        hi = max(min(last, end), lo)
+        series = int(self.block.series[job, 0])
+        return tuple(int(i) for i in np.nonzero(self.tables.missing[series, lo:hi])[0] + lo)
+
+    def first_not_wet(self, job: int, first: int, last: int) -> int | None:
+        """The first day of [first, last) that is not wet for one job (None when every day is wet)."""
+        gaps = np.nonzero(~self.tables.wet[int(self.block.series[job, 0]), first:last])[0]
+        return int(gaps[0]) + first if len(gaps) else None
+
+    def spell(self, veto: int, job: int, cand: int) -> tuple[int, int, float] | None:
+        """(first day, last day, rain total in the data's unit) of the first spell a confirmed veto found, or None.
+
+        A dry run is extended over the dry days that follow it, up to the end of the veto's span (starts_inside and
+        beginning-within spells: up to the data end).
+        """
+        spell_plan, tables, block = self.plan.vetoes[veto], self.tables, self.block
+        facts = self.vetoes[veto]
+        series, end = int(block.series[job, 0]), int(block.data_end[job, 0])
+        row = tables.veto_prefix[veto][series]
+        lo, hi = int(facts.lo[job, cand]), int(facts.hi[job, cand])
+        if hi <= lo or row[hi] == row[lo]:
+            return None
+        first = int(np.searchsorted(row, row[lo], side="right")) - 1
+        last = first + spell_plan.length - 1
+        if spell_plan.kind == P.DRY_RUN:
+            limit = min(int(facts.last[job, cand]) if spell_plan.placement == P.INSIDE else end, end) - 1
+            while last + 1 <= limit and tables.dry[series, last + 1]:
+                last += 1
+        return first, last, tables.px[series, last + 1] - tables.px[series, first]
+
+
+def evaluate(plan: P.Plan, tables: Tables, jobs: Jobs) -> Evaluation:
+    """Evaluate every candidate of first-passage jobs against prebuilt tables; the facts behind detect's decision.
+
+    All jobs form one block (use a few jobs, or call detect for many); detect decides through this same function.
+    """
+    series, start, end, data_end = (np.asarray(a, dtype=np.int64)
+                                    for a in (jobs.series, jobs.start, jobs.end, jobs.data_end))
+    origin = start if jobs.origin is None else np.asarray(jobs.origin, dtype=np.int64)
+    return _evaluate_block(plan, tables, _Block(series, start, end, data_end, int(np.maximum(end - start + 1, 1).max()),
+                                                origin))
+
+
+def _evaluate_block(plan: P.Plan, tables: Tables, job: _Block) -> Evaluation:
     """Evaluate all candidates of a block and pick the first one that is not False."""
     shape = job.d.shape
-    req_codes, veto_codes = [], []
+    conditions, vetoes = [], []
     unknown_flags = np.zeros(shape, dtype=np.int8)
     any_false = np.zeros(shape, dtype=bool)
     any_unknown = np.zeros(shape, dtype=bool)
     for cond in plan.conditions:
-        code, flags = _condition(cond, tables, job)
-        req_codes.append(code)
-        any_false |= code == FALSE
-        any_unknown |= code == UNKNOWN
-        unknown_flags |= flags
+        facts = _condition(cond, tables, job)
+        conditions.append(facts)
+        any_false |= facts.code == FALSE
+        any_unknown |= facts.code == UNKNOWN
+        unknown_flags |= facts.flags
     for veto, spell_prefix in zip(plan.vetoes, tables.veto_prefix):
-        code, flags = _veto(veto, spell_prefix, tables, job)
-        veto_codes.append(code)
-        any_false |= code == TRUE
-        any_unknown |= code == UNKNOWN
-        unknown_flags |= flags
+        facts = _veto(veto, spell_prefix, tables, job)
+        vetoes.append(facts)
+        any_false |= facts.code == TRUE
+        any_unknown |= facts.code == UNKNOWN
+        unknown_flags |= facts.flags
+    day_missing = np.zeros(shape, dtype=bool)
     if tables.keep:
-        any_false |= tables.missing[job.series, np.clip(job.d, 0, tables.n_time - 1)] & (job.d < job.data_end)
+        day_missing = tables.missing[job.series, np.clip(job.d, 0, tables.n_time - 1)] & (job.d < job.data_end)
+        any_false |= day_missing
     state = np.where(any_false | ~job.valid, FALSE, np.where(any_unknown, UNKNOWN, TRUE)).astype(np.int8)
     flags = np.where(state == UNKNOWN, unknown_flags, 0).astype(np.int8)
 
@@ -350,13 +455,20 @@ def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block) -> dict:
         wet_day = tables.next_wet[series, lo]
         in_window = (lo_raw < tables.n_time) & (wet_day < b) & (wet_day < job.data_end[:, 0])
         day = np.where(onset & in_window, wet_day, day)
-    trace_out = {"day": np.where(job.valid, job.d, -1), "valid": job.valid, "state": state, "flags": flags,
-                 "requirements": [np.where(job.valid, c, 0).astype(np.int8) for c in req_codes],
-                 "vetoes": [np.where(job.valid, c, 0).astype(np.int8) for c in veto_codes]}
-    return {"day": day, "status": status, "trace": trace_out}
+    return Evaluation(tables, plan, job, np.where(job.valid, job.d, -1), job.valid, state, flags, day_missing,
+                      conditions, vetoes, day, status)
 
 
-def _curve_block(plan: P.Plan, tables: _Tables, job: _Block) -> dict:
+def _first_passage_block(plan: P.Plan, tables: Tables, job: _Block) -> dict:
+    """Evaluate all candidates of a block and return the decision (and the trace arrays)."""
+    ev = _evaluate_block(plan, tables, job)
+    trace_out = {"day": ev.day, "valid": ev.valid, "state": ev.state, "flags": ev.flags,
+                 "requirements": [np.where(job.valid, c.code, 0).astype(np.int8) for c in ev.conditions],
+                 "vetoes": [np.where(job.valid, c.code, 0).astype(np.int8) for c in ev.vetoes]}
+    return {"day": ev.onset, "status": ev.status, "trace": trace_out}
+
+
+def _curve_block(plan: P.Plan, tables: Tables, job: _Block) -> dict:
     """Evaluate the cumulative-anomaly rule for every job of a block."""
     start, end, series = job.start[:, 0], job.end[:, 0], job.series[:, 0]
     ok, flags = _observe(tables, job, job.start, job.end + 1)

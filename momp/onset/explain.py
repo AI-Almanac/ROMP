@@ -1,11 +1,11 @@
 """Explain why one cell got the onset date it did: a structured Anatomy of the search and a readable log.
 
-trace_observed and trace_forecast build the engine's own jobs for a single cell, run the reference backend
-with trace=True on that one job, and read the decision from the engine's own rules (including the
-history-only PRIOR search of stitched forecasts), so the Anatomy's result is the engine's result. The
-descriptive values shown next to each outcome (window totals, wet-day counts, the first confirmed dry spell)
-are recomputed from the series for display only. explain() turns an Anatomy into text; the plot lives in
-momp.onset.viz.anatomy.
+trace_observed and trace_forecast build the engine's own jobs for a single cell and evaluate them with the
+reference backend (backends/reference.evaluate), so the Anatomy's result is the engine's result (including the
+history-only PRIOR search of stitched forecasts) and every fact shown next to an outcome (window totals,
+wet-day counts, spans, missing days, the confirmed dry spell) is the backend's own; nothing of the rule is
+re-evaluated here. The run options (exact rain, missing and horizon policies, dry_day, beginning within) are
+the backend's. explain() turns an Anatomy into text; the plot lives in momp.onset.viz.anatomy.
 """
 from __future__ import annotations
 
@@ -19,12 +19,14 @@ from momp.onset import plan as P
 from momp.onset.backends import reference
 from momp.onset.describe import describe
 from momp.onset.model import (
-    Curve, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status,
+    Curve, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, resolution_of,
 )
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 _OP_WORDS = {"ge": "at least", "gt": "more than", "le": "at most", "lt": "less than"}
 _OP_NAMES = {code: name for name, code in P.OP_CODES.items()}
+_PLACEMENTS = {P.INSIDE: "inside", P.STARTS_INSIDE: "starts_inside", P.BEGINS: "begins"}
+_PLACEMENT_VERBS = {"starts_inside": "starts", "begins": "begins"}
 _OUTCOME = {1: "pass", 0: "fail", -1: "unknown"}
 _VETO_OUTCOME = {1: "fail", 0: "pass", -1: "unknown"}
 _STATE = {1: "T", 0: "F", -1: "U"}
@@ -36,11 +38,13 @@ class ThresholdValue:
 
     compared maps a comparator ("ge", "gt", "le", "lt") to the amount in tenths of a mm (the threshold
     rounded for that comparator); for a curve baseline the single key "baseline" holds thousandths of a mm.
+    With exact rain it holds the unrounded mm and exact is True.
     """
 
     name: str
     mm: float
     compared: dict
+    exact: bool = False
 
 
 @dataclass(frozen=True)
@@ -57,8 +61,10 @@ class Spell:
 class Check:
     """One requirement or veto evaluated for one candidate.
 
-    role is "require" or "veto" and kind "total", "wet_days", "dry_run" or "dry_window". outcome is
-    "pass", "fail" or "unknown" (for a veto, "fail" means a spell was confirmed and the candidate rejected).
+    role is "require" or "veto" and kind "total", "wet_days", "dry_run", "dry_window" or "day_missing" (the
+    candidate day itself is missing under the "keep" policy, so it is rejected). outcome is
+    "pass", "fail" or "unknown" (for a veto, "fail" means a spell was confirmed and the candidate rejected;
+    spell is None when the horizon "reject" policy rejected it because its span runs past the data).
     first..last (day indices, inclusive) is the span the rule looks at and need_first..need_last the days
     it needs to be observable. value is the window total in mm or the wet-day count (None when not
     observable); op/limit the comparison (limit in mm, a day count or a wet-day count); limit_name the
@@ -173,6 +179,8 @@ class Anatomy:
     curve: CurveTrace | None
     result: Result
     labels: "_Labels" = field(repr=False, default=None)
+    dry_mm: float | None = None
+    dry_op: str | None = None
 
     @property
     def is_forecast(self) -> bool:
@@ -317,129 +325,67 @@ def _cell_thresholds(plan: P.Plan, thresholds, spatial_dims, spatial_shape, cell
     return {name: values[flat:flat + 1].copy() for name, values in per_cell.items()}
 
 
-def _threshold_values(plan: P.Plan, per_cell: dict, amounts: dict) -> tuple[ThresholdValue, ...]:
-    """The named thresholds with the integer amounts compared for each comparator."""
+def _threshold_values(plan: P.Plan, per_cell: dict, amounts: dict, exact: bool) -> tuple[ThresholdValue, ...]:
+    """The named thresholds with the amounts compared for each comparator (integers, or mm when exact)."""
     found: dict[str, dict] = {}
     for spec in plan.amount_specs:
         if spec.kind == "fixed":
             continue
         entry = found.setdefault(spec.name, {})
-        entry["baseline" if spec.kind == "baseline" else _OP_NAMES[spec.op]] = int(amounts[spec.key][0])
-    return tuple(ThresholdValue(name, float(per_cell[name][0]), compared) for name, compared in found.items())
+        value = amounts[spec.key][0]
+        entry["baseline" if spec.kind == "baseline" else _OP_NAMES[spec.op]] = float(value) if exact else int(value)
+    return tuple(ThresholdValue(name, float(per_cell[name][0]), compared, exact) for name, compared in found.items())
 
 
-# ---------------------------------------------------------------------------------- the displayed series
+# ---------------------------------------------------------------------------------- the backend's facts
 
-def _prefix(values: np.ndarray) -> np.ndarray:
-    """Prefix sums with a leading zero."""
-    return np.concatenate([[0], np.cumsum(values, dtype=np.int64)])
-
-
-def _compare(op: int, value, amount):
-    """Elementwise comparison selected by an operator code."""
-    return reference._compare(op, value, amount)
+def _threshold_name(key: str) -> str | None:
+    """The threshold a comparison's amount key refers to (None for a fixed amount)."""
+    return None if key.startswith("fixed:") else key.rsplit(":", 1)[0]
 
 
-class _Series:
-    """Prefix tables over the one series being explained (rain, missing, wet and dry days)."""
-
-    def __init__(self, tenths: np.ndarray, missing: np.ndarray, wet_op: int, wet_amount: int):
-        """Build the tables; missing days count as no rain and are neither wet nor dry."""
-        self.miss = np.asarray(missing, dtype=bool)
-        self.x = np.where(self.miss, 0, tenths).astype(np.int64)
-        self.n = len(self.x)
-        self.wet = ~self.miss & _compare(wet_op, self.x, wet_amount)
-        self.dry = ~self.miss & ~self.wet
-        self.px, self.pm, self.pw, self.pd = (_prefix(a) for a in (self.x, self.miss, self.wet, self.dry))
-
-    def observe(self, a: int, b: int, end: int) -> tuple[tuple, tuple]:
-        """(flags, missing day indices) of the span [a, b) against data ending at `end` (the backend's rule)."""
-        lo = min(max(a, 0), end)
-        hi = max(min(b, end), lo)
-        n_missing = int(self.pm[hi] - self.pm[lo])
-        flags = []
-        if a < 0 or n_missing > 0:
-            flags.append("missing")
-        if b > end:
-            flags.append("horizon")
-        days = tuple(int(i) for i in np.nonzero(self.miss[lo:hi])[0] + lo) if n_missing else ()
-        return tuple(flags), days
-
-
-def _check_requirement(cp: P.CondPlan, i: int, code: int, d: int, s: _Series, amounts: dict, start: int,
-                       end: int) -> Check:
-    """Describe requirement i of candidate d, with the values behind its outcome."""
-    a = start if cp.since_start else d + cp.first
-    b = d + cp.last
-    flags, missing_days = s.observe(a, b, end)
-    observable = not flags
+def _requirement_check(ev: reference.Evaluation, i: int, c: int, amounts: dict) -> Check:
+    """Requirement i of candidate c as the backend evaluated it."""
+    cp, f, per_mm = ev.plan.conditions[i], ev.conditions[i], ev.tables.per_mm
+    code, a, b = int(f.code[0, c]), int(f.first[0, c]), int(f.last[0, c])
+    unknown = code == reference.UNKNOWN
+    flags = _flag_names(int(f.flags[0, c])) if unknown else ()
+    missing_days = ev.missing_days(0, a, b) if unknown else ()
+    value = None if unknown else float(f.value[0, c])
     if cp.kind == P.TOTAL:
-        value = (s.px[b] - s.px[a]) / 10 if observable else None
         key = cp.cmp.key
-        name = None if key.startswith("fixed:") else key.rsplit(":", 1)[0]
         return Check("require", i, "total", _OUTCOME[code], a, b - 1, a, b - 1, b - a, _OP_NAMES[cp.cmp.op],
-                     float(amounts[key][0]) / 10, name, value, None, 0, None, None,
-                     () if observable else flags, missing_days, cp.since_start, cp.first)
-    value = float(s.pw[b] - s.pw[a]) if observable else None
-    first_not_wet = None
-    if observable and code == reference.FALSE:
-        gaps = np.nonzero(~s.wet[a:b])[0]
-        first_not_wet = int(gaps[0]) + a if len(gaps) else None
+                     float(amounts[key][0]) / per_mm, _threshold_name(key), None if unknown else value / per_mm,
+                     None, 0, None, None, flags, missing_days, cp.since_start, cp.first)
+    first_not_wet = ev.first_not_wet(0, a, b) if code == reference.FALSE else None
     return Check("require", i, "wet_days", _OUTCOME[code], a, b - 1, a, b - 1, b - a, _OP_NAMES[cp.op],
-                 float(cp.count), None, value, None, 0, None, first_not_wet, () if observable else flags,
-                 missing_days, cp.since_start, cp.first)
+                 float(cp.count), None, value, None, 0, None, first_not_wet, flags, missing_days, cp.since_start,
+                 cp.first)
 
 
-def _find_spell(vp: P.VetoPlan, a: int, b: int, s: _Series, amounts: dict, end: int) -> Spell | None:
-    """The first dry spell the veto confirms for the span [a, b), or None (mirrors the backend's rule)."""
-    length = vp.length
-    if vp.placement == P.INSIDE:
-        if vp.last - vp.first < length:
-            return None
-        last_start = b - length
-    else:
-        last_start = b - 1
-    last_start = min(last_start, end - length)
-    first_start = max(a, 0)
-    if last_start < first_start:
-        return None
-    starts = np.arange(first_start, last_start + 1)
-    if vp.kind == P.DRY_RUN:
-        holds = (s.pd[starts + length] - s.pd[starts]) == length
-    else:
-        total = s.px[starts + length] - s.px[starts]
-        complete = (s.pm[starts + length] - s.pm[starts]) == 0
-        holds = complete & _compare(vp.cmp.op, total, amounts[vp.cmp.key])
-    if not holds.any():
-        return None
-    u = int(starts[int(np.argmax(holds))])
-    last = u + length - 1
-    if vp.kind == P.DRY_RUN:
-        limit = min(b if vp.placement == P.INSIDE else end, end) - 1
-        while last + 1 <= limit and s.dry[last + 1]:
-            last += 1
-    return Spell(u, last, last - u + 1, float(s.px[last + 1] - s.px[u]) / 10)
-
-
-def _check_veto(vp: P.VetoPlan, i: int, code: int, d: int, s: _Series, amounts: dict, end: int) -> Check:
-    """Describe veto i of candidate d, with the confirmed dry spell when it rejects the candidate."""
-    a, b = d + vp.first, d + vp.last
-    inside = vp.placement == P.INSIDE
-    need_last = b - 1 if inside else b + vp.length - 2
-    if inside and vp.last - vp.first < vp.length:
-        flags, missing_days = (), ()
-    else:
-        flags, missing_days = s.observe(a, need_last + 1, end)
-    spell = _find_spell(vp, a, b, s, amounts, end) if code == reference.TRUE else None
+def _veto_check(ev: reference.Evaluation, i: int, c: int, amounts: dict) -> Check:
+    """Veto i of candidate c as the backend evaluated it, with the confirmed dry spell when it rejects the candidate."""
+    vp, f, per_mm = ev.plan.vetoes[i], ev.vetoes[i], ev.tables.per_mm
+    code, a, b = int(f.code[0, c]), int(f.first[0, c]), int(f.last[0, c])
+    need_last = int(f.need_last[0, c]) - 1
+    unknown = code == reference.UNKNOWN
+    spell = None
+    found = ev.spell(i, 0, c) if code == reference.TRUE else None
+    if found is not None:
+        spell = Spell(found[0], found[1], found[1] - found[0] + 1, float(found[2]) / per_mm)
     kind = "dry_run" if vp.kind == P.DRY_RUN else "dry_window"
     op, limit, name = "ge", float(vp.length), None
     if vp.kind == P.DRY_WINDOW:
-        op, limit = _OP_NAMES[vp.cmp.op], float(amounts[vp.cmp.key][0]) / 10
-        name = None if vp.cmp.key.startswith("fixed:") else vp.cmp.key.rsplit(":", 1)[0]
+        op, limit, name = _OP_NAMES[vp.cmp.op], float(amounts[vp.cmp.key][0]) / per_mm, _threshold_name(vp.cmp.key)
     return Check("veto", i, kind, _VETO_OUTCOME[code], a, b - 1, a, need_last, b - a, op, limit, name, None,
-                 "inside" if inside else "starts_inside", vp.length, spell,
-                 None, flags if code == reference.UNKNOWN else (), missing_days if code == reference.UNKNOWN else (),
-                 False, vp.first)
+                 _PLACEMENTS[vp.placement], vp.length, spell, None,
+                 _flag_names(int(f.flags[0, c])) if unknown else (),
+                 ev.missing_days(0, a, need_last + 1) if unknown else (), False, vp.first)
+
+
+def _day_missing_check(day: int) -> Check:
+    """The "keep" policy's rejection of a candidate whose own day is missing."""
+    return Check("require", -1, "day_missing", "fail", day, day, day, day, 0, "ge", 0.0)
 
 
 # ---------------------------------------------------------------------------------- building the Anatomy
@@ -459,24 +405,23 @@ def _season_index(names: list[str], season: str | None) -> int:
     return names.index(season)
 
 
-def _first_passage_candidates(plan, defn_trace, amounts, s, labels, start, end, data_end) -> tuple:
+def _first_passage_candidates(ev: reference.Evaluation, amounts: dict, labels) -> tuple:
     """CandidateTraces up to and including the first candidate that is not False."""
-    tr = defn_trace
     out = []
-    for c in range(tr["day"].shape[1]):
-        if not tr["valid"][0, c]:
+    for c in range(ev.day.shape[1]):
+        if not ev.valid[0, c]:
             continue
-        d = int(tr["day"][0, c])
-        state = int(tr["state"][0, c])
-        checks = [_check_requirement(cp, i, int(tr["requirements"][i][0, c]), d, s, amounts, start, data_end)
-                  for i, cp in enumerate(plan.conditions)]
-        checks += [_check_veto(vp, i, int(tr["vetoes"][i][0, c]), d, s, amounts, data_end)
-                   for i, vp in enumerate(plan.vetoes)]
+        d = int(ev.day[0, c])
+        state = int(ev.state[0, c])
+        checks = [_requirement_check(ev, i, c, amounts) for i in range(len(ev.conditions))]
+        checks += [_veto_check(ev, i, c, amounts) for i in range(len(ev.vetoes))]
+        if ev.day_missing[0, c]:
+            checks.append(_day_missing_check(d))
         decisive = None
         for k, check in enumerate(checks):
             if check.outcome == ("fail" if state == reference.FALSE else "unknown") and decisive is None:
                 decisive = k
-        out.append(CandidateTrace(d, labels.date(d), _STATE[state], _flag_names(int(tr["flags"][0, c])),
+        out.append(CandidateTrace(d, labels.date(d), _STATE[state], _flag_names(int(ev.flags[0, c])),
                                   tuple(checks), decisive))
         if state != reference.FALSE:
             break
@@ -493,14 +438,6 @@ def _curve_trace(plan, trace, amounts) -> CurveTrace | None:
     k = int(np.argmin(cumulative))
     return CurveTrace(days, cumulative, int(days[k]), float(cumulative[k]), amounts[plan.curve_key][0] / 1000.0,
                       plan.curve_after_min)
-
-
-def _compile(defn: Definition) -> P.Plan:
-    """The plan of a definition, refusing the parity options explain does not trace (dry_day, beginning within)."""
-    plan = P.compile(defn)
-    if plan.dry is not None or any(v.placement == P.BEGINS for v in plan.vetoes):
-        raise NotImplementedError("explain does not trace definitions with dry_day or 'beginning within' yet")
-    return plan
 
 
 def _plan_reach(plan: P.Plan) -> int:
@@ -531,22 +468,22 @@ class _Case:
 def _build(defn: Definition, plan: P.Plan, case: _Case, per_cell: dict, amounts: dict, invalid: bool, *,
            location: dict, season: str, year, init, member, lead_label, stitched: bool) -> Anatomy:
     """Run the traced search for one prepared case and assemble the Anatomy."""
-    wet_key = plan.wet.key
-    wet_amount = int(amounts[wet_key][0])
-    s = _Series(case.tenths, case.missing, plan.wet.op, wet_amount)
-    status, day, trace, data_end = Status.NOT_FOUND, -1, None, case.data_end
+    tables = reference.Tables(plan, case.tenths[None, :], case.missing[None, :], amounts)
+    per_mm = tables.per_mm
+    x, miss, wet = tables.x[0], tables.missing[0], tables.wet[0]
+    status, day, facts, data_end = Status.NOT_FOUND, -1, None, case.data_end
     if case.preset >= 0:
         status = Status(case.preset)
     elif invalid:
         status = Status.INSUFFICIENT_DATA
     else:
-        status, day, trace, data_end = case.run(s)
+        status, day, facts, data_end = case.run(tables)
     candidates, curve = (), None
-    if trace is not None:
+    if facts is not None:
         if plan.family == P.CURVE:
-            curve = _curve_trace(plan, trace, amounts)
+            curve = _curve_trace(plan, facts, amounts)
         else:
-            candidates = _first_passage_candidates(plan, trace, amounts, s, case.labels, case.start, case.end, data_end)
+            candidates = _first_passage_candidates(facts, amounts, case.labels)
     decision = next((c.day for c in candidates if c.state != "F"), None)
     if curve is not None and status in (Status.ONSET,):
         decision = curve.min_day
@@ -561,7 +498,7 @@ def _build(defn: Definition, plan: P.Plan, case: _Case, per_cell: dict, amounts:
         hi = max(hi, day + 3)
     if lead_label is not None:
         hi = max(hi, case.split + 3)
-    hi = min(max(hi, lo + 1), s.n)
+    hi = min(max(hi, lo + 1), tables.n_time)
     lo = min(lo, hi - 1)
     days = np.arange(lo, hi)
     found = day >= 0
@@ -573,34 +510,48 @@ def _build(defn: Definition, plan: P.Plan, case: _Case, per_cell: dict, amounts:
     return Anatomy(
         definition=defn, sentence=describe(defn), location=location, season=season, year=year, init=init,
         member=member, split=case.split, lead_label=lead_label, stitched=stitched, days=days,
-        dates=case.labels.dates(days), rain_mm=s.x[days] / 10.0, missing=s.miss[days], wet=s.wet[days],
-        source=case.source[days], wet_mm=wet_amount / 10.0, wet_op=_OP_NAMES[plan.wet.op],
+        dates=case.labels.dates(days), rain_mm=x[days] / per_mm, missing=miss[days], wet=wet[days],
+        source=case.source[days], wet_mm=float(amounts[plan.wet.key][0]) / per_mm, wet_op=_OP_NAMES[plan.wet.op],
         first_candidate=int(case.start), last_candidate=int(case.end), data_end=int(data_end),
-        thresholds=_threshold_values(plan, per_cell, amounts), candidates=candidates, curve=curve, result=result,
-        labels=case.labels)
+        thresholds=_threshold_values(plan, per_cell, amounts, per_mm == 1), candidates=candidates, curve=curve,
+        result=result, labels=case.labels,
+        dry_mm=None if plan.dry is None else float(amounts[plan.dry.key][0]) / per_mm,
+        dry_op=None if plan.dry is None else _OP_NAMES[plan.dry.op])
 
 
-def _detect_single(plan: P.Plan, amounts: dict, start: int, end: int, data_end: int):
-    """A run callback: the reference backend, traced, on one job of the displayed series."""
-    def run(s: _Series):
-        """Return (status, day, trace, data_end) of the job."""
-        det = reference.detect(plan, s.x[None, :], s.miss[None, :], amounts,
-                               Jobs(np.zeros(1, np.int64), np.array([start]), np.array([end]), np.array([data_end])),
-                               trace=True)
+def _decide(plan: P.Plan, tables: reference.Tables, start: int, end: int, data_end: int):
+    """The backend's decision on one job of the tables: (status, day, facts, data_end).
+
+    facts are the first-passage Evaluation, or the curve rule's trace arrays.
+    """
+    jobs = Jobs(np.zeros(1, np.int64), np.array([start]), np.array([end]), np.array([data_end]))
+    if plan.family == P.CURVE:
+        det = reference.detect(plan, tables.x, tables.missing, tables.amounts, jobs, trace=True)
         return Status(int(det.status[0])), int(det.day[0]), det.trace, data_end
+    ev = reference.evaluate(plan, tables, jobs)
+    return Status(int(ev.status[0])), int(ev.onset[0]), ev, data_end
+
+
+def _detect_single(plan: P.Plan, start: int, end: int, data_end: int):
+    """A run callback: the reference backend, with its facts, on one job of the displayed series."""
+    def run(tables: reference.Tables):
+        """Return (status, day, facts, data_end) of the job."""
+        return _decide(plan, tables, start, end, data_end)
     return run
 
 
 def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon: float | None, year: int,
-                   season: str | None = None, thresholds=None,
-                   season_climatology: xr.Dataset | None = None) -> Anatomy:
+                   season: str | None = None, thresholds=None, season_climatology: xr.Dataset | None = None,
+                   horizon: str = "censor", missing: str | None = None) -> Anatomy:
     """Trace the onset search of the cell nearest (lat, lon) in the season of `year`.
 
     The cell must lie within half a grid step of (lat, lon). The jobs are the engine's own
     (build_observed_jobs on the one-cell series) and the Anatomy's result equals detect_observed's.
-    thresholds are as for detect_observed; season picks a season by name (the first by default).
+    thresholds, horizon and missing are as for detect_observed (exact rain, every missing policy, dry_day and
+    beginning-within vetoes all work); season picks a season by name (the first by default).
     """
-    plan = _compile(defn)
+    policy = engine._missing_policy(rain, missing)
+    plan = P.compile(defn, horizon=horizon, missing=policy)
     spatial_dims, spatial_shape = rain.dims[:-1], rain.tenths.shape[:-1]
     cell = _cell_of(spatial_dims, rain.coords, lat, lon)
     rain1 = _single_rain(rain, cell)
@@ -610,12 +561,15 @@ def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon:
     jobs, layout = engine.build_observed_jobs(defn, rain1, [year], clim1)
     k = _season_index(layout.season_names, season)
     per_cell = _cell_thresholds(plan, thresholds, spatial_dims, spatial_shape, cell)
-    amounts, invalid = P.resolve_amounts(plan, per_cell, n_series=1)
+    amounts, invalid = P.resolve_amounts(plan, per_cell, n_series=1, exact=resolution_of(rain.tenths) == "exact")
+    if policy == "drop":
+        engine._drop_incomplete_years(rain1, np.asarray([year]), layout)
     start, end, data_end = int(jobs.start[k]), int(jobs.end[k]), int(jobs.data_end[k])
     row = (*cell, slice(None))
     labels = _Labels(rain.calendar, rain.year, rain.month, rain.day)
-    case = _Case(rain.tenths[row], rain.missing[row], labels, np.full(len(labels.y), "observed"), 0, start, end,
-                 data_end, int(layout.preset[k]), _detect_single(plan, amounts, start, end, data_end))
+    case = _Case(rain.tenths[row], engine._flat_missing(rain1, policy, 1)[0], labels,
+                 np.full(len(labels.y), "observed"), 0, start, end, data_end, int(layout.preset[k]),
+                 _detect_single(plan, start, end, data_end))
     return _build(defn, plan, case, per_cell, amounts, bool(invalid[0]),
                   location=_location(spatial_dims, rain.coords, cell), season=layout.season_names[k], year=year,
                   init=None, member=None, lead_label=None, stitched=False)
@@ -656,7 +610,8 @@ def _find_member(forecast: ForecastRain, member) -> int | None:
 def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float | None, lon: float | None,
                    member=None, history: DailyRain | None = None, thresholds=None,
                    lead_window: tuple[int, int] = (1, 30), season: str | None = None,
-                   restrict_to_season: bool = True, season_climatology: xr.Dataset | None = None) -> Anatomy:
+                   restrict_to_season: bool = True, season_climatology: xr.Dataset | None = None,
+                   horizon: str = "censor", missing: str | None = None) -> Anatomy:
     """Trace the onset search of one init (and member) at the cell nearest (lat, lon).
 
     With `history` the search is stitched (observed history before lead 1, then the forecast, with the
@@ -667,12 +622,17 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
 
     DerivedSeasons (with restrict_to_season=True) need season_climatology, as for detect_forecast
     (dims (season, *spatial) on the forecast's grid); the traced cell's own season is used and `season`
-    picks among the derived seasons by name ("1", "2", ...; the first by default).
+    picks among the derived seasons by name ("1", "2", ...; the first by default). horizon and missing are as
+    for detect_forecast.
     """
     if isinstance(defn.seasons, DerivedSeasons) and restrict_to_season and season_climatology is None:
         raise ValueError("this definition has derived seasons: pass season_climatology "
                          "(n_seasons, onset_doy, cessation_doy) to trace_forecast")
-    plan = _compile(defn)
+    policy = engine._missing_policy(forecast, missing)
+    if policy == "drop":
+        raise ValueError("missing 'drop' removes whole cell-years of observed rain; use 'zero', 'keep' or 'flag' "
+                         "for forecasts")
+    plan = P.compile(defn, horizon=horizon, missing=policy)
     series_dims = forecast.dims[:-1]
     n_lead_dims = 2 if "member" in series_dims else 1
     spatial_dims = series_dims[n_lead_dims:]
@@ -685,7 +645,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
         clim1 = season_climatology.isel({d: slice(i, i + 1) for d, i in zip(spatial_dims, cell)})
     fc1 = _single_forecast(forecast, ii, mi, cell)
     per_cell = _cell_thresholds(plan, thresholds, spatial_dims, spatial_shape, cell)
-    amounts, invalid = P.resolve_amounts(plan, per_cell, n_series=1)
+    amounts, invalid = P.resolve_amounts(plan, per_cell, n_series=1, exact=resolution_of(forecast.tenths) == "exact")
     n_leads = forecast.tenths.shape[-1]
     fc_row = (ii, *(() if mi is None else (mi,)), *cell, slice(None))
     fc_tenths, fc_missing = forecast.tenths[fc_row], forecast.missing[fc_row]
@@ -699,10 +659,11 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
         k = _season_index(layout.season_names, season)
         start, end, data_end = int(jobs.start[k]), int(jobs.end[k]), int(jobs.data_end[k])
         labels = _Labels(forecast.calendar, fy, fm, fd)
-        case = _Case(fc_tenths, fc_missing, labels, np.full(n_leads, "forecast"), 0, start, end, data_end,
-                     int(layout.preset[k]), _detect_single(plan, amounts, start, end, data_end))
+        case = _Case(fc_tenths, engine._flat_missing(fc1, policy, 1)[0], labels, np.full(n_leads, "forecast"), 0,
+                     start, end, data_end, int(layout.preset[k]), _detect_single(plan, start, end, data_end))
         return _build(defn, plan, case, per_cell, amounts, bool(invalid[0]), season=layout.season_names[k],
                       stitched=False, **common)
+    P.reject_exact_stitched(history.tenths, forecast.tenths)
     hist1 = _single_rain(history, cell)
     jobs, layout = engine.build_stitched_jobs(defn, hist1, fc1, lead_window, restrict_to_season, clim1)
     k = _season_index(layout.season_names, season)
@@ -714,29 +675,24 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     missing = np.concatenate([history.missing[hist_row][:split], fc_missing])
     source = np.array(["observed"] * split + ["forecast"] * n_leads)
     preset = int(layout.preset[k])
-    run = _stitched_run(plan, amounts, start, end, data_end, split, preset, bool(invalid[0]))
+    run = _stitched_run(plan, amounts, start, end, data_end, split)
     case = _Case(tenths, missing, labels, source, split, start, end, data_end, preset, run)
     return _build(defn, plan, case, per_cell, amounts, bool(invalid[0]), season=layout.season_names[k],
                   stitched=True, **common)
 
 
-def _stitched_run(plan: P.Plan, amounts: dict, start: int, end: int, data_end: int, split: int, preset: int,
-                  invalid: bool):
+def _stitched_run(plan: P.Plan, amounts: dict, start: int, end: int, data_end: int, split: int):
     """A run callback for a stitched job: the history-only PRIOR search first (first-passage rules), then the full search."""
-    def run(s: _Series):
-        """Return (status, day, trace, data_end) as the engine decides it."""
+    def run(tables: reference.Tables):
+        """Return (status, day, facts, data_end) as the engine decides it."""
         if plan.family == P.FIRST_PASSAGE:
             prior_end = min(end, split - 1)
             if prior_end >= start:
-                det = reference.detect(plan, s.x[None, :split], s.miss[None, :split], amounts,
-                                       Jobs(np.zeros(1, np.int64), np.array([start]), np.array([prior_end]),
-                                            np.array([split])), trace=True)
-                if int(det.status[0]) == Status.ONSET:
-                    return Status.PRIOR, int(det.day[0]), det.trace, split
-        det = reference.detect(plan, s.x[None, :], s.miss[None, :], amounts,
-                               Jobs(np.zeros(1, np.int64), np.array([start]), np.array([end]), np.array([data_end])),
-                               trace=True)
-        return Status(int(det.status[0])), int(det.day[0]), det.trace, data_end
+                history = reference.Tables(plan, tables.x[:, :split], tables.missing[:, :split], amounts)
+                status, day, facts, _ = _decide(plan, history, start, prior_end, split)
+                if status == Status.ONSET:
+                    return Status.PRIOR, day, facts, split
+        return _decide(plan, tables, start, end, data_end)
     return run
 
 
@@ -797,10 +753,18 @@ def _veto_phrase(check: Check) -> str:
     return f"{check.spell_days}-day window totalling {_OP_WORDS[check.op]} {_amount_text(check)}"
 
 
+def _horizon_reject_text(a: Anatomy, check: Check) -> str:
+    """Why the horizon "reject" policy rejected a veto's candidate: its span runs past the data."""
+    noun = "forecast" if a.is_forecast else "data"
+    return f"needs {_span_text(a, check.need_first, check.need_last)}, past the {noun} (the 'reject' horizon rejects it)"
+
+
 def _reason(a: Anatomy, check: Check, wet_text: str) -> str:
     """The reason one check gave its outcome, in words with the numbers."""
     if check.outcome == "unknown":
         return _unknown_text(a, check)
+    if check.kind == "day_missing":
+        return "the candidate day is missing"
     if check.role == "require":
         if check.kind == "total":
             if check.outcome == "fail":
@@ -816,9 +780,11 @@ def _reason(a: Anatomy, check: Check, wet_text: str) -> str:
     where = _span_text(a, check.first, check.last)
     if check.outcome == "fail":
         spell = check.spell
+        if spell is None:
+            return _horizon_reject_text(a, check)
         what = (f"a dry run of {spell.length} days" if check.kind == "dry_run"
                 else f"a {check.spell_days}-day window totalling {spell.total_mm:.1f} mm")
-        starts = "" if check.placement == "inside" else " that starts"
+        starts = "" if check.placement == "inside" else f" that {_PLACEMENT_VERBS[check.placement]}"
         return f"followed by {what} ({_span_text(a, spell.first, spell.last)}){starts} within {where}"
     return f"no {_veto_phrase(check)} within {where}"
 
@@ -828,7 +794,7 @@ def _group_key(c: CandidateTrace):
     check = c.checks[c.decisive]
     if check.role == "veto":
         spell = check.spell
-        return ("veto", check.index, spell.first, spell.last)
+        return ("veto", check.index) + ((spell.first, spell.last) if spell is not None else (None, None))
     return ("require", check.index, check.first_not_wet - check.first if _all_wet(check) and check.first_not_wet is not None
             else None)
 
@@ -837,11 +803,15 @@ def _group_reason(a: Anatomy, group: list[CandidateTrace], wet_text: str) -> str
     """The shared reason of consecutive candidates failing the same check, with value ranges."""
     checks = [c.checks[c.decisive] for c in group]
     first = checks[0]
+    if first.kind == "day_missing":
+        return "the candidate day is missing"
+    if first.role == "veto" and first.spell is None:
+        return _horizon_reject_text(a, first)
     if first.role == "veto":
         spell = first.spell
         what = (f"a dry run of {spell.length} days" if first.kind == "dry_run"
                 else f"a {first.spell_days}-day window totalling {spell.total_mm:.1f} mm")
-        starts = "" if first.placement == "inside" else " that starts within the following days"
+        starts = "" if first.placement == "inside" else f" that {_PLACEMENT_VERBS[first.placement]} within the following days"
         return f"followed by {what} ({_span_text(a, spell.first, spell.last)}){starts}"
     if first.kind == "total":
         values = [c.value for c in checks]
@@ -901,6 +871,10 @@ def _threshold_lines(a: Anatomy) -> list[str]:
     for t in a.thresholds:
         if "baseline" in t.compared:
             lines.append(f"  {t.name} = {t.mm:.4g} mm/day (compared as {t.compared['baseline']} thousandths of a mm)")
+            continue
+        if t.exact:
+            used = ", ".join(f"{_OP_WORDS[op]} {v:g} mm" for op, v in t.compared.items())
+            lines.append(f"  {t.name} = {t.mm:.4g} mm (compared exactly, as {used})")
             continue
         used = ", ".join(f"{_OP_WORDS[op]} {v / 10:g} mm ({v} tenths)" for op, v in t.compared.items())
         lines.append(f"  {t.name} = {t.mm:.4g} mm (compared as {used})")
@@ -980,6 +954,8 @@ def explain(a: Anatomy, *, compress: bool = True) -> str:
         lines[-1] += f", season {a.season}"
     lines.append(f"Rule: {a.sentence}")
     lines.append(f"Wet day: {_wet_text(a)}")
+    if a.dry_mm is not None:
+        lines.append(f"Dry day: {_OP_WORDS[a.dry_op]} {a.dry_mm:g} mm")
     if a.thresholds:
         lines.append("Thresholds:")
         lines += _threshold_lines(a)
