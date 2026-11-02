@@ -147,7 +147,6 @@ def run_momp(config_dict) -> dict:
 
     from momp.blend import features
     from momp.io.input import load_thresholds
-    from momp.onset import climatology_kde as kde
 
     t = translate(blending_config(config_dict))
     cfg, recipe, setup = t.cfg, t.recipe, t.setup
@@ -156,12 +155,7 @@ def run_momp(config_dict) -> dict:
     observed = features.observed(cfg, recipe, setup, thresholds, reference)
     forecasts = {m.name: features.forecast(cfg, recipe, setup, m.name, thresholds, reference) for m in recipe.models}
     years = sorted({y for f in forecasts.values() for y in f.years})
-    spec = recipe.climatology
-    train, test = kde.climatology_years(observed.years, years, train_years=spec.train_years, test_years=spec.test_years)
-    grid, by_year, max_h = kde.plan_issues(test, features._season_start(setup), spec.issue_end,
-                                           recipe.climatology_forecast_window(), spec.horizon_dicts(), spec.cv_by_year)
-    clim = kde.build_climatology(observed.onsets(), grid, by_year, max_h, train=train, test=test,
-                                 min_onset_years=spec.min_onset_years, cv_by_year=spec.cv_by_year, windows=spec.windows)
+    clim = features.climatology(recipe, setup, observed, years)
     weekly = features.weekly(recipe, setup.definition, clim, observed, forecasts)
     daily = features.daily_inputs(recipe, clim, observed, forecasts, max_day=28)
     return finish(observed, forecasts, clim, weekly, daily)

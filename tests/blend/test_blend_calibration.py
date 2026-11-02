@@ -1,9 +1,6 @@
 """momp.blend.calibration: Platt calibration as platt_cv_multibin and fit_platt_weights_export (oracle:
 onset_blending@1e6d696) computed it, serially and in worker processes."""
 
-from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import get_context
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -58,8 +55,7 @@ def test_worker_processes_calibrate_the_same():
     args = (P, outcome, frame["year"].to_numpy(), trainable, holdout)
 
     serial = calibration.cross_validated(*args)
-    with ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn")) as executor:
-        pooled = calibration.cross_validated(*args, executor=executor)
+    pooled = calibration.cross_validated(*args, workers=2)
 
     for (y1, t1, p1), (y2, t2, p2) in zip(serial, pooled):
         assert y1 == y2

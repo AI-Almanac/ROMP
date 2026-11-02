@@ -33,6 +33,7 @@ from momp.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Week
 from momp.io import input as io_input
 from momp.lib.dataset_schema import file_year
 from momp.onset.climatology import ReferenceOnset
+from momp.onset import climatology_kde as kde
 from momp.onset.climatology_kde import Climatology
 from momp.onset.thresholds import unit_thresholds
 from momp.stats import detect
@@ -229,6 +230,21 @@ def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference
 # ---------------------------------------------------------------------------------------------------------------
 # Samples
 # ---------------------------------------------------------------------------------------------------------------
+
+
+def climatology(recipe: Recipe, setup, observed_onsets: ObservedOnsets, forecast_years, *,
+                test_years: tuple[int, int] | None = None, workers: int = 1) -> Climatology:
+    """The KDE climatologies for the issue dates of the test years (`momp.onset.climatology_kde`): the training
+    window's and one per extra year window of the recipe. test_years overrides the recipe's (a live season scores
+    one year); the recipe's own worker count, if any, wins over `workers`."""
+    spec = recipe.climatology
+    train, test = kde.climatology_years(observed_onsets.years, forecast_years, train_years=spec.train_years,
+                                        test_years=test_years or spec.test_years)
+    grid, by_year, max_h = kde.plan_issues(test, _season_start(setup), spec.issue_end,
+                                           recipe.climatology_forecast_window(), spec.horizon_dicts(), spec.cv_by_year)
+    return kde.build_climatology(observed_onsets.onsets(), grid, by_year, max_h, train=train, test=test,
+                                 min_onset_years=spec.min_onset_years, cv_by_year=spec.cv_by_year,
+                                 windows=spec.windows, workers=spec.workers or workers)
 
 
 @dataclass

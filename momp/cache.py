@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import pickle
+import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -112,7 +113,8 @@ def part_hash(*values) -> str:
 
 
 def atomic_write(path, write: Callable[[Path], None]) -> None:
-    """Make `path` by calling write(temporary path) and renaming it over `path`; nothing is left behind on failure."""
+    """Make `path` (a file, or a folder `write` creates) by calling write(temporary path) and renaming it over `path`;
+    nothing is left behind on failure."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f"{path.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp{path.suffix}")
@@ -120,7 +122,10 @@ def atomic_write(path, write: Callable[[Path], None]) -> None:
         write(temp)
         os.replace(temp, path)
     except BaseException:
-        temp.unlink(missing_ok=True)
+        if temp.is_dir():
+            shutil.rmtree(temp, ignore_errors=True)
+        else:
+            temp.unlink(missing_ok=True)
         raise
 
 

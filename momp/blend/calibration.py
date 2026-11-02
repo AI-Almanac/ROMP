@@ -9,8 +9,8 @@ normalised. `export_weights` is fit_platt_weights_export: per-bin weights on
 the logit, fitted on the training years, applied as expit(a + b logit(p)).
 
 Fits run on one BLAS thread, so results do not depend on the machine's core
-count; with an executor the holdout years are fitted in parallel worker
-processes (inputs in shared memory), with the same results.
+count; with `workers` the holdout years are fitted in parallel on the run's worker pool (inputs in shared
+memory), with the same results.
 """
 
 from __future__ import annotations
@@ -20,13 +20,14 @@ import pandas as pd
 from scipy.special import expit, logit
 from sklearn.linear_model import LogisticRegression
 
+from momp.stats.parallel import map_items
 from momp.utils import workers as pool
 
 _EPS = 1e-6
 
 
 def cross_validated(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, trainable: np.ndarray,
-                    holdout_years, *, executor=None) -> list[tuple[int, np.ndarray, np.ndarray]]:
+                    holdout_years, *, workers: int = 1) -> list[tuple[int, np.ndarray, np.ndarray]]:
     """Calibrated probabilities per holdout year: [(year, sample positions, (n, bins))].
 
     P: (samples, bins) raw probabilities; outcome: codes (-1 without one);
@@ -41,12 +42,12 @@ def cross_validated(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, traina
         "years": np.asarray(year),
         "trainable": np.asarray(trainable, dtype=bool),
     }
-    if executor is None:
+    count = min(int(workers), len(holdout_years))
+    if count <= 1:
         folds = [_fold(arrays, test_year) for test_year in holdout_years]
     else:
         with pool.SharedArrays(**arrays) as shared:
-            futures = [executor.submit(_fold, shared.specs, test_year) for test_year in holdout_years]
-            folds = [future.result() for future in futures]
+            folds = map_items(_pooled_fold, list(holdout_years), (shared.specs,), workers=count)
     out = []
     for test_year, (calibrated, fallback) in zip(holdout_years, folds):
         test = np.flatnonzero(arrays["years"] == test_year)
@@ -58,6 +59,10 @@ def cross_validated(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, traina
         sums[sums == 0] = 1
         out.append((int(test_year), test, calibrated / sums))
     return out
+
+
+def _pooled_fold(test_year, specs):
+    return _fold(specs, test_year)
 
 
 def _fold(arrays, test_year):

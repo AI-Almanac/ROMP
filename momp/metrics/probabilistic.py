@@ -29,6 +29,7 @@ from scipy.stats import ks_2samp, rankdata
 BRIER_SCALES = ("element", "sample", "pooled")
 BIN_MEANS = ("numpy", "compensated")
 RPS_SUMMATIONS = ("cumulative", "prefix")
+AUC_METHODS = ("rank", "sklearn")
 
 
 def one_hot(outcome: np.ndarray, n_classes: int) -> np.ndarray:
@@ -260,11 +261,16 @@ def cell_metrics(P: np.ndarray, outcome: np.ndarray, ids: np.ndarray, labels, *,
     return pd.concat([cells, pd.DataFrame([pooled])], ignore_index=True)
 
 
-def yearly_metrics(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, model: str, method: str) -> list[dict]:
+def yearly_metrics(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, model: str, method: str, *,
+                   auc_method: str = "rank") -> list[dict]:
     """Per-year pooled Brier, RPS and AUC over the interval bins, every unit.
 
-    The AUC is the rank-sum one, which equals sklearn's roc_auc_score up to rounding.
+    auc_method: "rank" is the rank-sum AUC (`auc`); "sklearn" is sklearn's roc_auc_score (NaN where a year lacks
+    positives or negatives), which blending's yearly scores use and which differs from the rank-sum one in the last
+    bits.
     """
+    if auc_method not in AUC_METHODS:
+        raise ValueError(f"auc_method must be one of {AUC_METHODS}, not {auc_method!r}")
     P = np.asarray(P, dtype=float)
     keep = (outcome >= 0) & ~np.isnan(P).any(axis=1)
     P, outcome, year = P[keep], outcome[keep], np.asarray(year)[keep]
@@ -275,9 +281,20 @@ def yearly_metrics(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, model: 
         g_P, g_Y = P[pos], Y[pos]
         rows.append({
             "year": int(y), "model": model, "cv_method": method,
-            "brier": brier(g_P, g_Y), "rps": rps(g_P, g_Y), "auc": auc(g_Y.flatten(), g_P.flatten()),
+            "brier": brier(g_P, g_Y), "rps": rps(g_P, g_Y),
+            "auc": auc(g_Y.flatten(), g_P.flatten()) if auc_method == "rank" else _sklearn_auc(g_Y, g_P),
         })
     return rows
+
+
+def _sklearn_auc(Y: np.ndarray, P: np.ndarray) -> float:
+    from sklearn.metrics import roc_auc_score
+
+    y_long, p_long = Y.flatten(), P.flatten()
+    try:
+        return roc_auc_score(y_long, p_long) if len(np.unique(y_long)) == 2 else np.nan
+    except Exception:
+        return np.nan
 
 
 def pooled_skill(cells: pd.DataFrame, baseline: str = "unc_clim_raw") -> pd.DataFrame:

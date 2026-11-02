@@ -101,6 +101,17 @@ def test_yearly_metrics_equal_the_legacy_ones_up_to_the_auc_rounding():
     np.testing.assert_allclose(got["auc"], expected["auc"], rtol=1e-12)
 
 
+def test_yearly_metrics_with_sklearns_auc_equal_the_legacy_ones_exactly():
+    pytest.importorskip("sklearn")
+    frame = cv_frame(seed=3, ties=True)
+    expected = pd.DataFrame(legacy.compute_yearly_metrics(frame, "m", "global", 4))
+    P, codes, _, _ = arrays(frame)
+    got = pd.DataFrame(prob.yearly_metrics(P, codes, frame["year"].to_numpy(), "m", "global", auc_method="sklearn"))
+    pd.testing.assert_frame_equal(got, expected, check_exact=True)
+    with pytest.raises(ValueError, match="auc_method"):
+        prob.yearly_metrics(P, codes, frame["year"].to_numpy(), "m", "global", auc_method="x")
+
+
 def test_yearly_metrics_equal_the_per_year_legacy_pieces():
     """Without sklearn: Brier and RPS of each year equal the legacy formulas on that year's rows, AUC the legacy
     rank-sum."""
