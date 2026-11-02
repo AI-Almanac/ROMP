@@ -1,0 +1,90 @@
+# Merging onset_blending into ROMP
+
+Status: plan (2026-11-02). Branch `monorepo`.
+
+onset_blending (`/home/hcwf/code/onset_blending`, pinned oracle commit `1e6d696`) moves into
+`momp`. Afterwards ROMP trains, cross-validates and applies onset blends, and benchmarks and blends
+on grid cells or on political boundaries (admin units), for any ROMP region, all from one run YAML
+and one onset-definition system (`momp/onset`). The onset_blending repo is then retired.
+
+Overlap analyses (verdict per concept, file:line): scratchpad `overlap_io_domain.md`,
+`overlap_onset.md`, `overlap_eval_config.md` (copied to `docs/blend_merge/` for the agents).
+
+## Decisions (user, 2026-11-02)
+
+1. **Exact parity with onset_blending.** Every blending option keeps its exact numbers, through
+   options on ROMP's single implementation (never a second implementation). ROMP's own defaults and
+   outputs stay byte-identical.
+2. **Regions:** blending and benchmarking work for any ROMP region or country, one region per run
+   file; a batch command runs several run files.
+3. **Compatibility:** `momp-run convert` turns BlendConfig YAML and legacy spec sets into ROMP run
+   YAML; existing `trained.blend` files still load and forecast. ai-almanac's output contract
+   (docs/pipeline-redesign.md in onset_blending) is preserved.
+
+## Rules for every change
+
+- **One implementation per concept.** When a blending function has a ROMP counterpart, extend
+  ROMP's and delete the blending one; never copy both. Where ROMP itself has two (e.g. the mean
+  and median climatological onset, three dimension-alias tables, two `*_climatology` metric
+  copies), collapse them as part of the same change.
+- **Parity options are options of the one implementation**, e.g. `rain_resolution: exact`,
+  `missing: keep`, `horizon: truncate`; defaults are ROMP's current behaviour.
+- **ROMP outputs byte-identical** under default settings (existing tests, `data/phase7/baseline`).
+- **Blending numbers identical** under the parity options: blending's oracles (`tests/_legacy`,
+  its 191 tests) move to `tests/blend/` and run against momp; end-to-end, momp's results are
+  compared artifact by artifact with onset_blending@1e6d696 on the same config and data.
+- Memory-efficient by design (streaming, no needless copies); report peak RSS for real-data runs.
+
+## Target layout
+
+```
+momp/
+  spatial/      units.py (EvaluationUnits: grid | polygon | region, subsets such as
+                dissemination), regrid.py (SparseTransform, observed_mean, weights from shapefiles
+                and CSV, conservative grid-to-grid), ids.py (string unit ids at I/O edges)
+  cache.py      one fingerprint store (observed onsets, thresholds, seasons, weights, datasets)
+  onset/        + parity options: rain_resolution, missing policy, horizon, dry_day, dry-run
+                placement; search_start variants; onset_count histogram; Definition.windows()
+  metrics/      probabilistic.py (Brier, RPS, AUC, Pietra; per unit, pooled, per year; fair and
+                bin-scope options); ROMP's score code becomes adapters
+  stats/bins.py one LeadBins (week1..later labels and "Days a-b" labels)
+  utils/workers.py  + memory budget, BLAS limits, SharedArrays; stats/parallel.start_items
+  blend/        features, design, predictions, logit, random_forest, _crps_tree, mme,
+                calibration, evaluation, training, trained, forecast, signature
+  lib/convert_specs.py  BlendConfig / spec sets -> run YAML
+```
+
+Config: the existing sections absorb domain, observations, models, onset, climatology; new
+top-level `units:` (polygon units, dissemination, weights) and `blend:` (years, CV, formulas,
+baselines, MME, random forest, rain predictors, fixed_cutoff, reference_onset). CLI: `momp-run`
+trains when `blend:` is present; `momp-run forecast trained.blend --forecast MODEL=FILE`;
+`momp-run convert` accepts BlendConfig and spec sets; `--check` covers the blend.
+
+## Waves (one Sonnet agent each; disjoint files within a wave; verify + commit per agent)
+
+Wave 1 (foundations, parallel)
+- W1a spatial units and regridding (`momp/spatial/`), oracle tests from blending test_domain.
+- W1b onset engine parity (`momp/onset/` model, plan, definition, engine, ingest, backends).
+- W1c infrastructure: `momp/cache.py`, `utils/workers.py`, `stats/parallel.start_items`.
+- W1d metrics and bins (`momp/metrics/`, `stats/score.py`, `stats/bins.py`).
+
+Wave 2
+- W2a thresholds, KDE climatology issue grid, one reference-onset provider.
+- W2b input: multi-file/glob datasets, years filter, unit dims, sparse chunk reads, units table;
+  `engine.regional` re-expressed as a one-unit transform.
+- W2c blend methods: design, predictions, logit, random_forest, _crps_tree, mme, calibration.
+- W2d regions: domain boxes for every region, per-region `units:`, legacy region names, seasons
+  crossing 1 January.
+
+Wave 3
+- W3a blend features, onsets glue, evaluation, training.
+- W3b trained/forecast/signature, old `trained.blend` loading.
+
+Wave 4
+- W4a config schema, CLI, API, run folders, convert (BlendConfig, specs), registry ids for
+  blending's definition readings.
+- W4b benchmarking on political boundaries: scoring, exports, maps on the unit axis
+  (see branch `adm3-support` for an earlier attempt and its demo outputs).
+
+Wave 5: end-to-end parity runs (synthetic + real data, Ethiopia and India), docs, dependencies,
+retire onset_blending.
