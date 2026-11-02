@@ -1,5 +1,7 @@
 """Build forecast-observation pairs per day bin (from ensemble members or climatology) for probabilistic verification."""
 
+from dataclasses import dataclass
+
 import pandas as pd
 import numpy as np
 from momp.io.input import load_thresholds, load_history, get_initialization_dates
@@ -25,15 +27,131 @@ def counts_back_dated(cfg):
     return onset_setup(cfg).forecast_history == "observed"
 
 
+@dataclass(frozen=True)
+class LeadBins:
+    """The lead bins of a forecast: inner (first, last) day pairs, and the bins before and after them.
+
+    Lead days count from the day after issue: lead 1 is the day after the issue date. The inner bins are
+    ROMP's `day_bins` ((1, 5), (6, 10), ...); blending's week bins are `LeadBins.uniform(count, days)`. Around them
+    sit the "before" bin (leads below the first day: an onset on or before the issue when the first day is 1)
+    and the "after" bin (everything past the last day: blending's `later`).
+
+    Labels come in two styles: "days" (ROMP: `Days a-b`, `Before day a`, `After day b`) and "week" (blending:
+    `week1..weekN`, `earlier`, `later`; contiguous bins from lead 1 only). Bin positions run over
+    labels(style, earlier=True), or over labels(style, earlier=False) when the before bin is left out.
+    """
+
+    inner: tuple
+
+    def __post_init__(self):
+        object.__setattr__(self, "inner", tuple((int(a), int(b)) for a, b in self.inner))
+        if not self.inner:
+            raise ValueError("lead bins need at least one inner bin")
+
+    @classmethod
+    def from_day_bins(cls, day_bins):
+        """The bins of ROMP's `day_bins`, e.g. ((1, 5), (6, 10), (11, 15))."""
+        return cls(tuple(day_bins))
+
+    @classmethod
+    def uniform(cls, count, days):
+        """`count` bins of `days` days from lead 1 (blending's features.bins.count and days)."""
+        return cls(tuple((k * days + 1, (k + 1) * days) for k in range(count)))
+
+    @property
+    def n_inner(self):
+        return len(self.inner)
+
+    @property
+    def first_day(self):
+        """The first lead day of the inner bins."""
+        return min(self.inner)[0]
+
+    @property
+    def last_day(self):
+        """The last lead day of the inner bins (ROMP's max forecast day)."""
+        return max(self.inner)[1]
+
+    @property
+    def extended(self):
+        """The inner bins with the open bins around them: ((-inf, first - 1), *inner, (last + 1, inf))."""
+        return ((-float("inf"), self.first_day - 1),) + self.inner + ((self.last_day + 1, float("inf")),)
+
+    @property
+    def contiguous(self):
+        """Whether the inner bins follow each other without a gap."""
+        return all(a[1] + 1 == b[0] for a, b in zip(self.inner, self.inner[1:]))
+
+    def label(self, k, style="days"):
+        """Label of the bin at position k of `extended` (0: before, 1..n_inner: inner, n_inner + 1: after)."""
+        if style == "days":
+            if k == 0:
+                return f"Before day {self.first_day}"
+            if k == self.n_inner + 1:
+                return f"After day {self.last_day}"
+            return "Days %d-%d" % self.inner[k - 1]
+        if style == "week":
+            self._require_weeks()
+            return "earlier" if k == 0 else "later" if k == self.n_inner + 1 else f"week{k}"
+        raise ValueError(f"style must be 'days' or 'week', not {style!r}")
+
+    def labels(self, style="days", *, earlier=True):
+        """Labels in bin order: before (when `earlier`), the inner bins, after."""
+        return [self.label(k, style) for k in range(0 if earlier else 1, self.n_inner + 2)]
+
+    def _require_weeks(self):
+        if self.first_day != 1 or not self.contiguous:
+            raise ValueError(f"week labels need contiguous bins from lead 1, not {self.inner}")
+
+    def in_bin(self, lead, k, *, nan_after=False):
+        """Boolean array: which leads fall in the bin at position k of `extended`.
+
+        A bin holds the leads from its first to its last day (the before bin everything below the first day, the
+        after bin everything above the last day). NaN falls in no bin, or in the after bin with nan_after (a member
+        with no onset in the window is an onset later than it).
+        """
+        lead = np.asarray(lead, dtype=float)
+        if k == 0:
+            return lead < self.first_day
+        if k == self.n_inner + 1:
+            return ~(lead <= self.last_day) if nan_after else lead > self.last_day
+        start, end = self.inner[k - 1]
+        return (start <= lead) & (lead <= end)
+
+    def codes(self, lead, *, earlier=False):
+        """Position (in labels(earlier=earlier)) of the bin of each lead; -1 for NaN and, without `earlier`, for
+        leads below the first day.
+
+        Needs contiguous bins; a lead past the last day is in the after bin. Blending's outcome codes.
+        """
+        if not self.contiguous:
+            raise ValueError(f"codes need contiguous bins, not {self.inner}")
+        lead = np.asarray(lead, dtype=float)
+        edges = np.array([self.first_day - 1] + [end for _, end in sorted(self.inner)], dtype=float)
+        with np.errstate(invalid="ignore"):
+            codes = np.searchsorted(edges, lead, side="left") - 1 + (1 if earlier else 0)
+            codes = np.where(lead <= edges[0], 0 if earlier else -1, codes)
+        codes[np.isnan(lead)] = -1
+        return codes.astype(np.int8)
+
+    def column_slices(self):
+        """Slices of the inner bins in an array whose columns are lead days 1, 2, ... (blending's day sums)."""
+        return [slice(a - 1, b) for a, b in self.inner]
+
+    @staticmethod
+    def first_day_of(label):
+        """The first lead day of a `Days a-b` label, 999 for any other label (to sort them last)."""
+        if 'Days ' in label:
+            try:
+                return int(label.replace('Days ', '').split('-')[0])
+            except ValueError:
+                return 999
+        return 999
+
+
 def extract_day_range(bin_label):
     """ extract the start day of each bin for sorting purpose """
-    if 'Days ' in bin_label:
-        try:
-            day_part = bin_label.replace('Days ', '').split('-')[0]
-            return int(day_part)
-        except:
-            return 999
-    return 999
+    return LeadBins.first_day_of(bin_label)
 
 
 def get_target_bins(brier_forecast, brier_climatology):
@@ -83,14 +201,12 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     observed onset, or initialized on or after it, are left out.
     """
 
-    max_forecast_day = max(day_bins)[1]
-    min_forecast_day = min(day_bins)[0]
+    bins = LeadBins.from_day_bins(day_bins)
+    max_forecast_day = bins.last_day
+    extended_bins = bins.extended
 
     # Unique combinations of init_time, lat, lon from the filtered forecast data
     forecast_groups = onset_all_members.groupby(['init_time', 'lat', 'lon'])
-
-    # Add the "after max_forecast_day" bin
-    extended_bins = ((-float('inf'), min_forecast_day - 1),) + day_bins + ((max_forecast_day + 1, float('inf')),)
 
     log.debug(f"Processing {len(forecast_groups)} forecast cases with day bins: {day_bins}")
     log.debug(f"Including 'after day {max_forecast_day}' bin for members without onset in forecast window")
@@ -117,30 +233,18 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
 
     member_day = onset_all_members['onset_day'].to_numpy(dtype=float)
     has_onset = ~np.isnan(member_day)
-    obs_day = obs_date[kept].astype("datetime64[D]")
     init_kept = init_date[kept]
-
-    def date_after(days):
-        """Return the dates the given number of days after each kept init date."""
-        return (init_kept + np.timedelta64(days, "D")).astype("datetime64[D]")
+    # Lead day of each kept case's observed onset (the day after the init is lead 1)
+    obs_lead = (obs_date[kept].astype("datetime64[D]") - init_kept.astype("datetime64[D]")).astype(np.int64)
 
     members_in_bin = []
     observed_onset = []
     labels = []
-    for bin_start, bin_end in extended_bins:
-        if bin_start == -float('inf'):
-            labels.append(f'Before day {min_forecast_day}')
-            member_in_bin = has_onset & (member_day < min_forecast_day)
-            observed = obs_day < date_after(min_forecast_day)
-        elif bin_start > max_forecast_day:
-            labels.append(f'After day {max_forecast_day}')
-            # Members predict "after day X" if onset_day is NaN or > max_forecast_day
-            member_in_bin = ~has_onset | (member_day > max_forecast_day)
-            observed = obs_day > date_after(max_forecast_day)
-        else:
-            labels.append(f'Days {bin_start}-{bin_end}')
-            member_in_bin = has_onset & (bin_start <= member_day) & (member_day <= bin_end)
-            observed = (date_after(bin_start) <= obs_day) & (obs_day <= date_after(bin_end))
+    for k in range(len(extended_bins)):
+        labels.append(bins.label(k))
+        # Members with no onset in the forecast window predict "after day X"
+        member_in_bin = bins.in_bin(member_day, k, nan_after=True)
+        observed = bins.in_bin(obs_lead, k)
         members_in_bin.append(
             np.bincount(member_case, weights=member_in_bin, minlength=len(cases)).astype(np.int64)[kept])
         observed_onset.append(observed.astype(np.int64))
@@ -258,9 +362,9 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     DataFrame with forecast-observation pairs, rows in order of init date, lon, lat and bin
     """
 
-    # adjust max_forecast_day to the end of day_bins
-    max_forecast_day = max(day_bins)[1]
-    min_forecast_day = min(day_bins)[0]
+    # the forecast window is the span of day_bins
+    bins = LeadBins.from_day_bins(day_bins)
+    max_forecast_day, min_forecast_day = bins.last_day, bins.first_day
 
     # Get the observed onset for the target year
     if target_year not in clim_onset.year.values:
@@ -272,7 +376,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     ensemble_years = list(clim_onset.year.values)
 
     # Create extended bins including "before initialization" and "after max_forecast_day" bins
-    extended_bins = ((-float('inf'), min_forecast_day - 1),) + day_bins + ((max_forecast_day + 1, float('inf')),)
+    extended_bins = bins.extended
 
     log.debug(f"Creating climatological forecasts for target year {target_year}")
     log.debug(f"Using {len(ensemble_years)} years as ensemble members: {ensemble_years}")
@@ -316,23 +420,12 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     contributing = []
     observed_onset = []
     labels = []
-    for bin_start, bin_end in extended_bins:
-        if bin_start == -float('inf'):
-            labels.append(f'Before day {min_forecast_day}')
-            members_in_bin.append(has_onset & (member_days <= min_forecast_day - 1))
-            contributing.append(has_onset & (member_days <= 0))
-            observed = case_obs_doy <= init_doy[init_case] + min_forecast_day - 1
-        elif bin_start > max_forecast_day:
-            labels.append(f'After day {max_forecast_day}')
-            members_in_bin.append(has_onset & (member_days > max_forecast_day))
-            contributing.append(members_in_bin[-1])
-            observed = obs_days_from_init > max_forecast_day
-        else:
-            labels.append(f'Days {bin_start}-{bin_end}')
-            members_in_bin.append(has_onset & (bin_start <= member_days) & (member_days <= bin_end))
-            contributing.append(members_in_bin[-1])
-            observed = (bin_start <= obs_days_from_init) & (obs_days_from_init <= bin_end)
-        observed_onset.append(observed.astype(np.int64))
+    for k in range(len(extended_bins)):
+        labels.append(bins.label(k))
+        members_in_bin.append(has_onset & bins.in_bin(member_days, k))
+        # members whose onset is dated on or before the init also count for the Before bin's years
+        contributing.append(has_onset & (member_days <= 0) if k == 0 else members_in_bin[-1])
+        observed_onset.append(bins.in_bin(obs_days_from_init, k).astype(np.int64))
 
     members_with_onset = np.stack([in_bin.sum(axis=1) for in_bin in members_in_bin], axis=1)
     total_members_with_onset = members_with_onset.sum(axis=1)
