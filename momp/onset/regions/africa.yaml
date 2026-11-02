@@ -1,5 +1,6 @@
 id: africa
 title: Africa
 kind: region
+domain: {lat: [-35.5, 37.5], lon: [-18, 52]}  # Natural Earth 110m Africa bounds (-34.8..37.3 N, -17.6..51.4 E) plus a small margin
 definitions:
   also: [dunning]

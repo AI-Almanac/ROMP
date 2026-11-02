@@ -5,6 +5,10 @@ iso: IND
 aliases: [India]
 part_of: [south_asia]
 domain: {lat: [6.5, 38.5], lon: [66.5, 100]}
+# `region: India` (capital I) was the box of an older table; configs written so keep selecting the same cells.
+# Any other spelling (india, INDIA) takes the domain above.
+legacy_domains:
+  India: {lat: [6.46, 35.51], lon: [68.11, 91.4]}
 observations:
   dataset: IMD 0.25 deg gridded rainfall
   day_boundary: 03 UTC, labelled by end

@@ -3,6 +3,7 @@ title: West Africa
 kind: region
 part_of: [africa]
 aliases: [West Africa]
+domain: {lat: [4, 28], lon: [-18, 16]}  # Mauritania to Nigeria, Niger and Chad's west (Natural Earth 110m bounds) plus a margin
 definitions:
   default: sivakumar
   also: [marteau, omotosho, dunning]

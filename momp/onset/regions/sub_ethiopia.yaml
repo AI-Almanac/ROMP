@@ -1,0 +1,7 @@
+id: sub_ethiopia
+title: Sub-Ethiopia
+kind: region
+part_of: [ethiopia]
+aliases: [Sub_Ethiopia]
+domain: {lat: [7.5, 13.5], lon: [37.5, 40]}
+notes: A small test box inside Ethiopia (the old Sub_Ethiopia domain); it inherits Ethiopia's datasets and definitions.

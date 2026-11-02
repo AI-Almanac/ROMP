@@ -104,6 +104,8 @@ def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
     import matplotlib.patches as mpatches
     from momp.params.region_def import domain
 
+    if rect_boundary == "rect_boundary":  # the plots' placeholder name: no box is drawn until a region is given
+        return ax
     lats, latn, lonw, lone = domain(rect_boundary)
 
     vals = [lats, latn, lonw, lone]

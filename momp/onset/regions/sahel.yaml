@@ -2,5 +2,6 @@ id: sahel
 title: Sahel
 kind: region
 part_of: [west_africa]
+domain: {lat: [10, 20], lon: [-18, 40]}  # the usual Sahel belt, 10-20 N from Senegal to Sudan
 definitions:
   default: marteau

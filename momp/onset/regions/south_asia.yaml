@@ -2,3 +2,4 @@ id: south_asia
 title: South Asia
 kind: region
 aliases: [South Asia]
+domain: {lat: [5, 38.5], lon: [60, 100]}  # Pakistan to Bangladesh and Sri Lanka to the Karakoram (Natural Earth 110m) plus a margin

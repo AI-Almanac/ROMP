@@ -2,5 +2,6 @@ id: amazon
 title: Amazon
 kind: region
 aliases: [Amazon Basin]
+domain: {lat: [-20, 6], lon: [-80, -45]}  # Amazon basin outline, about 20 S to 6 N and 80 W to 45 W (longitudes negative: -180..180)
 definitions:
   default: liebmann_marengo

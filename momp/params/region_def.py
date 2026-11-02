@@ -5,55 +5,16 @@ import logging
 log = logging.getLogger(__name__)
 
 
-# define rectangular domain
 def domain(region, **kwargs):
     """Return (lats, latn, lonw, lone) bounds for a named region.
 
-    The four old names below keep their boxes (so runs written with them score the same cells). Any other name,
-    in any case, is looked up in the region registry (momp/onset/regions, ids and aliases) and takes its
-    ``domain`` lat/lon box, so ``region: ethiopia`` works as well as ``Ethiopia``.
+    The name is looked up in the region registry (momp/onset/regions: ids and aliases, any case) and takes its
+    ``domain`` lat/lon box. ``India`` written exactly so keeps its older box through the entry's
+    ``legacy_domains`` (see ``momp.onset.regions.box``).
     """
-    if region not in _LEGACY_BOXES:
-        return _registry_box(region)
-    if region == "Ethiopia":
-        lats = 3
-        latn = 15
-        lonw = 33
-        lone = 48
-
-    if region == "Sub_Ethiopia":
-        lats = 7.5
-        latn = 13.5
-        lonw = 37.5
-        lone = 40
-
-    if region == "India":
-        lats = 6.46
-        latn = 35.51
-        lonw = 68.11
-        lone = 91.4
-
-    if region == "rect_boundary":
-        lats = 999
-        latn = 12
-        lonw = 38
-        lone = 42
-
-    return lats, latn, lonw, lone
-
-
-_LEGACY_BOXES = ("Ethiopia", "Sub_Ethiopia", "India", "rect_boundary")
-
-
-def _registry_box(region):
-    """(lats, latn, lonw, lone) of a region of the registry; an unknown name is an error listing the known ones."""
     from momp.onset import regions
 
-    found = regions.load_region(str(region))
-    if found.lat is None or found.lon is None:
-        raise regions.RegionError(f"region '{found.id}' has no domain (lat/lon box). Fix: add 'domain:' to "
-                                  f"momp/onset/regions/{found.id}.yaml")
-    return found.lat[0], found.lat[1], found.lon[0], found.lon[1]
+    return regions.box(region)
 
 
 def polygon_boundary(da):

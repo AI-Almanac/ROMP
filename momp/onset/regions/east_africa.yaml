@@ -3,6 +3,7 @@ title: East Africa
 kind: region
 part_of: [africa]
 aliases: [East Africa]
+domain: {lat: [-12, 23], lon: [22, 52]}  # ICPAC Greater Horn countries (Natural Earth 110m: -11.7..22.0 N, 21.9..51.1 E) plus a margin
 definitions:
   default: icpac
   also: [dunning, liebmann_marengo]

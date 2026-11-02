@@ -7,6 +7,7 @@ the definitions of the regions that contain it.
 from __future__ import annotations
 
 import functools
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,13 +20,43 @@ from momp.onset.model import Definition
 
 REGIONS_DIR = Path(__file__).parent / "regions"
 
-_KEYS = ("id", "title", "kind", "iso", "aliases", "part_of", "domain", "observations", "climatology",
-         "definitions", "notes")
+_KEYS = ("id", "title", "kind", "iso", "aliases", "part_of", "domain", "legacy_domains", "units", "observations",
+         "climatology", "definitions", "notes")
+_UNITS_KEYS = ("shapefile", "unit_id_col", "unit_name_col", "parent_col", "weights", "centroids", "centroid_id_col",
+               "dissemination", "dissemination_id_col")
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 
 
 class RegionError(ValueError):
     """A malformed region entry or an unknown region; the message names the YAML path and the fix."""
+
+
+@dataclass(frozen=True)
+class UnitsSpec:
+    """Where a region's evaluation units come from: a shapefile or a weights table, plus an optional list.
+
+    Paths are as written in the YAML; `resolve_path` expands ${ENV} and ~ and anchors a relative one at `base`
+    (the folder of the YAML).
+    """
+
+    base: Path
+    shapefile: str | None = None
+    unit_id_col: str | None = None
+    unit_name_col: str | None = None
+    parent_col: str | None = None
+    weights: str | None = None
+    centroids: str | None = None
+    centroid_id_col: str | None = None
+    dissemination: str | None = None
+    dissemination_id_col: str | None = None
+
+    def resolve_path(self, value: str) -> Path:
+        """The path with ${ENV} and ~ expanded, relative to the YAML's folder; an unset variable is an error."""
+        expanded = os.path.expanduser(os.path.expandvars(value))
+        if re.search(r"\$\{?\w+\}?", expanded):
+            raise RegionError(f"units path '{value}' uses an environment variable that is not set. "
+                              "Fix: export it or write the path out")
+        return self.base / expanded if not os.path.isabs(expanded) else Path(expanded)
 
 
 @dataclass(frozen=True)
@@ -40,6 +71,8 @@ class Region:
     part_of: tuple[str, ...] = ()
     lat: tuple[float, float] | None = None
     lon: tuple[float, float] | None = None
+    legacy_boxes: tuple[tuple[str, tuple[float, float], tuple[float, float]], ...] = ()
+    units: UnitsSpec | None = None
     observations_dataset: str | None = None
     day_boundary: str | None = None
     climatology_years: tuple[int, int] | None = None
@@ -80,8 +113,8 @@ def _span(value, origin: str, path: str) -> tuple[float, float]:
     return float(value[0]), float(value[1])
 
 
-def _parse(text: str, origin: str) -> Region:
-    """Validate one region entry."""
+def _parse(text: str, origin: str, base: Path | None = None) -> Region:
+    """Validate one region entry; `base` is the folder of its file, where relative units paths start."""
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -116,6 +149,19 @@ def _parse(text: str, origin: str) -> Region:
             if key not in box:
                 _fail(origin, "domain", f"missing '{key}'. Fix: write 'domain: {{lat: [3, 15], lon: [33, 48]}}'")
         lat, lon = _span(box["lat"], origin, "domain.lat"), _span(box["lon"], origin, "domain.lon")
+    legacy = []
+    if "legacy_domains" in data:
+        if not isinstance(data["legacy_domains"], dict):
+            _fail(origin, "legacy_domains", f"expected a mapping but found {data['legacy_domains']!r}. "
+                                            "Fix: write 'Name: {lat: [..], lon: [..]}' lines")
+        for name, box in data["legacy_domains"].items():
+            path = f"legacy_domains.{name}"
+            box = _mapping(box, origin, path, ("lat", "lon"))
+            for key in ("lat", "lon"):
+                if key not in box:
+                    _fail(origin, path, f"missing '{key}'. Fix: write '{{lat: [3, 15], lon: [33, 48]}}'")
+            legacy.append((str(name), _span(box["lat"], origin, f"{path}.lat"), _span(box["lon"], origin, f"{path}.lon")))
+    units = _parse_units(data["units"], origin, base) if "units" in data else None
     dataset = boundary = None
     if "observations" in data:
         obs = _mapping(data["observations"], origin, "observations", ("dataset", "day_boundary"))
@@ -149,9 +195,28 @@ def _parse(text: str, origin: str) -> Region:
                 _fail(origin, path, f"'{name}' is not a registry definition (known: {', '.join(known)}). "
                                     "Fix: use the id of a file in momp/onset/registry")
     return Region(id=ident, title=data["title"], kind=kind, iso=iso, aliases=aliases, part_of=part_of,
-                  lat=lat, lon=lon, observations_dataset=dataset, day_boundary=boundary,
+                  lat=lat, lon=lon, legacy_boxes=tuple(legacy), units=units, observations_dataset=dataset, day_boundary=boundary,
                   climatology_years=years, default_definition=default, also_definitions=also,
                   notes=str(data.get("notes", "")))
+
+
+def _parse_units(value, origin: str, base: Path | None) -> UnitsSpec:
+    """Validate a `units:` block: a shapefile (with its id column) or a weights table, and an optional list."""
+    block = _mapping(value, origin, "units", _UNITS_KEYS)
+    for key, text in block.items():
+        if not isinstance(text, str) or not text.strip():
+            _fail(origin, f"units.{key}", f"{text!r} is not text. Fix: write a path or a column name")
+    if ("shapefile" in block) == ("weights" in block):
+        _fail(origin, "units", "needs exactly one of 'shapefile' and 'weights'. Fix: name the polygons' file or the "
+                               "weights CSV")
+    if "shapefile" in block and "unit_id_col" not in block:
+        _fail(origin, "units.unit_id_col", "is required with a shapefile. Fix: name the column holding the unit ids")
+    wrong = [k for k in (("weights", "centroids", "centroid_id_col") if "shapefile" in block
+                         else ("unit_id_col", "unit_name_col", "parent_col")) if k in block]
+    if wrong:
+        _fail(origin, f"units.{wrong[0]}", "does not go with this source. Fix: shapefile takes unit_*_col and "
+                                           "parent_col, weights takes centroids and centroid_id_col")
+    return UnitsSpec(base=base or REGIONS_DIR, **block)
 
 
 def region_ids() -> list[str]:
@@ -164,7 +229,7 @@ def _index() -> dict[str, Region]:
     """Load every region, keyed by lower-cased id and alias."""
     index: dict[str, Region] = {}
     for file in sorted(REGIONS_DIR.glob("*.yaml")):
-        region = _parse(file.read_text(), file.name)
+        region = _parse(file.read_text(), file.name, file.parent)
         if region.id != file.stem:
             _fail(file.name, "id", f"'{region.id}' differs from the file name. Fix: rename the file to {region.id}.yaml")
         for name in (region.id, *region.aliases):
@@ -231,3 +296,56 @@ def check_definition_region(defn: Definition, name: str) -> str | None:
         return None
     return (f"definition '{defn.id}' lists regions {', '.join(defn.regions)}, which do not include "
             f"{region.title} ({', '.join(sorted(covered))}); check it applies there")
+
+
+def box(name: str) -> tuple[float, float, float, float]:
+    """Return (lats, latn, lonw, lone) of a region's `domain` box.
+
+    A name written exactly as one of the region's `legacy_domains` (case counts) gets that older box, so configs
+    written with it keep selecting the same cells; any other name matches by id or alias, ignoring case.
+    """
+    key = str(name).strip()
+    region = load_region(key)
+    for legacy, lat, lon in region.legacy_boxes:
+        if key == legacy:
+            return lat[0], lat[1], lon[0], lon[1]
+    if region.lat is None or region.lon is None:
+        _fail(f"{region.id}.yaml", "domain", "the region has no domain (lat/lon box). Fix: add "
+                                              "'domain: {lat: [low, high], lon: [low, high]}'")
+    return region.lat[0], region.lat[1], region.lon[0], region.lon[1]
+
+
+def units_spec(name: str) -> UnitsSpec | None:
+    """The `units:` block of the nearest area in the part_of chain that declares one, else None."""
+    region = load_region(name)
+    return next((r.units for r in (region, *ancestors(region)) if r.units), None)
+
+
+def units_for(name: str, lat=None, lon=None, *, mask=None, label: str = "data"):
+    """The `EvaluationUnits` of a region: its declared polygons or weights, else grid units.
+
+    With a `units:` block (own or inherited through part_of) the units are the shapefile's polygons, or the
+    weights table's targets, with the `dissemination` list as a boolean subset of that name. Without one they
+    are the cells of the (lat, lon) grid inside the region's box and ROMP's `mask` (a `MaskSpec` or its mapping;
+    None keeps every cell), so a grid is required.
+    """
+    from momp.spatial.units import EvaluationUnits
+
+    spec = units_spec(name)
+    if spec is None:
+        if lat is None or lon is None:
+            raise RegionError(f"region '{name}' declares no units, so grid units need lat and lon. "
+                              "Fix: pass the grid or add 'units:' to the region entry")
+        units = EvaluationUnits.from_mask(mask, lat, lon, label=label)
+        return units.restrict(units.in_area(box=str(name)))
+    if spec.shapefile:
+        units = EvaluationUnits.from_shapefile(spec.resolve_path(spec.shapefile), spec.unit_id_col,
+                                               spec.unit_name_col, spec.parent_col)
+    else:
+        centroids = spec.resolve_path(spec.centroids) if spec.centroids else None
+        units = EvaluationUnits.from_weights(spec.resolve_path(spec.weights), centroids,
+                                             centroid_id_col=spec.centroid_id_col)
+    if spec.dissemination:
+        units = units.subset_from_csv("dissemination", spec.resolve_path(spec.dissemination),
+                                      spec.dissemination_id_col)
+    return units

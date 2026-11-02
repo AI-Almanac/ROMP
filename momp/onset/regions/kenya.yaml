@@ -4,4 +4,5 @@ kind: country
 iso: KEN
 aliases: [Kenya]
 part_of: [east_africa]
+domain: {lat: [-5.5, 6], lon: [33, 42.5]}  # Natural Earth 110m Kenya bounds (-4.7..5.5 N, 33.9..41.9 E) plus a margin
 notes: No definitions of its own; inherits those of East Africa.
