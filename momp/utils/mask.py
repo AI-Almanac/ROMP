@@ -155,38 +155,48 @@ def _make_valid(geom):
     return geom if shapely.is_valid(geom) else shapely.make_valid(geom)
 
 
-def rasterise(geom, lat, lon, rule="centre", fraction=0.5) -> np.ndarray:
-    """The cells of the grid (ascending centres lat, lon) kept by a shape under the cell rule; shape (nlat, nlon).
-
-    centre: the cell centre is inside the shape (on its boundary counts as inside). overlap_fraction: the part
-    of the cell's area (planar, in degrees squared) inside the shape is at least `fraction`. The shape is in
-    longitude -180..180; cell longitudes are wrapped into that range.
-    """
-    import shapely
-
+def cell_bounds(lat, lon):
+    """Cell edges (n + 1 each) of a grid of ascending centres: (lat edges, lon edges)."""
     lat = np.asarray(lat, dtype=float)
     lon = np.asarray(lon, dtype=float)
     fallback = cell_size(lon, cell_size(lat, 1.0)) or 1.0
+    return cell_edges(lat, cell_size(lon, fallback)), cell_edges(lon, cell_size(lat, fallback))
+
+
+def _window(geom, lat, lon):
+    """The repaired shape, the cell longitudes wrapped to -180..180, the cell edges (lat_lo, lat_hi, lon_lo, lon_hi,
+    longitudes wrapped like the centres) and the rows and columns whose cells can touch the shape; geom is None
+    when the shape is empty."""
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
     wrapped = ((lon + 180.0) % 360.0) - 180.0
     shift = wrapped - lon
-    lon_edges = cell_edges(lon, cell_size(lat, fallback))
+    lat_edges, lon_edges = cell_bounds(lat, lon)
     lon_lo, lon_hi = lon_edges[:-1] + shift, lon_edges[1:] + shift
-    lat_edges = cell_edges(lat, cell_size(lon, fallback))
     lat_lo, lat_hi = lat_edges[:-1], lat_edges[1:]
-    out = np.zeros((lat.size, lon.size), dtype=bool)
+    empty = np.zeros(0, dtype=int)
     geom = _make_valid(geom)
     if geom.is_empty:
-        return out
+        return None, wrapped, (lat_lo, lat_hi, lon_lo, lon_hi), empty, empty
     minx, miny, maxx, maxy = geom.bounds
     rows = np.nonzero((lat_hi >= miny) & (lat_lo <= maxy))[0]
     cols = np.nonzero((lon_hi >= minx) & (lon_lo <= maxx))[0]
-    if rows.size == 0 or cols.size == 0:
-        return out
+    return geom, wrapped, (lat_lo, lat_hi, lon_lo, lon_hi), rows, cols
+
+
+def cell_shares(geom, lat, lon):
+    """The share of each cell's area (planar, degrees squared) inside a shape: (rows, cols, share).
+
+    The grid has ascending centres lat, lon. rows and cols are the indices of the cells that can touch the
+    shape's bounding box and share has shape (len(rows), len(cols)), 0 to 1. The shape is in longitude
+    -180..180; cell longitudes are wrapped into that range. Cells outside the box are left out (share 0).
+    """
+    import shapely
+
+    geom, _, (lat_lo, lat_hi, lon_lo, lon_hi), rows, cols = _window(geom, lat, lon)
+    if geom is None or rows.size == 0 or cols.size == 0:
+        return rows[:0], cols[:0], np.zeros((0, 0))
     shapely.prepare(geom)
-    if rule == "centre":
-        xx, yy = np.meshgrid(wrapped[cols], lat[rows])
-        out[np.ix_(rows, cols)] = shapely.intersects_xy(geom, xx, yy)
-        return out
     x0, y0 = np.meshgrid(lon_lo[cols], lat_lo[rows])
     x1, y1 = np.meshgrid(lon_hi[cols], lat_hi[rows])
     boxes = shapely.box(x0.ravel(), y0.ravel(), x1.ravel(), y1.ravel())
@@ -194,7 +204,32 @@ def rasterise(geom, lat, lon, rule="centre", fraction=0.5) -> np.ndarray:
     partly = shapely.intersects(geom, boxes) & (share == 0)
     if partly.any():
         share[partly] = shapely.area(shapely.intersection(geom, boxes[partly])) / shapely.area(boxes[partly])
-    out[np.ix_(rows, cols)] = (share >= fraction - _EPS).reshape(rows.size, cols.size)
+    return rows, cols, share.reshape(rows.size, cols.size)
+
+
+def rasterise(geom, lat, lon, rule="centre", fraction=0.5) -> np.ndarray:
+    """The cells of the grid (ascending centres lat, lon) kept by a shape under the cell rule; shape (nlat, nlon).
+
+    centre: the cell centre is inside the shape (on its boundary counts as inside). overlap_fraction: the part
+    of the cell's area (planar, in degrees squared) inside the shape is at least `fraction` (see cell_shares).
+    The shape is in longitude -180..180; cell longitudes are wrapped into that range.
+    """
+    import shapely
+
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    out = np.zeros((lat.size, lon.size), dtype=bool)
+    if rule != "centre":
+        rows, cols, share = cell_shares(geom, lat, lon)
+        if rows.size and cols.size:
+            out[np.ix_(rows, cols)] = share >= fraction - _EPS
+        return out
+    geom, wrapped, _, rows, cols = _window(geom, lat, lon)
+    if geom is None or rows.size == 0 or cols.size == 0:
+        return out
+    shapely.prepare(geom)
+    xx, yy = np.meshgrid(wrapped[cols], lat[rows])
+    out[np.ix_(rows, cols)] = shapely.intersects_xy(geom, xx, yy)
     return out
 
 
