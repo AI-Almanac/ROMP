@@ -30,15 +30,24 @@ Op = Literal["ge", "gt", "le", "lt"]
 
 @dataclass(frozen=True)
 class Amount:
-    """A rainfall amount: fixed tenths of a mm, or the name of a per-cell threshold."""
+    """A rainfall amount: fixed tenths of a mm, a fixed finer amount in mm, or the name of a per-cell threshold.
+
+    mm is only set for amounts that are not a whole number of tenths; they need rain_resolution "exact".
+    """
 
     tenths: int | None = None
     threshold: str | None = None
+    mm: float | None = None
 
     def __post_init__(self):
-        """Require exactly one of a fixed amount or a threshold name."""
-        if (self.tenths is None) == (self.threshold is None):
-            raise ValueError("Amount needs exactly one of tenths or threshold")
+        """Require exactly one of tenths, mm or a threshold name."""
+        if sum(v is not None for v in (self.tenths, self.threshold, self.mm)) != 1:
+            raise ValueError("Amount needs exactly one of tenths, mm or threshold")
+
+    @property
+    def fixed_mm(self) -> float | None:
+        """The fixed amount in mm, or None for a threshold."""
+        return self.tenths / 10 if self.tenths is not None else self.mm
 
 
 @dataclass(frozen=True)
@@ -109,11 +118,14 @@ class DryWindow:
 
 @dataclass(frozen=True)
 class Veto:
-    """Reject a candidate when a dry spell lies wholly inside, or starts inside, a span."""
+    """Reject a candidate when a dry spell lies wholly inside, starts inside, or begins inside a span.
+
+    "begins" counts only a dry run whose previous day is not dry (the start of a maximal run).
+    """
 
     spell: Union[DryRun, DryWindow]
     span: Span
-    placement: Literal["inside", "starts_inside"]
+    placement: Literal["inside", "starts_inside", "begins"]
 
 
 @dataclass(frozen=True)
@@ -206,11 +218,47 @@ class Definition:
     thresholds: tuple[tuple[str, ThresholdSpec], ...] = ()
     regions: tuple[str, ...] = field(default=(), compare=False)
     source_yaml: str = field(default="", compare=False)
+    dry_day: Comparison | None = None
 
     @property
     def threshold_specs(self) -> dict[str, ThresholdSpec]:
         """The named thresholds as a dict."""
         return dict(self.thresholds)
+
+    def windows(self) -> dict[str, int | None]:
+        """Window lengths of a first-passage rule, from its spans (None where absent).
+
+        trigger: the longest requirement span starting at day 1; follow: the longest veto span;
+        dry_run and dry_window: the length of the first dry run and the first dry window veto.
+        """
+        out: dict[str, int | None] = {"trigger": None, "follow": None, "dry_run": None, "dry_window": None}
+        if not isinstance(self.rule, FirstPassage):
+            return out
+        firsts = [c.span.last for c in self.rule.require if c.span.first == 1 and not c.span.since_search_start]
+        out["trigger"] = max(firsts, default=None)
+        spans = [v.span.last - v.span.first + 1 for v in self.rule.reject_if]
+        out["follow"] = max(spans, default=None)
+        for veto in self.rule.reject_if:
+            key, length = ("dry_run", veto.spell.length) if isinstance(veto.spell, DryRun) else (
+                "dry_window", veto.spell.days)
+            out[key] = out[key] or length
+        return out
+
+
+RESOLUTIONS = ("tenths", "exact")
+MISSING_POLICIES = ("flag", "zero", "drop", "keep")
+HORIZON_POLICIES = ("censor", "truncate", "reject")
+
+
+def _check_dtype(values: np.ndarray) -> None:
+    """Rain is int32 tenths of a mm, or float64 mm for rain_resolution "exact"."""
+    if values.dtype not in (np.int32, np.float64):
+        raise TypeError(f"tenths must be int32 (or float64 for exact resolution), got {values.dtype}")
+
+
+def resolution_of(values: np.ndarray) -> str:
+    """"exact" for float rain, "tenths" for int32."""
+    return "exact" if values.dtype.kind == "f" else "tenths"
 
 
 @dataclass
@@ -219,7 +267,8 @@ class DailyRain:
 
     tenths and missing have dims `dims`, with "time" last. Missing days hold 0 in
     tenths. year/month/day label each day in the dataset's own calendar, so
-    search windows resolve without datetime arithmetic.
+    search windows resolve without datetime arithmetic. With resolution "exact"
+    tenths holds float64 millimetres instead of int32 tenths (see momp.onset.ingest, rain_resolution).
     """
 
     tenths: np.ndarray
@@ -232,13 +281,13 @@ class DailyRain:
     calendar: str
     day_boundary: str
     source: str = ""
+    missing_policy: str = "flag"
 
     def __post_init__(self):
         """Check the arrays agree with each other and with the contract."""
         if self.dims[-1] != "time":
             raise ValueError(f"time must be the last dim, got {self.dims}")
-        if self.tenths.dtype != np.int32:
-            raise TypeError(f"tenths must be int32, got {self.tenths.dtype}")
+        _check_dtype(self.tenths)
         if self.missing.shape != self.tenths.shape or self.missing.dtype != bool:
             raise ValueError("missing must be a bool array shaped like tenths")
         n_time = self.tenths.shape[-1]
@@ -267,13 +316,13 @@ class ForecastRain:
     calendar: str
     day_boundary: str
     source: str = ""
+    missing_policy: str = "flag"
 
     def __post_init__(self):
         """Check the arrays agree with each other and with the contract."""
         if self.dims[0] != "init_time" or self.dims[-1] != "lead":
             raise ValueError(f"dims must start with init_time and end with lead, got {self.dims}")
-        if self.tenths.dtype != np.int32:
-            raise TypeError(f"tenths must be int32, got {self.tenths.dtype}")
+        _check_dtype(self.tenths)
         if self.missing.shape != self.tenths.shape or self.missing.dtype != bool:
             raise ValueError("missing must be a bool array shaped like tenths")
         n_init = self.tenths.shape[0]

@@ -495,9 +495,17 @@ def _curve_trace(plan, trace, amounts) -> CurveTrace | None:
                       plan.curve_after_min)
 
 
+def _compile(defn: Definition) -> P.Plan:
+    """The plan of a definition, refusing the parity options explain does not trace (dry_day, beginning within)."""
+    plan = P.compile(defn)
+    if plan.dry is not None or any(v.placement == P.BEGINS for v in plan.vetoes):
+        raise NotImplementedError("explain does not trace definitions with dry_day or 'beginning within' yet")
+    return plan
+
+
 def _plan_reach(plan: P.Plan) -> int:
     """How many days past a candidate its spans can reach."""
-    reach = max([c.last for c in plan.conditions] + [v.last + (v.length - 1 if v.placement == P.STARTS_INSIDE else 0)
+    reach = max([c.last for c in plan.conditions] + [v.last + (v.length - 1 if v.placement != P.INSIDE else 0)
                                                     for v in plan.vetoes] + [1])
     if plan.report_span is not None:
         reach = max(reach, plan.report_span[1])
@@ -592,7 +600,7 @@ def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon:
     (build_observed_jobs on the one-cell series) and the Anatomy's result equals detect_observed's.
     thresholds are as for detect_observed; season picks a season by name (the first by default).
     """
-    plan = P.compile(defn)
+    plan = _compile(defn)
     spatial_dims, spatial_shape = rain.dims[:-1], rain.tenths.shape[:-1]
     cell = _cell_of(spatial_dims, rain.coords, lat, lon)
     rain1 = _single_rain(rain, cell)
@@ -664,7 +672,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     if isinstance(defn.seasons, DerivedSeasons) and restrict_to_season and season_climatology is None:
         raise ValueError("this definition has derived seasons: pass season_climatology "
                          "(n_seasons, onset_doy, cessation_doy) to trace_forecast")
-    plan = P.compile(defn)
+    plan = _compile(defn)
     series_dims = forecast.dims[:-1]
     n_lead_dims = 2 if "member" in series_dims else 1
     spatial_dims = series_dims[n_lead_dims:]

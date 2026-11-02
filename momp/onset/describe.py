@@ -67,8 +67,8 @@ def _threshold_text(name: str, spec: ThresholdSpec | None) -> str:
 
 def _amount(amount: Amount, names: dict[str, ThresholdSpec]) -> str:
     """Return an amount as '20 mm' or 'name (what it is)'."""
-    if amount.tenths is not None:
-        return f"{amount.tenths / 10:g} mm"
+    if amount.threshold is None:
+        return f"{amount.fixed_mm:g} mm"
     return f"{amount.threshold} ({_threshold_text(amount.threshold, names.get(amount.threshold))})"
 
 
@@ -84,14 +84,10 @@ def _days_text(span: Span) -> str:
     return f"days {span.first} to {span.last}"
 
 
-def _window_of(spans: list[Span], first: int) -> int | None:
-    """Return W when a span starting at day first follows a trigger window of W days (days 1 to W)."""
-    return first - 1 if first > 2 and any(s.first == 1 and s.last == first - 1 for s in spans) else None
-
-
-def _rule_spans(rule: FirstPassage) -> list[Span]:
-    """Return every span used by the requirements."""
-    return [c.span for c in rule.require]
+def _window_of(defn: Definition, first: int) -> int | None:
+    """Return W when a span starting at day first follows the trigger window of W days (days 1 to W)."""
+    window = defn.windows()["trigger"]
+    return window if window is not None and first > 2 and first == window + 1 else None
 
 
 def _veto_span(span: Span, window: int | None) -> str:
@@ -156,15 +152,17 @@ def _dry_run_text(run: DryRun) -> str:
     return f"a dry run of at least {run.length} days"
 
 
-def _veto(veto: Veto, rule_spans: list[Span], notes: _WetNotes, names: dict[str, ThresholdSpec]) -> str:
+def _veto(veto: Veto, defn: Definition, notes: _WetNotes, names: dict[str, ThresholdSpec]) -> str:
     """Describe one veto as a clause."""
     if isinstance(veto.spell, DryRun):
         spell = _dry_run_text(veto.spell) + notes.dry()
     else:
         spell = f"a dry window of {veto.spell.days} days totalling {_comparison(veto.spell.comparison, names)}"
-    where = _veto_span(veto.span, _window_of(rule_spans, veto.span.first))
+    where = _veto_span(veto.span, _window_of(defn, veto.span.first))
     if veto.placement == "inside":
         return f"that is not followed by {spell} within {where}"
+    if veto.placement == "begins":
+        return f"that is not followed by {spell} that begins within {where} (a run already under way does not count)"
     return f"that is not followed by {spell} that starts within {where}"
 
 
@@ -180,9 +178,8 @@ def _join(clauses: list[str]) -> str:
 def _describe_first_passage(defn: Definition, rule: FirstPassage, names: dict[str, ThresholdSpec]) -> str:
     """Describe a first-passage rule."""
     notes = _WetNotes(defn.wet_day)
-    spans = _rule_spans(rule)
     clauses = [_condition(c, notes, names) for c in rule.require]
-    clauses += [_veto(v, spans, notes, names) for v in rule.reject_if]
+    clauses += [_veto(v, defn, notes, names) for v in rule.reject_if]
     sentence = f"Onset is the first day {_season_phrase(defn)} {_join(clauses)}."
     if rule.report == "first_wet_day":
         span = rule.report_span

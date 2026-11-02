@@ -123,7 +123,7 @@ def _season_words(defn: Definition) -> str:
 
 def _amount_words(amount: Amount) -> str:
     """'20 mm' or the threshold's name."""
-    return f"{amount.tenths / 10:g} mm" if amount.tenths is not None else str(amount.threshold)
+    return f"{amount.fixed_mm:g} mm" if amount.threshold is None else str(amount.threshold)
 
 
 def _cmp_words(c: Comparison) -> str:
@@ -176,6 +176,8 @@ def _veto_label(veto: Veto) -> str:
     where = _days_words(veto.span.first, veto.span.last)
     if veto.placement == "inside":
         return f"no {what} within {where}"
+    if veto.placement == "begins":
+        return f"no {what} beginning within {where} (it may end later)"
     return f"no {what} starting within {where} (it may end later)"
 
 
@@ -220,7 +222,7 @@ def _x_range(rows: list[_Row]) -> tuple[float, float]:
             lo = min(lo, s.first)
         hi = max(hi, s.last)
         if row.veto is not None:
-            start = s.last if row.veto.placement == "starts_inside" else s.first
+            start = s.first if row.veto.placement == "inside" else s.last
             hi = max(hi, start + _spell_length(row.veto.spell) - 1)
     left = lo - 0.5 - (SEARCH_START_DAYS if any(r.span.since_search_start for r in rows) else 0)
     return left, hi + 0.5
@@ -313,7 +315,7 @@ def _draw_veto(cv: _Canvas, row: _Row, y: float) -> None:
     ax.plot([x0, x0, x1, x1], [y - BRACKET_IN, y, y, y - BRACKET_IN], color=pal.dry_spell,
             linewidth=style.LINE_WIDTH, solid_joinstyle="miter", zorder=3)
     length = _spell_length(veto.spell)
-    start = s.last if veto.placement == "starts_inside" else s.first
+    start = s.first if veto.placement == "inside" else s.last
     y_spell = y - BRACKET_IN - 0.05 - SPELL_IN
     kept = min(start + length - 1, s.last)
     ax.add_patch(Rectangle((start - 0.5, y_spell), kept - start + 1, SPELL_IN, facecolor=pal.dry_spell, alpha=0.2,

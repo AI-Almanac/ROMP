@@ -8,6 +8,8 @@ fix the text, and momp.onset.definition prefixes it with the YAML path.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal
 
 from momp.onset.model import Amount, Comparison, DayRef, DryRun, DryWindow, Op, Span
@@ -31,6 +33,20 @@ _COMPARATOR_RE = re.compile(r"^(at least|more than|less than|at most|>=|<=|>|<)\
 _COMPARATOR_HINT = "at least, more than, less than, at most (or >=, >, <, <=)"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _MONTH_DAYS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+_FINE_AMOUNTS: ContextVar[bool] = ContextVar("fine_amounts", default=False)
+
+
+@contextmanager
+def fine_amounts(allowed: bool = True):
+    """Within the block, fixed amounts finer than 0.1 mm parse into Amount(mm=...) instead of failing.
+
+    They only run at rain_resolution "exact"; resolve_amounts rejects them otherwise.
+    """
+    token = _FINE_AMOUNTS.set(allowed)
+    try:
+        yield
+    finally:
+        _FINE_AMOUNTS.reset(token)
 
 
 def _normalize(text: object, example: str) -> str:
@@ -60,6 +76,8 @@ def parse_comparison(text: object) -> Comparison:
     if match is not None:
         tenths = Decimal(match.group(1)) * 10
         if tenths != tenths.to_integral_value():
+            if _FINE_AMOUNTS.get():
+                return Comparison(op, Amount(mm=float(Decimal(match.group(1)))))
             raise UnitsError(
                 f"'{rest}' is finer than 0.1 mm. Fix: round the amount to a whole tenth of a mm, e.g. 20.1 mm")
         return Comparison(op, Amount(tenths=int(tenths)))

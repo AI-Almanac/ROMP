@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as _dt
 import importlib
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -11,7 +12,8 @@ import xarray as xr
 
 from momp.onset import calendar as cal
 from momp.onset import plan as plan_mod
-from momp.onset.model import DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, StitchedJobs
+from momp.onset.model import (
+    MISSING_POLICIES, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, StitchedJobs, resolution_of)
 
 NO_PRESET = -1
 MAX_TABLE_CELLS = 20_000_000
@@ -125,7 +127,8 @@ def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, threshold
     """
     extra = {} if windows is None else {"amount_windows": windows}
     module = _load_backend(backend)
-    amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=tenths.shape[0])
+    amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=tenths.shape[0],
+                                                exact=resolution_of(tenths) == "exact")
     n_jobs = len(jobs.series)
     day = np.full(n_jobs, -1, dtype=np.int64)
     status = np.where(preset >= 0, preset, Status.NOT_FOUND).astype(np.int8)
@@ -146,7 +149,8 @@ def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, threshold
         if len(sel) == 0:
             continue
         s0, s1 = edges[k], min(edges[k + 1], tenths.shape[0])
-        sub = Jobs(jobs.series[sel] - s0, jobs.start[sel], jobs.end[sel], jobs.data_end[sel])
+        sub = Jobs(jobs.series[sel] - s0, jobs.start[sel], jobs.end[sel], jobs.data_end[sel],
+                   None if jobs.origin is None else jobs.origin[sel])
         sub_amounts = {key: value[s0:s1] for key, value in amounts.items()}
         out = module.detect(plan, tenths[s0:s1], missing[s0:s1], sub_amounts, sub, **extra)
         day[sel] = out.day
@@ -337,9 +341,110 @@ def _spatial_coords(dims: tuple[str, ...], coords: dict[str, np.ndarray]) -> dic
     return {d: coords[d] for d in dims if d in coords}
 
 
+BASE_START = "base"
+"""Name of the search start taken from the season itself, first on the "start" axis when search_start is given."""
+
+
+def _missing_policy(data: DailyRain | ForecastRain, missing: str | None) -> str:
+    """The missing-rain policy of a run: the argument if given, else the one ingest recorded."""
+    policy = data.missing_policy if missing is None else missing
+    if policy not in MISSING_POLICIES:
+        raise ValueError(f"missing must be one of {MISSING_POLICIES}, got {policy!r}")
+    return policy
+
+
+def _flat_missing(data: DailyRain | ForecastRain, policy: str, n_series: int) -> np.ndarray:
+    """The missing flags as (series, time), all False under "zero" (the days already hold 0)."""
+    n_time = data.tenths.shape[-1]
+    if policy == "zero":
+        return np.zeros((n_series, n_time), dtype=bool)
+    return data.missing.reshape(n_series, n_time)
+
+
+def _drop_incomplete_years(rain: DailyRain, years: np.ndarray, layout: JobLayout) -> None:
+    """Preset INSUFFICIENT_DATA for every (year, cell) with a missing day anywhere in that year (the "drop" policy)."""
+    flat = rain.missing.reshape(layout.n_series, -1)
+    n_seasons = len(layout.season_names)
+    preset = layout.preset.reshape(len(years), n_seasons, layout.n_series)
+    for i, year in enumerate(years):
+        cols = np.flatnonzero(rain.year == year)
+        if len(cols):
+            preset[i, :, flat[:, cols].any(axis=1)] = Status.INSUFFICIENT_DATA
+
+
+def _stack_starts(jobs: Jobs, preset: np.ndarray, starts: list[np.ndarray]) -> tuple[Jobs, np.ndarray]:
+    """Repeat the jobs once per search start (base first): start = max(job start, entry), origin = the job's own start.
+
+    starts holds one entry array per variant, each (n_jobs,) of earliest day indices (-1: no restriction).
+    All variants then share one backend call and one set of prefix tables.
+    """
+    n_jobs, n_var = len(jobs.series), len(starts) + 1
+    start = np.stack([jobs.start, *[np.where(jobs.end >= jobs.start, np.maximum(jobs.start, e), jobs.start)
+                                    for e in starts]])
+    origin = np.broadcast_to(jobs.start if jobs.origin is None else jobs.origin, (n_var, n_jobs))
+    tiled = Jobs(np.tile(jobs.series, n_var), start.reshape(-1), np.tile(jobs.end, n_var),
+                 np.tile(jobs.data_end, n_var), origin.reshape(-1).copy())
+    return tiled, np.tile(preset, n_var)
+
+
+def _date_keys(values, calendar: str) -> np.ndarray:
+    """Label keys (year*10000 + month*100 + day) of datetime64 dates, -1 for NaT."""
+    values = np.asarray(values)
+    if not np.issubdtype(values.dtype, np.datetime64):
+        raise ValueError("search_start dates must be datetime64 (NaT for no restriction)")
+    if calendar not in _STANDARD_CALENDARS:
+        raise ValueError(f"search_start dates need a standard calendar, not {calendar!r}")
+    days = values.astype("datetime64[D]")
+    months = days.astype("datetime64[M]")
+    year = days.astype("datetime64[Y]").astype(np.int64) + 1970
+    keys = cal.label_keys(year, months.astype(np.int64) % 12 + 1, (days - months).astype(np.int64) + 1)
+    return np.where(np.isnat(values), -1, keys)
+
+
+def _entry_keys(entry, rows: np.ndarray, row_dim: str, spatial_dims: tuple[str, ...], spatial_shape: tuple[int, ...],
+                calendar: str) -> np.ndarray:
+    """Label keys of a search_start entry as (len(rows), n_cell); rows are the years (or inits) of the output.
+
+    An "MM-DD" string means that day of each row's year; a DataArray holds dates over row_dim (optional) and the
+    spatial dims (optional), NaT for no restriction.
+    """
+    n_cell = int(np.prod(spatial_shape, dtype=np.int64))
+    if isinstance(entry, str):
+        month, day = int(entry[:2]), int(entry[3:])
+        return np.broadcast_to((rows * 10000 + month * 100 + day)[:, None], (len(rows), n_cell))
+    if not isinstance(entry, xr.DataArray):
+        raise TypeError(f"a search_start entry is an 'MM-DD' string or a DataArray of dates, got {type(entry).__name__}")
+    extra = set(entry.dims) - {row_dim, *spatial_dims}
+    if extra:
+        raise ValueError(f"search_start dims {sorted(extra)} are not {row_dim} or the spatial dims {spatial_dims}")
+    dims = tuple(d for d in (row_dim, *spatial_dims) if d in entry.dims)
+    keys = _date_keys(entry.transpose(*dims).values, calendar)
+    shape = tuple(entry.sizes[d] if d in entry.dims else 1 for d in (row_dim, *spatial_dims))
+    return np.broadcast_to(keys.reshape(shape), (len(rows), *spatial_shape)).reshape(len(rows), n_cell)
+
+
+def _observed_starts(search_start: Mapping, rain: DailyRain, years: np.ndarray, n_seasons: int) -> list[np.ndarray]:
+    """Per variant, the earliest day index of every observed job, ordered (year, season, cell); the time axis end if after the data."""
+    keys = cal.label_keys(rain.year, rain.month, rain.day)
+    spatial_dims, spatial_shape = rain.dims[:-1], rain.tenths.shape[:-1]
+    out = []
+    for entry in search_start.values():
+        wanted = _entry_keys(entry, years, "year", spatial_dims, spatial_shape, rain.calendar)
+        index = np.where(wanted >= 0, np.searchsorted(keys, wanted), -1)
+        out.append(np.broadcast_to(index[:, None, :], (len(years), n_seasons, index.shape[1])).reshape(-1))
+    return out
+
+
+def _check_search_start(search_start: Mapping | None) -> None:
+    """Reject names that clash with the base start."""
+    if search_start and BASE_START in search_start:
+        raise ValueError(f"'{BASE_START}' is the season's own start; name the search_start entry differently")
+
+
 def detect_observed(definition: Definition, rain: DailyRain, *, thresholds=None, years=None,
                     season_climatology: xr.Dataset | None = None, backend: str = "numba",
-                    attrs: dict | None = None) -> xr.Dataset:
+                    attrs: dict | None = None, horizon: str = "censor", missing: str | None = None,
+                    search_start: Mapping[str, str | xr.DataArray] | None = None) -> xr.Dataset:
     """Detect onset in every (year, season, cell).
 
     Returns a Dataset with dims (year, season, *spatial) and variables onset_date
@@ -347,29 +452,60 @@ def detect_observed(definition: Definition, rain: DailyRain, *, thresholds=None,
     (index on the time axis, -1 if none) and status (int8 Status codes).
     thresholds map names to per-cell mm values (DataArray over the spatial dims,
     or an ndarray). attrs are merged into the dataset attrs.
+
+    Run options (not part of the definition; recorded in attrs): horizon is "censor"
+    (a span past the data ends the search CENSORED), "truncate" or "reject" (see
+    plan.compile); missing overrides the policy ingest recorded on `rain`, and "drop"
+    marks every (year, cell) with a missing day in that year INSUFFICIENT_DATA;
+    rain_resolution is the one of `rain`. search_start maps a name to dates ("MM-DD",
+    or a DataArray of dates over year and the spatial dims, NaT for none): each adds
+    a variant whose search starts at max(season start, date), and the result gets a
+    "start" dim, "base" first, then the names. Variants share one backend call.
     """
-    plan = plan_mod.compile(definition)
+    _check_search_start(search_start)
+    policy = _missing_policy(rain, missing)
+    plan = plan_mod.compile(definition, horizon=horizon, missing=policy)
     jobs, layout = build_observed_jobs(definition, rain, years, season_climatology)
     years = np.unique(rain.year) if years is None else np.asarray(years, dtype=np.int64)
+    if policy == "drop":
+        _drop_incomplete_years(rain, years, layout)
+    preset = layout.preset
+    if search_start:
+        jobs, preset = _stack_starts(jobs, preset, _observed_starts(search_start, rain, years, len(layout.season_names)))
     spatial_dims = rain.dims[:-1]
     spatial_shape = rain.tenths.shape[:-1]
     n_time = rain.tenths.shape[-1]
     per_series = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape,
                                     first_window_only=True)
-    day, status = _run(plan, rain.tenths.reshape(layout.n_series, n_time),
-                       rain.missing.reshape(layout.n_series, n_time), per_series, jobs, layout.preset, backend)
+    day, status = _run(plan, rain.tenths.reshape(layout.n_series, n_time), _flat_missing(rain, policy, layout.n_series),
+                       per_series, jobs, preset, backend)
     out_shape = (len(years), len(layout.season_names), *spatial_shape)
-    index = day.reshape(out_shape)
+    dims = ("year", "season", *spatial_dims)
+    coords = {"year": years, "season": layout.season_names, **_spatial_coords(spatial_dims, rain.coords)}
+    if search_start:
+        out_shape = (len(search_start) + 1, *out_shape)
+        dims = ("year", "season", "start", *spatial_dims)
+        coords["start"] = [BASE_START, *search_start]
+        day, status = (np.moveaxis(a.reshape(out_shape), 0, 2) for a in (day, status))
+    index = day.reshape(out_shape) if not search_start else day
     safe = np.where(index >= 0, index, 0)
     dates = _dates_from_labels(rain.calendar, rain.year[safe], rain.month[safe], rain.day[safe], index >= 0)
-    dims = ("year", "season", *spatial_dims)
     ds = xr.Dataset(
         {"onset_date": (dims, dates), "onset_index": (dims, index.astype(np.int64)),
-         "status": _status_var(status.reshape(out_shape), dims)},
-        coords={"year": years, "season": layout.season_names, **_spatial_coords(spatial_dims, rain.coords)})
-    ds.attrs.update({"definition_id": definition.id, "definition_version": definition.version, "backend": backend})
+         "status": _status_var(status.reshape(index.shape), dims)}, coords=coords)
+    ds.attrs.update({"definition_id": definition.id, "definition_version": definition.version, "backend": backend,
+                     **_option_attrs(rain, horizon, policy, search_start)})
     ds.attrs.update(attrs or {})
     return ds
+
+
+def _option_attrs(data: DailyRain | ForecastRain, horizon: str, policy: str, search_start: Mapping | None) -> dict:
+    """Dataset attrs recording the run options (rain_resolution, missing, horizon, search_start)."""
+    out = {"rain_resolution": resolution_of(data.tenths), "missing": policy, "horizon": horizon}
+    if search_start:
+        out["search_start"] = "; ".join(f"{name}={entry if isinstance(entry, str) else 'per-cell dates'}"
+                                        for name, entry in search_start.items())
+    return out
 
 
 def _bound_key(calendar: str, year: np.ndarray, ref) -> np.ndarray:
@@ -744,7 +880,8 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
     n_series = layout.n_series
     flat_h = history.tenths.reshape(n_cell, n_time), history.missing.reshape(n_cell, n_time)
     flat_f = forecast.tenths.reshape(-1, n_leads), forecast.missing.reshape(-1, n_leads)
-    amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=flat_f[0].shape[0])
+    amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=flat_f[0].shape[0],
+                                                exact=resolution_of(flat_f[0]) == "exact")
     n_jobs = len(jobs.series)
     day = np.full(n_jobs, -1, dtype=np.int64)
     status = np.where(layout.preset >= 0, layout.preset, Status.NOT_FOUND).astype(np.int8)
@@ -784,37 +921,70 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
 
 
 def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...], coords: dict,
-                      max_lead: int) -> dict[str, xr.DataArray]:
-    """members_by_status and onset_probability from (init, member, season, *spatial) lead and status arrays."""
+                      max_lead: int, onset_count: bool = False) -> dict[str, xr.DataArray]:
+    """members_by_status and onset_probability from (init, member, season, [start], *spatial) lead and status arrays.
+
+    With onset_count, also onset_count (members with their onset on each lead 0..max_lead) and members.
+    """
     codes = np.array([s.value for s in Status], dtype=np.int8)
     counts = np.stack([(status == c).sum(axis=1) for c in codes]).astype(np.int64)
     out_dims = ("init_time", *dims[2:])
+    head = 3 + ("start" in dims)
+    shared = {d: v for d, v in coords.items() if d in out_dims}
     by_status = xr.DataArray(
         counts, dims=("status_code", *out_dims),
-        coords={"status_code": codes, "status_name": ("status_code", [s.name for s in Status]), **{
-            d: v for d, v in coords.items() if d in out_dims}},
+        coords={"status_code": codes, "status_name": ("status_code", [s.name for s in Status]), **shared},
         attrs={"long_name": "number of members in each onset status"})
     leads = np.arange(max_lead + 1)
     reached = (lead[..., None] <= leads).sum(axis=1)
     usable = (status != Status.INSUFFICIENT_DATA).sum(axis=1)
     with np.errstate(invalid="ignore", divide="ignore"):
         share = np.where(usable[..., None] > 0, reached / usable[..., None], np.nan)
-    share = np.moveaxis(share, -1, 2)
+    share = np.moveaxis(share, -1, head - 1)
     probability = xr.DataArray(
-        share, dims=("init_time", "season", "lead", *dims[3:]),
-        coords={"lead": leads, **{d: v for d, v in coords.items() if d in out_dims}},
+        share, dims=("init_time", *dims[2:head], "lead", *dims[head:]),
+        coords={"lead": leads, **shared},
         attrs={"long_name": "share of members whose onset is on or before this lead",
                "comment": "PRIOR and back-dated onsets (onset_lead <= 0) count at lead 0; members with "
                           "INSUFFICIENT_DATA are excluded from the denominator; CENSORED and NOT_FOUND members "
                           "stay in it and never count as reached"})
-    return {"members_by_status": by_status, "onset_probability": probability}
+    out = {"members_by_status": by_status, "onset_probability": probability}
+    if onset_count:
+        on_lead = np.moveaxis((np.maximum(lead, 0)[..., None] == leads).sum(axis=1), -1, head - 1)
+        out["onset_count"] = xr.DataArray(
+            on_lead.astype(np.int64), dims=probability.dims, coords={"lead": leads, **shared},
+            attrs={"long_name": "number of members whose onset is on this lead",
+                   "comment": "PRIOR and back-dated onsets (onset_lead <= 0) count at lead 0"})
+        out["members"] = xr.DataArray(counts.sum(axis=0), dims=out_dims, coords=shared,
+                                      attrs={"long_name": "number of members"})
+    return out
+
+
+def _forecast_starts(search_start: Mapping, forecast: ForecastRain, n_leads: int, n_season: int) -> list[np.ndarray]:
+    """Per variant, the first lead index on or after the entry's date for every forecast job, ordered (season, init, [member], cell)."""
+    series_dims = forecast.dims[:-1]
+    n_lead_dims = 2 if "member" in series_dims else 1
+    spatial_dims, spatial_shape = series_dims[n_lead_dims:], forecast.tenths.shape[n_lead_dims:-1]
+    n_cell = int(np.prod(spatial_shape, dtype=np.int64))
+    n_member = forecast.tenths.shape[1] if n_lead_dims == 2 else 1
+    lead_keys = cal.label_keys(*_label_table(forecast, n_leads))
+    out = []
+    for entry in search_start.values():
+        wanted = _entry_keys(entry, np.asarray(forecast.init_year, dtype=np.int64), "init_time", spatial_dims,
+                             spatial_shape, forecast.calendar)
+        first = np.where(wanted >= 0, (lead_keys[:, :, None] < wanted[:, None, :]).sum(axis=1), -1)
+        per_series = np.broadcast_to(first[:, None, :], (len(first), n_member, n_cell)).reshape(-1)
+        out.append(np.tile(per_series, n_season))
+    return out
 
 
 def detect_forecast(definition: Definition, forecast: ForecastRain, *, thresholds=None,
                     lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True,
                     backend: str = "numba", attrs: dict | None = None,
                     history: DailyRain | None = None, threshold_windows=None,
-                    season_climatology: xr.Dataset | None = None) -> xr.Dataset:
+                    season_climatology: xr.Dataset | None = None, horizon: str = "censor",
+                    missing: str | None = None, search_start: Mapping[str, str | xr.DataArray] | None = None,
+                    onset_count: bool = False) -> xr.Dataset:
     """Detect onset in every (init, [member], season, cell) of a forecast.
 
     Returns dims (init_time, [member], season, *spatial) with onset_lead (float64:
@@ -841,8 +1011,26 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     for detect_observed): candidates are then limited to each cell's own season, the
     season coordinate is the climatology's (1, 2, ...), and a cell without that season
     is NOT_FOUND. Stitched, curve rules accumulate from the cell's season start.
+
+    Run options (not part of the definition; recorded in attrs), as for detect_observed:
+    horizon "truncate" (what blending does with forecasts) lets a veto see only the leads
+    that exist; missing overrides the policy ingest recorded ("drop" is for observed rain
+    only); search_start adds variants (dates over init_time and the spatial dims, or
+    "MM-DD" of each init's year) searching from the first lead on or after the date, with
+    a "start" dim after season. They need forecast_history "none". onset_count adds, for
+    an ensemble, onset_count (members with their onset on each lead 0..lead_window[1],
+    per start) and members.
     """
-    plan = plan_mod.compile(definition)
+    _check_search_start(search_start)
+    policy = _missing_policy(forecast, missing)
+    if policy == "drop":
+        raise ValueError("missing 'drop' removes whole cell-years of observed rain; use 'zero', 'keep' or 'flag' "
+                         "for forecasts")
+    if search_start and history is not None:
+        raise ValueError("search_start needs forecast_history 'none' (no history)")
+    if onset_count and "member" not in forecast.dims:
+        raise ValueError("onset_count needs a forecast with a member dim")
+    plan = plan_mod.compile(definition, horizon=horizon, missing=policy)
     n_leads = forecast.tenths.shape[-1]
     series_dims = forecast.dims[:-1]
     series_shape = forecast.tenths.shape[:-1]
@@ -850,11 +1038,18 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     spatial_dims, spatial_shape = series_dims[n_lead_dims:], series_shape[n_lead_dims:]
     per_series = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, series_shape)
     windows = _threshold_windows(plan, thresholds, threshold_windows)
+    n_variants = 1
     if history is None:
         jobs, layout = build_forecast_jobs(definition, forecast, lead_window, restrict_to_season,
                                             season_climatology)
+        preset = layout.preset
+        if search_start:
+            jobs, preset = _stack_starts(jobs, preset, _forecast_starts(
+                search_start, forecast, n_leads, len(layout.season_names)))
+            n_variants = len(search_start) + 1
         day, status = _run(plan, forecast.tenths.reshape(layout.n_series, n_leads),
-                           forecast.missing.reshape(layout.n_series, n_leads), per_series, jobs, layout.preset, backend, windows)
+                           _flat_missing(forecast, policy, layout.n_series), per_series, jobs, preset, backend,
+                           windows)
         split = np.zeros(len(day), dtype=np.int64)
         hist_labels = None
     else:
@@ -867,9 +1062,11 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
         hist_labels = (history.year, history.month, history.day)
     k = len(layout.season_names)
     full = (k, *series_shape)
-    day = np.moveaxis(day.reshape(full), 0, n_lead_dims)
-    status = np.moveaxis(status.reshape(full), 0, n_lead_dims)
-    split = np.moveaxis(split.reshape(full), 0, n_lead_dims)
+    if search_start:
+        full, to = (n_variants, *full), (n_lead_dims + 1, n_lead_dims)
+        day, status, split = (np.moveaxis(a.reshape(full), (0, 1), to) for a in (day, status, split))
+    else:
+        day, status, split = (np.moveaxis(a.reshape(full), 0, n_lead_dims) for a in (day, status, split))
     found = day >= 0
     lead = np.where(found, day - split + 1, np.nan).astype(np.float64)
     label_y, label_m, label_d = _label_table(forecast, n_leads)
@@ -881,17 +1078,20 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
         h = np.where(in_hist, day, 0)
         year, month, dayn = (np.where(in_hist, labels[h], fc) for labels, fc in zip(hist_labels, (year, month, dayn)))
     dates = _dates_from_labels(forecast.calendar, year, month, dayn, found)
-    dims = (*series_dims[:n_lead_dims], "season", *spatial_dims)
+    dims = (*series_dims[:n_lead_dims], "season", *(("start",) if search_start else ()), *spatial_dims)
     coords = {"season": layout.season_names, **_spatial_coords(dims, forecast.coords)}
+    if search_start:
+        coords["start"] = [BASE_START, *search_start]
     variables = {"onset_lead": (dims, lead), "onset_date": (dims, dates), "status": _status_var(status, dims)}
     ds = xr.Dataset(variables, coords=coords)
     if "member" in series_dims:
-        summary = _ensemble_summary(lead, status, dims, coords, lead_window[1])
+        summary = _ensemble_summary(lead, status, dims, coords, lead_window[1], onset_count)
         for name, var in summary.items():
             ds[name] = var
     ds.attrs.update({"definition_id": definition.id, "definition_version": definition.version, "backend": backend,
                      "lead_label": forecast.lead_label,
-                     "forecast_history": "none" if history is None else "observed"})
+                     "forecast_history": "none" if history is None else "observed",
+                     **_option_attrs(forecast, horizon, policy, search_start)})
     ds.attrs.update(attrs or {})
     return ds
 
@@ -901,7 +1101,7 @@ def regional(rain: DailyRain, mask, weights: str = "cos_lat") -> DailyRain:
 
     mask is a boolean array (or DataArray) over the spatial dims. weights is
     "equal" or "cos_lat" (needs a "lat" dim with coordinates). Rain is averaged
-    in float mm and rounded half to even. A day is missing only if every cell
+    in float mm and rounded half to even (left unrounded at exact resolution). A day is missing only if every cell
     in the mask is missing on that day; with partial missing, the average runs
     over the cells that have data, with their weights renormalised.
     """
@@ -930,10 +1130,10 @@ def regional(rain: DailyRain, mask, weights: str = "cos_lat") -> DailyRain:
     total = (w * valid * rain.tenths.reshape(-1, n_time)).sum(axis=0)
     all_missing = weight_sum == 0
     mean = np.divide(total, weight_sum, out=np.zeros(n_time), where=~all_missing)
-    tenths = np.rint(mean).astype(np.int32)
+    tenths = mean if resolution_of(rain.tenths) == "exact" else np.rint(mean).astype(np.int32)
     coords = {"time": rain.coords["time"]} if "time" in rain.coords else {}
     return DailyRain(tenths, all_missing, ("time",), coords, rain.year, rain.month, rain.day, rain.calendar,
-                     rain.day_boundary, rain.source)
+                     rain.day_boundary, rain.source, rain.missing_policy)
 
 
 def climatological_onset(definition: Definition, rain: DailyRain, *, thresholds=None, years,

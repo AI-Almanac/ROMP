@@ -71,7 +71,7 @@ def _lookback(plan: P.Plan) -> int:
     """How many days before a candidate any span of the plan can start (0 when none reaches back)."""
     firsts = [0]
     firsts += [c.first for c in plan.conditions if not c.since_start]
-    firsts += [v.first for v in plan.vetoes]
+    firsts += [v.first - (v.placement == P.BEGINS) for v in plan.vetoes]
     if plan.report_span is not None and not plan.report_span[2]:
         firsts.append(plan.report_span[0])
     return -min(firsts)
@@ -88,6 +88,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     after the job's split is never copied. Trace arrays are as in detect(), with
     candidate days in stitched days. Per-window amounts work as in detect().
     """
+    P.reject_exact_stitched(hist_tenths, fc_tenths)
     amounts, starts = windowed.prepare(amounts, amount_windows)
     if starts is not None:
         if trace:
@@ -168,16 +169,23 @@ class _Tables:
     """Prefix tables over the series, built once per detect call."""
 
     def __init__(self, plan, tenths, missing, amounts):
-        """Build prefix sums of rain, missing days, wet days and dry days, and the per-veto spell tables."""
+        """Build prefix sums of rain, missing days, wet days and dry days, and the per-veto spell tables.
+
+        Rain is int64 tenths, or float64 mm (summed in time order from day 0) for exact resolution.
+        """
         self.amounts = amounts
         self.n_time = tenths.shape[1]
-        missing = np.asarray(missing, dtype=bool)
-        x = np.where(missing, 0, tenths).astype(np.int64)
+        self.horizon, self.keep = plan.horizon, plan.keep_missing
+        missing = self.missing = np.asarray(missing, dtype=bool)
+        x = np.where(missing, 0, tenths).astype(np.float64 if np.asarray(tenths).dtype.kind == "f" else np.int64)
         self.x = x
         wet_amount = amounts[plan.wet.key][:, None]
         self.wet = ~missing & _compare(plan.wet.op, x, wet_amount)
-        self.dry = ~missing & ~self.wet
-        self.px = _prefix(x, np.int64)
+        if plan.dry is None:
+            self.dry = ~missing & ~self.wet
+        else:
+            self.dry = ~missing & _compare(plan.dry.op, x, amounts[plan.dry.key][:, None])
+        self.px = _prefix(x, x.dtype)
         self.pm = _prefix(missing, np.int32)
         self.pw = _prefix(self.wet, np.int32)
         self.pd = _prefix(self.dry, np.int32)
@@ -195,6 +203,8 @@ class _Tables:
             span = n_time - length + 1
             if veto.kind == P.DRY_RUN:
                 holds[:, :span] = (self.pd[:, length:] - self.pd[:, :span]) == length
+                if veto.placement == P.BEGINS:
+                    holds[:, 1:span] &= ~self.dry[:, :span - 1]
             else:
                 total = self.px[:, length:] - self.px[:, :span]
                 amount = self.amounts[veto.cmp.key][:, None]
@@ -232,7 +242,7 @@ def _observe(tables: _Tables, job: _Block, a: np.ndarray, b: np.ndarray) -> tupl
     lo = np.clip(a, 0, e)
     hi = np.maximum(np.minimum(b, e), lo)
     n_missing = tables.pm[job.series, hi] - tables.pm[job.series, lo]
-    flags = (((a < 0) | (n_missing > 0)) * MISSING_FLAG + (b > e) * HORIZON_FLAG).astype(np.int8)
+    flags = (((a < 0) | ((n_missing > 0) & (not tables.keep))) * MISSING_FLAG + (b > e) * HORIZON_FLAG).astype(np.int8)
     return flags == 0, flags
 
 
@@ -276,7 +286,14 @@ def _veto(veto: P.VetoPlan, spell_prefix: np.ndarray, tables: _Tables, job: _Blo
     hi = np.maximum(np.clip(u_last + 1, 0, n_table - 1), lo)
     confirmed = (spell_prefix[job.series, hi] - spell_prefix[job.series, lo]) > 0
     code = np.where(confirmed, TRUE, np.where(ok, FALSE, UNKNOWN)).astype(np.int8)
-    return code, np.where(code == UNKNOWN, flags, 0).astype(np.int8)
+    flags = np.where(code == UNKNOWN, flags, 0).astype(np.int8)
+    if tables.horizon != "censor":
+        code = np.where(flags == HORIZON_FLAG, FALSE, code).astype(np.int8)
+        flags = np.where(code == UNKNOWN, flags, 0).astype(np.int8)
+        if tables.horizon == "reject":
+            code = np.where(b > job.data_end, TRUE, code).astype(np.int8)
+            flags = np.where(code == UNKNOWN, flags, 0).astype(np.int8)
+    return code, flags
 
 
 def _status_from_flags(flags: np.ndarray) -> np.ndarray:
@@ -303,6 +320,8 @@ def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block) -> dict:
         any_false |= code == TRUE
         any_unknown |= code == UNKNOWN
         unknown_flags |= flags
+    if tables.keep:
+        any_false |= tables.missing[job.series, np.clip(job.d, 0, tables.n_time - 1)] & (job.d < job.data_end)
     state = np.where(any_false | ~job.valid, FALSE, np.where(any_unknown, UNKNOWN, TRUE)).astype(np.int8)
     flags = np.where(state == UNKNOWN, unknown_flags, 0).astype(np.int8)
 

@@ -17,7 +17,8 @@ OP_CODES = {"ge": GE, "gt": GT, "le": LE, "lt": LT}
 
 TOTAL, WET_DAYS = 0, 1
 DRY_RUN, DRY_WINDOW = 0, 1
-INSIDE, STARTS_INSIDE = 0, 1
+INSIDE, STARTS_INSIDE, BEGINS = 0, 1, 2
+PLACEMENT_CODES = {"inside": INSIDE, "starts_inside": STARTS_INSIDE, "begins": BEGINS}
 
 FIRST_PASSAGE, CURVE = "first_passage", "curve"
 
@@ -65,13 +66,14 @@ class VetoPlan:
 
 @dataclass(frozen=True)
 class AmountSpec:
-    """How to build amounts[key]: kind "fixed" (tenths), "threshold" (per-cell mm, rounded for op) or "baseline" (thousandths of mm)."""
+    """How to build amounts[key]: kind "fixed" (tenths, or mm when finer: tenths None), "threshold" (per-cell mm, rounded for op) or "baseline" (thousandths of mm)."""
 
     key: str
     kind: str
-    tenths: int = 0
+    tenths: int | None = 0
     name: str = ""
     op: int = GE
+    mm: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,10 @@ class Plan:
     window searched for the first wet day. For curve, curve_key names the
     baseline amount (thousandths of mm) and curve_after_min selects the
     day after the minimum rather than the minimum itself.
+
+    dry is the dry-day comparison (None: a dry day is a valid day that is not
+    wet). horizon ("censor", "truncate" or "reject") and keep_missing are run
+    options of compile(), not part of the definition: see compile().
     """
 
     family: str
@@ -95,29 +101,50 @@ class Plan:
     curve_key: str | None
     curve_after_min: bool
     amount_specs: tuple[AmountSpec, ...]
+    dry: Cmp | None = None
+    horizon: str = "censor"
+    keep_missing: bool = False
 
 
-def compile(definition: model.Definition) -> Plan:
-    """Turn a Definition into a Plan (a pure function of the definition)."""
+def compile(definition: model.Definition, *, horizon: str = "censor", missing: str = "flag") -> Plan:
+    """Turn a Definition into a Plan (a pure function of the definition and the two run options).
+
+    horizon says what a span past the data does. "censor": the candidate is unknown, so
+    the search ends CENSORED. "truncate": a veto sees only the data that exists (its
+    spell must lie in the data; a veto unknown only for the horizon is False), while
+    a requirement past the data stays unknown. "reject": as truncate, and a candidate
+    whose veto span runs past the data is rejected. missing "keep" makes missing days
+    neither wet nor dry nor unknown (they add 0 to totals), and a missing candidate
+    day is rejected; the other policies are settled at ingest.
+    """
+    if horizon not in model.HORIZON_POLICIES:
+        raise ValueError(f"horizon must be one of {model.HORIZON_POLICIES}, got {horizon!r}")
+    if missing not in model.MISSING_POLICIES:
+        raise ValueError(f"missing must be one of {model.MISSING_POLICIES}, got {missing!r}")
     specs: dict[str, AmountSpec] = {}
 
     def amount_cmp(cmp: model.Comparison) -> Cmp:
         """Register the amount of a comparison and return its comparator and key."""
         op = OP_CODES[cmp.op]
         if cmp.amount.threshold is None:
-            key = f"fixed:{cmp.amount.tenths}"
-            specs.setdefault(key, AmountSpec(key, "fixed", tenths=int(cmp.amount.tenths)))
+            tenths = cmp.amount.tenths
+            key = f"fixed:{tenths}" if tenths is not None else f"fixed:{cmp.amount.mm!r}mm"
+            specs.setdefault(key, AmountSpec(key, "fixed", tenths=None if tenths is None else int(tenths),
+                                             mm=cmp.amount.fixed_mm))
         else:
             key = f"{cmp.amount.threshold}:{cmp.op}"
             specs.setdefault(key, AmountSpec(key, "threshold", name=cmp.amount.threshold, op=op))
         return Cmp(op, key)
 
     wet = amount_cmp(definition.wet_day)
+    dry = None if definition.dry_day is None else amount_cmp(definition.dry_day)
+    options = {"dry": dry, "horizon": horizon, "keep_missing": missing == "keep"}
     rule = definition.rule
     if isinstance(rule, model.Curve):
         key = f"{rule.baseline}:baseline"
         specs[key] = AmountSpec(key, "baseline", name=rule.baseline)
-        return Plan(CURVE, wet, (), (), False, None, key, rule.report == "day_after_minimum", tuple(specs.values()))
+        return Plan(CURVE, wet, (), (), False, None, key, rule.report == "day_after_minimum", tuple(specs.values()),
+                    **options)
 
     conditions = []
     for cond in rule.require:
@@ -131,7 +158,7 @@ def compile(definition: model.Definition) -> Plan:
         first, last, since = _offsets(veto.span)
         if since:
             raise ValueError("a veto span cannot be 'season to date'")
-        placement = INSIDE if veto.placement == "inside" else STARTS_INSIDE
+        placement = PLACEMENT_CODES[veto.placement]
         if isinstance(veto.spell, model.DryRun):
             vetoes.append(VetoPlan(DRY_RUN, int(veto.spell.length), placement, first, last))
         else:
@@ -143,7 +170,7 @@ def compile(definition: model.Definition) -> Plan:
             raise ValueError("report first_wet_day needs a report_span")
         report_span = _offsets(rule.report_span)
     return Plan(FIRST_PASSAGE, wet, tuple(conditions), tuple(vetoes), rule.report == "first_wet_day",
-                report_span, None, True, tuple(specs.values()))
+                report_span, None, True, tuple(specs.values()), **options)
 
 
 def _offsets(span: model.Span) -> tuple[int, int, bool]:
@@ -153,9 +180,12 @@ def _offsets(span: model.Span) -> tuple[int, int, bool]:
     return span.first - 1, span.last, False
 
 
-def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int | None = None
-                    ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int | None = None, *,
+                    exact: bool = False) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Return (amounts, invalid): int64 amounts for every key the plan reads, and a bool (S,) of series with a NaN amount.
+
+    With exact=True (rain_resolution "exact") the amounts are float64 mm, unrounded, to compare with
+    float64 rain; curve rules are not available then.
 
     A threshold given as (S, W) (one column per verification window, spec
     section 13) gives (S, W) amounts; fixed amounts and (S,) thresholds stay (S,).
@@ -174,9 +204,17 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
         n_series = max(sizes)
     amounts: dict[str, np.ndarray] = {}
     invalid = np.zeros(n_series, dtype=bool)
+    if exact and plan.family == CURVE:
+        raise NotImplementedError("curve rules need rain_resolution 'tenths'")
     for spec in plan.amount_specs:
         if spec.kind == "fixed":
-            amounts[spec.key] = np.full(n_series, spec.tenths, dtype=np.int64)
+            if exact:
+                amounts[spec.key] = np.full(n_series, spec.mm, dtype=np.float64)
+            elif spec.tenths is None:
+                raise ValueError(f"the amount {spec.mm} mm is finer than 0.1 mm. Fix: round it to a whole tenth "
+                                 "of a mm, or use rain_resolution 'exact'")
+            else:
+                amounts[spec.key] = np.full(n_series, spec.tenths, dtype=np.int64)
             continue
         if spec.name not in thresholds:
             raise KeyError(f"threshold {spec.name!r} is needed by the definition but was not supplied")
@@ -184,6 +222,10 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
         values = np.broadcast_to(raw, (n_series, *raw.shape[1:]) if raw.ndim == 2 else (n_series,))
         bad = ~np.isfinite(values)
         safe = np.where(bad, 0.0, values)
+        if exact:
+            amounts[spec.key] = safe
+            invalid |= bad.any(axis=1) if bad.ndim == 2 else bad
+            continue
         if spec.kind == "baseline":
             converted = np.rint(safe * 1000.0)
         else:
@@ -192,3 +234,9 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
         amounts[spec.key] = converted.astype(np.int64)
         invalid |= bad.any(axis=1) if bad.ndim == 2 else bad
     return amounts, invalid
+
+
+def reject_exact_stitched(*tables: np.ndarray) -> None:
+    """Stitched searches add history and forecast prefix sums, which float rain cannot reproduce exactly."""
+    if any(np.asarray(t).dtype.kind == "f" for t in tables):
+        raise NotImplementedError("rain_resolution 'exact' is not available with forecast_history 'observed'")

@@ -1,7 +1,9 @@
 """CuPy backend: the reference algorithm (prefix tables, full candidate masks, first non-False via argmax) on the GPU.
 
-Everything is integer arithmetic, so results are bit-identical to the
-reference backend. Prefix tables for all series live on the device; jobs are
+Integer rain (tenths) is exact integer arithmetic; float rain (rain_resolution
+"exact") is summed in time order by a one-thread-per-row kernel, because a
+parallel scan would round differently. Either way results are bit-identical to
+the reference backend. Prefix tables for all series live on the device; jobs are
 processed in blocks of (jobs x candidates) cells sized from free device memory.
 
 detect_stitched does the same over observed history followed by a forecast, joining
@@ -80,6 +82,8 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
     width = int(n_cand.max())
     if width == 0:
         return Detection(day, status, None)
+    if plan.family == P.CURVE and np.asarray(tenths).dtype.kind == "f":
+        raise NotImplementedError("curve rules need rain_resolution 'tenths'")
     tables = _Tables(plan, tenths, missing, amounts)
     block = max(1, _block_cells() // width)
     day_d = cp.full(n_jobs, -1, dtype=cp.int64)
@@ -116,27 +120,39 @@ class _Tables:
     """Prefix tables over the series, built once per detect call on the device."""
 
     def __init__(self, plan, tenths, missing, amounts):
-        """Upload the data and build prefix sums of rain, missing, wet and dry days, plus per-veto spell tables."""
-        self.amounts = {k: cp.asarray(v, dtype=cp.int64) for k, v in amounts.items()}
+        """Upload the data and build prefix sums of rain, missing, wet and dry days, plus per-veto spell tables.
+
+        Rain is int64 tenths, or float64 mm for exact resolution. pd is kept (for the stitched seam) only
+        when the definition has its own dry_day.
+        """
+        exact = np.asarray(tenths).dtype.kind == "f"
+        self.horizon, self.keep = plan.horizon, plan.keep_missing
+        self.amounts = {k: cp.asarray(v, dtype=cp.float64 if exact else cp.int64) for k, v in amounts.items()}
         self.n_time = tenths.shape[1]
         missing = cp.asarray(missing, dtype=cp.bool_)
-        x = cp.where(missing, 0, cp.asarray(tenths)).astype(cp.int64)
+        x = cp.where(missing, 0, cp.asarray(tenths)).astype(cp.float64 if exact else cp.int64)
         wet_amount = self.amounts[plan.wet.key][:, None]
         wet = ~missing & _compare(plan.wet.op, x, wet_amount)
-        dry = ~missing & ~wet
+        if plan.dry is None:
+            dry = ~missing & ~wet
+        else:
+            dry = ~missing & _compare(plan.dry.op, x, self.amounts[plan.dry.key][:, None])
         self.x_shape = x.shape
-        self.px = _prefix(x, cp.int64)
+        self.px = _prefix(x, x.dtype)
         del x
         self.pm = _prefix(missing, cp.int32)
         self.pw = _prefix(wet, cp.int32)
         self.pd = _prefix(dry, cp.int32)
+        self._dry = dry
         self.veto_prefix = [self._spell_prefix(v) for v in plan.vetoes]
         self.wet_order = None
         if plan.report_first_wet:
             # Wet days first, in time order, so the k-th wet day of a series is wet_order[s, k].
             self.wet_order = cp.argsort(~wet, axis=1, kind="stable").astype(cp.int32)
         del wet, dry, missing
-        self.pd = None
+        self._dry = None
+        if plan.dry is None:
+            self.pd = None
 
     def _spell_prefix(self, veto: P.VetoPlan):
         """Prefix sum over start days u of "a spell of this veto starts at u and lies fully in the data"."""
@@ -146,6 +162,8 @@ class _Tables:
             span = n_time - length + 1
             if veto.kind == P.DRY_RUN:
                 holds[:, :span] = (self.pd[:, length:] - self.pd[:, :span]) == length
+                if veto.placement == P.BEGINS:
+                    holds[:, 1:span] &= ~self._dry[:, :span - 1]
             else:
                 total = self.px[:, length:] - self.px[:, :span]
                 amount = self.amounts[veto.cmp.key][:, None]
@@ -161,8 +179,36 @@ class _Tables:
         return cp.where(rank < total, found, self.n_time)
 
 
+_ROW_CUMSUM = None
+
+
+def _row_cumsum(values):
+    """Float64 prefix sums with a leading zero column, each row added in time order (what np.cumsum does)."""
+    global _ROW_CUMSUM
+    if _ROW_CUMSUM is None:
+        _ROW_CUMSUM = cp.RawKernel(r'''
+        extern "C" __global__ void row_cumsum(const double* x, double* out, long long rows, long long cols) {
+            long long r = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+            if (r >= rows) return;
+            double acc = 0.0;
+            out[r * (cols + 1)] = 0.0;
+            for (long long t = 0; t < cols; ++t) {
+                acc += x[r * cols + t];
+                out[r * (cols + 1) + t + 1] = acc;
+            }
+        }''', "row_cumsum", options=("--fmad=false",))
+    values = cp.ascontiguousarray(values, dtype=cp.float64)
+    rows, cols = values.shape
+    out = cp.empty((rows, cols + 1), dtype=cp.float64)
+    if rows:
+        _ROW_CUMSUM(((rows + 255) // 256,), (256,), (values, out, np.int64(rows), np.int64(cols)))
+    return out
+
+
 def _prefix(values, dtype):
     """Prefix sums along time with a leading zero column, so table[:, t] sums days [0, t)."""
+    if np.dtype(dtype).kind == "f":
+        return _row_cumsum(values)
     out = cp.zeros((values.shape[0], values.shape[1] + 1), dtype=dtype)
     cp.cumsum(values, axis=1, dtype=dtype, out=out[:, 1:])
     return out
@@ -190,7 +236,7 @@ def _observe(tables: _Tables, job: _Block, a, b):
     lo = cp.clip(a, 0, e)
     hi = cp.maximum(cp.minimum(b, e), lo)
     n_missing = tables.pm[job.series, hi] - tables.pm[job.series, lo]
-    flags = (((a < 0) | (n_missing > 0)) * MISSING_FLAG + (b > e) * HORIZON_FLAG).astype(cp.int8)
+    flags = (((a < 0) | ((n_missing > 0) & (not tables.keep))) * MISSING_FLAG + (b > e) * HORIZON_FLAG).astype(cp.int8)
     return flags == 0, flags
 
 
@@ -232,8 +278,20 @@ def _veto(veto: P.VetoPlan, spell_prefix, tables: _Tables, job: _Block):
     lo = cp.clip(a, 0, n_table - 1)
     hi = cp.maximum(cp.clip(u_last + 1, 0, n_table - 1), lo)
     confirmed = (spell_prefix[job.series, hi] - spell_prefix[job.series, lo]) > 0
+    return _veto_code(tables, job, b, confirmed, ok, flags)
+
+
+def _veto_code(tables, job, b, confirmed, ok, flags):
+    """(code, flags) of a veto from its confirmation and observability, applying the horizon policy."""
     code = cp.where(confirmed, TRUE, cp.where(ok, FALSE, UNKNOWN)).astype(cp.int8)
-    return code, cp.where(code == UNKNOWN, flags, 0).astype(cp.int8)
+    flags = cp.where(code == UNKNOWN, flags, 0).astype(cp.int8)
+    if tables.horizon != "censor":
+        code = cp.where(flags == HORIZON_FLAG, FALSE, code).astype(cp.int8)
+        flags = cp.where(code == UNKNOWN, flags, 0).astype(cp.int8)
+        if tables.horizon == "reject":
+            code = cp.where(b > job.data_end, TRUE, code).astype(cp.int8)
+            flags = cp.where(code == UNKNOWN, flags, 0).astype(cp.int8)
+    return code, flags
 
 
 def _status_from_flags(flags):
@@ -257,6 +315,9 @@ def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block):
         any_false |= code == TRUE
         any_unknown |= code == UNKNOWN
         unknown_flags |= flags
+    if tables.keep:
+        any_false |= ((tables.pm[job.series, cp.clip(job.d + 1, 0, tables.n_time)]
+                       - tables.pm[job.series, cp.clip(job.d, 0, tables.n_time)]) > 0) & (job.d < job.data_end)
     state = cp.where(any_false | ~job.valid, FALSE, cp.where(any_unknown, UNKNOWN, TRUE)).astype(cp.int8)
     flags = cp.where(state == UNKNOWN, unknown_flags, 0).astype(cp.int8)
 
@@ -322,7 +383,7 @@ def _first_column(plan: P.Plan, start: np.ndarray, origin: np.ndarray) -> int:
     offsets = [0]
     for cond in plan.conditions:
         offsets.append(0 if cond.since_start else cond.first)
-    offsets.extend(v.first for v in plan.vetoes)
+    offsets.extend(v.first - (v.placement == P.BEGINS) for v in plan.vetoes)
     if plan.report_first_wet and plan.report_span is not None:
         offsets.append(0 if plan.report_span[2] else plan.report_span[0])
     return max(0, min(int(start.min()) + min(offsets), int(origin.min())))
@@ -344,6 +405,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     """
     if trace:
         raise NotImplementedError("use the reference backend for traces")
+    P.reject_exact_stitched(hist_tenths, fc_tenths)
     amounts, starts = windowed.prepare(amounts, amount_windows)
     if starts is not None:
         return windowed.run(plan, amounts, starts, jobs, lambda j, a: detect_stitched(
@@ -402,16 +464,30 @@ class _StitchedTables:
         self.px = _prefix(x, cp.int64)
         self.pm = _prefix(miss, cp.int32)
 
+        self.horizon, self.keep = plan.horizon, plan.keep_missing
         wet_amount_h = np.asarray(amounts[plan.wet.key], dtype=np.int64)[series_h]
         wcell, wamt, wv = _variants(cell_idx, wet_amount_h)
         wcell_d, wamt_d = cp.asarray(wcell), cp.asarray(wamt)
         miss_v = miss[wcell_d]
         wet = ~miss_v & _compare(plan.wet.op, x[wcell_d], wamt_d[:, None])
         self.pw = _prefix(wet, cp.int32)
-        dry_prefix = _prefix(~miss_v & ~wet, cp.int32)
         self.wet_order = None
         if plan.report_first_wet:
             self.wet_order = cp.argsort(~wet, axis=1, kind="stable").astype(cp.int32)
+        # Dry days: the wet variants' complement, or one variant per (cell, dry amount) with its own dry_day.
+        self.use_pd = plan.dry is not None
+        if self.use_pd:
+            dry_amount_h = np.asarray(amounts[plan.dry.key], dtype=np.int64)[series_h]
+            dcell, damt, dv = _variants(cell_idx, dry_amount_h)
+            dcell_d, damt_d = cp.asarray(dcell), cp.asarray(damt)
+            dry = ~miss[dcell_d] & _compare(plan.dry.op, x[dcell_d], damt_d[:, None])
+        else:
+            dcell, dv = wcell, wv
+            dry = ~miss_v & ~wet
+        dry_prefix = _prefix(dry, cp.int32)
+        self.hd = dry_prefix if self.use_pd else self.pw
+        self.fd = self.fc.pd if self.use_pd else self.fc.pw
+        self.dry_variant = cp.asarray(dv)
         del wet, miss_v
 
         self.cell = cp.asarray(cell_idx)
@@ -427,10 +503,12 @@ class _StitchedTables:
             span = self.width - veto.length + 1
             holds = cp.zeros((0, self.width + 1), dtype=cp.bool_)
             if veto.kind == P.DRY_RUN:
-                variant = wv
-                holds = cp.zeros((len(wcell), self.width + 1), dtype=cp.bool_)
+                variant = dv
+                holds = cp.zeros((len(dcell), self.width + 1), dtype=cp.bool_)
                 if span > 0:
                     holds[:, :span] = (dry_prefix[:, veto.length:] - dry_prefix[:, :span]) == veto.length
+                    if veto.placement == P.BEGINS:
+                        holds[:, 1:span] &= ~dry[:, :span - 1]
             else:
                 amount_h = np.asarray(amounts[veto.cmp.key], dtype=np.int64)[series_h]
                 vcell, vamt, variant = _variants(cell_idx, amount_h)
@@ -443,7 +521,7 @@ class _StitchedTables:
                     holds[:, :span] = complete & _compare(veto.cmp.op, total, vamt_d[:, None])
             self.spell_prefix.append(_prefix(holds, cp.int32))
             self.spell_variant.append(cp.asarray(variant))
-        del dry_prefix
+        del dry, dry_prefix
         self.amounts = self.fc.amounts
 
 
@@ -455,6 +533,7 @@ class _StitchedBlock:
         self.series = tables.series[sl][:, None]
         self.cell = tables.cell[sl][:, None]
         self.wet_variant = tables.wet_variant[sl][:, None]
+        self.dry_variant = tables.dry_variant[sl][:, None]
         self.split = tables.split[sl][:, None]
         self.start = tables.start[sl][:, None]
         self.origin = tables.origin[sl][:, None]
@@ -481,7 +560,7 @@ def _observe_s(tables: _StitchedTables, job: _StitchedBlock, a, b):
     lo = cp.clip(a, 0, e)
     hi = cp.maximum(cp.minimum(b, e), lo)
     n_missing = _g(tables, tables.pm, tables.fc.pm, job.cell, job, hi) - _g(tables, tables.pm, tables.fc.pm, job.cell, job, lo)
-    flags = (((a < 0) | (n_missing > 0)) * MISSING_FLAG + (b > e) * HORIZON_FLAG).astype(cp.int8)
+    flags = (((a < 0) | ((n_missing > 0) & (not tables.keep))) * MISSING_FLAG + (b > e) * HORIZON_FLAG).astype(cp.int8)
     return flags == 0, flags
 
 
@@ -502,12 +581,16 @@ def _condition_s(plan_cond: P.CondPlan, tables: _StitchedTables, job: _StitchedB
 
 
 def _seam(veto: P.VetoPlan, tables: _StitchedTables, job: _StitchedBlock):
-    """Per-job cumulative indicator (jobs, length) of spells starting in [split - length + 1, split - 1] that hold."""
-    length = veto.length
-    seam = cp.zeros((job.n_jobs, length), dtype=cp.int32)
-    if length == 1:
+    """Per-job cumulative indicator (jobs, n + 1) of the spells starting in [split - length + 1, split - 1] that hold.
+
+    A begins run also starts at split itself (n = length), and needs the history day before it not to be dry.
+    """
+    length, begin = veto.length, int(veto.placement == P.BEGINS)
+    n_seam = length - 1 + begin
+    seam = cp.zeros((job.n_jobs, n_seam + 1), dtype=cp.int32)
+    if n_seam == 0:
         return seam
-    i = cp.arange(length - 1, dtype=cp.int64)[None, :]
+    i = cp.arange(n_seam, dtype=cp.int64)[None, :]
     u = job.split - length + 1 + i
     fc_len = i + 1
     inside = (u >= tables.c0) & (u + length <= job.n_time)
@@ -521,8 +604,16 @@ def _seam(veto: P.VetoPlan, tables: _StitchedTables, job: _StitchedBlock):
 
     missing = hist_diff(tables.pm, job.cell) + tables.fc.pm[job.series, fc_col]
     if veto.kind == P.DRY_RUN:
-        wet = hist_diff(tables.pw, job.wet_variant) + tables.fc.pw[job.series, fc_col]
-        holds = inside & (missing == 0) & (wet == 0)
+        count = hist_diff(tables.hd, job.dry_variant) + tables.fd[job.series, fc_col]
+        holds = inside & (missing == 0) & (count == (length if tables.use_pd else 0))
+        if begin:
+            prev = cp.clip(u - 1 - tables.c0, 0, tables.width)
+            gap = tables.hd[job.dry_variant, u_col] - tables.hd[job.dry_variant, prev]
+            if tables.use_pd:
+                prev_dry = gap == 1
+            else:
+                prev_dry = (gap == 0) & (tables.pm[job.cell, u_col] - tables.pm[job.cell, prev] == 0)
+            holds &= ~((u - 1 >= tables.c0) & prev_dry)
     else:
         total = hist_diff(tables.px, job.cell) + tables.fc.px[job.series, fc_col]
         amount = tables.amounts[veto.cmp.key][job.series]
@@ -547,20 +638,19 @@ def _veto_s(veto: P.VetoPlan, spell_prefix, variant, fc_prefix, tables: _Stitche
     lo = cp.clip(a, 0, job.n_time)
     hi = cp.maximum(cp.clip(u_last + 1, 0, job.n_time), lo)
     base = job.split - length + 1
+    begin = int(veto.placement == P.BEGINS)
     seam = _seam(veto, tables, job)
     rows = cp.arange(job.n_jobs)[:, None]
     x = cp.minimum(hi, base)
     count = cp.where(x > lo, spell_prefix[variant, cp.clip(x - tables.c0, 0, tables.width)]
                      - spell_prefix[variant, cp.clip(lo - tables.c0, 0, tables.width)], 0)
-    x0, x1 = cp.maximum(lo, base), cp.minimum(hi, job.split)
-    count = count + cp.where(x1 > x0, seam[rows, cp.clip(x1 - base, 0, length - 1)]
-                             - seam[rows, cp.clip(x0 - base, 0, length - 1)], 0)
-    y0 = cp.maximum(lo, job.split)
+    x0, x1 = cp.maximum(lo, base), cp.minimum(hi, job.split + begin)
+    count = count + cp.where(x1 > x0, seam[rows, cp.clip(x1 - base, 0, length - 1 + begin)]
+                             - seam[rows, cp.clip(x0 - base, 0, length - 1 + begin)], 0)
+    y0 = cp.maximum(lo, job.split + begin)
     count = count + cp.where(hi > y0, fc_prefix[job.series, cp.clip(hi - job.split, 0, tables.n_fc)]
                              - fc_prefix[job.series, cp.clip(y0 - job.split, 0, tables.n_fc)], 0)
-    confirmed = count > 0
-    code = cp.where(confirmed, TRUE, cp.where(ok, FALSE, UNKNOWN)).astype(cp.int8)
-    return code, cp.where(code == UNKNOWN, flags, 0).astype(cp.int8)
+    return _veto_code(tables, job, b, count > 0, ok, flags)
 
 
 def _first_wet_day_s(tables: _StitchedTables, job: _StitchedBlock, onset, pick_day, day, report_span):
@@ -605,6 +695,9 @@ def _first_passage_block_s(plan: P.Plan, tables: _StitchedTables, job: _Stitched
         any_false |= code == TRUE
         any_unknown |= code == UNKNOWN
         unknown_flags |= flags
+    if tables.keep:
+        any_false |= ((_g(tables, tables.pm, tables.fc.pm, job.cell, job, job.d + 1)
+                       - _g(tables, tables.pm, tables.fc.pm, job.cell, job, job.d)) > 0) & (job.d < job.data_end)
     state = cp.where(any_false | ~job.valid, FALSE, cp.where(any_unknown, UNKNOWN, TRUE)).astype(cp.int8)
     flags = cp.where(state == UNKNOWN, unknown_flags, 0).astype(cp.int8)
 

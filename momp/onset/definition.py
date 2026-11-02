@@ -24,7 +24,7 @@ from momp.onset.model import (
 REGISTRY_DIR = Path(__file__).parent / "registry"
 
 _TOP_KEYS = ("id", "version", "title", "citation", "wording", "status", "notes", "extends", "wet_day",
-             "season", "seasons", "thresholds", "onset", "curve", "regions")
+             "dry_day", "season", "seasons", "thresholds", "onset", "curve", "regions")
 _REQUIRED_KEYS = ("id", "version", "title", "citation", "wording", "status", "notes", "wet_day")
 _RESTATED_KEYS = ("id", "version", "title", "status")
 _EXCLUSIVE_PAIRS = (("season", "seasons"), ("onset", "curve"))
@@ -155,14 +155,17 @@ def _resolve_extends(mapping: dict, base_dir: Path | None, stack: tuple[Path, ..
     return _merge(parent, child)
 
 
-def loads(text: str, *, base_dir: Path | str | None = None) -> Definition:
-    """Parse and validate definition YAML text; a relative `extends` path is taken from base_dir."""
+def loads(text: str, *, base_dir: Path | str | None = None, fine_amounts: bool = False) -> Definition:
+    """Parse and validate definition YAML text; a relative `extends` path is taken from base_dir.
+
+    fine_amounts allows fixed amounts finer than 0.1 mm (they need rain_resolution "exact").
+    """
     base = Path(base_dir) if base_dir is not None else None
     merged = _resolve_extends(_read_mapping(text, "definition"), base, ())
-    return _build(merged)
+    return _build(merged, fine_amounts)
 
 
-def load(id_or_path: str | Path) -> Definition:
+def load(id_or_path: str | Path, *, fine_amounts: bool = False) -> Definition:
     """Load a registry definition by id, or a definition from the path of a .yaml file."""
     if isinstance(id_or_path, str) and id_or_path in registry_ids():
         file = REGISTRY_DIR / f"{id_or_path}.yaml"
@@ -174,10 +177,10 @@ def load(id_or_path: str | Path) -> Definition:
                 "Fix: use a registry id or the path of a .yaml file")
     file = file.resolve()
     merged = _resolve_extends(_read_mapping(file.read_text(), str(file)), file.parent, (file,))
-    return _build(merged)
+    return _build(merged, fine_amounts)
 
 
-def override(defn: Definition, changes: dict) -> Definition:
+def override(defn: Definition, changes: dict, *, fine_amounts: bool = False) -> Definition:
     """Return the definition with `changes` merged into its stored YAML mapping and validated again.
 
     The merge follows `extends`: mappings merge key by key, lists and scalars replace.
@@ -188,7 +191,7 @@ def override(defn: Definition, changes: dict) -> Definition:
         for mine, other in ((first, second), (second, first)):
             if mine in changes and other not in changes:
                 merged.pop(other, None)
-    return _build(merged)
+    return _build(merged, fine_amounts)
 
 
 def without_dry_spell_check(defn: Definition) -> Definition:
@@ -202,10 +205,15 @@ def without_dry_spell_check(defn: Definition) -> Definition:
     })
 
 
+_OMITTED_WHEN_NONE = ("mm",)
+"""Fields added after hashes were first recorded; leaving them out when unset keeps those hashes."""
+
+
 def _canonical(obj):
     """Turn model objects into plain JSON values, tagging each dataclass with its class name."""
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        fields = {f.name: _canonical(getattr(obj, f.name)) for f in dataclasses.fields(obj) if f.compare}
+        fields = {f.name: _canonical(getattr(obj, f.name)) for f in dataclasses.fields(obj)
+                  if f.compare and not (f.name in _OMITTED_WHEN_NONE and getattr(obj, f.name) is None)}
         return {"_type": type(obj).__name__, **fields}
     if isinstance(obj, (tuple, list)):
         return [_canonical(item) for item in obj]
@@ -213,18 +221,26 @@ def _canonical(obj):
 
 
 def definition_hash(defn: Definition) -> str:
-    """sha256 of the canonical JSON of wet_day, seasons, rule and thresholds; provenance does not count."""
+    """sha256 of the canonical JSON of wet_day, dry_day (if set), seasons, rule and thresholds; provenance does not count."""
     semantic = {
         "wet_day": _canonical(defn.wet_day),
         "seasons": _canonical(defn.seasons),
         "rule": _canonical(defn.rule),
         "thresholds": {name: _canonical(spec) for name, spec in sorted(defn.thresholds)},
     }
+    if defn.dry_day is not None:
+        semantic["dry_day"] = _canonical(defn.dry_day)
     return hashlib.sha256(json.dumps(semantic, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _build(m: dict) -> Definition:
+def _build(m: dict, fine_amounts: bool = False) -> Definition:
     """Validate a fully merged mapping and normalize it into a Definition."""
+    with units.fine_amounts(fine_amounts):
+        return _build_checked(m)
+
+
+def _build_checked(m: dict) -> Definition:
+    """_build inside the amount-precision context."""
     _mapping(m, "", _TOP_KEYS, _REQUIRED_KEYS)
     ident = m["id"]
     if not isinstance(ident, str) or not _ID_RE.match(ident):
@@ -247,6 +263,7 @@ def _build(m: dict) -> Definition:
     thresholds = _thresholds(m.get("thresholds", {}))
     names = frozenset(name for name, _ in thresholds)
     wet_day = _wet_day(m["wet_day"])
+    dry_day = _dry_day(m["dry_day"]) if "dry_day" in m else None
     seasons = _seasons(m)
     if ("onset" in m) == ("curve" in m):
         _fail("onset", "exactly one of 'onset' (first-passage rule) or 'curve' (cumulative anomaly) is "
@@ -254,7 +271,8 @@ def _build(m: dict) -> Definition:
     rule = _onset(m["onset"], names) if "onset" in m else _curve(m["curve"], names)
     return Definition(
         id=ident, version=version, status=m["status"], wet_day=wet_day, seasons=seasons, rule=rule,
-        thresholds=thresholds, regions=regions, source_yaml=yaml.safe_dump(m, sort_keys=False), **provenance)
+        thresholds=thresholds, regions=regions, source_yaml=yaml.safe_dump(m, sort_keys=False), dry_day=dry_day,
+        **provenance)
 
 
 def _regions(value) -> tuple[str, ...]:
@@ -285,9 +303,18 @@ def _comparison(value, path: str, names: frozenset[str]) -> Comparison:
 def _wet_day(value) -> Comparison:
     """Parse wet_day, which must be 'at least X mm' or 'more than X mm'."""
     comparison = _comparison(value, "wet_day", frozenset())
-    if comparison.op not in ("ge", "gt") or comparison.amount.tenths is None:
+    if comparison.op not in ("ge", "gt") or comparison.amount.threshold is not None:
         _fail("wet_day", f"{value!r} is not allowed. Fix: write 'at least X mm' or 'more than X mm' "
                          "with a fixed amount")
+    return comparison
+
+
+def _dry_day(value) -> Comparison:
+    """Parse dry_day, which must be 'less than X mm' or 'at most X mm'."""
+    comparison = _comparison(value, "dry_day", frozenset())
+    if comparison.op not in ("lt", "le") or comparison.amount.threshold is not None:
+        _fail("dry_day", f"{value!r} is not allowed. Fix: write 'less than X mm' or 'at most X mm' "
+                         "with a fixed amount, or leave dry_day out so a dry day is a valid day that is not wet")
     return comparison
 
 
@@ -472,15 +499,17 @@ def _requirement(item, path: str, window: int | None, names: frozenset[str]) -> 
 
 def _veto(item, path: str, window: int | None, names: frozenset[str]) -> Veto:
     """Parse one `reject if` item into a Veto."""
-    _mapping(item, path, ("dry run", "dry window", "within", "starting within"))
+    _mapping(item, path, ("dry run", "dry window", "within", "starting within", "beginning within"))
     spells = [k for k in ("dry run", "dry window") if k in item]
     if len(spells) != 1:
         _fail(path, "needs exactly one of 'dry run' or 'dry window'. Fix: write e.g. 'dry run: at least 7 days'")
-    places = [k for k in ("within", "starting within") if k in item]
+    places = [k for k in ("within", "starting within", "beginning within") if k in item]
     if len(places) != 1:
-        _fail(path, "needs exactly one of 'within' or 'starting within' to say where the spell must "
-                    "lie. Fix: add e.g. 'within: 21 days after onset'")
+        _fail(path, "needs exactly one of 'within', 'starting within' or 'beginning within' to say where "
+                    "the spell must lie. Fix: add e.g. 'within: 21 days after onset'")
     kind, place = spells[0], places[0]
+    if place == "beginning within" and kind != "dry run":
+        _fail(_join(path, place), "only applies to a 'dry run'. Fix: use 'within' or 'starting within'")
     if kind == "dry run":
         spell = _units(_join(path, kind), units.parse_dry_run, item[kind])
         length = spell.length
@@ -493,7 +522,7 @@ def _veto(item, path: str, window: int | None, names: frozenset[str]) -> Veto:
                                      f"{', '.join(sorted(names)) or 'none defined'}). "
                                      "Fix: add it under 'thresholds:' or use a fixed amount such as '5 mm'")
     span = _span(item[place], _join(path, place), window)
-    placement = "inside" if place == "within" else "starts_inside"
+    placement = {"within": "inside", "starting within": "starts_inside", "beginning within": "begins"}[place]
     span_length = span.last - span.first + 1
     if placement == "inside" and length > span_length:
         _fail(_join(path, place), f"the {length}-day spell cannot fit inside a {span_length}-day span. "
