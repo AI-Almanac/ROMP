@@ -41,6 +41,8 @@ from momp.lib.convention import Case, Setting
 from momp.lib.onset_config import onset_setup
 from momp.lib.run_folder import file_name
 from momp.lib.resolved import resolved_config_text
+from momp.io.output import with_unit_labels
+from momp.spatial import axes
 from momp.onset import definition as definition_mod
 from momp.onset.describe import describe
 from momp.onset.model import Status
@@ -232,6 +234,8 @@ def _coord_attrs(ds: xr.Dataset, lead_label: str | None, lead_comment: str) -> N
     attrs = {
         "lat": {"units": "degrees_north", "standard_name": "latitude", "long_name": "latitude", "axis": "Y"},
         "lon": {"units": "degrees_east", "standard_name": "longitude", "long_name": "longitude", "axis": "X"},
+        "unit": {"long_name": "evaluation unit id", "cf_role": "timeseries_id"},
+        "unit_name": {"long_name": "evaluation unit name"},
         "year": {"long_name": "year of the onset season (the season's start)"},
         "season": {"long_name": "onset season (name in the definition)"},
         "init_time": {"standard_name": "forecast_reference_time", "long_name": "forecast initialisation date"},
@@ -297,8 +301,8 @@ def _threshold_hash(thresholds) -> str:
 
 
 def _mask_summary(dic: dict, sample: xr.DataArray) -> dict:
-    """The mask settings and how many cells of the loaded grid have no data at all in the sample variable."""
-    spatial = [d for d in sample.dims if d in ("lat", "lon")]
+    """The mask settings and how many cells (or units) of the loaded grid have no data at all in the sample variable."""
+    spatial = [d for d in sample.dims if d in ("lat", "lon", "unit")]
     other = [d for d in sample.dims if d not in spatial]
     empty = sample.isnull().all(other) if other else sample.isnull()
     return {"region": dic.get("region"), "nc_mask": dic.get("nc_mask"), "shpfile_dir": dic.get("shpfile_dir"),
@@ -359,10 +363,10 @@ def _provenance(dic: dict, kw: dict, source: str, kind: str, thresholds, mask: d
 
 def _chunks(var: xr.DataArray) -> tuple[int, ...]:
     """Chunk sizes: whole map, lead and status axes per chunk, one init, year, season (and member for big grids)."""
-    whole = ("lat", "lon", "lead", "status_code", "member")
+    whole = ("lat", "lon", "unit", "lead", "status_code", "member")
     chunk = [min(n, 512) if d in whole else 1 for d, n in zip(var.dims, var.shape)]
     while np.prod(chunk) > _MAX_CHUNK:
-        for dim in ("member", "lead", "status_code", "lon", "lat"):
+        for dim in ("member", "lead", "status_code", "unit", "lon", "lat"):
             if dim in var.dims and chunk[var.dims.index(dim)] > 1:
                 chunk[var.dims.index(dim)] = -(-chunk[var.dims.index(dim)] // 2)
                 break
@@ -421,7 +425,7 @@ def _years_loop(kw: dict, load):
 def collect_observed(dic: dict) -> xr.Dataset:
     """The observed onsets of every evaluated year, from momp.stats.detect.detect_observed_result (what is scored).
 
-    Dims (year, season, lat, lon): onset_date, onset_doy and status.
+    Dims (year, season, lat, lon), or (year, season, unit) on evaluation units: onset_date, onset_doy and status.
     """
     kw = case_kwargs(dic, dic["model_list"][0])
     thresholds = load_thresholds(**kw)
@@ -435,7 +439,8 @@ def collect_observed(dic: dict) -> xr.Dataset:
         raise ValueError("no observation year could be read; nothing to export")
     result = xr.concat(parts, dim="year", join="exact", data_vars="minimal", coords="minimal")
     calendar = parts[0].attrs["calendar"]
-    dims = ("year", "season", "lat", "lon")
+    spatial = axes.spatial_dims(result["onset_date"].dims)
+    dims = ("year", "season", *spatial)
     days = _days(result["onset_date"].transpose(*dims).values, calendar)
     ds = xr.Dataset(
         {"onset_date": _date_var(days, dims, calendar, "observed rainy-season onset date",
@@ -444,7 +449,8 @@ def collect_observed(dic: dict) -> xr.Dataset:
                                  "1-366 in the onset date's own year; NaN where there is no onset"),
          "status": status_var(result["status"].transpose(*dims).values, dims)},
         coords={"year": result["year"].values, "season": result["season"].values,
-                "lat": result["lat"].values, "lon": result["lon"].values})
+                **{d: result[d].values for d in spatial}})
+    ds = with_unit_labels(ds, kw)
     _coord_attrs(ds, None, "")
     years = [int(y) for y in ds["year"].values]
     mask = _mask_summary(dic, sample)
@@ -458,7 +464,7 @@ def collect_observed(dic: dict) -> xr.Dataset:
 def collect_model(dic: dict, model: str) -> xr.Dataset:
     """The onsets of one forecast model for every evaluated year, from momp.stats.detect._detect_forecast.
 
-    Dims (init_time, [member], season, lat, lon): onset_date, onset_doy, onset_lead (the engine's 1-based lead,
+    Dims (init_time, [member], season, lat, lon), or with unit instead of lat and lon on evaluation units: onset_date, onset_doy, onset_lead (the engine's 1-based lead,
     <= 0 when back-dated into the observed history), onset_day (days from the init date to the onset date, as
     the scoring tables' onset_day), status and scored. Ensembles (the run's `probabilistic`) also have
     members_by_status, onset_probability and the ensemble onset the scoring uses: ensemble_onset_date,
@@ -482,10 +488,11 @@ def collect_model(dic: dict, model: str) -> xr.Dataset:
         setup, calendar = out["setup"], out["calendar"]
         parts.append(_model_year(out, ensemble, kw["onset_percentage_threshold"]))
         if sample is None:
-            sample = p_model.isel({d: 0 for d in p_model.dims if d not in ("lat", "lon")})
+            sample = p_model.isel({d: 0 for d in p_model.dims if d not in ("lat", "lon", "unit")})
     if not parts:
         raise ValueError(f"no forecast year of {model} could be read; nothing to export")
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
+    ds = with_unit_labels(ds, kw)
     _coord_attrs(ds, setup.lead_label, _lead_comment(setup.lead_label))
     years = sorted({int(t.year) for t in pd.DatetimeIndex(ds["init_time"].values)})
     extra = {"calendar": calendar, "model": model, "ensemble": ensemble,
@@ -502,7 +509,7 @@ def _model_year(out: dict, ensemble: bool, threshold: float) -> xr.Dataset:
     """One year of a model as a Dataset from the dict _detect_forecast returns."""
     res, calendar = out["result"], out["calendar"]
     dims = tuple(res["status"].dims)
-    spatial = ("lat", "lon")
+    spatial = out["spatial"]
     status = res["status"].transpose(*dims).values
     found = status == Status.ONSET
     days = np.where(found, _days(res["onset_date"].transpose(*dims).values, calendar), np.nan)
@@ -529,21 +536,22 @@ def _model_year(out: dict, ensemble: bool, threshold: float) -> xr.Dataset:
     if ensemble:
         _ensemble_variables(variables, out, res, threshold, calendar, init_days)
     return xr.Dataset(variables, coords={"init_time": res["init_time"].values, "season": res["season"].values,
-                                         "lat": res["lat"].values, "lon": res["lon"].values,
+                                         **{d: res[d].values for d in spatial},
                                          **({"member": res["member"].values} if "member" in res.coords else {})})
 
 
 def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: float, calendar: str,
                         init_days: np.ndarray) -> None:
     """Add the ensemble summary (the engine's, and the ensemble onset ROMP scores) to variables, in place."""
-    dims = ("init_time", "season", "lat", "lon")
+    spatial = out["spatial"]
+    dims = ("init_time", "season", *spatial)
     by_status = res["members_by_status"].transpose("status_code", *dims)
     variables["members_by_status"] = xr.DataArray(
         by_status.values.astype(np.int32), dims=by_status.dims,
         coords={"status_code": by_status["status_code"].values,
                 "status_name": ("status_code", by_status["status_name"].values)},
         attrs={**by_status.attrs, "comment": "member counts per status code; the codes are the status_code flags"})
-    probability = res["onset_probability"].transpose("init_time", "season", "lead", "lat", "lon")
+    probability = res["onset_probability"].transpose("init_time", "season", "lead", *spatial)
     variables["onset_probability"] = xr.DataArray(
         probability.values.astype(np.float32), dims=probability.dims, coords={"lead": probability["lead"].values},
         attrs=dict(probability.attrs))
@@ -551,7 +559,7 @@ def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: 
     has_onset = ~np.isnan(day)
     names = _ensemble_status(out["status"], threshold, has_onset)
     codes = np.vectorize(lambda n: Status[n].value, otypes=[np.int8])(names)
-    ensemble_days = _days(date, calendar) if _standard(calendar) else init_days.reshape(-1, 1, 1) + day
+    ensemble_days = _days(date, calendar) if _standard(calendar) else axes.broadcast_rows(init_days, day.ndim) + day
     ensemble_days = np.where(has_onset, ensemble_days, np.nan)
     comment = (f"as scored: the ensemble has an onset when at least {threshold:g} of the members have one; its "
                "day after the init is the mean member onset day rounded half to even (this is not the median)")
@@ -579,10 +587,10 @@ def _reference_inputs(dic: dict, model: str):
 
 
 def _scored(init_dates, obs_da: xr.DataArray) -> np.ndarray:
-    """The cases ROMP scores, (init, lat, lon) bool: the cell has an observed onset and the init is before it."""
-    obs = obs_da.transpose("lat", "lon").values.astype("datetime64[ns]")
+    """The cases ROMP scores, (init, lat, lon) or (init, unit) bool: the cell has an observed onset and the init is before it."""
+    obs = obs_da.transpose(*axes.spatial_dims(obs_da.dims)).values.astype("datetime64[ns]")
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates]).values.astype("datetime64[ns]")
-    return ~np.isnat(obs)[None] & (inits[:, None, None] < obs[None])
+    return ~np.isnat(obs)[None] & (axes.broadcast_rows(inits, obs.ndim + 1) < obs[None])
 
 
 def _stand_in(obs_da: xr.DataArray) -> xr.DataArray:
@@ -591,10 +599,10 @@ def _stand_in(obs_da: xr.DataArray) -> xr.DataArray:
 
 
 def _reference_year(table: pd.DataFrame, init_dates, obs_da: xr.DataArray, scored: np.ndarray, season: str) -> xr.Dataset:
-    """One year of a climatology reference from the table of its forecast functions (a row per init, lat, lon)."""
-    lat, lon = obs_da["lat"].values, obs_da["lon"].values
-    shape = (len(init_dates), 1, len(lat), len(lon))
-    dims = ("init_time", "season", "lat", "lon")
+    """One year of a climatology reference from the table of its forecast functions (a row per init, lat, lon or unit)."""
+    spatial = axes.spatial_dims(obs_da.dims)
+    shape = (len(init_dates), 1, *(obs_da.sizes[d] for d in spatial))
+    dims = ("init_time", "season", *spatial)
     date = pd.to_datetime(pd.Series(table["onset_date"].to_numpy(dtype=object))).to_numpy().reshape(shape)
     day = table["onset_day"].to_numpy(dtype=float).reshape(shape)
     days = _days(date.astype("datetime64[ns]"), "standard")
@@ -607,12 +615,12 @@ def _reference_year(table: pd.DataFrame, init_dates, obs_da: xr.DataArray, score
                                   "days after the init date (lead k is init + k); NaN where there is no onset"),
          "onset_day": _float_var(day, dims, "days from the init date to the onset date"),
          "status": status_var(np.where(found, Status.ONSET, Status.NOT_FOUND), dims),
-         "scored": xr.DataArray(scored.astype(np.int8), dims=("init_time", "lat", "lon"), attrs={
+         "scored": xr.DataArray(scored.astype(np.int8), dims=("init_time", *spatial), attrs={
              "long_name": "case is scored by ROMP", "flag_values": np.array([0, 1], dtype=np.int8),
              "flag_meanings": "not_scored scored",
              "comment": "1: the cell has an observed onset and the init is before it"})},
         coords={"init_time": pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates]).values,
-                "season": [season], "lat": lat, "lon": lon})
+                "season": [season], **{d: obs_da[d].values for d in spatial}})
 
 
 def collect_climatology(dic: dict) -> xr.Dataset:
@@ -633,14 +641,20 @@ def collect_climatology(dic: dict) -> xr.Dataset:
         table = compute_climatology_as_forecast(clim_doy, year, init_dates, _stand_in(obs_da), **kw)
         parts.append(_reference_year(table, init_dates, obs_da, _scored(init_dates, obs_da), setup.season))
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
-    doy = clim_doy.transpose("lat", "lon").values.astype(float)[None]
+    spatial = axes.spatial_dims(clim_doy.dims)
+    doy = clim_doy.transpose(*spatial).values.astype(float)[None]
     reference_year = int(years[0][0])
     nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - _EPOCH)
                        / np.timedelta64(1, "D") + doy - 1)
-    ds["climatological_onset_doy"] = _float_var(doy, ("season", "lat", "lon"), "climatological onset, day of year",
+    ds = with_unit_labels(ds, kw)
+    if "unit" in spatial:   # units are matched by id
+        doy = clim_doy.reindex(unit=ds["unit"].values).transpose(*spatial).values.astype(float)[None]
+        nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - _EPOCH)
+                           / np.timedelta64(1, "D") + doy - 1)
+    ds["climatological_onset_doy"] = _float_var(doy, ("season", *spatial), "climatological onset, day of year",
                                                "1", "rounded mean day of the calendar year of the observed onsets "
                                                f"of years_clim {kw['years_clim'][0]}-{kw['years_clim'][-1]}")
-    ds["climatological_onset_date"] = _date_var(nominal, ("season", "lat", "lon"), "standard",
+    ds["climatological_onset_date"] = _date_var(nominal, ("season", *spatial), "standard",
                                                 "climatological onset date",
                                                 f"the day of year placed in the nominal year {reference_year}")
     _coord_attrs(ds, setup.lead_label, "days after the init date: the climatology forecast onset lies at lead k = init + k")
@@ -672,18 +686,20 @@ def collect_conditional_climatology(dic: dict) -> xr.Dataset:
             continue
         table = compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, _stand_in(obs_da), **kw)
         part = _reference_year(table, init_dates, obs_da, _scored(init_dates, obs_da), setup.season)
-        probability = conditional_lead_probabilities(clim_onset, year, init_dates, obs_da["lat"].values,
-                                                     obs_da["lon"].values, horizon, kw.get("climatology_cv"))
+        probability = conditional_lead_probabilities(clim_onset, year, init_dates, obs_da, horizon,
+                                                     kw.get("climatology_cv"))
         cdf = np.cumsum(probability, axis=-1)
         cdf = np.concatenate([np.where(np.isnan(cdf[..., :1]), np.nan, 0.0), cdf], axis=-1)
+        spatial = axes.spatial_dims(obs_da.dims)
         part["onset_probability"] = xr.DataArray(
-            cdf.transpose(0, 3, 1, 2)[:, None].astype(np.float32), dims=("init_time", "season", "lead", "lat", "lon"),
+            np.moveaxis(cdf, -1, 1)[:, None].astype(np.float32), dims=("init_time", "season", "lead", *spatial),
             coords={"lead": np.arange(horizon + 1)},
             attrs={"long_name": "probability that the onset is on or before this lead, given none by the init",
                    "comment": "conditional CDF of the KDE of observed onsets over the climatology years; 0 at "
                               "lead 0; NaN for cells with fewer than 10 onset years"})
         parts.append(part)
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
+    ds = with_unit_labels(ds, kw)
     _coord_attrs(ds, setup.lead_label, "days after the init date: the conditional onset lies at lead k = init + k")
     configured = dic.get("climatology_cv")
     ds.attrs = _provenance(dic, kw, CONDITIONAL_CLIMATOLOGY, "conditional climatology reference", thresholds,

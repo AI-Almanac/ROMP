@@ -6,6 +6,7 @@ from matplotlib.patches import Polygon
 from momp.params.region_def import polygon_boundary
 from momp.utils.land_mask import get_india_outline, shp_outline
 from momp.utils.visual import box_boundary
+from momp.graphics.field import draw_field, extent, units_of
 import logging
 
 log = logging.getLogger(__name__)
@@ -49,18 +50,18 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
     far = spatial_metrics['false_alarm_rate'] * 100  # Convert to percentage
     miss_rate = spatial_metrics['miss_rate'] * 100   # Convert to percentage
 
-    # Get coordinates
-    lats = mean_mae.lat.values
-    lons = mean_mae.lon.values
+    # Get coordinates (the bounds of the polygons on evaluation units)
+    units = units_of(mean_mae, kwargs)
+    lats, lons = extent(mean_mae, units)
 
     # Detect resolution from latitude spacing
-    lat_diff = abs(lats[1] - lats[0])
+    lat_diff = abs(lats[1] - lats[0]) if units is None else np.nan
     log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Define Core Monsoon Zone bounding polygon coordinates based on resolution 
     polygon_defined = False
 
-    if polygon:
+    if polygon and units is None:
         polygon1_lat, polygon1_lon = polygon_boundary(mean_mae)
 
         if len(polygon1_lat) > 0 and len(polygon1_lon) > 0:
@@ -120,18 +121,13 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
         cmz_far = np.nan
         cmz_mr = np.nan
 
-    # Create edges for pcolormesh (cell boundaries)
-    lon_edges = np.concatenate([lons - (lons[1]-lons[0])/2, [lons[-1] + (lons[1]-lons[0])/2]])
-    lat_edges = np.concatenate([lats - (lats[1]-lats[0])/2, [lats[-1] + (lats[1]-lats[0])/2]])
-    LON_edges, LAT_edges = np.meshgrid(lon_edges, lat_edges)
-
     # Plot parameters
     map_lw = 0.75
     polygon_lw = 1.25
     panel_linewidth = 0.5
     tick_length = 3
     tick_width = 0.8
-    if abs(lat_diff) < 0.99:
+    if units is not None or abs(lat_diff) < 0.99:   # no values are written on polygons
         txt_fsize = None
     elif abs(lat_diff - 2.0) < 0.1:
         txt_fsize = 8
@@ -143,9 +139,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
         txt_fsize = 8
 
     # Panel 1: Mean MAE
-    masked_mae = np.ma.masked_invalid(mean_mae.values)
-    im1 = axes[0].pcolormesh(LON_edges, LAT_edges, masked_mae, 
-                             cmap='OrRd', vmin=0, vmax=15, shading='flat')
+    im1 = draw_field(axes[0], mean_mae, units, shading='flat', cmap='OrRd', vmin=0, vmax=15)
 
     # Add India outline
     if shpfile_dir:
@@ -191,9 +185,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
     axes[0].set_ylabel('Latitude', fontsize=12)
 
     # Panel 2: False Alarm Rate
-    masked_far = np.ma.masked_invalid(far.values)
-    im2 = axes[1].pcolormesh(LON_edges, LAT_edges, masked_far, 
-                             cmap='Reds', vmin=0, vmax=100, shading='flat')
+    im2 = draw_field(axes[1], far, units, shading='flat', cmap='Reds', vmin=0, vmax=100)
 
     # Add India outline
     if "india_boundaries" in locals():
@@ -233,9 +225,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
     axes[1].set_xlabel('Longitude', fontsize=12)
 
     # Panel 3: Miss Rate
-    masked_mr = np.ma.masked_invalid(miss_rate.values)
-    im3 = axes[2].pcolormesh(LON_edges, LAT_edges, masked_mr, 
-                             cmap='Blues', vmin=0, vmax=100, shading='flat')
+    im3 = draw_field(axes[2], miss_rate, units, shading='flat', cmap='Blues', vmin=0, vmax=100)
 
     # Add India outline
     if "india_boundaries" in locals():

@@ -3,13 +3,14 @@
 import hashlib
 from momp.io.input import load_thresholds, load_history, get_initialization_dates
 from momp.io.input import get_forecast_probabilistic_twice_weekly, get_forecast_deterministic_twice_weekly
-from momp.io.input import load_imd_rainfall, prewarm
+from momp.io.input import load_imd_rainfall, point_dims, prewarm
 from momp.stats.detect import detect_observed_onset, compute_onset_for_deterministic_model, compute_onset_for_all_members
 from momp.stats.detect import check_alignment_once
 from momp.stats.climatology import compute_climatological_onset, compute_climatology_as_forecast
 from momp.stats.bins import counts_back_dated
 from momp.stats.climatology import compute_climatological_onset_dataset
 from momp.stats.conditional_climatology import CONDITIONAL_CLIMATOLOGY, compute_conditional_climatology_as_forecast
+from momp.spatial import axes
 from momp.stats.parallel import map_years
 from momp.utils.practical import restore_args
 
@@ -25,7 +26,8 @@ log = logging.getLogger(__name__)
 def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification_window, **kwargs):
     """Compute contingency matrix metrics following MATLAB logic with forecast and validation windows.
 
-    Returns one row per grid point, in order of first appearance in onset_df, and summary totals.
+    Returns one row per grid point (or evaluation unit, with a unit column instead of lat and lon), in order of first
+    appearance in onset_df, and summary totals.
     With forecast_history "observed" (definition mode) the rows also have `n_back_dated`: the cases whose
     forecast onset is dated on or before the init, which count as the first lead; 0 unless the window
     starts at lead 1. Legacy and "none" runs get no such column.
@@ -37,20 +39,21 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
 
     forecast_bin_start = verification_window[0]
     forecast_bin_end = verification_window[1]
-    columns = ['lat', 'lon', 'total_forecasts', 'true_positive', 'true_negative', 'false_positive', 'false_negative',
+    points = list(axes.spatial_dims(onset_df.columns) if len(onset_df.columns) else point_dims(kwargs))
+    columns = [*points, 'total_forecasts', 'true_positive', 'true_negative', 'false_positive', 'false_negative',
                'num_onset', 'num_no_onset', 'mae_combined', 'mae_tp_only', 'num_tp_errors', 'num_fp_errors',
                'tolerance_days', 'verification_window', 'forecast_days']
 
     if onset_df.empty:
         # Small domains (e.g. a user focus area) can have no forecast onsets in a year.
-        onset_df = pd.DataFrame(columns=['lat', 'lon'])
-    unique_locations = onset_df[['lat', 'lon']].drop_duplicates()
+        onset_df = pd.DataFrame(columns=points)
+    unique_locations = onset_df[points].drop_duplicates()
 
     log.debug(f"Processing {len(unique_locations)} unique grid points...")
 
     if len(onset_df):
         day = np.timedelta64(1, "D")
-        code = onset_df.groupby(['lat', 'lon'], sort=False).ngroup().to_numpy()
+        code = onset_df.groupby(points, sort=False).ngroup().to_numpy()
         n_points = len(unique_locations)
         first_row = np.unique(code, return_index=True)[1]
 
@@ -94,8 +97,7 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
             mae_tp_only = np.where(tp > 0, error_sum(true_positive) / tp, np.nan)
         back_dated = has_model_onset & (model_onset <= t_init)
         metrics_df = pd.DataFrame({
-            'lat': unique_locations['lat'].to_numpy(),
-            'lon': unique_locations['lon'].to_numpy(),
+            **{point: unique_locations[point].to_numpy() for point in points},
             'total_forecasts': np.bincount(code, minlength=n_points),
             'true_positive': tp,
             'true_negative': count(true_negative),
@@ -114,7 +116,7 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
         if report_back_dated:
             metrics_df['n_back_dated'] = count(back_dated) if forecast_bin_start == 1 else np.zeros(n_points, np.int64)
     else:
-        metrics_df = pd.DataFrame(columns=columns[:11] + (['n_back_dated'] if report_back_dated else []))
+        metrics_df = pd.DataFrame(columns=columns[:len(points) + 9] + (['n_back_dated'] if report_back_dated else []))
 
     summary_stats = {
         'total_grid_points': len(metrics_df),

@@ -10,6 +10,8 @@ from momp.io.input import load_imd_rainfall
 from momp.lib.onset_config import is_legacy, onset_setup
 from momp.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
 from momp.stats.conditional_climatology import CLIMATOLOGY_REFERENCES
+from momp.spatial import axes
+from momp.spatial.axes import first_close as _first_close
 from momp.utils.practical import restore_args
 import logging
 
@@ -171,16 +173,6 @@ def get_target_bins(brier_forecast, brier_climatology):
 
 
 # Function to create forecast-observation pairs with specified day bins for probabilistic verification
-def _first_close(values, targets, tolerance=0.01):
-    """Index in values of the first entry within tolerance of each target, -1 where there is none."""
-    found = np.full(len(targets), -1, dtype=np.int64)
-    for n, target in enumerate(targets):
-        close = np.flatnonzero(np.abs(values - target) < tolerance)
-        if len(close):
-            found[n] = close[0]
-    return found
-
-
 def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, day_bins, max_forecast_day, **kwargs):
     """
     Create forecast-observation pairs using specified day bins, including a final bin for "after max_forecast_day".
@@ -197,7 +189,7 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     max_forecast_day : int, default=15
         Maximum forecast day. Members without onset get assigned to "after day X" bin
 
-    Returns one row per forecast case (init_time, lat, lon, in sorted order) and bin; cases without an
+    Returns one row per forecast case (init_time, lat, lon, or init_time, unit; in sorted order) and bin; cases without an
     observed onset, or initialized on or after it, are left out.
     """
 
@@ -205,8 +197,9 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     max_forecast_day = bins.last_day
     extended_bins = bins.extended
 
-    # Unique combinations of init_time, lat, lon from the filtered forecast data
-    forecast_groups = onset_all_members.groupby(['init_time', 'lat', 'lon'])
+    # Unique combinations of init_time and location from the filtered forecast data
+    spatial = axes.spatial_dims(onset_all_members.columns)
+    forecast_groups = onset_all_members.groupby(['init_time', *spatial])
 
     log.debug(f"Processing {len(forecast_groups)} forecast cases with day bins: {day_bins}")
     log.debug(f"Including 'after day {max_forecast_day}' bin for members without onset in forecast window")
@@ -216,17 +209,12 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     cases = case_size.index
     total_members = case_size.to_numpy()
     init_times = cases.get_level_values('init_time')
-    lats = cases.get_level_values('lat').to_numpy(dtype=float)
-    lons = cases.get_level_values('lon').to_numpy(dtype=float)
+    place = {d: cases.get_level_values(d).to_numpy(dtype=float if d != 'unit' else str) for d in spatial}
 
     # Observed onset of each case's location, a case without a matching grid point is left out
-    unique_lats, lat_of_case = np.unique(lats, return_inverse=True)
-    unique_lons, lon_of_case = np.unique(lons, return_inverse=True)
-    lat_idx = _first_close(onset_da.lat.values, unique_lats)[lat_of_case]
-    lon_idx = _first_close(onset_da.lon.values, unique_lons)[lon_of_case]
-    located = (lat_idx >= 0) & (lon_idx >= 0)
+    where, located = axes.locate(onset_da, place)
     obs_date = np.full(len(cases), np.datetime64("NaT"), dtype="datetime64[ns]")
-    obs_date[located] = onset_da.values.astype("datetime64[ns]")[lat_idx[located], lon_idx[located]]
+    obs_date[located] = onset_da.transpose(*spatial).values.astype("datetime64[ns]")[tuple(w[located] for w in where)]
     init_date = pd.DatetimeIndex(init_times).values.astype("datetime64[ns]")
     # Only use forecasts initialized before the observed onset
     kept = np.flatnonzero(located & ~np.isnat(obs_date) & (init_date < obs_date))
@@ -268,8 +256,7 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
 
     forecast_obs_df = pd.DataFrame({
         'init_time': per_case(init_times[kept]) if len(kept) else [],
-        'lat': per_case(lats[kept]),
-        'lon': per_case(lons[kept]),
+        **{d: per_case(place[d][kept]) for d in spatial},
         'bin_start': np.tile(np.array([b[0] for b in extended_bins], dtype=float), len(kept)),
         'bin_end': np.tile(np.array([b[1] for b in extended_bins], dtype=float), len(kept)),
         'bin_label': np.tile(np.array(labels, dtype=object), len(kept)),
@@ -385,19 +372,19 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     log.debug(f"Extended bins include: 'Before day {min_forecast_day}' and 'After day {max_forecast_day}' ")
     log.debug(f"Using day-of-year method for onset comparison")
 
-    # Get the actual lat/lon coordinates from the data
-    lats = obs_onset_da.lat.values
-    lons = obs_onset_da.lon.values
+    # Get the actual coordinates (lat and lon, or unit ids) from the data
+    spatial = axes.spatial_dims(obs_onset_da.dims)
+    coords = axes.coords_of(obs_onset_da, spatial)
+    n_places = int(np.prod([len(coords[d]) for d in spatial]))
 
-    log.debug(f"Processing {len(lats) * len(lons)} unique lat-lon pairs")
+    log.debug(f"Processing {n_places} unique {'/'.join(spatial)} locations")
 
-    lat_idx = _first_close(lats, lats)
-    lon_idx = _first_close(lons, lons)
-    obs_onset = obs_onset_da.values.astype("datetime64[ns]")[np.ix_(lat_idx, lon_idx)]
+    obs_onset = axes.snap(obs_onset_da.transpose(*spatial).values.astype("datetime64[ns]"), spatial, coords)
     has_obs = ~np.isnat(obs_onset)
     obs_onset_doy = np.where(has_obs, pd.DatetimeIndex(obs_onset.ravel()).dayofyear.to_numpy().reshape(obs_onset.shape),
                              0).astype(np.int64)
-    ensemble_onset = clim_onset.transpose("year", "lat", "lon").values.astype("datetime64[ns]")[:, lat_idx][:, :, lon_idx]
+    ensemble_onset = axes.snap(clim_onset.transpose("year", *spatial).values.astype("datetime64[ns]"), spatial, coords,
+                               lead=1)
     ensemble_doy = np.where(np.isnat(ensemble_onset), np.nan,
                             pd.DatetimeIndex(ensemble_onset.ravel()).dayofyear.to_numpy()
                             .reshape(ensemble_onset.shape).astype(float))
@@ -406,14 +393,17 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     init_doy = inits.dayofyear.to_numpy().astype(np.int64)
 
     # A case is a location with an observed onset and an init before it (by day of year),
-    # ordered by init date, then lon, then lat
-    cases = np.nonzero(has_obs.T[None] & (init_doy[:, None, None] < obs_onset_doy.T[None]))
-    init_case, lon_case, lat_case = cases
-    case_obs_doy = obs_onset_doy[lat_case, lon_case]
+    # ordered by init date, then lon, then lat (a grid's axes reversed; units by id)
+    reverse = tuple(reversed(range(len(spatial))))
+    cases = np.nonzero(has_obs.transpose(reverse)[None]
+                       & (axes.broadcast_rows(init_doy, has_obs.ndim + 1) < obs_onset_doy.transpose(reverse)[None]))
+    init_case, *backwards = cases
+    where = tuple(reversed(backwards))
+    case_obs_doy = obs_onset_doy[where]
     obs_days_from_init = case_obs_doy - init_doy[init_case]
 
     # Days from init of each year's onset at the case's location, NaN where the year has none
-    member_days = ensemble_doy[:, lat_case, lon_case].T - init_doy[init_case][:, None]
+    member_days = ensemble_doy[(slice(None), *where)].T - init_doy[init_case][:, None]
     has_onset = ~np.isnan(member_days)
 
     members_in_bin = []
@@ -459,8 +449,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
 
     forecast_obs_df = pd.DataFrame({
         'init_time': per_case(inits.strftime('%Y-%m-%d').to_numpy(dtype=object)[init_case[kept]]),
-        'lat': per_case(lats[lat_case[kept]]),
-        'lon': per_case(lons[lon_case[kept]]),
+        **{d: per_case(c) for d, c in axes.columns_of(spatial, coords, tuple(w[kept] for w in where)).items()},
         'bin_start': per_bin(np.array([b[0] for b in extended_bins], dtype=float)),
         'bin_end': per_bin(np.array([b[1] for b in extended_bins], dtype=float)),
         'bin_label': per_bin(np.array(labels, dtype=object)),
@@ -472,7 +461,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
         'contributing_years': contributing_years.ravel(),
         'n_contributing_years': n_contributing_years.ravel(),
         'year': target_year,
-        'obs_onset_date': per_case(pd.DatetimeIndex(obs_onset[lat_case[kept], lon_case[kept]])
+        'obs_onset_date': per_case(pd.DatetimeIndex(obs_onset[tuple(w[kept] for w in where)])
                                    .strftime('%Y-%m-%d').to_numpy(dtype=object)),
         'obs_onset_doy': per_case(case_obs_doy[kept]),
         'init_doy': per_case(init_doy[init_case[kept]]),
@@ -486,14 +475,14 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
         return forecast_obs_df
 
     log.debug(f"Generated {len(forecast_obs_df)} climatological forecast-observation pairs")
-    log.debug(f"Unique lat-lon pairs processed: {len(lats) * len(lons)}")
+    log.debug(f"Unique {'/'.join(spatial)} locations processed: {n_places}")
     log.debug(f"Total bins per forecast: {len(extended_bins)}")
     log.debug(f"Probability range: {forecast_obs_df['predicted_prob'].min():.3f} - {forecast_obs_df['predicted_prob'].max():.3f}")
     log.debug(f"Observed onset rate: {forecast_obs_df['observed_onset'].mean():.3f}")
     log.debug(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
 
     # Verify uniqueness
-    unique_locations_in_output = len(forecast_obs_df[['lat', 'lon']].drop_duplicates())
+    unique_locations_in_output = len(forecast_obs_df[list(spatial)].drop_duplicates())
     log.debug(f"Unique locations in output: {unique_locations_in_output}")
 
     # Show distribution across bins

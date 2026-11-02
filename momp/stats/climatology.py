@@ -4,6 +4,7 @@ from momp.io.input import load_thresholds, obs_years, reference_held, reference_
 from momp.stats.detect import detect_observed_onset
 from momp.lib.onset_config import onset_setup
 from momp.onset.climatology import ReferenceOnset, reduce_onset_days
+from momp.spatial import axes
 from momp.utils.practical import restore_args
 
 import numpy as np
@@ -46,9 +47,9 @@ def _read_years(years, kwargs, shared=True):
 
 
 def _axes(rain):
-    """The (lat, lon) values of a year's rainfall, a DataArray or an ingested DailyRain."""
+    """The (lat, lon) values, or the (unit) ids, of a year's rainfall, a DataArray or an ingested DailyRain."""
     return tuple(np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
-                 for name in ("lat", "lon"))
+                 for name in axes.spatial_dims(rain.dims))
 
 
 def compute_climatological_onset(*, years_clim,
@@ -91,7 +92,7 @@ def compute_climatological_onset(*, years_clim,
 
             # Convert onset dates to day of year
             onset_doy = onset_da.dt.dayofyear.astype(float)
-            onset_doy = onset_doy.where(~onset_da.isnull())
+            onset_doy = onset_doy.where(~onset_da.isnull()).reset_coords(drop=True)   # units carry per-year flags
 
             all_onset_days.append(onset_doy)
 
@@ -151,31 +152,35 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     earliest_onset_date: optional (month, day) tuple; if set, only onsets on or after that date count (falsy = no filter)
 
     Returns:
-    pandas DataFrame with climatology forecast results, one row per (init, lat, lon) in that order for
+    pandas DataFrame with climatology forecast results, one row per (init, lat, lon) (or (init, unit)) in that order for
     cells with an observed onset and an init before it; the climatological onset falls in the year of its init
     """
     if isinstance(climatological_onset_doy, ReferenceOnset):
         climatological_onset_doy = climatological_onset_doy.doy_field(observed_onset_da)
-    lats = climatological_onset_doy.lat.values
-    lons = climatological_onset_doy.lon.values
+    spatial = axes.spatial_dims(observed_onset_da.dims)
+    if "unit" in spatial:   # units are matched by id
+        climatological_onset_doy = climatological_onset_doy.reindex(unit=observed_onset_da["unit"].values)
+    coords = axes.coords_of(climatological_onset_doy, spatial)
+    n_cells = int(np.prod([len(coords[d]) for d in spatial]))
 
-    log.debug(f"Processing climatology as forecast for {len(init_dates)} init times x {len(lats)} lats x {len(lons)} lons...")
+    log.debug(f"Processing climatology as forecast for {len(init_dates)} init times x {n_cells} {'/'.join(spatial)} points...")
     log.debug(f"Year: {year}")
 
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
     init_ns = inits.values.astype("datetime64[ns]")
-    obs = observed_onset_da.values.astype("datetime64[ns]")
+    obs = observed_onset_da.transpose(*spatial).values.astype("datetime64[ns]")
     no_obs = np.isnat(obs)
     total_potential_inits = len(inits) * obs.size
     skipped_no_obs = len(inits) * int(no_obs.sum())
 
-    late = init_ns[:, None, None] >= obs[None]
+    late = axes.broadcast_rows(init_ns, obs.ndim + 1) >= obs[None]
     skipped_late_init = int((~no_obs[None] & late).sum())
     valid = ~no_obs[None] & ~late
-    i, j, k = np.nonzero(valid)
+    i, *where = np.nonzero(valid)
+    where = tuple(where)
     valid_inits = len(i)
 
-    doy = climatological_onset_doy.values.astype(float)[j, k]
+    doy = climatological_onset_doy.transpose(*spatial).values.astype(float)[where]
     no_clim = np.isnan(doy)
     init_year = inits.year.to_numpy()[i] - 1970
     clim_date = (init_year.astype("datetime64[Y]").astype("datetime64[D]")
@@ -198,13 +203,12 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
         onset_day = (clim_at - init_at) // np.timedelta64(1, "D")
         climatology_forecast_df = pd.DataFrame({
             'init_time': [init_dates[n] for n in i],
-            'lat': lats[j],
-            'lon': lons[k],
+            **axes.columns_of(spatial, coords, where),
             'onset_day': onset_day if in_window.all() else np.where(in_window, onset_day, np.nan),
             'onset_date': np.where(in_window, dates(clim_date), None),
             'climatological_onset_doy': doy,
             'climatological_onset_date': np.where(no_clim, None, dates(clim_date)),
-            'obs_onset_date': dates(obs[j, k]),
+            'obs_onset_date': dates(obs[where]),
         })
     else:
         climatology_forecast_df = pd.DataFrame([])
@@ -249,7 +253,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     Returns:
     --------
     xarray.DataArray
-        3D array with dimensions [year, lat, lon] containing onset dates
+        3D array with dimensions [year, lat, lon] (or 2D [year, unit] on evaluation units) containing onset dates
     """
 
     kwargs = restore_args(compute_climatological_onset_dataset, kwargs, locals())
@@ -279,7 +283,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
 
             # Detect onset for this year
             onset_da = detect_observed_onset(rainfall_ds, thresh_slice, year, **kwargs)
-            lats, lons = _axes(rainfall_ds)
+            spatial, values = axes.spatial_dims(onset_da.dims), _axes(rainfall_ds)
 
             # Count valid onsets
             valid_onsets = (~pd.isna(onset_da.values)).sum()
@@ -304,11 +308,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     # Create the final DataArray
     climatological_onset_da = xr.DataArray(
         onset_3d,
-        coords=[
-            ('year', valid_years),
-            ('lat', lats),
-            ('lon', lons)
-        ],
+        coords=[('year', valid_years), *zip(spatial, values)],
         name='climatological_onset_dates',
         attrs={
             'description': 'Onset dates for climatological ensemble',
@@ -319,14 +319,14 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     )
 
     # Print summary statistics
-    total_possible = len(valid_years) * len(lats) * len(lons)
+    total_possible = onset_3d.size
     total_valid = (~pd.isna(climatological_onset_da.values)).sum()
 
     log.debug(f"\n{'='*60}")
     log.debug(f"CLIMATOLOGICAL ONSET DATASET SUMMARY")
     log.debug(f"{'='*60}")
     log.debug(f"Years processed: {len(valid_years)} ({min(valid_years)}-{max(valid_years)})")
-    log.debug(f"Spatial domain: {len(lats)} lats x {len(lons)} lons")
+    log.debug(f"Spatial domain: {' x '.join(f'{len(v)} {d}' for d, v in zip(spatial, values))}")
     log.debug(f"Total valid onsets: {total_valid:,}/{total_possible:,} ({total_valid/total_possible:.1%})")
     log.debug(f"Method: {climatological_onset_da.attrs['method']}")
 

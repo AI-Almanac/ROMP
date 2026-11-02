@@ -13,6 +13,7 @@ from momp.utils.visual import cbar_season, set_basemap
 from momp.utils.land_mask import shp_mask, add_polygon
 from momp.graphics.func_map import spatial_metrics_map
 from momp.utils.visual import box_boundary
+from momp.graphics.field import draw_field, extent, units_of
 import logging
 
 log = logging.getLogger(__name__)
@@ -27,12 +28,12 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
     # Extract data
     climatological_onset_doy = next(iter(onset_da_dict.values()))
 
-    # Get coordinates
-    lats = climatological_onset_doy.lat.values
-    lons = climatological_onset_doy.lon.values
+    # Get coordinates (the bounds of the polygons on evaluation units)
+    units = units_of(climatological_onset_doy, kwargs)
+    lats, lons = extent(climatological_onset_doy, units)
 
     # Detect resolution from latitude spacing
-    lat_diff = abs(lats[1] - lats[0])
+    lat_diff = abs(lats[1] - lats[0]) if units is None else np.nan
     log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Plot parameters
@@ -41,7 +42,7 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
     panel_linewidth = 0.5
     tick_length = 3
     tick_width = 0.8
-    if abs(lat_diff) < 0.99:
+    if units is not None or abs(lat_diff) < 0.99:   # no values are written on polygons
         txt_fsize = None
     elif abs(lat_diff - 2.0) < 0.1:
         txt_fsize = 8
@@ -65,7 +66,7 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
     # Define Core Monsoon Zone bounding polygon coordinates based on resolution 
     polygon_defined = False
 
-    if polygon:
+    if polygon and units is None:
         ax, polygon1_lat, polygon1_lon, polygon_defined = \
                                     add_polygon(ax, climatological_onset_doy, polygon, return_polygon=True)
 
@@ -83,14 +84,13 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         norm_jjas = mcolors.BoundaryNorm(levels, cmap_jjas.N, extend='max')
 
     # mask data inside country boundary
-    if domain_mask:
+    if domain_mask and units is None:
         climatological_onset_doy = shp_mask(climatological_onset_doy, region=region)
 
     vmin, vmax = climatological_onset_doy.quantile([0.05, 0.95], dim=None, skipna=True).values
 
     # Plot discrete values at each grid point using pcolormesh with custom colormap
-    im = ax.pcolormesh(climatological_onset_doy.lon, climatological_onset_doy.lat, climatological_onset_doy.values, 
-                     cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree(), shading='auto')
+    im = draw_field(ax, climatological_onset_doy, units, cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree())
 
     # Add colorbar with MMM DD labels for every other tick
     cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02, shrink=0.6, aspect=20)

@@ -20,6 +20,7 @@ from momp.onset.ingest import ingest
 from momp.onset.legacy import LEGACY_THRESHOLD
 from momp.onset.model import DailyRain, Status
 from momp.onset.thresholds import unit_thresholds
+from momp.spatial import axes
 import logging
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,13 @@ def _on_grid(da, lat, lon):
     if "lat" not in da.dims or "lon" not in da.dims:
         return da
     return da.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE)
+
+
+def _like(da, coords):
+    """A per-cell or per-unit DataArray on the spatial axes `coords` (cells within tolerance, or units by id); the rest NaN."""
+    if "unit" in coords:
+        return da.reindex(unit=np.asarray(coords["unit"]).astype(str))
+    return _on_grid(da, coords["lat"], coords["lon"])
 
 
 def _on_units(value, ids, convention=None):
@@ -65,6 +73,8 @@ def _thresholds(setup, thresh_slice, coords, per_window=True, convention=None):
     lead) keeps the first window.
     """
     if setup.legacy:
+        if "unit" in coords:
+            raise ValueError("the old flat onset keys cannot be evaluated on units; use an onset definition")
         if isinstance(thresh_slice, xr.DataArray) and thresh_slice.ndim:
             return {LEGACY_THRESHOLD: _on_grid(thresh_slice, coords["lat"], coords["lon"])}
         return None
@@ -198,13 +208,13 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     cube = p_model.sel(step=slice(1, steps_needed))
     if "member" in cube.dims and members and list(cube["member"].values) != list(members):
         cube = cube.sel(member=list(members))  # the loader already took them; selecting again would copy the cube
-    spatial = ("lat", "lon") if "lat" in cube.dims else tuple(d for d in cube.dims if d not in ("init_time", "member", "step"))
+    spatial = axes.spatial_dims(cube.dims)
     order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + spatial + ("step",)
     forecast = ingest_model_forecast(cube.transpose(*order), setup, kwargs, "forecast")
     coords = {d: forecast.coords[d] for d in spatial}
     stitched = None
     if history is not None and not setup.legacy and setup.forecast_history == "observed":
-        on_grid = _on_grid(history, coords["lat"], coords["lon"]).transpose("lat", "lon", ...)
+        on_grid = _like(history, coords).transpose(*spatial, ...)
         stitched = ingest(on_grid, day_boundary=setup.ingest_boundary, units="mm", source="observed history")
     count = bool(kwargs.get("onset_count"))
     result = engine.detect_forecast(
@@ -230,15 +240,17 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     lead_dims = (("init_time", "member") if "member" in forecast.dims else ("init_time",)) + spatial
     dates = result["onset_date"].transpose(*lead_dims).values
     status = result["status"].transpose(*lead_dims).values
-    obs = onset_da.reindex(lat=coords["lat"], lon=coords["lon"], method="nearest",
-                           tolerance=_GRID_TOLERANCE).transpose("lat", "lon")
+    obs = (onset_da.reindex(unit=np.asarray(coords["unit"]).astype(str)) if "unit" in coords else
+           onset_da.reindex(lat=coords["lat"], lon=coords["lon"], method="nearest", tolerance=_GRID_TOLERANCE)
+           ).transpose(*spatial)
     obs_values = obs.values.astype("datetime64[ns]")
-    valid = ~np.isnat(obs_values)[None] & (init.astype("datetime64[ns]")[:, None, None] < obs_values[None])
+    valid = ~np.isnat(obs_values)[None] & (axes.broadcast_rows(init.astype("datetime64[ns]"), obs_values.ndim + 1)
+                                           < obs_values[None])
     found = status == Status.ONSET
     init_day = init.astype("datetime64[D]").reshape((-1,) + (1,) * (dates.ndim - 1))
     days_after_init = (dates.astype("datetime64[D]") - init_day) / np.timedelta64(1, "D")
-    return {"setup": setup, "result": export_result, "calendar": forecast.calendar,
-            "init": init, "lat": np.asarray(coords["lat"]), "lon": np.asarray(coords["lon"]),
+    return {"setup": setup, "result": export_result, "calendar": forecast.calendar, "spatial": spatial,
+            "init": init, "axes": {d: np.asarray(coords[d]) for d in spatial},
             "member": np.asarray(forecast.coords["member"]) if "member" in forecast.dims else None,
             "day": np.where(found, days_after_init, np.nan), "date": dates, "status": status,
             "valid": valid, "obs": obs_values, "totals": (int(obs.size * len(init)), int((~np.isnat(obs_values)).sum()))}
@@ -263,7 +275,7 @@ def _date_strings(values):
 
 def _print_back_dated(day, valid):
     """Print how many scored forecast onsets lie on or before the init (back-dated by the observed history)."""
-    mask = np.broadcast_to(valid[:, None] if day.ndim == 4 else valid, day.shape)
+    mask = np.broadcast_to(valid[:, None] if day.ndim == valid.ndim + 1 else valid, day.shape)
     count = int((day[mask] <= 0).sum())
     if count:
         log.debug(f"Back-dated forecast onsets (onset_day <= 0, scored as documented in docs/onset_in_romp.md): {count}")
@@ -273,7 +285,7 @@ def _print_status_counts(setup, status, valid):
     """Print how many forecast searches ended in each status (definition mode only)."""
     if setup.legacy:
         return
-    mask = np.broadcast_to(valid[:, None] if status.ndim == 4 else valid, status.shape)
+    mask = np.broadcast_to(valid[:, None] if status.ndim == valid.ndim + 1 else valid, status.shape)
     counts = np.bincount(status[mask].astype(np.int64), minlength=len(Status))
     log.debug("Forecast onset searches by status: "
           + ", ".join(f"{s.name} {int(counts[s])}" for s in Status if counts[s]))
@@ -292,26 +304,28 @@ def _names(status):
 def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, history=None, **kwargs):
     """Compute onset dates for deterministic model forecast.
 
-    p_model has dims (init_time, lat, lon, step). Returns one row per (init, cell)
-    in that order for cells with an observed onset and an init before it, with
-    columns init_time, lat, lon, onset_day (lead day, None if no onset), onset_date
+    p_model has dims (init_time, lat, lon, step), or (init_time, unit, step) on evaluation units. Returns one row per
+    (init, cell or unit) in that order for those with an observed onset and an init before it, with
+    columns init_time, lat and lon (or unit), onset_day (lead day, None if no onset), onset_date
     ('YYYY-MM-DD' or None) and obs_onset_date, plus onset_status for definitions.
     """
     out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs, history=history)
     setup, valid = out["setup"], out["valid"]
-    log.debug(f"Processing {len(out['init'])} init times x {len(out['lat'])} lats x {len(out['lon'])} lons...")
-    i, j, k = np.nonzero(valid)
-    day = out["day"][i, j, k]
+    spatial = out["spatial"]
+    log.debug(f"Processing {len(out['init'])} init times x {valid[0].size} {'/'.join(spatial)} points...")
+    i, *where = np.nonzero(valid)
+    at = (i, *where)
+    day = out["day"][at]
     has = ~np.isnan(day)
-    onset_date = np.where(has, _date_strings(out["date"][i, j, k]), None).tolist() if len(i) else []
+    onset_date = np.where(has, _date_strings(out["date"][at]), None).tolist() if len(i) else []
     columns = {
-        "init_time": out["init"][i], "lat": out["lat"][j], "lon": out["lon"][k],
+        "init_time": out["init"][i], **axes.columns_of(spatial, out["axes"], where),
         "onset_day": [int(d) if h else None for d, h in zip(day, has)],
         "onset_date": onset_date,
-        "obs_onset_date": _date_strings(out["obs"][j, k]) if len(i) else [],
+        "obs_onset_date": _date_strings(out["obs"][tuple(where)]) if len(i) else [],
     }
     if not setup.legacy:
-        columns["onset_status"] = _names(out["status"][i, j, k]).tolist()
+        columns["onset_status"] = _names(out["status"][at]).tolist()
     onset_df = pd.DataFrame(columns) if len(i) else pd.DataFrame([])
     total, with_obs = out["totals"]
     log.debug(f"\nProcessing Summary:")
@@ -338,10 +352,10 @@ def _ensemble_status(status, threshold, has_onset):
 
 
 def ensemble_onset(day, init, threshold):
-    """The ensemble onset ROMP scores from member onset days (init_time, member, lat, lon), NaN for none.
+    """The ensemble onset ROMP scores from member onset days (init_time, member, lat, lon or unit), NaN for none.
 
     Returns (count of members with an onset, their fraction, ensemble onset day, ensemble onset date), each
-    shaped (init_time, lat, lon). The ensemble has an onset when the fraction is at least threshold; its day
+    shaped (init_time, lat, lon) or (init_time, unit). The ensemble has an onset when the fraction is at least threshold; its day
     (days after the init) is the mean member day rounded half to even. init is the array of init dates.
     """
     n_member = day.shape[1]
@@ -350,7 +364,7 @@ def ensemble_onset(day, init, threshold):
     with np.errstate(invalid="ignore"):
         mean_day = np.nanmean(day, axis=1) if n_member else np.full(count.shape, np.nan)
     ensemble_day = np.where(fraction >= threshold, np.round(mean_day), np.nan)
-    ensemble_date = pd.DatetimeIndex(init).values[:, None, None] + (
+    ensemble_date = axes.broadcast_rows(pd.DatetimeIndex(init).values, ensemble_day.ndim) + (
         np.nan_to_num(ensemble_day, nan=0).astype("int64").astype("timedelta64[D]"))
     return count, fraction, ensemble_day, ensemble_date
 
@@ -358,7 +372,7 @@ def ensemble_onset(day, init, threshold):
 def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None, **kwargs):
     """Compute per-member and ensemble onsets.
 
-    p_model has dims (init_time, member, lat, lon, step). The ensemble has an onset
+    p_model has dims (init_time, member, lat, lon, step), or (init_time, member, unit, step) on evaluation units. The ensemble has an onset
     when the fraction of members with one is at least onset_percentage_threshold;
     its day is the mean member onset day rounded half to even.
     Returns (member onset DataFrame, ensemble onset DataFrame).
@@ -368,14 +382,15 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None,
     out = _detect_forecast(p_model, thresh_slice, onset_da, kwargs, members=members, history=history)
     setup, valid, day = out["setup"], out["valid"], out["day"]
     n_init, n_member = day.shape[0], day.shape[1]
-    log.debug(f"Processing {n_init} init times x {len(out['lat']) * len(out['lon'])} unique locations x {n_member} members...")
+    spatial = out["spatial"]
+    log.debug(f"Processing {n_init} init times x {valid[0].size} unique locations x {n_member} members...")
 
     member_day = day
     count, fraction, ensemble_day, ensemble_date = ensemble_onset(day, out["init"], threshold)
     onset_loop = setup.legacy and kwargs["dry_extent"] > kwargs["wet_spell"]
 
     grid = valid.shape
-    if onset_loop:
+    if onset_loop:   # the old flat keys: grid cells only, rows in lon-major order
         order = np.array(np.nonzero(np.transpose(valid, (0, 2, 1)))).T
         ii, kk, jj = order[:, 0], order[:, 1], order[:, 2]
         member_rows = (np.repeat(ii, n_member), np.tile(np.arange(n_member), len(ii)),
@@ -389,36 +404,37 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None,
         member_index = pd.Index(np.flatnonzero(flat_valid.ravel()))
         ens_rows = tuple(np.nonzero(valid))
         ens_index = pd.Index(np.flatnonzero(valid.ravel()))
-    mi, mm, mj, mk = member_rows
-    ei, ej, ek = ens_rows
+    mi, mm, *member_where = member_rows
+    ei, *ens_where = ens_rows
+    member_at, ens_at = (mi, mm, *member_where), (ei, *ens_where)
 
-    member_values = member_day[mi, mm, mj, mk]
+    member_values = member_day[member_at]
     onset_df = pd.DataFrame({
-        "init_time": out["init"][mi], "lat": out["lat"][mj], "lon": out["lon"][mk],
+        "init_time": out["init"][mi], **axes.columns_of(spatial, out["axes"], member_where),
         "member": out["member"][mm],
         "onset_day": member_values if not onset_loop else [None if np.isnan(v) else int(v) for v in member_values],
-        "obs_onset_date": pd.Series(pd.to_datetime(out["obs"][mj, mk])).dt.strftime("%Y-%m-%d").to_numpy()
+        "obs_onset_date": pd.Series(pd.to_datetime(out["obs"][tuple(member_where)])).dt.strftime("%Y-%m-%d").to_numpy()
         if len(mi) else [],
     }, index=member_index)
-    chosen = ensemble_day[ei, ej, ek]
+    chosen = ensemble_day[ens_at]
     has_onset = ~np.isnan(chosen)
-    ens_dates = np.where(has_onset, _date_strings(ensemble_date[ei, ej, ek]) if len(ei) else [], None)
+    ens_dates = np.where(has_onset, _date_strings(ensemble_date[ens_at]) if len(ei) else [], None)
     ensemble_df = pd.DataFrame({
-        "init_time": out["init"][ei], "lat": out["lat"][ej], "lon": out["lon"][ek],
+        "init_time": out["init"][ei], **axes.columns_of(spatial, out["axes"], ens_where),
         "onset_day": chosen if not onset_loop else [int(v) if h else None for v, h in zip(chosen, has_onset)],
-        "member_onset_count": count[ei, ej, ek], "total_members": n_member,
-        "onset_percentage": fraction[ei, ej, ek],
-        "obs_onset_date": pd.Series(pd.to_datetime(out["obs"][ej, ek])).dt.strftime("%Y-%m-%d").to_numpy()
+        "member_onset_count": count[ens_at], "total_members": n_member,
+        "onset_percentage": fraction[ens_at],
+        "obs_onset_date": pd.Series(pd.to_datetime(out["obs"][tuple(ens_where)])).dt.strftime("%Y-%m-%d").to_numpy()
         if len(ei) else [],
     }, index=ens_index)
-    ensemble_df.insert(4, "onset_date", None)
+    ensemble_df.insert(4 if len(spatial) == 2 else 3, "onset_date", None)
     if onset_loop:
         ensemble_df["onset_date"] = ens_dates.tolist()
     elif has_onset.any():
         ensemble_df.loc[has_onset, "onset_date"] = ens_dates[has_onset]
     if not setup.legacy:
-        onset_df["onset_status"] = _names(out["status"][mi, mm, mj, mk])
-        ensemble_df["onset_status"] = _ensemble_status(out["status"][ei, :, ej, ek], threshold, has_onset)
+        onset_df["onset_status"] = _names(out["status"][member_at])
+        ensemble_df["onset_status"] = _ensemble_status(out["status"][(ei, slice(None), *ens_where)], threshold, has_onset)
 
     log.debug(f"\nProcessing Summary:")
     log.debug(f"Generated {len(onset_df)} member-forecast combinations")

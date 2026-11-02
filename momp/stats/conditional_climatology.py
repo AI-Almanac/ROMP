@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from momp.onset.climatology_kde import conditional_probabilities, season_days
+from momp.spatial import axes
 import logging
 
 log = logging.getLogger(__name__)
@@ -51,52 +52,61 @@ def season_day(dates) -> np.ndarray:
     return season_days(dates, (1, 1), leap_shift=True)
 
 
-def _conditional_by_case(clim_onset, target_year, cell_lat, cell_lon, issue_dates, horizon, cv):
+def _conditional_by_case(clim_onset, target_year, cells, issue_dates, horizon, cv):
     """Conditional lead probabilities (case, issue, lead) of cells given by grid indices, NaN where no KDE fits.
 
-    clim_onset is the observed onset dates (year, lat, lon) of the climatology
-    years; cell_lat and cell_lon index its grid, once per requested cell.
+    clim_onset is the observed onset dates (year, lat, lon) of the climatology years (or (year, unit)); `cells` is
+    a tuple of index arrays into its spatial axes (lat and lon, or unit), once per requested cell.
     """
+    spatial = axes.spatial_dims(clim_onset.dims)
     years = clim_onset.year.values.astype(int)
-    dates = clim_onset.transpose("year", "lat", "lon").values.astype("datetime64[ns]")
+    dates = clim_onset.transpose("year", *spatial).values.astype("datetime64[ns]")
     days = season_day(dates).reshape(dates.shape)
-    keys = sorted(set(zip(cell_lat.tolist(), cell_lon.tolist())))
-    onset_by_cell = {key: pd.Series(days[:, key[0], key[1]], index=years) for key in keys}
+    cell_at = list(zip(*(c.tolist() for c in cells)))
+    keys = sorted(set(cell_at))
+    onset_by_cell = {key: pd.Series(days[(slice(None), *key)], index=years) for key in keys}
     issue = season_day(issue_dates)
     unique_issue, back = np.unique(issue, return_inverse=True)
     probs = conditional_probabilities(onset_by_cell, unique_issue, horizon,
                                       cv_years=[int(target_year)] if cv else None)
     values = probs.values[:, 0] if cv else probs.values
     slot = {key: n for n, key in enumerate(keys)}
-    position = np.array([slot[key] for key in zip(cell_lat.tolist(), cell_lon.tolist())], dtype=int)
+    position = np.array([slot[key] for key in cell_at], dtype=int)
     return values, position, back
 
 
-def _align(clim_onset, lat, lon):
-    """The climatology onsets on the given lat/lon grid (nearest cells within tolerance; others NaT)."""
-    return clim_onset.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE)
+def _align(clim_onset, like):
+    """The climatology onsets on the spatial axes of `like` (nearest cells within tolerance, or units by id; others NaT)."""
+    if "unit" in like.dims:
+        return clim_onset.reindex(unit=like["unit"].values)
+    return clim_onset.reindex(lat=like["lat"].values, lon=like["lon"].values, method="nearest",
+                              tolerance=_GRID_TOLERANCE)
 
 
 def _cases(inits, obs):
-    """Index arrays (init, lat, lon) of the cells with an observed onset and the inits before it, init-major."""
+    """Index arrays (init, *spatial) of the cells with an observed onset and the inits before it, init-major."""
     has_obs = ~np.isnat(obs)
-    return np.nonzero(has_obs[None] & (inits.values.astype("datetime64[ns]")[:, None, None] < obs[None]))
+    return np.nonzero(has_obs[None] & (axes.broadcast_rows(inits.values.astype("datetime64[ns]"), obs.ndim + 1) < obs[None]))
 
 
-def conditional_lead_probabilities(clim_onset, year, init_dates, lats, lons, horizon, climatology_cv=None):
-    """Conditional onset probabilities of every init and cell, shaped (init, lat, lon, lead) for leads 1..horizon.
+def conditional_lead_probabilities(clim_onset, year, init_dates, like, horizon, climatology_cv=None):
+    """Conditional onset probabilities of every init and cell, shaped (init, lat, lon, lead) (or (init, unit, lead))
+    for leads 1..horizon.
 
     The same probabilities the scoring functions of this module use (the KDE of clim_onset refitted without
-    `year` when climatology_cv is leave_one_year_out); NaN for cells without a KDE. `lats` and `lons` are the
-    grid of the observed onsets (clim_onset is aligned to it as the scoring does) and init_dates the issue dates.
+    `year` when climatology_cv is leave_one_year_out); NaN for cells without a KDE. `like` is a DataArray over the
+    spatial axes of the observed onsets (clim_onset is aligned to them as the scoring does) and init_dates the issue
+    dates.
     """
     cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
-    clim = _align(clim_onset, lats, lons)
+    clim = _align(clim_onset, like)
+    spatial = axes.spatial_dims(like.dims)
+    shape = tuple(like.sizes[d] for d in spatial)
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
-    lat_cell, lon_cell = (a.ravel() for a in np.indices((len(lats), len(lons))))
-    values, position, back = _conditional_by_case(clim, year, lat_cell, lon_cell, inits, horizon, cv)
+    cells = tuple(a.ravel() for a in np.indices(shape))
+    values, position, back = _conditional_by_case(clim, year, cells, inits, horizon, cv)
     prob = values[position][:, back, :]
-    return prob.reshape(len(lats), len(lons), len(inits), horizon).transpose(2, 0, 1, 3)
+    return prob.reshape(*shape, len(inits), horizon).transpose(len(shape), *range(len(shape)), len(shape) + 1)
 
 
 def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, observed_onset_da=None, *,
@@ -120,23 +130,24 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     max_day, min_day = bins.last_day, bins.first_day
     extended_bins = bins.extended
     obs_da = clim_onset.sel(year=target_year) if observed_onset_da is None else observed_onset_da
-    lats, lons = obs_da.lat.values, obs_da.lon.values
-    clim = _align(clim_onset, lats, lons)
-    obs = obs_da.transpose("lat", "lon").values.astype("datetime64[ns]")
+    spatial = axes.spatial_dims(obs_da.dims)
+    coords = axes.coords_of(obs_da, spatial)
+    clim = _align(clim_onset, obs_da)
+    obs = obs_da.transpose(*spatial).values.astype("datetime64[ns]")
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
-    init_case, lat_case, lon_case = _cases(inits, obs)
+    init_case, *where = _cases(inits, obs)
     if not len(init_case):
         return pd.DataFrame([])
 
-    values, position, back = _conditional_by_case(clim, target_year, lat_case, lon_case, inits, max_day, cv)
+    values, position, back = _conditional_by_case(clim, target_year, tuple(where), inits, max_day, cv)
     prob = values[position, back[init_case], :]
     kept = np.flatnonzero(~np.isnan(prob).any(axis=1))
     if not len(kept):
         return pd.DataFrame([])
     prob = prob[kept]
-    init_case, lat_case, lon_case = init_case[kept], lat_case[kept], lon_case[kept]
+    init_case, where = init_case[kept], tuple(w[kept] for w in where)
 
-    obs_days = ((obs[lat_case, lon_case] - inits.values.astype("datetime64[ns]")[init_case])
+    obs_days = ((obs[where] - inits.values.astype("datetime64[ns]")[init_case])
                 // np.timedelta64(1, "D")).astype(np.int64)
     labels, bin_prob, observed = bins.labels(), [], []
     for k, (start, end) in enumerate(extended_bins):
@@ -158,8 +169,7 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
 
     return pd.DataFrame({
         "init_time": per_case(inits.strftime("%Y-%m-%d").to_numpy(dtype=object)[init_case]),
-        "lat": per_case(lats[lat_case]),
-        "lon": per_case(lons[lon_case]),
+        **{d: per_case(c) for d, c in axes.columns_of(spatial, coords, where).items()},
         "bin_start": np.tile(np.array([b[0] for b in extended_bins], dtype=float), n_case),
         "bin_end": np.tile(np.array([b[1] for b in extended_bins], dtype=float), n_case),
         "bin_label": np.tile(np.array(labels, dtype=object), n_case),
@@ -168,7 +178,7 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
         "total_members": np.inf,
         "total_members_with_onset": np.inf,
         "year": target_year,
-        "obs_onset_date": per_case(pd.DatetimeIndex(obs[lat_case, lon_case]).strftime("%Y-%m-%d").to_numpy(dtype=object)),
+        "obs_onset_date": per_case(pd.DatetimeIndex(obs[where]).strftime("%Y-%m-%d").to_numpy(dtype=object)),
         "obs_days_from_init": per_case(obs_days),
         "bin_index": np.tile(np.arange(n_bins), n_case),
         "forecast_type": "conditional_climatological",
@@ -223,16 +233,18 @@ def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, ob
     (month, day) tuple; falsy for no filter).
     """
     cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
-    lats, lons = observed_onset_da.lat.values, observed_onset_da.lon.values
-    clim = _align(clim_onset, lats, lons)
-    obs = observed_onset_da.transpose("lat", "lon").values.astype("datetime64[ns]")
+    spatial = axes.spatial_dims(observed_onset_da.dims)
+    coords = axes.coords_of(observed_onset_da, spatial)
+    clim = _align(clim_onset, observed_onset_da)
+    obs = observed_onset_da.transpose(*spatial).values.astype("datetime64[ns]")
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
     init_ns = inits.values.astype("datetime64[ns]")
-    init_case, lat_case, lon_case = _cases(inits, obs)
+    init_case, *where = _cases(inits, obs)
+    where = tuple(where)
     if not len(init_case):
         return pd.DataFrame([])
 
-    values, position, back = _conditional_by_case(clim, year, lat_case, lon_case, inits, max_forecast_day, cv)
+    values, position, back = _conditional_by_case(clim, year, where, inits, max_forecast_day, cv)
     cdf = np.cumsum(values[position, back[init_case], :], axis=1)
     reached = np.nan_to_num(cdf, nan=0.0) >= 0.5
     lead = np.argmax(reached, axis=1) + 1
@@ -251,9 +263,8 @@ def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, ob
 
     return pd.DataFrame({
         "init_time": [init_dates[n] for n in init_case],
-        "lat": lats[lat_case],
-        "lon": lons[lon_case],
+        **axes.columns_of(spatial, coords, where),
         "onset_day": np.where(has_onset, lead, np.nan),
         "onset_date": np.where(has_onset, dates(onset_at), None),
-        "obs_onset_date": dates(obs[lat_case, lon_case]),
+        "obs_onset_date": dates(obs[where]),
     })

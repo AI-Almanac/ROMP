@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import warnings
 from momp.metrics import probabilistic
+from momp.spatial import axes
 from momp.stats.bins import get_target_bins
 import logging
 
@@ -27,9 +28,10 @@ def _pair_matrices(df, members_column=None):
     regular = lambda c: len(c) % n_bins == 0 and bool((c.reshape(-1, n_bins) == np.arange(n_bins)).all())
     order = None
     if not regular(codes):
-        if not {'init_time', 'lat', 'lon', 'bin_index'} <= set(df.columns):
+        case_columns = ['init_time', *axes.spatial_dims(df.columns)]
+        if not {*case_columns, 'bin_index'} <= set(df.columns):
             raise ValueError("the pair table does not hold every bin, in the same order, for each case")
-        case = df.groupby(['init_time', 'lat', 'lon'], sort=False).ngroup().to_numpy()
+        case = df.groupby(case_columns, sort=False).ngroup().to_numpy()
         order = np.lexsort((df['bin_index'].to_numpy(), case))
         codes, labels = pd.factorize(df['bin_label'].to_numpy()[order])
         if not regular(codes):
@@ -210,8 +212,8 @@ def calculate_rps(forecast_obs_df):
     """
     _require_members(forecast_obs_df, "RPS")
 
-    # Group by forecast (init_time, lat, lon) to get all bins for each forecast
-    forecast_groups = forecast_obs_df.groupby(['init_time', 'lat', 'lon'])
+    # Group by forecast (init_time and the location: lat and lon, or unit) to get all bins for each forecast
+    forecast_groups = forecast_obs_df.groupby(['init_time', *axes.spatial_dims(forecast_obs_df.columns)])
     group_id = forecast_groups.ngroup().to_numpy()
     n_forecasts = len(forecast_groups)
 

@@ -273,9 +273,9 @@ def store(rain, thresh, year, kwargs, onset) -> None:
 
 
 def current() -> dict:
-    """The in-memory tables of this run's grid detections, {fingerprint: {"years": {year: values}, "lat", "lon"}}
-    (for results; tables of units are for the blend)."""
-    return {fp: table for fp, table in _tables.items() if table["lat"] is not None}
+    """The in-memory tables of this run's detections, {fingerprint: {"years": {year: values}, "dims", "coords"}}
+    (with "lat" and "lon" too for a grid), over lat and lon or over the units."""
+    return {fp: table for fp, table in _tables.items() if table["dims"] is not None}
 
 
 def export_state() -> dict:

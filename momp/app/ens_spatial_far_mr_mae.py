@@ -1,5 +1,4 @@
 """Compute, save and plot spatial MAE, FAR and MR maps for ensemble (probabilistic) forecast models."""
-import os
 from dataclasses import asdict
 from itertools import product
 import copy
@@ -11,17 +10,14 @@ from momp.lib.loader import get_cfg, get_setting
 from momp.graphics.maps import plot_spatial_metrics
 from momp.graphics.onset_map import plot_spatial_climatology_onset
 from momp.graphics.panel_portrait_error import panel_portrait_mae_far_mr
-from momp.io.output import add_back_dated_map, save_metrics_to_netcdf
+from momp.io.output import add_back_dated_map, save_climatology_onset, save_metrics_to_netcdf
 from momp.io.output import set_nested
-from momp.utils.mask import mask_attrs
-from momp.utils.printing import tuple_to_str_range
 
 from momp.stats.benchmark import ens_compute_metrics_multiple_years
 import logging
 from momp.utils.log import progress
 
 log = logging.getLogger(__name__)
-from momp.lib.run_folder import file_name
 
 
 def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
@@ -137,12 +133,7 @@ def ens_spatial_far_mr_mae_map(cfg=None, setting=None):
 
     # save climatological onset to netcdf
     if case.model == 'climatology' and case_cfg_ref['save_nc_climatology']:
-        fout = os.path.join(case_cfg_ref['dir_out'],
-                            file_name(case_cfg_ref, "climatology", tuple_to_str_range(case_cfg_ref['years_clim'])))
-        climatological_onset_doy = next(iter(onset_da_dict.values()))
-        climatological_onset_doy.attrs["years"] = case.years_clim
-        climatological_onset_doy.attrs.update(mask_attrs())   # nothing unless a region mask is in use
-        climatological_onset_doy.to_netcdf(fout)
+        save_climatology_onset(onset_da_dict, case_cfg_ref, case.years_clim)
 
     # spatial map of climatology onset day
     if case_cfg_ref['plot_climatology_onset']:

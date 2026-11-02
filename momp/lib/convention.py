@@ -93,6 +93,24 @@ class Setting:
     onset_backend: str = field(default="numba")
     # cross-validation of the conditional climatology reference: "none" or "leave_one_year_out"
     climatology_cv: str = field(default="leave_one_year_out")
+    # The `units:` section (momp.spatial.UnitsSpec): evaluate on admin units or weighted cells instead of grid cells.
+    # All None for a grid run; units_mode and units_weights may map a source name to its own value.
+    units_mode: Optional[Union[str, dict]] = field(default=None)
+    units_shapefile: Optional[str] = field(default=None)
+    units_unit_id_col: Optional[str] = field(default=None)
+    units_unit_name_col: Optional[str] = field(default=None)
+    units_parent_col: Optional[str] = field(default=None)
+    units_weights: Optional[Union[str, dict]] = field(default=None)
+    units_centroids: Optional[str] = field(default=None)
+    units_centroid_id_col: Optional[str] = field(default=None)
+    units_dissemination: Optional[str] = field(default=None)
+    units_dissemination_id_col: Optional[str] = field(default=None)
+    units_dissemination_scope: Optional[str] = field(default=None)
+    units_box: Optional[dict] = field(default=None)
+    units_outline: Optional[str] = field(default=None)
+    units_boundary: Optional[str] = field(default=None)
+    units_id_digits: Optional[int] = field(default=None)
+    units_id_format: Optional[str] = field(default=None)
     # Set by the run: the shared cache folder (None: next to dir_out) and whether output file names are short.
     cache_dir: Optional[str] = field(default=None)
     short_names: bool = field(default=False)

@@ -4,7 +4,25 @@ import xarray as xr
 import pandas as pd
 import logging
 
+from momp.spatial import axes
+
 log = logging.getLogger(__name__)
+
+
+def year_points(metrics_df, onset_da, spatial, coords):
+    """The rows of a year's metrics table that stand for a location of the output grid, and where they sit on it.
+
+    A location's first row stands for it; locations outside the grid and those without an observed onset this year
+    are skipped. Returns (rows, index) with one index array per spatial dim (lat and lon, or unit).
+    """
+    shape = tuple(len(coords[d]) for d in spatial)
+    points = metrics_df.drop_duplicates(list(spatial))
+    flat = axes.flat_positions(points, spatial, coords)
+    in_grid = flat >= 0
+    points, flat = points[in_grid], flat[in_grid]
+    has_onset = ~pd.isna(onset_da.transpose(*spatial).values).ravel()[flat]
+    points, flat = points[has_onset], flat[has_onset]
+    return points, np.unravel_index(flat, shape)
 
 
 def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
@@ -13,7 +31,7 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
     Parameters
     ----------
     metrics_df_dict : dict
-        Maps year to a per-grid-point metrics DataFrame (lat, lon, false_positive,
+        Maps year to a per-grid-point metrics DataFrame (lat and lon, or unit; false_positive,
         true_negative, false_negative, num_onset, mae_combined).
     onset_da_dict : dict
         Maps year to the observed onset DataArray; its grid defines the output
@@ -22,20 +40,19 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
     Returns
     -------
     dict
-        'false_alarm_rate', 'miss_rate', 'mean_mae' and 'mae_<year>' lat/lon DataArrays.
+        'false_alarm_rate', 'miss_rate', 'mean_mae' and 'mae_<year>' lat/lon (or unit) DataArrays.
     """
     first_year = list(onset_da_dict.keys())[0]
-    lats = onset_da_dict[first_year].lat.values
-    lons = onset_da_dict[first_year].lon.values
+    spatial = axes.spatial_dims(onset_da_dict[first_year].dims)
+    coords = axes.coords_of(onset_da_dict[first_year], spatial)
 
     log.debug(f"Creating spatial FAR, Miss Rate, yearly MAE, and mean MAE maps...")
-    log.debug(f"Grid dimensions: {len(lats)} lats x {len(lons)} lons")
+    log.debug(f"Grid dimensions: {' x '.join(f'{len(coords[d])} {d}' for d in spatial)}")
     log.debug(f"Years: {list(metrics_df_dict.keys())}")
 
     spatial_metrics = {}
 
-    shape = (len(lats), len(lons))
-    grid = pd.MultiIndex.from_product([lats, lons])
+    shape = tuple(len(coords[d]) for d in spatial)
     totals = {name: np.zeros(shape) for name in ('false_positive', 'true_negative', 'false_negative', 'num_onset')}
     has_any_valid_data = np.zeros(shape, dtype=bool)
     mae_sum = np.zeros(shape)
@@ -47,24 +64,18 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
         if len(metrics_df) == 0:
             continue
 
-        # a grid point's first row stands for it; points without an observed onset this year are skipped
-        points = metrics_df.drop_duplicates(['lat', 'lon'])
-        flat = grid.get_indexer(pd.MultiIndex.from_frame(points[['lat', 'lon']]))
-        in_grid = flat >= 0
-        points, flat = points[in_grid], flat[in_grid]
-        has_onset = ~pd.isna(onset_da_dict[year].values).ravel()[flat]
-        points, flat = points[has_onset], flat[has_onset]
-        i, j = np.unravel_index(flat, shape)
+        points, at = year_points(metrics_df, onset_da_dict[year], spatial, coords)
 
-        has_any_valid_data[i, j] = True
+        has_any_valid_data[at] = True
         for name, total in totals.items():
-            total[i, j] += points[name].to_numpy()
+            total[at] += points[name].to_numpy()
 
         mae = points['mae_combined'].to_numpy(dtype=float)
         valid_mae = ~np.isnan(mae)
-        yearly_mae_maps[year][i[valid_mae], j[valid_mae]] = mae[valid_mae]
-        mae_sum[i[valid_mae], j[valid_mae]] += mae[valid_mae]
-        mae_count[i[valid_mae], j[valid_mae]] += 1
+        valid_at = tuple(ix[valid_mae] for ix in at)
+        yearly_mae_maps[year][valid_at] = mae[valid_mae]
+        mae_sum[valid_at] += mae[valid_mae]
+        mae_count[valid_at] += 1
 
     false_alarm_denominator = totals['false_positive'] + totals['true_negative']
     with np.errstate(invalid='ignore', divide='ignore'):
@@ -76,21 +87,21 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
 
     spatial_metrics['false_alarm_rate'] = xr.DataArray(
         false_alarm_rate_map,
-        coords=[('lat', lats), ('lon', lons)],
+        coords=[(d, coords[d]) for d in spatial],
         name='false_alarm_rate',
         attrs={'description': 'False Alarm Rate = sum(FP) / sum(FP + TN) across all valid years'}
     )
 
     spatial_metrics['miss_rate'] = xr.DataArray(
         miss_rate_map,
-        coords=[('lat', lats), ('lon', lons)],
+        coords=[(d, coords[d]) for d in spatial],
         name='miss_rate',
         attrs={'description': 'Miss Rate = sum(FN) / sum(total_onsets) across all valid years'}
     )
 
     spatial_metrics['mean_mae'] = xr.DataArray(
         mean_mae_map,
-        coords=[('lat', lats), ('lon', lons)],
+        coords=[(d, coords[d]) for d in spatial],
         name='mean_mae',
         attrs={'description': 'Mean MAE across all valid years (omitting NaN values)'}
     )
@@ -98,7 +109,7 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
     for year, mae_map in yearly_mae_maps.items():
         spatial_metrics[f'mae_{year}'] = xr.DataArray(
             mae_map,
-            coords=[('lat', lats), ('lon', lons)],
+            coords=[(d, coords[d]) for d in spatial],
             name=f'mae_{year}',
             attrs={'description': f'Mean Absolute Error for year {year}'}
         )

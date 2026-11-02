@@ -708,8 +708,11 @@ def _check_same_grid(history: DailyRain, forecast: ForecastRain, spatial_dims: t
         if h != f:
             raise ValueError(f"history and forecast grids differ along {dim}: {h} vs {f} cells")
         if dim in history.coords and dim in forecast.coords:
-            if not np.allclose(np.asarray(history.coords[dim], dtype=float), np.asarray(forecast.coords[dim], dtype=float),
-                               rtol=0, atol=1e-6):
+            h_coords, f_coords = np.asarray(history.coords[dim]), np.asarray(forecast.coords[dim])
+            if h_coords.dtype.kind in "USO":   # unit ids: the same ids in the same order
+                if not (h_coords == f_coords).all():
+                    raise ValueError(f"history and forecast differ along {dim}: the ids do not match")
+            elif not np.allclose(h_coords.astype(float), f_coords.astype(float), rtol=0, atol=1e-6):
                 raise ValueError(f"history and forecast grids differ along {dim}: coordinates do not match to 1e-6")
 
 

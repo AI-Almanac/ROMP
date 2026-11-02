@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import pickle
+from momp.metrics.error import year_points
+from momp.spatial import axes
 from momp.stats.bins import get_target_bins
 from momp.lib.run_folder import file_name
 from momp.utils.printing import tuple_to_str
@@ -88,7 +90,7 @@ def back_dated_member_share(forecast_obs_df):
     """
     if forecast_obs_df is None or 'back_dated_members' not in forecast_obs_df.columns:
         return None
-    cases = forecast_obs_df.drop_duplicates(['init_time', 'lat', 'lon'])
+    cases = forecast_obs_df.drop_duplicates(['init_time', *axes.spatial_dims(forecast_obs_df.columns)])
     onsets = cases['onset_members'].sum()
     return float(cases['back_dated_members'].sum() / onsets) if onsets else float('nan')
 
@@ -104,21 +106,16 @@ def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
     if not tables:
         return spatial_metrics
     first = onset_da_dict[list(onset_da_dict)[0]]
-    lats, lons = first.lat.values, first.lon.values
-    grid = pd.MultiIndex.from_product([lats, lons])
-    counts = np.zeros((len(lats), len(lons)))
+    spatial = axes.spatial_dims(first.dims)
+    coords = axes.coords_of(first, spatial)
+    counts = np.zeros(tuple(len(coords[d]) for d in spatial))
     for year, df in metrics_df_dict.items():
         if 'n_back_dated' not in df.columns or len(df) == 0:
             continue
-        points = df.drop_duplicates(['lat', 'lon'])
-        flat = grid.get_indexer(pd.MultiIndex.from_frame(points[['lat', 'lon']]))
-        keep = flat >= 0
-        points, flat = points[keep], flat[keep]
-        has_onset = ~pd.isna(onset_da_dict[year].values).ravel()[flat]
-        i, j = np.unravel_index(flat[has_onset], counts.shape)
-        counts[i, j] += points['n_back_dated'].to_numpy()[has_onset]
+        points, at = year_points(df, onset_da_dict[year], spatial, coords)
+        counts[at] += points['n_back_dated'].to_numpy()
     spatial_metrics['n_back_dated'] = xr.DataArray(
-        counts, coords=[('lat', lats), ('lon', lons)], name='n_back_dated',
+        counts, coords=[(d, coords[d]) for d in spatial], name='n_back_dated',
         attrs={'description': 'Scored init cases whose forecast onset was back-dated (on or before the init, '
                               'scored as the first lead); 0 unless the verification window starts at lead 1'})
     return spatial_metrics
@@ -147,6 +144,41 @@ def load_ref_score_results(ref_score_file, results_dict):
     return results_dict
 
 
+def with_unit_labels(obj, kwargs):
+    """A DataArray or Dataset over "unit" with each unit's name and centroid (unit_name, lat, lon) as coordinates.
+
+    Returned as it is when there is no "unit" dimension. The names, centroids and polygons are the run's own
+    (momp.io.input.unit_table); a unit without a name is called by its id.
+    """
+    if "unit" not in obj.dims:
+        return obj
+    from momp.io.input import unit_table
+
+    units = unit_table(kwargs, obj["unit"].values)
+    names = units.column("name")
+    return obj.assign_coords(unit_name=("unit", units.ids if names is None else np.asarray(names).astype(str)),
+                             lat=("unit", units.lat), lon=("unit", units.lon))
+
+
+def save_unit_tables(ds, kwargs, stem):
+    """Write a per-unit Dataset as the table `stem`.csv (unit_id, name, centroid lat and lon, one column per variable)
+    and, for polygon units, as the GeoJSON `stem`.geojson (the same values on the polygons). Returns the paths."""
+    table = ds.to_dataframe().reset_index().rename(columns={"unit": "unit_id", "unit_name": "name"})
+    table = table[["unit_id", "name", "lat", "lon", *[c for c in table.columns if c not in ("unit_id", "name", "lat", "lon")]]]
+    written = [f"{stem}.csv"]
+    table.to_csv(written[0], index=False)
+    from momp.io.input import unit_table
+
+    units = unit_table(kwargs, ds["unit"].values)
+    if units.geometry is not None:
+        import geopandas as gpd
+
+        frame = gpd.GeoDataFrame(table, geometry=units.geometry, crs="EPSG:4326")
+        written.append(f"{stem}.geojson")
+        frame.to_file(written[1], driver="GeoJSON")
+    return written
+
+
 def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='spatial_metrics',
                            allowed_attrs = ['model', 'years', 'tolerance_days', 'verification_window',
                                             'max_forecast_day', 'earliest_onset_date', 'lead_window']):
@@ -167,7 +199,7 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
         (dir_out and case_name are read from attrs_dict)
     """
 
-    ds = xr.Dataset(spatial_metrics)
+    ds = with_unit_labels(xr.Dataset(spatial_metrics), attrs_dict)
 
     case_name = attrs_dict.get('case_name', 'missing_case_name')
     if fname == 'spatial_metrics':
@@ -208,6 +240,24 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
     ds.to_netcdf(fout)
 
     log.info(f"{fname} saved to: {fout}")
+    if "unit" in ds.dims:   # per evaluation unit: also a table keyed by unit id, and the polygons with the values
+        for path in save_unit_tables(ds, attrs_dict, os.path.splitext(fout)[0]):
+            log.info(f"{fname} (per unit) saved to: {path}")
+
+
+def save_climatology_onset(onset_da_dict, kwargs, years_clim):
+    """Write the climatological onset (day of year) of the reference run to NetCDF, over lat and lon or over the units.
+
+    onset_da_dict is the reference case's {year: onset}: every year holds the same climatological field.
+    """
+    from momp.utils.mask import mask_attrs
+    from momp.utils.printing import tuple_to_str_range
+
+    fout = os.path.join(kwargs['dir_out'], file_name(kwargs, "climatology", tuple_to_str_range(kwargs['years_clim'])))
+    climatological_onset_doy = with_unit_labels(next(iter(onset_da_dict.values())), kwargs)
+    climatological_onset_doy.attrs["years"] = years_clim
+    climatological_onset_doy.attrs.update(mask_attrs())   # nothing unless a region mask is in use
+    climatological_onset_doy.to_netcdf(fout)
 
 
 def set_nested(result_dict, keys, value):

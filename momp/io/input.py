@@ -28,7 +28,8 @@ from momp.onset.climatology import ThresholdCache, compute_thresholds_from_forec
 from momp.lib.dataset_schema import DatasetError, file_year, resolve_paths
 from momp.onset.thresholds import ThresholdScale, read_threshold_grid, read_threshold_table, scale_values
 from momp.onset.ingest import IngestInfo, ingest, ingest_forecast_info, observation_shift_days, unit_scale
-from momp.spatial.units import UnitsSpec
+from momp.spatial import axes, ids as unit_ids
+from momp.spatial.units import EvaluationUnits, UnitsSpec
 from momp.utils.standard import (dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim, rename_model_dims)
 from momp.utils.region import load_blocks, region_box, region_select
 from momp.utils.practical import restore_args
@@ -463,7 +464,7 @@ def prewarm(kwargs):
     """
     load_thresholds(**kwargs)
     years = kwargs.get("years")
-    if not years or isinstance(years, str):
+    if not years or isinstance(years, str) or units_spec(kwargs) is not None:   # units are read without a cell mask
         return
     year = int(list(years)[0])
     try:
@@ -864,6 +865,17 @@ def _open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered
     return ds.sel(init_time=matching_times), close
 
 
+def _forecast_on_units(da, spec: UnitsSpec, kwargs, unit_cvt):
+    """The selected issues of a forecast variable on the run's evaluation units, dims (init_time, [member], unit, step).
+
+    The units are those of the observations (their ids, as the same specification builds them for this source), the
+    millimetre factor is the file's declared unit or unit_cvt (as `UnitForecast` reads it).
+    """
+    units, positions = select_units(da, spec, kwargs.get("keep_unit_ids"))
+    out = read_units(da, spec, units, positions, block_dim="init_time", scale=declared_scale(da, unit_cvt))
+    return out.transpose("init_time", *[d for d in ("member", "unit", "step") if d in out.dims])
+
+
 def _load_forecast(year, *, model_dir, model_var, unit_cvt, file_pattern, region, members, ensemble, kwargs):
     """Read one year of forecasts as a loaded DataArray in mm, reading only what the run needs.
 
@@ -874,6 +886,7 @@ def _load_forecast(year, *, model_dir, model_var, unit_cvt, file_pattern, region
     """
     sources = _forecast_sources(year, model_dir, file_pattern, kwargs.get("model_paths"), kwargs.get("model_files_years"))
     dates = get_initialization_dates(year, **kwargs)
+    spec = units_spec(kwargs, str(kwargs.get("model") or ""))
     parts = []
     for file_path in sources:
         ds, close = _open_forecast(year, model_dir, file_pattern, ensemble, kwargs.get("model_dims"), dates,
@@ -887,6 +900,9 @@ def _load_forecast(year, *, model_dir, model_var, unit_cvt, file_pattern, region
             ds = select_leads(ds, None, onset_steps_needed(**kwargs))
             if ensemble and members:
                 ds = select_members(ds, members)
+            if spec is not None:   # evaluation units: the rain is averaged onto them as it is read
+                parts.append(_forecast_on_units(ds[model_var], spec, kwargs, unit_cvt))
+                continue
             da = region_select(ds[[model_var]], read_by="init_time",
                                **{**kwargs, "region": region, "dataset_name": str(kwargs.get("model") or "model")})[model_var]
             parts.append(_in_memory(da))
@@ -895,7 +911,7 @@ def _load_forecast(year, *, model_dir, model_var, unit_cvt, file_pattern, region
     if not parts:
         raise ValueError(f"No matching initialization times found for year {year}")
     da = parts[0] if len(parts) == 1 else xr.concat(parts, dim="init_time").sortby("init_time")
-    return _scale_in_place(da, unit_cvt)
+    return da if spec is not None else _scale_in_place(da, unit_cvt)   # units are scaled as they are averaged
 
 
 def get_forecast_deterministic_twice_weekly(year, *, model_var, date_filter_year, init_days,
@@ -1175,6 +1191,31 @@ def units_files(kwargs, source: str = "observations") -> list:
     """The identities (path, size, time) of the files the source's units specification names; none without units."""
     spec = units_spec(kwargs, source)
     return [] if spec is None else [file_identity(p) for p in spec.files()]
+
+
+def point_dims(kwargs) -> tuple:
+    """The spatial dims of a run's onset arrays: ("unit",) on evaluation units, else ("lat", "lon") (see momp.spatial.axes)."""
+    return axes.UNIT if units_spec(kwargs) is not None else axes.GRID
+
+
+def unit_table(kwargs, ids) -> EvaluationUnits:
+    """The run's evaluation units of the string `ids`, in that order: their names, centroids and, for polygons, geometry.
+
+    Polygon (shapefile) and weights units come from the specification; ids of cells or of a pre-aggregated file are
+    labelled with the centroids table, or with the cell they spell ("<lat>_<lon>").
+    """
+    spec, ids = units_spec(kwargs), np.asarray(ids).astype(str)
+    units = spec.build(ids=None if (spec.shapefile or spec.weights) else ids)
+    order = pd.Index(units.ids).get_indexer(ids)
+    if (order < 0).any():
+        raise ValueError(f"units not among the run's units: {', '.join(ids[order < 0][:10])}")
+    table = units.table.iloc[order].reset_index(drop=True)
+    for n in np.flatnonzero(table["lat"].isna().to_numpy()):
+        parsed = unit_ids.parse_grid_id(table["id"][n])
+        if parsed is not None:
+            table.loc[n, ["lat", "lon"]] = parsed
+    geometry = None if units.geometry is None else [units.geometry[i] for i in order]
+    return EvaluationUnits(table, units.kind, geometry=geometry)
 
 
 def declared_scale(da, unit_cvt) -> float | None:

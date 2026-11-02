@@ -13,6 +13,7 @@ from matplotlib import colormaps
 from momp.utils.visual import cbar_season, set_basemap
 from momp.utils.land_mask import shp_mask, add_polygon
 from momp.utils.visual import box_boundary
+from momp.graphics.field import draw_field, extent, units_of
 import logging
 
 log = logging.getLogger(__name__)
@@ -35,13 +36,13 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
         Figure, axes, the pcolormesh handle and the would-be output file path.
     """
 
-    # Get coordinates
-    lats = da.lat.values
-    lons = da.lon.values
+    # Get coordinates (the bounds of the polygons on evaluation units)
+    units = units_of(da, kwargs)
+    lats, lons = extent(da, units)
     var_name = da.name
 
     # Detect resolution from latitude spacing
-    lat_diff = abs(lats[1] - lats[0])
+    lat_diff = abs(lats[1] - lats[0]) if units is None else np.nan
     log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Plot parameters
@@ -50,7 +51,7 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
     panel_linewidth = 0.5
     tick_length = 3
     tick_width = 0.8
-    if abs(lat_diff) < 0.99:
+    if units is not None or abs(lat_diff) < 0.99:   # no values are written on polygons
         txt_fsize = None
     elif abs(lat_diff - 2.0) < 0.1:
         txt_fsize = 8
@@ -116,7 +117,7 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
 
     polygon_defined = False
 
-    if polygon:
+    if polygon and units is None:
         ax, polygon1_lat, polygon1_lon, polygon_defined = \
                                     add_polygon(ax, da, polygon, return_polygon=True)
 
@@ -127,15 +128,14 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
         cmz_onset_mean = np.nan
 
     # mask data inside country boundary
-    if domain_mask:
+    if domain_mask and units is None:
         da = shp_mask(da, region=region)
 
-    if polygon_only:
+    if polygon_only and units is None:
         da = polygon_mask(da)
 
     # Plot discrete values at each grid point using pcolormesh with custom colormap
-    im = ax.pcolormesh(da.lon, da.lat, da.values, 
-                     cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree(), shading='auto')
+    im = draw_field(ax, da, units, cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree())
 
     # Add colorbar with MMM DD labels for every other tick
     if not panel:
