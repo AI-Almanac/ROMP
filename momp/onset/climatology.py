@@ -398,7 +398,7 @@ class ThresholdCache:
                  "grid": {dim: rain.coords[dim] for dim in rain.dims[:-1]}, "files": self.files}
         if options:
             parts["options"] = {key: options[key] for key in sorted(options)}
-        if resolution_of(rain.tenths) == "exact":
+        if rain.resolution == "exact":
             parts["resolution"] = "exact"
         return parts
 

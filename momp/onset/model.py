@@ -294,6 +294,11 @@ class DailyRain:
         if not (len(self.year) == len(self.month) == len(self.day) == n_time):
             raise ValueError("year/month/day must label every time step")
 
+    @property
+    def resolution(self) -> str:
+        """"exact" (float mm) or "tenths" (int32)."""
+        return resolution_of(self.tenths)
+
 
 @dataclass
 class ForecastRain:

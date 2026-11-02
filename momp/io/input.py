@@ -155,14 +155,14 @@ def load_thresh_file(*, thresh_file, thresh_var, wet_threshold, region, **kwargs
 
 
 class _LazyRain:
-    """A DailyRain whose data is read only when something other than its grid and source is asked for.
+    """A DailyRain whose data is read only when something other than its grid, source and resolution is asked for.
 
-    The threshold cache keys on the grid and source, so a cache hit never loads the reference years.
+    The threshold cache keys on those, so a cache hit never loads the reference years.
     """
 
     def __init__(self, probe, load):
         """Take dims, coords and source from the probe (one year); `load` returns the full DailyRain."""
-        self.dims, self.coords, self.source = probe.dims, probe.coords, probe.source
+        self.dims, self.coords, self.source, self.resolution = probe.dims, probe.coords, probe.source, probe.resolution
         self._load, self._full = load, None
 
     def __getattr__(self, name):
