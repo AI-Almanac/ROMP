@@ -1103,6 +1103,9 @@ def regional(rain: DailyRain, mask, weights: str = "cos_lat") -> DailyRain:
     in float mm and rounded half to even (left unrounded at exact resolution). A day is missing only if every cell
     in the mask is missing on that day; with partial missing, the average runs
     over the cells that have data, with their weights renormalised.
+
+    The mean is the one-unit transform of momp.spatial (EvaluationUnits.from_region, then
+    SparseTransform.observed_mean) over the tenths, NaN where missing.
     """
     spatial_dims = rain.dims[:-1]
     if isinstance(mask, xr.DataArray):
@@ -1110,25 +1113,30 @@ def regional(rain: DailyRain, mask, weights: str = "cos_lat") -> DailyRain:
     mask = np.asarray(mask, dtype=bool)
     if mask.shape != rain.tenths.shape[:-1]:
         raise ValueError(f"mask shape {mask.shape} does not match the spatial shape {rain.tenths.shape[:-1]}")
-    if not mask.any():
-        raise ValueError("mask selects no cells")
-    if weights == "equal":
-        w = np.ones(mask.shape)
-    elif weights == "cos_lat":
-        if "lat" not in spatial_dims or "lat" not in rain.coords:
-            raise ValueError("cos_lat weights need a lat dim with coordinates")
-        shape = [1] * len(spatial_dims)
-        shape[spatial_dims.index("lat")] = -1
-        w = np.broadcast_to(np.cos(np.deg2rad(np.asarray(rain.coords["lat"], dtype=float))).reshape(shape), mask.shape)
-    else:
+    if weights not in ("cos_lat", "equal"):
         raise ValueError(f"weights must be 'cos_lat' or 'equal', got {weights!r}")
+    if weights == "cos_lat" and ("lat" not in spatial_dims or "lat" not in rain.coords):
+        raise ValueError("cos_lat weights need a lat dim with coordinates")
+    if spatial_dims == ("lat", "lon"):
+        from momp.spatial import EvaluationUnits
+
+        lat, lon = (np.asarray(rain.coords[d], dtype=float) for d in ("lat", "lon"))
+        transform = EvaluationUnits.from_region(mask, lat, lon, weights=weights).transform(lat, lon)
+    else:
+        from scipy import sparse
+
+        from momp.spatial import SparseTransform
+
+        if weights != "equal" or not mask.any():
+            raise ValueError("mask selects no cells" if not mask.any() else
+                             "cos_lat weights need the spatial dims (lat, lon)")
+        transform = SparseTransform(sparse.csr_matrix(mask.reshape(1, -1).astype(float)), None, ("region",),
+                                    keys="coordinate", grid=None)
     n_time = rain.tenths.shape[-1]
-    w = np.where(mask, w, 0.0).reshape(-1, 1)
-    valid = ~rain.missing.reshape(-1, n_time)
-    weight_sum = (w * valid).sum(axis=0)
-    total = (w * valid * rain.tenths.reshape(-1, n_time)).sum(axis=0)
-    all_missing = weight_sum == 0
-    mean = np.divide(total, weight_sum, out=np.zeros(n_time), where=~all_missing)
+    values = np.where(rain.missing, np.nan, rain.tenths.astype(float)).reshape(-1, n_time)
+    mean = transform.observed_mean(values)[0]
+    all_missing = np.isnan(mean)
+    mean = np.nan_to_num(mean)
     tenths = mean if resolution_of(rain.tenths) == "exact" else np.rint(mean).astype(np.int32)
     coords = {"time": rain.coords["time"]} if "time" in rain.coords else {}
     return DailyRain(tenths, all_missing, ("time",), coords, rain.year, rain.month, rain.day, rain.calendar,

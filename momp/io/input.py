@@ -3,6 +3,11 @@
 Loaders read only what the run needs: the year's inits, the leads the onset rule reads, the members asked for and
 the region's box are selected on the lazy array before any data is decoded; the cell mask and the unit
 conversion are then applied in place on the one array that was read.
+
+A dataset is read from one file per year (`file_pattern` with {} for the year), a zarr store, or an explicit list of
+files (`paths`, any number per year, optionally filtered by `years`): see `year_files`. Data on a string "unit"
+dimension (admin units) is read without a region box; `unit_series` and `read_on_units` aggregate cells onto units
+the way onset_blending's regrid and cell transform do, reading only the storage tiles that feed them.
 """
 import json
 import os
@@ -19,9 +24,11 @@ from momp.utils.workers import ordered_prefetch, worker_count
 from momp.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, is_legacy, onset_setup, setup_key
 from momp.onset import definition as definition_mod
 from momp.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
+from momp.lib.dataset_schema import DatasetError, file_year, resolve_paths
+from momp.onset.thresholds import read_threshold_grid
 from momp.onset.ingest import IngestInfo, ingest, ingest_forecast_info
 from momp.utils.standard import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble
-from momp.utils.region import region_select
+from momp.utils.region import load_blocks, region_box, region_select
 from momp.utils.practical import restore_args
 import logging
 
@@ -139,11 +146,8 @@ def _scale_in_place(da, factor):
 def load_thresh_file(*, thresh_file, thresh_var, wet_threshold, region, **kwargs):
     """Return the region-selected 2-D threshold from thresh_file, or the scalar wet_threshold if no file is given."""
     if thresh_file:
-        thresh_ds = xr.open_dataset(thresh_file)
-        thresh_da = thresh_ds[thresh_var]
-
-        thresh_da = region_select(thresh_da, region=region, **{**kwargs, "mask": None})
-
+        thresh_da = read_threshold_grid(
+            thresh_file, thresh_var, select=lambda da: region_select(da, region=region, **{**kwargs, "mask": None}))
     else:
         thresh_da = wet_threshold
 
@@ -172,6 +176,20 @@ class _LazyRain:
 
 _reported_ingest = set()
 
+_OBS_INGEST_KEYS = ("rain_resolution", "missing", "negatives", "gaps")
+_FORECAST_INGEST_KEYS = ("rain_resolution", "missing", "negatives", "check_units")
+
+
+def ingest_options(kwargs, forecast=False) -> dict:
+    """The parity options of the run's config that `ingest` (or `ingest_forecast_info`) takes, as keywords.
+
+    rain_resolution ("tenths" or "exact"), missing, negatives ("default" or "keep"), gaps (observations: "fill" or
+    "refuse") and check_units (forecasts). A key the config does not hold is left out, so ROMP's own behaviour is
+    what no key gives.
+    """
+    keys = _FORECAST_INGEST_KEYS if forecast else _OBS_INGEST_KEYS
+    return {key: kwargs[key] for key in keys if kwargs.get(key) is not None}
+
 
 def ingest_model_forecast(cube, setup, kwargs, source=None):
     """Normalise a model's forecast cube (already in mm, dims init_time, [member], lat, lon, step) to ForecastRain.
@@ -188,7 +206,7 @@ def ingest_model_forecast(cube, setup, kwargs, source=None):
         warnings.simplefilter("ignore", IngestInfo)
         forecast, info = ingest_forecast_info(cube, day_boundary=setup.forecast_boundary, lead_label=setup.lead_label,
                                               units="mm", source=source, accumulation=accumulation,
-                                              daily_boundary=boundary)
+                                              daily_boundary=boundary, **ingest_options(kwargs, forecast=True))
     forecast.ingest_info = info
     key = (str(kwargs.get("model")), info.accumulation, info.resolution, info.daily_boundary)
     if key not in _reported_ingest:
@@ -235,7 +253,7 @@ def _stream_reference(setup, years, kwargs, source):
     for year, (rain, error) in zip(range(years[0], years[1] + 1), obs_years(range(years[0], years[1] + 1), kwargs)):
         if error is not None:
             raise error
-        one = ingest(rain, day_boundary=setup.obs_day_boundary, units="mm", source=source)
+        one = ingest(rain, day_boundary=setup.obs_day_boundary, units="mm", source=source, **ingest_options(kwargs))
         del rain
         if one.calendar != "standard" or one.tenths.shape[-1] != (date(year, 12, 31) - date(year, 1, 1)).days + 1 \
                 or (date(year, 1, 1) - first).days != offset:
@@ -282,7 +300,7 @@ def _reference_rain(setup, years, kwargs):
             return rain
     return ingest(
         xr.concat([_reference_year(year, kwargs) for year in range(years[0], years[1] + 1)], dim="time"),
-        day_boundary=setup.obs_day_boundary, units="mm", source=source)
+        day_boundary=setup.obs_day_boundary, units="mm", source=source, **ingest_options(kwargs))
 
 
 def _harmonic_cached(cache_dir, rain, years, files=()):
@@ -350,8 +368,8 @@ def load_onset_thresholds(setup, *, dir_out, region, **kwargs):
     if not setup.uses_thresholds:
         return thresholds
     for name, path, var in setup.threshold_files:
-        with xr.open_dataset(path) as ds:
-            thresholds[name] = region_select(ds[var], region=region, **{**kwargs, "mask": None}).load()
+        thresholds[name] = read_threshold_grid(
+            path, var, select=lambda da: region_select(da, region=region, **{**kwargs, "mask": None}))
     pending = [(name, spec) for name, spec in setup.definition.thresholds if name not in thresholds]
     if not pending and not setup.derived_seasons:
         return thresholds
@@ -418,7 +436,9 @@ def prewarm(kwargs):
         return
     year = int(list(years)[0])
     try:
-        store, path = _obs_source(year, kwargs["obs_dir"], kwargs["obs_file_pattern"])
+        store, path = _obs_source(year, kwargs.get("obs_dir"), kwargs.get("obs_file_pattern"), kwargs.get("obs_paths"),
+                                  kwargs.get("obs_files_years"))
+        path = path[0] if isinstance(path, tuple) else path
         lazy = dim_fmt(open_store(store) if store is not None else xr.open_dataset(path))
         try:
             _warm_masks(lazy, kwargs["obs_var"], str(kwargs.get("obs") or "obs"), kwargs)
@@ -430,7 +450,10 @@ def prewarm(kwargs):
     try:
         ensemble = bool(kwargs.get("probabilistic"))
         fix = dim_fmt_model_ensemble if ensemble else dim_fmt_model
-        if is_zarr(kwargs["model_dir"]):
+        if kwargs.get("model_paths"):
+            path = year_files(kwargs["model_paths"], kwargs.get("model_dir"), kwargs.get("model_files_years"), year)[0]
+            lazy = fix(xr.open_dataset(path), kwargs.get("model_dims"))
+        elif is_zarr(kwargs["model_dir"]):
             lazy = fix(open_store(kwargs["model_dir"]), kwargs.get("model_dims"))
             path = None
         else:
@@ -465,8 +488,31 @@ def get_initialization_dates(year, *, date_filter_year, init_days, start_date, e
     return filtered_dates_yr
 
 
-def _obs_source(year, obs_dir, obs_file_pattern):
-    """Where the year's observations are: (zarr store path, None) or (None, NetCDF file path); FileNotFoundError if absent."""
+def year_files(paths, base, years_filter, year) -> list[str]:
+    """The files of `year` among those a dataset lists in `paths` (names or globs, relative ones under `base`).
+
+    The year of a file is the first 19xx or 20xx in its name (the rule of onset_blending); `years_filter` keeps only
+    the files of those years first. Any number of files may fall in a year (live files hold one init each); they
+    come in the order resolve_paths gives, by year and name.
+    """
+    try:
+        files = resolve_paths(paths, base, years_filter)
+    except DatasetError as exc:
+        raise FileNotFoundError(str(exc)) from None
+    return [str(f) for f in files if file_year(f) == year]
+
+
+def _obs_source(year, obs_dir, obs_file_pattern, paths=None, years_filter=None):
+    """Where the year's observations are: (zarr store path, None) or (None, NetCDF file path); FileNotFoundError if absent.
+
+    With `paths` (see year_files) the year's listed files are the source: one path, or a tuple of paths when
+    several files hold the year.
+    """
+    if paths:
+        found = year_files(paths, obs_dir or None, years_filter, year)
+        if not found:
+            raise FileNotFoundError(f"No observation file found for year {year} among the listed paths {list(paths)}")
+        return None, found[0] if len(found) == 1 else tuple(found)
     if is_zarr(obs_dir):
         return str(obs_dir), None
     file_patterns = [p.format(year) for p in obs_file_pattern]
@@ -487,6 +533,13 @@ def _obs_source(year, obs_dir, obs_file_pattern):
 _OBS_ARGS = ("obs_dir", "obs_file_pattern", "obs_var", "obs_unit_cvt", "region")
 """The settings that locate and read the observations (the rest of a config is passed on as kwargs)."""
 _GRID_ARGS = ("grid_point", "lat_select", "lon_select")
+
+
+def _obs_args(kwargs) -> dict:
+    """The observation-locating settings of a config; obs_dir and obs_file_pattern may be absent when obs_paths lists the files."""
+    listed = bool(kwargs.get("obs_paths"))
+    return {k: kwargs.get(k) if listed and k in ("obs_dir", "obs_file_pattern") else kwargs[k] for k in _OBS_ARGS}
+
 """Settings applied after a year is read (a single cell is picked out of it)."""
 _GROUP_BYTES = 1_500_000_000
 """The most observation data read in one block when years are read together (a block is read, sliced per year, freed)."""
@@ -542,14 +595,15 @@ def obs_years(years, kwargs, hold=True):
     years = list(years)
     if not years:
         return
-    args = {k: kwargs[k] for k in _OBS_ARGS}
+    args = _obs_args(kwargs)
     skip = _OBS_ARGS + _GRID_ARGS
     rest = {k: v for k, v in kwargs.items() if k not in skip}
     keep = _run_years(kwargs) if hold else set()
 
     def locate(year):
         """(observation-cache key, zarr store or None, file path or None) of a year."""
-        store, path = _obs_source(year, args["obs_dir"], args["obs_file_pattern"])
+        store, path = _obs_source(year, args["obs_dir"], args["obs_file_pattern"], rest.get("obs_paths"),
+                                  rest.get("obs_files_years"))
         return _obs_key(year, store, path, args["obs_var"], args["obs_unit_cvt"], args["region"], rest), store, path
 
     def held(year):
@@ -609,7 +663,13 @@ def obs_years(years, kwargs, hold=True):
 
 
 def _read_obs_year(year, store, path, obs_var, obs_unit_cvt, region, kwargs):
-    """Read one year of one variable: select the year and the region's box on the lazy array, read once, mask in place."""
+    """Read one year of one variable: select the year and the region's box on the lazy array, read once, mask in place.
+
+    A tuple of files (a year listed in several files) is read file by file and joined along time.
+    """
+    if isinstance(path, tuple):
+        parts = [_read_obs_year(year, store, one, obs_var, obs_unit_cvt, region, kwargs) for one in path]
+        return xr.concat(parts, dim="time").sortby("time")
     if store is not None:
         ds = open_store(store)
         ds = dim_fmt(ds)
@@ -630,8 +690,9 @@ def _obs_key(year, store, path, obs_var, obs_unit_cvt, region, kwargs):
     """What identifies a loaded observation year: the source (with its size and time), the settings that shape it and the cells."""
     source = store or path
     try:
-        stat = os.stat(source)
-        ident = (stat.st_size, stat.st_mtime_ns)
+        stats = [os.stat(p) for p in (source if isinstance(source, tuple) else (source,))]
+        ident = tuple((stat.st_size, stat.st_mtime_ns) for stat in stats)
+        ident = ident[0] if len(ident) == 1 else ident
     except OSError:
         ident = None
     return (year, str(source), ident, obs_var, obs_unit_cvt, str(region), kwargs.get("land_only", True),
@@ -639,7 +700,7 @@ def _obs_key(year, store, path, obs_var, obs_unit_cvt, region, kwargs):
             json.dumps(kwargs.get("mask"), sort_keys=True, default=str))
 
 
-def load_imd_rainfall(year, *, obs_dir, obs_file_pattern, obs_var, obs_unit_cvt, region,
+def load_imd_rainfall(year, *, obs_var, obs_unit_cvt, region, obs_dir=None, obs_file_pattern=None,
                       grid_point=False, lat_select=None, lon_select=None, **kwargs):
     """Load observed daily rainfall for a given year (from the year's NetCDF file, or from a .zarr store of all years).
 
@@ -647,8 +708,12 @@ def load_imd_rainfall(year, *, obs_dir, obs_file_pattern, obs_var, obs_unit_cvt,
     unit conversion are applied in place. The years the run scores (kwargs["years"], and the year before each)
     are read once per run: later calls (other windows, cases, the climatology) get the same array back, so treat
     it as read-only. Other years are read afresh when asked for.
+
+    With obs_paths (names or globs; obs_files_years keeps the files of those years) the year's files are the listed
+    ones with that year in their name, instead of obs_file_pattern.format(year) in obs_dir. A region of None, or data on
+    a "unit" dimension, is read without a box or cell mask.
     """
-    store, path = _obs_source(year, obs_dir, obs_file_pattern)
+    store, path = _obs_source(year, obs_dir, obs_file_pattern, kwargs.get("obs_paths"), kwargs.get("obs_files_years"))
     key = _obs_key(year, store, path, obs_var, obs_unit_cvt, region, kwargs)
     with _obs_lock:
         rainfall = _obs_years.get(key)
@@ -674,9 +739,10 @@ def load_imd_rainfall(year, *, obs_dir, obs_file_pattern, obs_var, obs_unit_cvt,
 
 def _read_obs_uncached(year, kwargs):
     """Read one observation year for a single use: the held copy if there is one, else a read that is not kept."""
-    args = {k: kwargs[k] for k in ("obs_dir", "obs_file_pattern", "obs_var", "obs_unit_cvt", "region")}
+    args = _obs_args(kwargs)
     rest = {k: v for k, v in kwargs.items() if k not in args}
-    store, path = _obs_source(year, args["obs_dir"], args["obs_file_pattern"])
+    store, path = _obs_source(year, args["obs_dir"], args["obs_file_pattern"], rest.get("obs_paths"),
+                              rest.get("obs_files_years"))
     with _obs_lock:
         held = _obs_years.get(_obs_key(year, store, path, args["obs_var"], args["obs_unit_cvt"], args["region"], rest))
     if held is None:
@@ -686,18 +752,39 @@ def _read_obs_uncached(year, kwargs):
     return held
 
 
-def _open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered_dates_yr):
+def _forecast_sources(year, model_dir, file_pattern, paths=None, years_filter=None) -> list:
+    """What holds the year's forecasts: [None] for a zarr store (all years), else the file paths.
+
+    One file, file_pattern.format(year) in model_dir, or the listed `paths` (see year_files) of the year, one init
+    or many in each. Raises FileNotFoundError when the year is absent.
+    """
+    if paths:
+        found = year_files(paths, model_dir or None, years_filter, year)
+        if not found:
+            raise FileNotFoundError(f"No forecast file found for year {year} among the listed paths {list(paths)}")
+        return found
+    if is_zarr(model_dir):
+        return [None]
+    file_path = os.path.join(model_dir, file_pattern.format(year))
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    return [file_path]
+
+
+def _open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered_dates_yr, file_path=None, multi=False):
     """Open the year's forecasts lazily and select its inits; returns (Dataset, close function).
 
     A model_dir that is a zarr store holds all years: the inits of the year are picked by time. Otherwise the
-    year's NetCDF file file_pattern.format(year) is opened. Raises FileNotFoundError when the year is absent.
+    year's NetCDF file file_pattern.format(year), or `file_path` when the caller names it, is opened. Raises
+    FileNotFoundError when the year is absent. With `multi` (one of several files of the year) a file without a
+    wanted init gives None instead of an error.
     """
     fix = dim_fmt_model_ensemble if ensemble else dim_fmt_model
-    if is_zarr(model_dir):
+    if file_path is None and is_zarr(model_dir):
         ds = fix(open_store(model_dir), model_dims)
         close = lambda: None  # noqa: E731 - the store handle is shared
     else:
-        file_path = os.path.join(model_dir, file_pattern.format(year))
+        file_path = file_path or os.path.join(model_dir, file_pattern.format(year))
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
         ds = fix(xr.open_dataset(file_path), model_dims)
@@ -705,7 +792,10 @@ def _open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered
     available_init_times = pd.to_datetime(ds.init_time.values)
     matching_times = available_init_times[available_init_times.isin(filtered_dates_yr)]
     if len(matching_times) == 0:
-        if is_zarr(model_dir) and not (available_init_times.year == year).any():
+        if multi:
+            close()
+            return None, None
+        if is_zarr(model_dir) and file_path is None and not (available_init_times.year == year).any():
             raise FileNotFoundError(f"No forecasts of {year} in {model_dir}")
         raise ValueError(f"No matching initialization times found for year {year}")
     return ds.sel(init_time=matching_times), close
@@ -716,38 +806,49 @@ def _load_forecast(year, *, model_dir, model_var, unit_cvt, file_pattern, region
 
     Inits, leads (up to what the onset rule reads), members and the region's box are selected on the lazy array;
     the selection is read once, the cell mask and the unit conversion (x * unit_cvt, in float32 as before) are
-    applied in place on it. The file's step 0, if present, is dropped.
+    applied in place on it. The file's step 0, if present, is dropped. A year listed in several files
+    (kwargs["model_paths"]) is read file by file and joined along init_time.
     """
-    ds, close = _open_forecast(year, model_dir, file_pattern, ensemble, kwargs.get("model_dims"),
-                               get_initialization_dates(year, **kwargs))
-    try:
-        if 'step' not in ds.dims:
-            raise KeyError("'step' dimension not found in dataset")
-        # Check if the first value of 'step' is 0, then slice to exclude it
-        if ds['step'][0].values == 0:
-            ds = ds.sel(step=slice(1, None))
-        # Onset detection reads no further than this lead day, so loading the rest only costs memory.
-        steps_needed = onset_steps_needed(**kwargs)
-        if steps_needed is not None:
-            ds = ds.sel(step=slice(None, steps_needed))
-        if ensemble and members:
-            ds = ds.sel(member=list(members))
-        da = region_select(ds[[model_var]], read_by="init_time",
-                           **{**kwargs, "region": region, "dataset_name": str(kwargs.get("model") or "model")})[model_var]
-        da = _in_memory(da)
-    finally:
-        close()
+    sources = _forecast_sources(year, model_dir, file_pattern, kwargs.get("model_paths"), kwargs.get("model_files_years"))
+    dates = get_initialization_dates(year, **kwargs)
+    parts = []
+    for file_path in sources:
+        ds, close = _open_forecast(year, model_dir, file_pattern, ensemble, kwargs.get("model_dims"), dates,
+                                   file_path, multi=len(sources) > 1)
+        if ds is None:
+            continue
+        try:
+            if 'step' not in ds.dims:
+                raise KeyError("'step' dimension not found in dataset")
+            # Check if the first value of 'step' is 0, then slice to exclude it
+            if ds['step'][0].values == 0:
+                ds = ds.sel(step=slice(1, None))
+            # Onset detection reads no further than this lead day, so loading the rest only costs memory.
+            steps_needed = onset_steps_needed(**kwargs)
+            if steps_needed is not None:
+                ds = ds.sel(step=slice(None, steps_needed))
+            if ensemble and members:
+                ds = ds.sel(member=list(members))
+            da = region_select(ds[[model_var]], read_by="init_time",
+                               **{**kwargs, "region": region, "dataset_name": str(kwargs.get("model") or "model")})[model_var]
+            parts.append(_in_memory(da))
+        finally:
+            close()
+    if not parts:
+        raise ValueError(f"No matching initialization times found for year {year}")
+    da = parts[0] if len(parts) == 1 else xr.concat(parts, dim="init_time").sortby("init_time")
     return _scale_in_place(da, unit_cvt)
 
 
-def get_forecast_deterministic_twice_weekly(year, *, model_dir, model_var, date_filter_year, init_days,
-                                            start_date, end_date, unit_cvt, file_pattern, region, **kwargs):
+def get_forecast_deterministic_twice_weekly(year, *, model_var, date_filter_year, init_days,
+                                            start_date, end_date, unit_cvt, region, model_dir=None, file_pattern=None,
+                                            **kwargs):
     """
     Loads model precip data for twice-weekly initializations from May to July.
     Filters for Mondays and Thursdays in the specified year.
     The forecast file is expected to be named file_pattern.format(year) in the model_dir (or model_dir is a
-    .zarr store of all years) with variable "tp" being daily accumulated rainfall with dimensions
-    (init_time, lat, lon, step).
+    .zarr store of all years, or model_paths lists the files, any number per year) with variable "tp" being daily
+    accumulated rainfall with dimensions (init_time, lat, lon, step).
 
     Parameters:
     year: int, year to load data for
@@ -761,9 +862,9 @@ def get_forecast_deterministic_twice_weekly(year, *, model_dir, model_var, date_
                           file_pattern=file_pattern, region=region, members=None, ensemble=False, kwargs=kwargs)
 
 
-def get_forecast_probabilistic_twice_weekly(year, *, model_dir, model_var, date_filter_year, init_days,
-                                            start_date, end_date, unit_cvt, file_pattern,
-                                            members, region, **kwargs):
+def get_forecast_probabilistic_twice_weekly(year, *, model_var, date_filter_year, init_days,
+                                            start_date, end_date, unit_cvt, members, region, model_dir=None,
+                                            file_pattern=None, **kwargs):
     """
     Loads model precip data for twice-weekly initializations from May to July.
     Reads like get_forecast_deterministic_twice_weekly, with the members asked for selected before the read.
@@ -793,3 +894,167 @@ def load_history(year, current, **kwargs):
     except FileNotFoundError:
         return current
     return xr.concat([previous, current], dim="time")
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Rain on units: source cells -> unit series (onset_blending's regrid and cell transform, as one transform)
+# ---------------------------------------------------------------------------------------------------------
+
+SOURCE_POLICIES = ("flag", "keep", "zero", "drop")
+"""Missing-rain policies applied to the source cells before they are averaged onto units: "flag" and "keep" leave
+NaN as it is (a unit averages its observed sources), "zero" counts NaN as 0 mm and "drop" removes every source cell
+with a missing day in a calendar year from that year's means (see `unit_series`)."""
+
+
+def unit_transform(units, lat, lon, positions=None, *, tolerance=None, wrap_longitude=False, convention=None):
+    """The transform of `units` (momp.spatial.EvaluationUnits) from the cells of a (lat, lon) grid, restricted to the
+    units at `positions` (all when None).
+
+    The weights are matched to the grid's cells by exact coordinates (as onset_blending matches them) or within
+    `tolerance`; wrap_longitude first puts the weights' longitudes in the grid's convention. `convention` is the
+    grid-id convention of weights keyed by source ids.
+    """
+    from momp.spatial import SparseTransform
+
+    full = units.transform(lat, lon, tolerance=tolerance, convention=convention, wrap_longitude=wrap_longitude)
+    if positions is None:
+        return full
+    positions = np.asarray(positions, dtype=np.int64)
+    out = SparseTransform(full.weighted_matrix[positions], full._source_ids, tuple(np.asarray(full.target_ids)[positions]),
+                          keys=full.keys, convention=full.convention, grid=full.grid)
+    return out
+
+
+def _cell_positions(transform, lat, lon):
+    """Each cell of the (lat, lon) grid (latitude-major) as its position among the transform's sources, or None when the
+    sources are the grid's cells themselves."""
+    if transform.keys == "coordinate":
+        return None
+    cell_lat, cell_lon = np.meshgrid(np.asarray(lat, float), np.asarray(lon, float), indexing="ij")
+    return transform.positions(cell_lat.reshape(-1), cell_lon.reshape(-1))
+
+
+def feeding_cells(transform, lat, lon):
+    """Boolean (nlat, nlon): the grid cells that are a source of some unit of the transform (what a read must keep)."""
+    sources = np.unique(transform.weighted_matrix.indices)
+    place = _cell_positions(transform, lat, lon)
+    keep = np.zeros(len(lat) * len(lon), dtype=bool)
+    if place is None:
+        keep[sources] = True
+    else:
+        keep = np.isin(place, sources)
+    return keep.reshape(len(lat), len(lon))
+
+
+def unit_series(da, transform, *, missing="flag", post_scale=None, support=False):
+    """Average a loaded DataArray with lat and lon dims onto the units of `transform`: dims become (the others, "unit").
+
+    Each unit is the weighted mean of its observed (finite) source cells, in float64 mm, NaN where none is observed
+    (SparseTransform.observed_mean). `missing` is applied to the sources first ("zero" counts NaN as 0 mm; "drop" needs
+    a "time" dim and removes a cell from the means of every calendar year in which it has a missing day, see
+    SOURCE_POLICIES). `post_scale` multiplies the means (a unit factor applied after the averaging, as onset_blending
+    does for a regrid; apply it to `da` first for a cell transform). The array is read in column blocks, so working
+    memory stays one block beyond the result. With `support` the result is (series, (unit, year) booleans of which
+    units have a source that year, the years).
+    """
+    if missing not in SOURCE_POLICIES:
+        raise ValueError(f"missing must be one of {SOURCE_POLICIES}, got {missing!r}")
+    lat, lon = np.asarray(da["lat"].values), np.asarray(da["lon"].values)
+    others = [d for d in da.dims if d not in ("lat", "lon")]
+    if missing == "drop" and others != ["time"]:
+        raise ValueError("missing 'drop' needs data with the dims (time, lat, lon)")
+    view = np.moveaxis(da.values, [da.dims.index("lat"), da.dims.index("lon")], [-2, -1])
+    rest_shape = view.shape[:-2]
+    cells = view.reshape(-1, len(lat) * len(lon))
+    place = _cell_positions(transform, lat, lon)
+    n_unit, n_source = transform.shape
+    used = None if place is None else np.flatnonzero(place >= 0)
+    out = np.empty((cells.shape[0], n_unit))
+
+    def sources(rows):
+        """(source, column) float64 values of the given rows of `cells`."""
+        block = cells[rows]
+        if place is None:
+            return block.T.astype(float)
+        values = np.full((n_source, block.shape[0]), np.nan)
+        values[place[used]] = block[:, used].T.astype(float)
+        return values
+
+    years = present = None
+    if missing == "drop":
+        times = da["time"]
+        years = np.asarray(times.dt.year.values)
+        distinct = np.unique(years)
+        present = np.ones((n_source, len(distinct)), dtype=bool)
+        for y, year in enumerate(distinct):
+            rows = np.flatnonzero(years == year)
+            values = sources(rows)
+            incomplete = np.isnan(values).any(axis=1)
+            values[incomplete] = np.nan
+            present[incomplete, y] = False
+            out[rows] = transform.observed_mean(values).T
+    else:
+        for start in range(0, cells.shape[0], 256):
+            rows = slice(start, min(cells.shape[0], start + 256))
+            values = sources(rows)
+            if missing == "zero":
+                values = np.where(np.isnan(values), 0.0, values)
+            out[rows] = transform.observed_mean(values).T
+    if post_scale is not None and post_scale != 1.0:
+        out *= post_scale
+    coords = {d: da[d].values for d in others if d in da.coords}
+    coords["unit"] = np.asarray(transform.target_ids, dtype=str)
+    result = xr.DataArray(out.reshape(rest_shape + (n_unit,)), dims=tuple(others) + ("unit",), coords=coords,
+                          attrs=da.attrs, name=da.name)
+    if not support:
+        return result
+    if present is None:
+        distinct = np.unique(np.asarray(da["time"].dt.year.values)) if "time" in da.coords else np.array([0])
+        present = np.ones((n_source, len(distinct)), dtype=bool)
+    return result, transform.supported(present), distinct
+
+
+def read_on_units(da, units, *, block_dim, region=None, positions=None, tolerance=None, wrap_longitude=False,
+                  convention=None, scale=None, post_scale=None, missing="flag", support=False):
+    """Read a lazy DataArray (dims named as ROMP's, lat and lon among them) onto `units`, reading only what feeds them.
+
+    The transform of `units` from the array's own cells is compiled (`unit_transform`; the array's lat and lon are
+    matched as they are, so give it the cut or uncut array in the order you want matched), only the storage tiles
+    holding a source cell of the wanted `positions` are read (block by block along block_dim, `load_blocks`), `scale`
+    multiplies the cells in place before they are averaged (as for a cell transform), and `unit_series` averages them
+    (post_scale, missing and support as there). Returns the unit series, dims (the others, "unit").
+
+    With a `region` the array is first cut to the region's box (latitude ascending, longitude in the region's
+    convention, so use wrap_longitude with weights written in the other one); no cell mask is applied, the weights
+    decide which cells count. Without a region the file's own order and extent are read.
+    """
+    if region is not None:
+        da = region_box(da, region=region)
+    lat, lon = np.asarray(da["lat"].values), np.asarray(da["lon"].values)
+    transform = unit_transform(units, lat, lon, positions, tolerance=tolerance, wrap_longitude=wrap_longitude,
+                               convention=convention)
+    if scale and da.variable._in_memory:
+        da = da.copy(deep=True)  # the caller's array is not scaled in place
+    loaded = _scale_in_place(load_blocks(da, block_dim, keep=feeding_cells(transform, lat, lon)), scale)
+    return unit_series(loaded, transform, missing=missing, post_scale=post_scale, support=support)
+
+
+def read_unit_dim(da, *, block_dim, ids=None, scale=None):
+    """Read the kept units of a lazy DataArray that already has a "unit" dimension (pre-aggregated admin units).
+
+    `ids` lists the units to keep, in the order wanted (default: all, in file order); only the storage tiles that hold
+    one are read. `scale` multiplies in place. Returns the array with its units compacted to the kept ones.
+    """
+    labels = np.asarray(da["unit"].values).astype(str)
+    if ids is None:
+        wanted = np.arange(labels.size)
+    else:
+        index = {label: i for i, label in enumerate(labels)}
+        missing = [str(i) for i in ids if str(i) not in index]
+        if missing:
+            raise KeyError(f"units not in the data: {', '.join(missing[:10])}")
+        wanted = np.array([index[str(i)] for i in ids], dtype=np.int64)
+    keep = np.zeros(labels.size, dtype=bool)
+    keep[wanted] = True
+    loaded = load_blocks(da, block_dim, keep=keep, keep_dims=("unit",))
+    return _scale_in_place(loaded.isel(unit=wanted), scale)  # isel with positions copies: nothing of the caller's is scaled

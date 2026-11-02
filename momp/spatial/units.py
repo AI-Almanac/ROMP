@@ -386,41 +386,45 @@ class EvaluationUnits:
     # -- transforms ----------------------------------------------------------------------------------------
 
     def transform(self, source_lat, source_lon, *, tolerance: float | None = None,
-                  convention: unit_ids.GridIdConvention | None = None) -> SparseTransform:
+                  convention: unit_ids.GridIdConvention | None = None, wrap_longitude: bool = False) -> SparseTransform:
         """The transform from the cells of a source grid (axes `source_lat`, `source_lon`) to the units, compiled
         once per grid (and tolerance).
 
         Weights from a table are matched to the grid's cells by exact coordinates, or within `tolerance` (the
         parity path for tables written by onset_blending is the exact one). Grid and region units use a
         selection when the grid holds all their cells within `tolerance` (default: ROMP's coordinate tolerance)
-        and conservative area weights otherwise.
+        and conservative area weights otherwise. `wrap_longitude` puts a weight table's longitudes in the source
+        grid's convention before matching (see `SparseTransform.from_weights`).
         """
         source_lat, source_lon = np.asarray(source_lat, dtype=float), np.asarray(source_lon, dtype=float)
-        key = (source_lat.tobytes(), source_lon.tobytes(), tolerance, convention)
+        key = (source_lat.tobytes(), source_lon.tobytes(), tolerance, convention, wrap_longitude)
         if key not in self._transforms:
-            self._transforms[key] = self._compile(source_lat, source_lon, tolerance, convention)
+            self._transforms[key] = self._compile(source_lat, source_lon, tolerance, convention, wrap_longitude)
         return self._transforms[key]
 
-    def _compile(self, lat, lon, tolerance, convention) -> SparseTransform:
+    def _compile(self, lat, lon, tolerance, convention, wrap_longitude=False) -> SparseTransform:
         targets = tuple(self.ids)
         if self._weights is not None:
-            return SparseTransform.from_weights(self._weights, lat, lon, target_ids=targets,
-                                                convention=convention, tolerance=tolerance)
+            return SparseTransform.from_weights(self._weights, lat, lon, target_ids=targets, convention=convention,
+                                                tolerance=tolerance, wrap_longitude=wrap_longitude)
         if self.kind == "polygon":
             table = regrid.polygon_weights(self.geometry, self.ids, lat, lon, **self._weight_options)
             return SparseTransform.from_weights(table, lat, lon, target_ids=targets, tolerance=tolerance)
         cells = self._cells
         n_cells = lat.size * lon.size
         tol = regrid.default_tolerance() if tolerance is None else tolerance
-        lat_pos = regrid.match_axis(cells.lat[cells.flat // cells.lon.size], lat, tol)
-        lon_pos = regrid.match_axis(cells.lon[cells.flat % cells.lon.size], lon, tol)
-        if (lat_pos >= 0).all() and (lon_pos >= 0).all():
-            matrix = regrid.selection(lat_pos * lon.size + lon_pos, n_cells, cells.weights)
+        if np.array_equal(lat, cells.lat) and np.array_equal(lon, cells.lon):  # the units' own grid: nothing to match
+            matrix = regrid.selection(cells.flat, n_cells, cells.weights)
         else:
-            to_cells = regrid.grid_weights(lat, lon, cells.lat, cells.lon)[cells.flat]
-            if cells.weights is not None:
-                to_cells = sparse.diags(cells.weights) @ to_cells
-            matrix = to_cells.tocsr()
+            lat_pos = regrid.match_axis(cells.lat[cells.flat // cells.lon.size], lat, tol)
+            lon_pos = regrid.match_axis(cells.lon[cells.flat % cells.lon.size], lon, tol)
+            if (lat_pos >= 0).all() and (lon_pos >= 0).all():
+                matrix = regrid.selection(lat_pos * lon.size + lon_pos, n_cells, cells.weights)
+            else:
+                to_cells = regrid.grid_weights(lat, lon, cells.lat, cells.lon)[cells.flat]
+                if cells.weights is not None:
+                    to_cells = sparse.diags(cells.weights) @ to_cells
+                matrix = to_cells.tocsr()
         if self.kind == "region":
             matrix = sparse.csr_matrix(matrix.sum(axis=0))
         return SparseTransform(matrix, None, targets, keys="coordinate", grid=(lat, lon))

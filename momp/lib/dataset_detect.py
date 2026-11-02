@@ -39,21 +39,14 @@ import numpy as np
 import xarray as xr
 
 from momp.cache import Store, file_identity
-from momp.lib.dataset_schema import DatasetError, expand_path, parse_dataset
+from momp.lib.dataset_schema import DatasetError, expand_path, file_year, parse_dataset, resolve_paths
 from momp.onset import ingest
+from momp.utils.standard import matches
 
 YEAR_RE = re.compile(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)")
 _PRECIP_RE = re.compile(r"(?i)precip|rain|prcp|(^|_)(tp|pr)($|_)")
-_ROLE_ALIASES = {
-    "time": ("time", "valid_time", "date"),
-    "init_time": ("init_time", "time", "forecast_reference_time"),
-    "step": tuple(a.lower() for a in ingest._LEAD_DIMS),
-    "member": ("member", "number", "ensemble", "realization", "sample"),
-    "lat": ("lat", "latitude", "y"),
-    "lon": ("lon", "longitude", "x"),
-}
-_ORDER = ("path", "file_pattern", "variable", "units", "dims", "day_boundary", "lead_label", "accumulation",
-          "daily_boundary", "members")
+_ORDER = ("path", "paths", "years", "file_pattern", "variable", "units", "unit_cvt", "dims", "day_boundary",
+          "lead_label", "accumulation", "daily_boundary", "members")
 _ALIGN_INITS = 40
 _NULLABLE = ("day_boundary", "lead_label")
 """Keys where an explicit null is a choice (the region's boundary; derive the label)."""
@@ -110,15 +103,18 @@ def find_pattern(names: list[str]) -> tuple[str | None, str]:
 
 
 def _roles(da: xr.DataArray, kind: str, problems: dict) -> dict:
-    """Map each dim role of the data to the file's dim name; ambiguous or missing roles go to problems."""
-    wanted = ("time", "lat", "lon") if kind == "observations" else ("init_time", "step", "member", "lat", "lon")
+    """Map each dim role of the data to the file's dim name; ambiguous or missing roles go to problems.
+
+    A string unit dimension (admin units, role "unit") stands in for lat and lon.
+    """
+    dims = [str(d) for d in da.dims]
+    unit = matches(dims, "unit")
+    spatial = ("unit",) if unit else ("lat", "lon")
+    wanted = (("time",) if kind == "observations" else ("init_time", "step", "member")) + spatial
     found = {}
     for role in wanted:
-        hits = [d for d in da.dims if str(d).lower() in _ROLE_ALIASES[role]]
-        if role == "step" and not hits:
-            hits = [d for d in da.dims if any(s in str(d).lower() for s in ("lead", "step", "timedelta"))]
-        if role == "init_time":
-            hits = [d for d in hits if d not in [x for x in da.dims if str(x).lower() in _ROLE_ALIASES["step"]]]
+        hits = matches(dims, role, exclude=matches(dims, "step") if role == "init_time" else (), fuzzy=role == "step",
+                       coords=da.coords if role == "step" else None)
         if len(hits) > 1:
             problems[f"dims.{role}"] = f"several dims could be {role}: {', '.join(map(str, hits))}; set dims: {{{role}: <name>}}"
         elif hits:
@@ -270,13 +266,29 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
 
     if obs is None or not obs.get("variable") or not obs.get("day_boundary"):
         return None, "needs the observations (with variable and day_boundary) to compare against"
-    obs_dir = expand_path(obs["path"])
-    if is_zarr_store(sample) or is_zarr_store(obs_dir):
-        return _lead_label_sampled(values, sample, obs, roles, obs_dir)
-    year = YEAR_RE.search(os.path.basename(sample))
-    files = sorted(glob.glob(os.path.join(obs_dir, obs["file_pattern"].replace("{}", year.group(1) if year else "*"))))
-    if not files:
-        return None, f"no observation file for year {year.group(1) if year else '?'} in {obs_dir}"
+    if obs.get("paths") or values.get("paths"):
+        year = file_year(sample) if values.get("paths") else None
+        if year is None and not values.get("paths"):
+            match = YEAR_RE.search(os.path.basename(sample))
+            year = int(match.group(1)) if match else None
+        if is_zarr_store(sample) or not obs.get("paths") and is_zarr_store(expand_path(obs["path"])):
+            return None, "the sampled check does not read datasets given by paths. Fix: set lead_label"
+        try:
+            listed = _dataset_files(obs) if obs.get("paths") else sorted(Path(expand_path(obs["path"])).glob(
+                obs["file_pattern"].replace("{}", str(year) if year else "*")))
+        except DatasetError as exc:
+            return None, str(exc)
+        files = [str(f) for f in listed if year is None or file_year(f) == year or not obs.get("paths")]
+        if not files:
+            return None, f"no observation file for year {year if year else '?'}"
+    else:
+        obs_dir = expand_path(obs["path"])
+        if is_zarr_store(sample) or is_zarr_store(obs_dir):
+            return _lead_label_sampled(values, sample, obs, roles, obs_dir)
+        year = YEAR_RE.search(os.path.basename(sample))
+        files = sorted(glob.glob(os.path.join(obs_dir, obs["file_pattern"].replace("{}", year.group(1) if year else "*"))))
+        if not files:
+            return None, f"no observation file for year {year.group(1) if year else '?'} in {obs_dir}"
     obs_units, fc_units = obs.get("units"), values.get("units")
     try:
         with open_data(files[0]) as ods:
@@ -348,15 +360,23 @@ def _store() -> Store:
     return Store("detect", cache_dir().parent, label="Dataset detection", memory=False)
 
 
+def _dataset_files(entry: dict) -> list[Path]:
+    """The files a dataset entry reads: its ``paths`` (see resolve_paths), the zarr store, or the NetCDF files in its folder."""
+    base = expand_path(entry["path"]) if entry.get("path") else None
+    if entry.get("paths"):
+        return resolve_paths(entry["paths"], base, entry.get("years"))
+    folder = Path(base)
+    return [folder] if is_zarr_store(folder) else sorted(
+        p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
+
+
 def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> dict | None:
     """What detection depends on: the user's keys, and the identity (path, size, mtime) of the dataset's files.
 
     None when the folder cannot be listed or a file read (nothing to cache against).
     """
     try:
-        folder = Path(expand_path(entry["path"]))
-        files = [folder] if is_zarr_store(folder) else sorted(
-            p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
+        files = _dataset_files(entry)
     except (KeyError, DatasetError, OSError):
         return None
     identities = [file_identity(path) for path in files]
@@ -422,15 +442,19 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         values[key] = value
         res.lines.append(Line(key, value, "detected", evidence))
 
-    if not values.get("path"):
-        problems["path"] = "missing. Fix: set path to the folder of the yearly files"
+    paths = values.get("paths")
+    if not values.get("path") and not paths:
+        problems["path"] = "missing. Fix: set path to the folder of the yearly files, or paths to the files"
         return res
     try:
-        folder = Path(expand_path(values["path"]))
+        folder = Path(expand_path(values["path"])) if values.get("path") else None
     except DatasetError as exc:
         problems["path"] = str(exc)
         return res
-    specified("path")
+    if folder is not None:
+        specified("path")
+    if paths:
+        return _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_label, lead_label_default)
     if is_zarr_store(folder):
         return _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label, lead_label_default)
     names = sorted(p.name for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr")) \
@@ -440,6 +464,8 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         needed.remove("day_boundary")
     if kind == "observations" and "lead_label" in needed:
         needed.remove("lead_label")
+    if "unit_cvt" in values and "units" in needed:
+        needed.remove("units")
     if not names:
         why = "folder not found" if not folder.is_dir() else "no NetCDF files in it"
         if needed:
@@ -474,6 +500,33 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
     with ds:
         _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, detect_lead_label,
                            lead_label_default)
+    return res
+
+
+def _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_label, lead_label_default):
+    """Resolve a dataset that names its files in ``paths``: no file_pattern; everything from the first file.
+
+    The files are the listed ones (resolve_paths), several per year if they are; the first holds the layout.
+    """
+    problems = res.problems
+    for key in ("paths", "years"):
+        specified(key)
+    try:
+        files = _dataset_files(values)
+    except DatasetError as exc:
+        problems["paths"] = str(exc)
+        return res
+    sample = str(files[0])
+    res.sample_file, res.checked = sample, True
+    res.lines.append(Line("file_pattern", "not needed", "detected", f"{len(files)} file(s) listed in paths"))
+    try:
+        ds = open_data(sample)
+    except Exception as exc:  # noqa: BLE001 - any reader error is reported against the path
+        problems["paths"] = f"cannot open {sample}: {exc}"
+        return res
+    with ds:
+        _resolve_from_file(ds, os.path.basename(sample), sample, kind, res, specified, detected, obs,
+                           detect_lead_label, lead_label_default)
     return res
 
 
@@ -538,8 +591,7 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
     da = ds[values["variable"]]
 
     probe = {}
-    lead_dims = [d for d in da.dims if str(d).lower() in _ROLE_ALIASES["step"]
-                 or any(s in str(d).lower() for s in ("lead", "step", "timedelta"))]
+    lead_dims = matches([str(d) for d in da.dims], "step", fuzzy=True, coords=da.coords)
     looks = "forecast" if lead_dims else "observations"
     if looks != kind:
         problems["kind"] = (f"the dataset is described as {kind} but {name} looks like {looks} data "
@@ -566,7 +618,7 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
         problems.update(probe)
 
     lat, lon = roles.get("lat"), roles.get("lon")
-    if lat in ds.coords and lon in ds.coords and ds[lat].size and ds[lon].size:
+    if lat is not None and lat in ds.coords and lon in ds.coords and ds[lat].size and ds[lon].size:
         res.extent = (float(ds[lat].min()), float(ds[lat].max()), float(ds[lon].min()), float(ds[lon].max()))
 
     if "member" in roles and kind == "forecast":
@@ -674,7 +726,16 @@ def _units(da, name, values, res, specified, detected, roles, guess=None, loaded
     elif peak.size:
         hint = (f" The sampled values peak at {peak.max():.3g}, which looks like "
                 f"{'metres (units: m)' if peak.max() < 0.5 else 'mm (units: mm)'}.")
-    if "units" in values:
+    if "unit_cvt" in values and "units" not in values:
+        if from_attr:  # declared units win: unit_cvt is the factor of files that declare none
+            values.pop("unit_cvt")
+            detected("units", from_attr, f"'units' attribute {attr!r} of {da.name} in {name} (unit_cvt is only for "
+                                         "files that declare no units)")
+            implied = from_attr
+        else:
+            specified("unit_cvt")
+            return
+    elif "units" in values:
         specified("units")
         if values["units"] not in ("mm", "m"):
             res.problems["units"] = f"{values['units']!r} is not supported. Fix: use units: mm or units: m"

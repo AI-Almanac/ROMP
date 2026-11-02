@@ -131,12 +131,21 @@ def coords_fmt(ds_tag, *, region, **kwargs):
 
 
 
+def has_box(ds, region) -> bool:
+    """Whether `ds` is cut to a region's box: it has a lat/lon grid (not a "unit" dimension) and a region is named."""
+    return region is not None and "unit" not in ds.dims
+
+
 def region_box(ds, *, region):
     """Subset `ds` (Dataset or DataArray) to the region's lat/lon box, lazily: nothing is read from file here.
 
     Longitude and latitude are put in ROMP's orientation first (see coords_fmt). A dataset that has to cross the
     longitude seam is loaded by swap_lon_axis; slice inits, leads and members before calling for large inputs.
+    Without a region, or for data on a string "unit" dimension (admin units), there is no box: `ds` is returned
+    as it is, in the file's own order.
     """
+    if not has_box(ds, region):
+        return ds
     lats, latn, lonw, lone, ds = coords_fmt(ds, region=region)
     return ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
 
@@ -164,13 +173,26 @@ def _keep_cells(lat, lon, region, land_only, shp_only):
 _BLOCK_BYTES = 64 * 1024 * 1024
 
 
-def load_blocks(da, block_dim):
+def _tiles(size: int, stored: int | None):
+    """Index ranges (start, stop) of one axis in storage-chunk steps (the whole axis when it is not chunked)."""
+    step = stored or size
+    return [(a, min(size, a + step)) for a in range(0, size, max(1, step))]
+
+
+def load_blocks(da, block_dim, keep=None, keep_dims=None):
     """Read a (lazy) DataArray into memory once, filled block by block along block_dim.
 
     The result is allocated once; each block (about 64 MB, a whole number of stored chunks when the source is
     chunked) is read and copied in, so the reader's temporaries for fancy-indexed reads stay block sized instead of
     the size of the whole selection. An array already in memory is returned as it is.
+
+    keep is an optional boolean array over the spatial dims keep_dims (default: ("lat", "lon") for a 2-D mask, the
+    one spatial dim ("unit", else "lat") for a 1-D mask). Only the storage tiles of those dims that hold a kept
+    cell are read, a block at a time; every cell outside keep is NaN in the result (onset_blending reads global and
+    admin-unit files this way). The array must be floating point; the result has the shape of da.
     """
+    if keep is not None and not da.variable._in_memory and block_dim in da.dims and da.ndim:
+        return _load_kept(da, block_dim, np.asarray(keep, dtype=bool), keep_dims)
     if da.variable._in_memory or block_dim not in da.dims or da.ndim == 0:
         return da.load()
     axis = da.dims.index(block_dim)
@@ -196,11 +218,51 @@ def load_blocks(da, block_dim):
     return xr.DataArray(out, dims=da.dims, coords=da.coords, attrs=da.attrs, name=da.name)
 
 
-def read_selection(obj, block_dim):
+def _load_kept(da, block_dim, keep, keep_dims):
+    """load_blocks for a keep mask: read the (block, spatial tile) pieces that hold a kept cell, NaN elsewhere."""
+    if not np.issubdtype(da.dtype, np.floating):
+        raise ValueError(f"a keep mask needs floating point data, got {da.dtype}")
+    if keep_dims is None:
+        keep_dims = ("lat", "lon") if keep.ndim == 2 else (next(d for d in ("unit", "lat") if d in da.dims),)
+    axes = [da.dims.index(d) for d in keep_dims]
+    if keep.shape != tuple(da.shape[a] for a in axes):
+        raise ValueError(f"keep has shape {keep.shape} for the dims {keep_dims} of size "
+                         f"{tuple(da.shape[a] for a in axes)}")
+    chunks = da.encoding.get("chunks") or da.encoding.get("chunksizes")  # zarr, or NetCDF4/HDF5 storage
+    chunks = chunks if chunks and len(chunks) == da.ndim else None
+    axis = da.dims.index(block_dim)
+    if axis in axes:
+        raise ValueError("block_dim cannot be one of the dims of keep")
+    per_row = da.dtype.itemsize * int(np.prod([n for i, n in enumerate(da.shape) if i != axis], dtype=np.int64))
+    rows = max(1, _BLOCK_BYTES // max(1, per_row))
+    stored = chunks[axis] if chunks else None
+    if stored:
+        rows = max(1, rows // stored) * stored
+    out = np.full(da.shape, np.nan, dtype=da.dtype)
+    ranges = [_tiles(da.shape[a], chunks[a] if chunks else None) for a in axes]
+    for corner in np.ndindex(*[len(r) for r in ranges]):
+        bounds = [r[c] for r, c in zip(ranges, corner)]
+        inside = keep[tuple(slice(a, b) for a, b in bounds)]
+        if not inside.any():
+            continue
+        for start in range(0, da.shape[axis], rows):
+            index = [slice(None)] * da.ndim
+            index[axis] = slice(start, start + rows)
+            for a, (lo, hi) in zip(axes, bounds):
+                index[a] = slice(lo, hi)
+            block = da.isel({d: index[i] for i, d in enumerate(da.dims) if index[i] != slice(None)}).values
+            if not inside.all():
+                moved = np.moveaxis(block, axes, list(range(-len(axes), 0)))
+                moved[..., ~inside] = np.nan
+            out[tuple(index)] = block
+    return xr.DataArray(out, dims=da.dims, coords=da.coords, attrs=da.attrs, name=da.name)
+
+
+def read_selection(obj, block_dim, keep=None):
     """Read a box-selected Dataset or DataArray into memory (see load_blocks); Dataset variables are read one by one."""
     if isinstance(obj, xr.DataArray):
-        return load_blocks(obj, block_dim)
-    return obj.assign({name: load_blocks(var, block_dim) for name, var in obj.data_vars.items()})
+        return load_blocks(obj, block_dim, keep)
+    return obj.assign({name: load_blocks(var, block_dim, keep) for name, var in obj.data_vars.items()})
 
 
 def _mask_in_place(da, keep):
@@ -221,6 +283,8 @@ def mask_region_loaded(obj, *, region, nc_mask=None, land_only=True, shp_only=Tr
     array's own memory (one pass, no copy); a `mask` section or an nc_mask goes through momp.utils.mask or
     apply_nc_mask as in region_select, which build a masked copy.
     """
+    if not has_box(obj, region):
+        return obj
     if mask or nc_mask:
         return region_select_masks(obj, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
                                    mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)
@@ -239,7 +303,12 @@ def mask_region_loaded(obj, *, region, nc_mask=None, land_only=True, shp_only=Tr
 
 def region_select_masks(ds_reg, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None,
                         dataset_name=None, dir_fig=None):
-    """Apply the cell masks of region_select to a box-selected dataset: `mask`, else nc_mask, land and country masks."""
+    """Apply the cell masks of region_select to a box-selected dataset: `mask`, else nc_mask, land and country masks.
+
+    Data without a box (no region, or admin units on a "unit" dimension) has no cells to mask.
+    """
+    if not has_box(ds_reg, region):
+        return ds_reg
     if mask:
         if nc_mask:
             from momp.utils.mask import MaskError
@@ -264,7 +333,7 @@ def region_select_masks(ds_reg, *, region, nc_mask=None, land_only=True, shp_onl
 
 
 def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,
-                  dir_fig=None, read_by=None, **kwargs):
+                  dir_fig=None, read_by=None, keep=None, **kwargs):
     """Subset `ds` to the region's lat/lon box, then limit it to the cells of the run's mask.
 
     With a `mask` mapping (the config's ``mask:`` section) the mask is built on this dataset's own grid by
@@ -274,11 +343,15 @@ def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, ma
 
     Without read_by the result stays lazy and the masks are applied with where. With read_by (a dim name) the
     box is read into memory once, block by block along that dim, and the implicit masks are then written in place
-    (see mask_region_loaded): slice inits, leads and members before calling so only those are read.
+    (see mask_region_loaded): slice inits, leads and members before calling so only those are read. `keep` (a
+    boolean array over the box's cells, see load_blocks) then reads only the storage tiles holding a kept cell; the
+    other cells are NaN.
+
+    With no region, or on a "unit" dimension, there is no box and no cell mask: the data is read as it is.
     """
     ds_reg = region_box(ds, region=region)
     if read_by:
-        ds_reg = read_selection(ds_reg, read_by)
+        ds_reg = read_selection(ds_reg, read_by, keep)
         return mask_region_loaded(ds_reg, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
                                   mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)
     return region_select_masks(ds_reg, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,

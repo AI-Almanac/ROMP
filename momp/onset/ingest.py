@@ -16,17 +16,11 @@ import numpy as np
 import xarray as xr
 
 from momp.onset.model import MISSING_POLICIES, RESOLUTIONS, DailyRain, ForecastRain
-
-_TIME_DIMS = ("time", "TIME", "valid_time", "date")
-_LAT_DIMS = ("lat", "latitude", "LATITUDE", "y")
-_LON_DIMS = ("lon", "longitude", "LONGITUDE", "x")
-_INIT_DIMS = ("init_time", "time", "forecast_reference_time")
-_LEAD_DIMS = ("lead", "step", "prediction_timedelta", "prediction_timedelta_daily", "day")
-_MEMBER_DIMS = ("member", "number", "ensemble")
+from momp.utils.standard import ROLE_ALIASES, find_dim
 
 _UNITS_MM = {"mm", "mm/day", "mm/d", "mm day-1", "mm d-1", "mm day**-1", "kg m-2", "kg m-2 day-1",
              "kg m-2 d-1", "kg/m2", "kg/m2/day"}
-_UNITS_M = {"m", "m/day", "m/d", "m day-1", "m d-1"}
+_UNITS_M = {"m", "metres", "meters", "m/day", "m/d", "m day-1", "m d-1"}
 
 # Offsets from UTC in hours for the zone names day boundaries may use.
 _ZONES = {"UTC": 0.0, "GMT": 0.0, "Z": 0.0, "IST": 5.5, "EAT": 3.0, "CAT": 2.0, "WAT": 1.0,
@@ -70,31 +64,29 @@ def _unit_scale(units: str | None) -> float:
     raise ValueError(f"Unsupported rainfall units {units!r}; supported: mm, mm/day, kg m-2, m, m/day")
 
 
-def _find_dim(da: xr.DataArray, candidates: tuple[str, ...], override: str | None, role: str,
-              required: bool = True) -> str | None:
-    """Pick the dim playing `role`: the override if given, else the first candidate present."""
+def _find_dim(da: xr.DataArray, role: str, override: str | None, label: str | None = None,
+              required: bool = True, exclude: tuple = ()) -> str | None:
+    """Pick the dim playing `role` (a key of ROLE_ALIASES): the override if given, else the first alias present."""
+    label = label or role
     if override is not None:
         if override not in da.dims:
-            raise ValueError(f"{role} dim {override!r} is not in the data dims {da.dims}")
+            raise ValueError(f"{label} dim {override!r} is not in the data dims {da.dims}")
         return override
-    for name in candidates:
-        if name in da.dims:
-            return name
-    if required:
-        raise ValueError(f"Cannot find the {role} dim among {da.dims}; tried {candidates}")
-    return None
+    found = find_dim(list(da.dims), role, exclude=exclude, coords=da.coords)
+    if found is None and required:
+        raise ValueError(f"Cannot find the {label} dim among {da.dims}; tried {ROLE_ALIASES[role]}")
+    return found
 
 
 def _rename_spatial(da: xr.DataArray) -> xr.DataArray:
     """Rename latitude/longitude style dims to lat and lon."""
     renames = {}
-    for target, candidates in (("lat", _LAT_DIMS), ("lon", _LON_DIMS)):
+    for target in ("lat", "lon"):
         if target in da.dims:
             continue
-        for name in candidates:
-            if name in da.dims:
-                renames[name] = target
-                break
+        name = find_dim(list(da.dims), target)
+        if name is not None:
+            renames[name] = target
     return da.rename(renames) if renames else da
 
 
@@ -146,8 +138,18 @@ def _coords(da: xr.DataArray, dims: tuple[str, ...]) -> dict[str, np.ndarray]:
     return out
 
 
-def _check_options(rain_resolution: str, missing: str) -> None:
-    """Raise unless the resolution and missing-rain policy are known."""
+NEGATIVES = ("default", "keep")
+"""Handling of negative rain: "default" (observations below -0.05 mm are missing, forecasts are set to 0) or
+"keep" (negative values stay, as onset_blending reads them)."""
+GAPS = ("fill", "refuse")
+"""Days missing from the time axis: "fill" (they become missing days, with a warning) or "refuse" (a gap inside a
+calendar year is an error, as onset_blending refuses it)."""
+
+
+def _check_options(rain_resolution: str, missing: str, negatives: str = "default") -> None:
+    """Raise unless the resolution, missing-rain policy and negative-value handling are known."""
+    if negatives not in NEGATIVES:
+        raise ValueError(f"negatives must be one of {NEGATIVES}, got {negatives!r}")
     if rain_resolution not in RESOLUTIONS:
         raise ValueError(f"rain_resolution must be one of {RESOLUTIONS}, got {rain_resolution!r}")
     if missing not in MISSING_POLICIES:
@@ -155,12 +157,14 @@ def _check_options(rain_resolution: str, missing: str) -> None:
 
 
 def _to_tenths_numpy(values: np.ndarray, to_tenths: float, clip_negative: bool,
-                     exact: bool = False) -> tuple[np.ndarray, np.ndarray, int, float]:
+                     exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray, int, float]:
     """The numpy reference of _to_tenths (several passes, float64 temporaries); used without numba and by the tests."""
     x = np.asarray(values, dtype=np.float64) * to_tenths
     floor = -0.05 if exact else -0.5
     finite = np.isfinite(x)
     bad = finite & (x < 0) if clip_negative else finite & (x < floor)
+    if keep_negative:
+        bad = np.zeros(x.shape, dtype=bool)
     lowest = float(x[bad].min()) if bad.any() else 0.0
     if clip_negative:
         x = np.where(bad, 0.0, x)
@@ -183,7 +187,7 @@ _CHUNKS = 256
 if numba is not None:
 
     @njit(parallel=True, cache=True)
-    def _tenths_kernel(flat, to_tenths, clip_negative, exact, out_tenths, out_missing, n_bad, lowest):
+    def _tenths_kernel(flat, to_tenths, clip_negative, exact, keep_negative, out_tenths, out_missing, n_bad, lowest):
         """Scale, clean and round the flat values to int32 tenths (float64 mm, unrounded, when exact) and missing flags
         in one pass, in parallel over pieces.
 
@@ -205,7 +209,7 @@ if numba is not None:
                     out_tenths[i] = 0
                     out_missing[i] = True
                     continue
-                bad = x < 0.0 if clip_negative else x < floor
+                bad = (not keep_negative) and (x < 0.0 if clip_negative else x < floor)
                 if bad:
                     count += 1
                     if x < low:
@@ -227,17 +231,18 @@ if numba is not None:
 
 def _to_tenths(values: np.ndarray, to_tenths: float, clip_negative: bool,
                out: tuple[np.ndarray, np.ndarray] | None = None,
-               exact: bool = False) -> tuple[np.ndarray, np.ndarray, int, float]:
+               exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray, int, float]:
     """Convert one block of rainfall to (int32 tenths, missing flags, count of negatives handled, lowest value in tenths).
 
     Observations: values below -0.05 mm become missing (they signal bad data).
     Forecasts (clip_negative): every negative value becomes 0, as model rain can dip below zero numerically.
     One parallel numba pass gives exactly what _to_tenths_numpy gives. `out` is an optional pair of C-contiguous
     arrays (int32, bool) of the block's shape to fill instead of allocating new ones. With exact, `to_tenths` is
-    the factor to mm, the first array is float64 mm (unrounded) and the lowest value is in mm.
+    the factor to mm, the first array is float64 mm (unrounded) and the lowest value is in mm. With keep_negative
+    negative values are neither clipped nor flagged (onset_blending keeps them).
     """
     if numba is None:
-        tenths, missing, n_bad, low = _to_tenths_numpy(values, to_tenths, clip_negative, exact)
+        tenths, missing, n_bad, low = _to_tenths_numpy(values, to_tenths, clip_negative, exact, keep_negative)
         if out is not None:
             out[0][...], out[1][...] = tenths, missing
             tenths, missing = out
@@ -250,14 +255,14 @@ def _to_tenths(values: np.ndarray, to_tenths: float, clip_negative: bool,
         np.empty(values.shape, np.float64 if exact else np.int32), np.empty(values.shape, bool))
     n_bad = np.zeros(_CHUNKS, dtype=np.int64)
     lowest = np.zeros(_CHUNKS, dtype=np.float64)
-    _tenths_kernel(flat, float(to_tenths), bool(clip_negative), bool(exact), tenths.reshape(-1), missing.reshape(-1),
-                   n_bad, lowest)
+    _tenths_kernel(flat, float(to_tenths), bool(clip_negative), bool(exact), bool(keep_negative), tenths.reshape(-1),
+                   missing.reshape(-1), n_bad, lowest)
     return tenths, missing, int(n_bad.sum()), float(lowest.min())
 
 
 def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
              positions: np.ndarray | None, clip_negative: bool = False,
-             exact: bool = False) -> tuple[np.ndarray, np.ndarray]:
+             exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """Convert da to (tenths, missing) of shape out_shape, reading blocks along its first axis.
 
     With `positions`, the last axis of da lands at those indices of the output's
@@ -277,7 +282,8 @@ def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
     for rows, block in blocks:
         direct = da.ndim > 1 and positions is None   # the block's rows are contiguous in the output: fill them in place
         t, m, neg, low = _to_tenths(block, scale * per_mm, clip_negative,
-                                    out=(tenths[rows], missing[rows]) if direct else None, exact=exact)
+                                    out=(tenths[rows], missing[rows]) if direct else None, exact=exact,
+                                    keep_negative=keep_negative)
         n_negative += neg
         lowest = min(lowest, low)
         if direct:
@@ -297,8 +303,20 @@ def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
     return tenths, missing
 
 
+def _refuse_gaps(ordinals: np.ndarray, calendar: str) -> None:
+    """Raise for the first day missing between two days of one calendar year."""
+    _, year, _, _ = _labels(ordinals, calendar)
+    jump = (np.diff(ordinals) != 1) & (year[1:] == year[:-1])
+    if jump.any():
+        at = int(np.flatnonzero(jump)[0])
+        before, after = (_labels(ordinals[at:at + 2], calendar)[0][i] for i in (0, 1))
+        raise ValueError(f"The time axis is not daily-contiguous within a year; first gap is {str(before)[:10]} "
+                         f"to {str(after)[:10]}")
+
+
 def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, source: str = "",
-           rain_resolution: str = "tenths", missing: str = "flag") -> DailyRain:
+           rain_resolution: str = "tenths", missing: str = "flag", negatives: str = "default",
+           gaps: str = "fill") -> DailyRain:
     """Normalize observed daily rainfall to DailyRain (spec section 5).
 
     Renames the time dim to "time" and the spatial dims to lat/lon, moves time
@@ -313,11 +331,16 @@ def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, sou
     cell-year with a missing day) or "keep" (they count 0 in totals, are neither
     wet nor dry, and a missing candidate day is rejected); the last two are
     recorded on the result for the engine.
+
+    negatives "keep" leaves negative values as they are instead of flagging those below -0.05 mm; gaps "refuse"
+    raises for days missing inside a calendar year instead of filling them (see NEGATIVES and GAPS).
     """
-    _check_options(rain_resolution, missing)
+    _check_options(rain_resolution, missing, negatives)
+    if gaps not in GAPS:
+        raise ValueError(f"gaps must be one of {GAPS}, got {gaps!r}")
     parse_day_boundary(day_boundary)
     scale = _unit_scale(units if units is not None else da.attrs.get("units"))
-    time_dim = _find_dim(da, _TIME_DIMS, None, "time")
+    time_dim = _find_dim(da, "time", None)
     if time_dim not in da.coords:
         raise ValueError(f"The time dim {time_dim!r} has no coordinate values")
     da = _rename_spatial(da.rename({time_dim: "time"}) if time_dim != "time" else da)
@@ -333,10 +356,13 @@ def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, sou
     full = np.arange(ordinals[0], ordinals[-1] + 1)
     positions = None
     if len(full) != len(ordinals):
+        if gaps == "refuse":
+            _refuse_gaps(ordinals, calendar)
         warnings.warn(f"Filled {len(full) - len(ordinals)} missing days in the time axis", UserWarning,
                       stacklevel=2)
         positions = ordinals - ordinals[0]
-    tenths, flags = _convert(da, scale, da.shape[:-1] + (len(full),), positions, exact=rain_resolution == "exact")
+    tenths, flags = _convert(da, scale, da.shape[:-1] + (len(full),), positions, exact=rain_resolution == "exact",
+                             keep_negative=negatives == "keep")
     if missing == "zero":
         flags[...] = False
     time_values, year, month, day = _labels(full, calendar)
@@ -471,7 +497,7 @@ def detect_accumulation(da: xr.DataArray, lead_dim: str | None = None) -> tuple[
     or mostly-cumulative data with growth are ambiguous and raise ValueError asking for an explicit
     accumulation. A single lead, no finite series or all-constant series cannot show accumulation: daily.
     """
-    lead_dim = _find_dim(da, _LEAD_DIMS, lead_dim, "lead")
+    lead_dim = _find_dim(da, "step", lead_dim, "lead")
     hours = _lead_hours(da, lead_dim)
     keep = np.flatnonzero(hours > 0)
     keep = keep[np.argsort(hours[keep])]
@@ -575,7 +601,7 @@ def detect_units(da: xr.DataArray, accumulation_kind: str, lead_dim: str | None 
     percentile below 0.5 means metres (mm totals are typically 1-50 on wet days and < 500 always);
     otherwise mm. With no positive values the answer is "mm" and the evidence says it is a guess.
     """
-    lead_dim = _find_dim(da, _LEAD_DIMS, lead_dim, "lead")
+    lead_dim = _find_dim(da, "step", lead_dim, "lead")
     sample = _sample(da, lead_dim)
     daily, _, _ = _to_daily(sample, lead_dim, accumulation_kind)
     q = _units_stats(daily, lead_dim)
@@ -642,9 +668,9 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
                          member_dim: str | None = None, accumulation: str = "auto",
                          daily_boundary: str | None = None, boundary_tolerance_hours: float = 0.0,
                          check_units: bool = True, rain_resolution: str = "tenths",
-                         missing: str = "flag") -> tuple[ForecastRain, ForecastIngestInfo]:
+                         missing: str = "flag", negatives: str = "default") -> tuple[ForecastRain, ForecastIngestInfo]:
     """Like `ingest_forecast`, but also return a ForecastIngestInfo saying how the days were made."""
-    _check_options(rain_resolution, missing)
+    _check_options(rain_resolution, missing, negatives)
     parse_day_boundary(day_boundary)
     if lead_label not in ("start", "end"):
         raise ValueError(f"lead_label must be 'start' or 'end', got {lead_label!r}")
@@ -652,10 +678,9 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
         raise ValueError(f"accumulation must be 'auto', 'daily' or 'since_init', got {accumulation!r}")
     declared = units if units is not None else da.attrs.get("units")
     scale = _unit_scale(declared)
-    lead = _find_dim(da, _LEAD_DIMS, lead_dim, "lead")
-    init = _find_dim(da, tuple(n for n in _INIT_DIMS if n != lead), init_dim, "init")
-    member = _find_dim(da, tuple(n for n in _MEMBER_DIMS if n not in (lead, init)), member_dim, "member",
-                       required=False)
+    lead = _find_dim(da, "step", lead_dim, "lead")
+    init = _find_dim(da, "init_time", init_dim, "init", exclude=(lead,))
+    member = _find_dim(da, "member", member_dim, "member", required=False, exclude=(lead, init))
     if len({lead, init, member} - {None}) != len([x for x in (lead, init, member) if x is not None]):
         raise ValueError("init, lead and member dims must be distinct")
     if init not in da.coords:
@@ -710,7 +735,8 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
         daily = daily.isel(init_time=perm)
         ordinals, shift = ordinals[perm], shift[perm]
     ordinals = ordinals + shift
-    tenths, flags = _convert(daily, scale, daily.shape, None, clip_negative=True, exact=rain_resolution == "exact")
+    tenths, flags = _convert(daily, scale, daily.shape, None, clip_negative=True, exact=rain_resolution == "exact",
+                             keep_negative=negatives == "keep")
     if missing == "zero":
         flags[...] = False
     _, year, month, day = _labels(ordinals, calendar)
@@ -737,7 +763,7 @@ def ingest_forecast(da: xr.DataArray, *, day_boundary: str, lead_label: str, uni
                     member_dim: str | None = None, accumulation: str = "auto",
                     daily_boundary: str | None = None, boundary_tolerance_hours: float = 0.0,
                     check_units: bool = True, rain_resolution: str = "tenths",
-                    missing: str = "flag") -> ForecastRain:
+                    missing: str = "flag", negatives: str = "default") -> ForecastRain:
     """Normalize forecast rainfall to ForecastRain (spec section 5).
 
     Dims become init_time, optional member, the remaining (spatial) dims, then lead. Inits are
@@ -754,7 +780,8 @@ def ingest_forecast(da: xr.DataArray, *, day_boundary: str, lead_label: str, uni
     complete day starts, so lead_label keeps its meaning. A boundary off the step grid is an error
     unless within boundary_tolerance_hours (then snapped, with a warning). check_units=False turns
     off the magnitude check of the units. rain_resolution and missing are as for `ingest`
-    ("drop" applies to observed rain only).
+    ("drop" applies to observed rain only). negatives "keep" leaves negative values as they are (the default sets
+    them to 0).
 
     The returned object carries a `ForecastIngestInfo` as the plain attribute `ingest_info`
     (ForecastRain is not changed); `ingest_forecast_info` returns the same pair explicitly.
@@ -763,6 +790,6 @@ def ingest_forecast(da: xr.DataArray, *, day_boundary: str, lead_label: str, uni
         da, day_boundary=day_boundary, lead_label=lead_label, units=units, source=source, init_dim=init_dim,
         lead_dim=lead_dim, member_dim=member_dim, accumulation=accumulation, daily_boundary=daily_boundary,
         boundary_tolerance_hours=boundary_tolerance_hours, check_units=check_units,
-        rain_resolution=rain_resolution, missing=missing)
+        rain_resolution=rain_resolution, missing=missing, negatives=negatives)
     forecast.ingest_info = info
     return forecast

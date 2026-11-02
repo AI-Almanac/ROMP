@@ -66,6 +66,20 @@ def match_axis(wanted, axis, tolerance: float | None = None) -> np.ndarray:
     return out
 
 
+def conform_longitudes(wanted, axis) -> np.ndarray:
+    """Longitudes put in the convention of `axis` (-180..180 when it has a negative value, else 0..360).
+
+    Only a value outside the axis' range is shifted by 360 (so a value already in range is returned exactly, as
+    exact matching needs); a shifted value can carry float noise, which matching within a tolerance absorbs.
+    """
+    wanted = np.array(wanted, dtype=float).reshape(-1)
+    if np.min(axis) < 0:
+        wanted[wanted > 180.0] -= 360.0
+    else:
+        wanted[wanted < 0.0] += 360.0
+    return wanted
+
+
 # ----------------------------------------------------------------------------------------------------------
 # weight tables
 # ----------------------------------------------------------------------------------------------------------
@@ -199,7 +213,7 @@ class SparseTransform:
     @classmethod
     def from_weights(cls, weights, lat=None, lon=None, *, target_ids=None,
                      convention: unit_ids.GridIdConvention | None = None,
-                     tolerance: float | None = None) -> "SparseTransform":
+                     tolerance: float | None = None, wrap_longitude: bool = False) -> "SparseTransform":
         """The transform of a weight table (see read_weights; a raw table or CSV path is read first).
 
         Weights keyed by coordinates need the source grid (`lat`, `lon` axes): its cells, latitude-major, are
@@ -207,6 +221,8 @@ class SparseTransform:
         cell the grid lacks is an error. Weights keyed by source ids have the sources they name (sorted), and
         the grid-id `convention` (explicit, else the one the ids establish) names grid points
         (see `positions`). Targets are the table's, sorted, unless `target_ids` gives their order.
+        `wrap_longitude` puts the weights' longitudes in the convention of the grid before matching (a grid ROMP
+        swapped to 0..360 or -180..180); use it with a `tolerance` when a shifted longitude carries float noise.
         """
         weights = _canonical(weights)
         targets = tuple(sorted(weights["target_id"].unique())) if target_ids is None else tuple(target_ids)
@@ -219,7 +235,8 @@ class SparseTransform:
         if lat is None or lon is None:
             raise ValueError("Weights keyed by coordinates need the source grid (lat and lon axes).")
         lat, lon = np.asarray(lat, dtype=float).reshape(-1), np.asarray(lon, dtype=float).reshape(-1)
-        lat_pos, lon_pos = _cell_axes(weights["lat"].to_numpy(), weights["lon"].to_numpy(), lat, lon, tolerance)
+        wlon = conform_longitudes(weights["lon"].to_numpy(), lon) if wrap_longitude else weights["lon"].to_numpy()
+        lat_pos, lon_pos = _cell_axes(weights["lat"].to_numpy(), wlon, lat, lon, tolerance)
         target_pos = pd.Series(weights["target_id"]).map({t: i for i, t in enumerate(targets)})
         if target_pos.isna().any():
             raise ValueError("Cell-transform weights contain IDs outside the compiled axes.")

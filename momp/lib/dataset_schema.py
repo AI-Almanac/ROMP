@@ -22,11 +22,18 @@ forecasts), day_boundary (observations: when the day starts and which date label
 "00 UTC, labelled by start") or lead_label (forecast: "start" = lead k is dated init + k - 1,
 "end" = init + k), accumulation (forecast: daily, since_init or auto), daily_boundary (forecast: cut the
 days at this UTC clock time, e.g. "03 UTC", instead of 24 h from the init), members (ensemble size), notes. ``path`` may use ``~`` and ``${ENV_VAR}``
-or ``${ENV_VAR:-default}``. `momp-run init --dataset-template obs` prints a blank entry.
+or ``${ENV_VAR:-default}``.
+
+Instead of ``file_pattern`` a dataset may list its files in ``paths`` (file names or globs, relative to ``path`` when
+that is given), with any number of files per year (live operational files hold one init each); ``years`` keeps the
+files of those years (a list, or "2010:2013"). A file's year is the first 19xx or 20xx in its name
+(`file_year`). ``unit_cvt`` (a number, the multiplier to mm) replaces ``units`` for files that declare none; a
+file that declares units is converted by them. `momp-run init --dataset-template obs` prints a blank entry.
 """
 from __future__ import annotations
 
 import difflib
+import glob
 import os
 import re
 from dataclasses import dataclass
@@ -37,12 +44,14 @@ import yaml
 from momp.lib.assertion import ROMPConfigError
 
 KINDS = ("observations", "forecast")
-DATASET_KEYS = ("id", "title", "kind", "name", "path", "file_pattern", "variable", "units", "dims",
-                "day_boundary", "lead_label", "accumulation", "daily_boundary", "members", "notes")
+DATASET_KEYS = ("id", "title", "kind", "name", "path", "paths", "years", "file_pattern", "variable", "units",
+                "unit_cvt", "dims", "day_boundary", "lead_label", "accumulation", "daily_boundary", "members", "notes")
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-OBS_DIMS = ("time", "lat", "lon")
-FORECAST_DIMS = ("init_time", "step", "member", "lat", "lon")
+OBS_DIMS = ("time", "lat", "lon", "unit")
+FORECAST_DIMS = ("init_time", "step", "member", "lat", "lon", "unit")
+FILE_YEAR_RE = re.compile(r"(19|20)\d{2}")
+"""The year of a file named in ``paths``: the first 19xx or 20xx anywhere in its name (as onset_blending reads it)."""
 UNIT_FACTORS = {"mm": None, "m": 1000}
 """Factor taking a ``units`` value to mm (None: already mm)."""
 
@@ -109,6 +118,8 @@ class Dataset:
     members: int | None = None
     notes: str = ""
     source: str = ""
+    paths: tuple | None = None
+    years: tuple | None = None
 
     @property
     def short_name(self) -> str:
@@ -119,6 +130,13 @@ class Dataset:
     def expanded_path(self) -> str:
         """The path with ``~`` and ${ENV_VAR} expanded; raises DatasetError if a variable is unset."""
         return expand_path(self.path, origin=self.source or "dataset")
+
+    def files(self) -> list[Path]:
+        """The files of a dataset given by ``paths`` (see `resolve_paths`); raises DatasetError for any other dataset."""
+        if self.paths is None:
+            raise DatasetError(f"{self.source or 'dataset'}: the dataset has no 'paths'")
+        return resolve_paths(self.paths, self.expanded_path if self.path else None, self.years,
+                             origin=self.source or "dataset")
 
 
 def suggest(name: str, candidates) -> str:
@@ -145,6 +163,74 @@ def expand_env(text: str, origin: str = "") -> str:
 def expand_path(text: str, origin: str = "") -> str:
     """Expand ${ENV_VAR} references and a leading ``~`` in a path string."""
     return str(Path(expand_env(str(text), origin)).expanduser())
+
+
+def file_year(path) -> int | None:
+    """The year a file holds: the first 19xx or 20xx in its name, or None."""
+    match = FILE_YEAR_RE.search(Path(str(path)).name)
+    return int(match.group()) if match else None
+
+
+def parse_years(value, origin: str = "years") -> tuple[int, ...]:
+    """A years filter: a list of years, one year, or text such as "2010:2013" (both ends included)."""
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, int):
+            return (value,)
+        if isinstance(value, str):
+            parts = [p for p in re.split(r"\s*[:\-]\s*", value.strip()) if p]
+            if len(parts) == 2:
+                first, last = int(parts[0]), int(parts[1])
+                if last < first:
+                    raise ValueError
+                return tuple(range(first, last + 1))
+            if len(parts) == 1:
+                return (int(parts[0]),)
+            raise ValueError
+        years = tuple(int(y) for y in value)
+        if not years or any(isinstance(y, bool) for y in value):
+            raise ValueError
+        return years
+    except (TypeError, ValueError):
+        raise DatasetError(f"{origin}: expected a list of years or text such as '2010:2013' but found {value!r}") from None
+
+
+def resolve_paths(paths, base=None, years=None, origin: str = "paths") -> list[Path]:
+    """The files named by ``paths`` (names or globs, ``~`` and ${ENV_VAR} expanded, relative ones under `base`).
+
+    The result is sorted by (year in the name, path), as onset_blending lists files, and holds each file once;
+    `years` keeps only the files of those years (a file whose name has no year is dropped then). A name that is
+    not a glob must exist; at least one file must remain.
+    """
+    items = [paths] if isinstance(paths, (str, Path)) else list(paths)
+    found: dict[str, Path] = {}
+    missing = []
+    for item in items:
+        text = expand_path(str(item), origin)
+        path = Path(text)
+        if not path.is_absolute() and base:
+            path = Path(base) / path
+        if any(c in text for c in "*?["):
+            hits = sorted(Path(p) for p in glob.glob(str(path)) if Path(p).is_file())
+            if not hits:
+                missing.append(str(path))
+        elif path.is_file():
+            hits = [path]
+        else:
+            hits = []
+            missing.append(str(path))
+        for hit in hits:
+            found.setdefault(str(hit), hit)
+    if missing:
+        raise DatasetError(f"{origin}: no file for {', '.join(missing)}. Fix: correct paths")
+    files = list(found.values())
+    if years is not None:
+        wanted = set(parse_years(years, f"{origin} years"))
+        files = [f for f in files if file_year(f) in wanted]
+    if not files:
+        raise DatasetError(f"{origin}: no file matches paths {items!r}" + (f" for the years {sorted(wanted)}" if years is not None else ""))
+    return sorted(files, key=lambda f: (file_year(f) or 0, str(f)))
 
 
 def unit_factor(units: str, origin: str) -> float | None:
@@ -192,13 +278,31 @@ def parse_dataset(data, origin: str, kind: str | None = None, require_id: bool =
         _fail(origin, f"kind {kind!r} is not a kind. Fix: write 'observations' or 'forecast'")
     if data.get("kind") not in (None, kind):
         _fail(origin, f"kind is {data['kind']!r} but a {kind} dataset is needed here")
-    path = _text(data, "path", origin)
+    paths = data.get("paths")
+    if paths is not None:
+        paths = (paths,) if isinstance(paths, str) else paths
+        if not isinstance(paths, (list, tuple)) or not paths or not all(isinstance(p, str) and p.strip() for p in paths):
+            _fail(origin, f"paths: expected a list of file names or globs but found {data.get('paths')!r}")
+        if "file_pattern" in data:
+            _fail(origin, "file_pattern and paths both say which files to read. Fix: keep one of them")
+        paths = tuple(paths)
+    path = _text(data, "path", origin, required=paths is None) or ""
+    years = parse_years(data["years"], f"{origin}: years") if data.get("years") is not None else None
+    if years is not None and paths is None:
+        _fail(origin, "years needs paths: a dataset read by file_pattern is read for the years the run asks for")
     variable = _text(data, "variable", origin)
     pattern = _text(data, "file_pattern", origin, required=False) or "{}.nc"
     if "{}" not in pattern:
         _fail(origin, f"file_pattern {pattern!r} has no '{{}}' for the year. Fix: write e.g. '{{}}.nc' (quoted)")
     units = data.get("units")
     cvt = unit_factor(units, origin) if units is not None else None
+    if data.get("unit_cvt") is not None:
+        factor = data["unit_cvt"]
+        if units is not None:
+            _fail(origin, "units and unit_cvt both say how to convert to mm. Fix: keep one of them")
+        if isinstance(factor, bool) or not isinstance(factor, (int, float)) or not 0 < factor < float("inf"):
+            _fail(origin, f"unit_cvt: expected a positive number (the multiplier to mm) but found {factor!r}")
+        cvt = float(factor)
     dims = data.get("dims")
     allowed = OBS_DIMS if kind == "observations" else FORECAST_DIMS
     if dims is not None:
@@ -243,7 +347,7 @@ def parse_dataset(data, origin: str, kind: str | None = None, require_id: bool =
     return Dataset(kind=kind, path=path, file_pattern=pattern, variable=variable, unit_cvt=cvt, units=units, accumulation=accumulation,
                    daily_boundary=daily_boundary, id=ident, title=str(data.get("title") or ""), name=_text(data, "name", origin, required=False),
                    dims=dims, day_boundary=boundary, lead_label=label, members=members,
-                   notes=str(data.get("notes") or "").strip(), source=origin)
+                   notes=str(data.get("notes") or "").strip(), source=origin, paths=paths, years=years)
 
 
 def _read_entries(file: Path) -> list[Dataset]:
