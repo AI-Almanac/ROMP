@@ -458,7 +458,7 @@ def forecast_reach(setup: OnsetSetup) -> int:
     for cond in compiled.conditions:
         reach = max(reach, cond.last)
     for veto in compiled.vetoes:
-        extra = veto.length - 1 if veto.placement == plan_mod.STARTS_INSIDE else 0
+        extra = veto.length - 1 if veto.placement in (plan_mod.STARTS_INSIDE, plan_mod.BEGINS) else 0
         reach = max(reach, veto.last + extra)
     if compiled.report_span is not None:
         reach = max(reach, compiled.report_span[1])

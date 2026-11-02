@@ -365,3 +365,14 @@ def test_exact_curve_rules_are_refused():
                                     "curve: {accumulate: rain minus base, onset: day after minimum}\n"))
     with pytest.raises(NotImplementedError, match="curve"):
         P.resolve_amounts(plan, {"base": np.array([3.0])}, n_series=1, exact=True)
+
+
+
+def test_forecast_reach_counts_a_dry_run_beginning_inside_like_one_starting_inside():
+    from types import SimpleNamespace
+    from momp.lib.onset_config import forecast_reach
+
+    text = DEFINITIONS["begins"]
+    def reach(t):
+        return forecast_reach(SimpleNamespace(definition=D.loads(HEAD + t, fine_amounts=True)))
+    assert reach(text) == reach(text.replace("beginning within", "starting within")) > 11
