@@ -16,7 +16,7 @@ onset date per init and cell, in the layout of compute_climatology_as_forecast.
 import numpy as np
 import pandas as pd
 
-from momp.onset.climatology_kde import conditional_probabilities
+from momp.onset.climatology_kde import conditional_probabilities, season_days
 import logging
 
 log = logging.getLogger(__name__)
@@ -46,11 +46,9 @@ def season_day(dates) -> np.ndarray:
 
     From 1 March on a leap year's dates count one less, so a calendar date has
     the same number every year and the KDE's day axis is not blurred by 29 February.
+    (momp.onset.climatology_kde.season_days with leap_shift: the one day counter, with onset_blending's start.)
     """
-    index = pd.DatetimeIndex(np.asarray(dates).ravel())
-    day = index.dayofyear.to_numpy() - 1
-    leap_shift = index.is_leap_year & (index.month >= 3)
-    return (day - leap_shift).astype(float)
+    return season_days(dates, (1, 1), leap_shift=True)
 
 
 def _conditional_by_case(clim_onset, target_year, cell_lat, cell_lon, issue_dates, horizon, cv):
@@ -115,9 +113,12 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     has no KDE (too few onset years) are left out. Rows are ordered by init,
     lat, lon and bin, with the columns of the climatology pair table.
     """
+    from momp.stats.bins import LeadBins
+
     cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
-    max_day, min_day = max(day_bins)[1], min(day_bins)[0]
-    extended_bins = ((-float("inf"), min_day - 1),) + tuple(day_bins) + ((max_day + 1, float("inf")),)
+    bins = LeadBins.from_day_bins(day_bins)
+    max_day, min_day = bins.last_day, bins.first_day
+    extended_bins = bins.extended
     obs_da = clim_onset.sel(year=target_year) if observed_onset_da is None else observed_onset_da
     lats, lons = obs_da.lat.values, obs_da.lon.values
     clim = _align(clim_onset, lats, lons)
@@ -137,18 +138,15 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
 
     obs_days = ((obs[lat_case, lon_case] - inits.values.astype("datetime64[ns]")[init_case])
                 // np.timedelta64(1, "D")).astype(np.int64)
-    labels, bin_prob, observed = [], [], []
-    for start, end in extended_bins:
-        if start == -float("inf"):
-            labels.append(f"Before day {min_day}")
+    labels, bin_prob, observed = bins.labels(), [], []
+    for k, (start, end) in enumerate(extended_bins):
+        if k == 0:
             bin_prob.append(prob[:, :min_day - 1].sum(axis=1))
             observed.append(obs_days <= min_day - 1)
-        elif start > max_day:
-            labels.append(f"After day {max_day}")
+        elif k == bins.n_inner + 1:
             bin_prob.append(np.maximum(1.0 - prob.sum(axis=1), 0.0))
             observed.append(obs_days > max_day)
         else:
-            labels.append(f"Days {start}-{end}")
             bin_prob.append(prob[:, start - 1:end].sum(axis=1))
             observed.append((start <= obs_days) & (obs_days <= end))
     n_bins = len(extended_bins)

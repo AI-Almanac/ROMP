@@ -1,14 +1,18 @@
 """Reference-climatology products: per-cell thresholds, harmonic season analysis and a threshold cache."""
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from momp.cache import NETCDF, Store
 from momp.onset.calendar import fixed_bounds, label_keys
-from momp.onset.model import Definition, ThresholdSpec
+from momp.onset.model import Definition, ThresholdSpec, resolution_of
+from momp.spatial import ids
 
 MAX_MISSING_FRACTION = 0.10
 _CHUNK_VALUES = 1 << 24
@@ -17,11 +21,12 @@ _CUMULATIVE_DAYS = np.concatenate([[0], np.cumsum(_DAYS_IN_MONTH)])
 _YEAR_LENGTH = 365
 
 
-def _year_windows(spec: ThresholdSpec, rain, years: tuple[int, int]) -> list[tuple[int, int]]:
+def _year_windows(spec: ThresholdSpec, rain, years: tuple[int, int], partial_years: bool = False) -> list[tuple[int, int]]:
     """Inclusive (first, last) time indices of the `during` window in each reference year.
 
     A window crossing the year end belongs to the year of its start. Years whose
-    window is not fully inside the data are skipped.
+    window is not fully inside the data are skipped, or with partial_years used for
+    the days the data has (a year with none of them is still skipped).
     """
     year_list = np.arange(years[0], years[1] + 1)
     if spec.during is None:
@@ -32,21 +37,58 @@ def _year_windows(spec: ThresholdSpec, rain, years: tuple[int, int]) -> list[tup
                 windows.append((int(idx[0]), int(idx[-1])))
         return windows
     keys = label_keys(rain.year, rain.month, rain.day)
+    if partial_years:
+        return _partial_windows(keys, year_list, *spec.during)
     first, last = fixed_bounds(keys, year_list, spec.during[0], spec.during[1])
     return [(int(a), int(b)) for a, b in zip(first, last) if a >= 0 and b >= a]
 
 
-def _threshold_rows(spec: ThresholdSpec, x: np.ndarray, valid: np.ndarray,
-                    windows: list[tuple[int, int]]) -> np.ndarray:
+def _partial_windows(keys: np.ndarray, year_list: np.ndarray, start, end) -> list[tuple[int, int]]:
+    """The window of each year cut to the days the data holds (first day on or after the start, last on or before the end)."""
+    if start.climatological is not None or end.climatological is not None:
+        raise ValueError("thresholds take month-day bounds; resolve climatological bounds per cell")
+    wraps = (end.month, end.day) < (start.month, start.day)
+    low = year_list * 10000 + start.month * 100 + start.day
+    high = (year_list + wraps) * 10000 + end.month * 100 + end.day
+    first = np.searchsorted(keys, low, side="left") + start.offset_days
+    last = np.searchsorted(keys, high, side="right") - 1 + end.offset_days
+    first, last = np.maximum(first, 0), np.minimum(last, len(keys) - 1)
+    return [(int(a), int(b)) for a, b in zip(first, last) if b >= a]
+
+
+def _window_sum(block: np.ndarray, sequential: bool) -> np.ndarray:
+    """Sum over time of a (series, time) block: numpy's own order, or day by day as a (time, series) array reduces.
+
+    The day-by-day order is the one blending's per-file totals take; it differs from the pairwise sum in the last bits.
+    """
+    if not sequential:
+        return block.sum(axis=1)
+    return np.add.reduce(np.ascontiguousarray(block.T), axis=0)
+
+
+def _add_compensated(total: np.ndarray, compensation: np.ndarray, value: np.ndarray) -> None:
+    """total += value with Kahan compensation, in place, as pandas' groupby sum adds (blending's totals over files)."""
+    y = value - compensation
+    t = total + y
+    compensation[:] = (t - total) - y
+    total[:] = t
+
+
+def _threshold_rows(spec: ThresholdSpec, x: np.ndarray, valid: np.ndarray, windows: list[tuple[int, int]],
+                    max_missing_fraction: float = MAX_MISSING_FRACTION, sequential: bool = False) -> np.ndarray:
     """Threshold in mm for each row of x (series, time), with NaN where too many reference days are missing."""
     n_days = sum(b - a + 1 for a, b in windows)
     if n_days == 0:
         return np.full(x.shape[0], np.nan)
     if spec.kind in ("mean_total", "mean_daily"):
-        total = np.zeros(x.shape[0])
+        total, compensation = np.zeros(x.shape[0]), np.zeros(x.shape[0])
         count = np.zeros(x.shape[0])
         for a, b in windows:
-            total += np.where(valid[:, a:b + 1], x[:, a:b + 1], 0.0).sum(axis=1)
+            part = _window_sum(np.where(valid[:, a:b + 1], x[:, a:b + 1], 0.0), sequential)
+            if sequential:
+                _add_compensated(total, compensation, part)
+            else:
+                total += part
             count += valid[:, a:b + 1].sum(axis=1)
         with np.errstate(invalid="ignore", divide="ignore"):
             mean = total / count
@@ -70,28 +112,39 @@ def _threshold_rows(spec: ThresholdSpec, x: np.ndarray, valid: np.ndarray,
         with np.errstate(all="ignore"):
             out = np.nanquantile(np.concatenate(sums, axis=1), spec.quantile, axis=1)
     missing_days = n_days - count
-    return np.where(missing_days / n_days > MAX_MISSING_FRACTION, np.nan, out)
+    return np.where(missing_days / n_days > max_missing_fraction, np.nan, out)
 
 
-def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int]) -> np.ndarray:
-    """Per-cell threshold in mm (spatial shape) from the reference years y0..y1 inclusive.
+def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
+                      max_missing_fraction: float = MAX_MISSING_FRACTION, partial_years: bool = False) -> np.ndarray:
+    """Per-series threshold in mm (spatial shape) from the reference years y0..y1 inclusive.
 
     mean_total is days x the mean daily rain over the `during` days pooled across
     years; mean_daily is that mean; quantile_total is the quantile (linear
     interpolation) of all `days`-day running totals lying wholly inside `during`,
     pooled across years. Windows crossing the year end belong to the year of
-    their start. A cell is NaN when more than 10 % of its reference days are missing.
+    their start. A series (grid cell or unit: the spatial dims are whatever `rain` has,
+    so a unit series gives a unit threshold) is NaN when more than max_missing_fraction
+    (default 10 %; 1.0 never) of its reference days are missing.
+
+    Options reproducing onset_blending's computed threshold: max_missing_fraction=1.0, partial_years=True
+    (a year whose window is only partly in the data counts its days, where by default it is skipped) and
+    float rain (rain_resolution "exact": millimetres are used as they are, summed day by day per year and the
+    years added with Kahan compensation, the order of blending's per-file totals and groupby sum). The caller sets `days` (blending defaults it to the trigger window).
     """
-    windows = _year_windows(spec, rain, years)
+    windows = _year_windows(spec, rain, years, partial_years)
     spatial_shape = rain.tenths.shape[:-1]
     n_time = rain.tenths.shape[-1]
     flat = rain.tenths.reshape(-1, n_time)
     flat_missing = rain.missing.reshape(-1, n_time)
+    exact = resolution_of(flat) == "exact"
     out = np.empty(flat.shape[0])
     step = max(1, _CHUNK_VALUES // max(n_time, 1))
     for a in range(0, flat.shape[0], step):
-        x = flat[a:a + step].astype(np.float64) / 10.0
-        out[a:a + step] = _threshold_rows(spec, x, ~flat_missing[a:a + step], windows)
+        x = flat[a:a + step].astype(np.float64)
+        if not exact:
+            x = x / 10.0
+        out[a:a + step] = _threshold_rows(spec, x, ~flat_missing[a:a + step], windows, max_missing_fraction, exact)
     return out.reshape(spatial_shape)
 
 
@@ -103,9 +156,11 @@ def _threshold_array(name: str, values: np.ndarray, spec: ThresholdSpec, rain, y
                                "spec": repr(spec)})
 
 
-def compute_thresholds(definition: Definition, rain, years: tuple[int, int]) -> dict[str, xr.DataArray]:
-    """Every threshold the definition names, as DataArrays in mm (attrs: source, years, spec)."""
-    return {name: _threshold_array(name, compute_threshold(spec, rain, years), spec, rain, years)
+def compute_thresholds(definition: Definition, rain, years: tuple[int, int], **options) -> dict[str, xr.DataArray]:
+    """Every threshold the definition names, as DataArrays in mm (attrs: source, years, spec).
+
+    `options` are those of compute_threshold (max_missing_fraction, partial_years)."""
+    return {name: _threshold_array(name, compute_threshold(spec, rain, years, **options), spec, rain, years)
             for name, spec in definition.thresholds}
 
 
@@ -337,13 +392,177 @@ class ThresholdCache:
         self.store = Store("thresholds", directory, codec=NETCDF, label="Thresholds")
         self.files = list(files)
 
-    def parts(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str = "") -> dict:
-        """The parts that identify one threshold computation."""
-        return {"name": name, "source": rain.source, "years": [int(years[0]), int(years[1])], "spec": repr(spec),
-                "grid": {dim: rain.coords[dim] for dim in rain.dims[:-1]}, "files": self.files}
+    def parts(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str = "", **options) -> dict:
+        """The parts that identify one threshold computation (options of compute_threshold only when given)."""
+        parts = {"name": name, "source": rain.source, "years": [int(years[0]), int(years[1])], "spec": repr(spec),
+                 "grid": {dim: rain.coords[dim] for dim in rain.dims[:-1]}, "files": self.files}
+        if options:
+            parts["options"] = {key: options[key] for key in sorted(options)}
+        if resolution_of(rain.tenths) == "exact":
+            parts["resolution"] = "exact"
+        return parts
 
-    def get_or_compute(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str) -> xr.DataArray:
-        """Return the stored threshold if present, else compute and store it."""
+    def get_or_compute(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str, **options) -> xr.DataArray:
+        """Return the stored threshold if present, else compute (with compute_threshold's `options`) and store it."""
         return self.store.get_or_compute(
-            self.parts(spec, rain, years, name),
-            lambda: _threshold_array(name, compute_threshold(spec, rain, years), spec, rain, years))
+            self.parts(spec, rain, years, name, **options),
+            lambda: _threshold_array(name, compute_threshold(spec, rain, years, **options), spec, rain, years))
+
+
+# ---------------------------------------------------------------------------
+# Reference onset dates: one provider for a fixed month-day, a table, and the computed mean or median
+# ---------------------------------------------------------------------------
+
+ONSET_STATISTICS = ("mean", "median")
+
+
+def reduce_onset_days(doy: xr.DataArray, how: str = "mean") -> xr.DataArray:
+    """The climatological onset day of year over the "year" dim of `doy` (NaN for a year without an onset).
+
+    "mean" is the mean over the years that have an onset, rounded half to even (ROMP's climatological onset);
+    "median" is the median of those years, NaN where fewer than half of the years have an onset
+    (engine.climatological_onset).
+    """
+    if how == "mean":
+        return np.round(doy.mean(dim="year"))
+    if how != "median":
+        raise ValueError(f"the onset statistic must be one of {ONSET_STATISTICS}, got {how!r}")
+    values = doy.transpose("year", ...).values
+    n_found = np.isfinite(values).sum(axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        median = np.nanmedian(values, axis=0)
+    median = np.where(n_found * 2 >= values.shape[0], median, np.nan)
+    dims = tuple(d for d in doy.dims if d != "year")
+    return xr.DataArray(median, dims=dims, coords={d: doy.coords[d] for d in dims if d in doy.coords})
+
+
+@dataclass(frozen=True)
+class ReferenceOnset:
+    """The reference (climatological) onset date: one provider for every source.
+
+    Sources: a fixed month-day ("06-02") in every year and unit, a table of dates keyed by unit id and/or year
+    (onset_blending's reference_onset), or a computed field: the mean or median onset day of year over many years
+    (`from_onsets`), as the climatology reference forecast and the derived seasons use.
+    Consumers: `dates` (a date per (year, unit)), `search_start` (the entry for momp.onset.engine's detect_*
+    search_start, so an onset search never begins before the reference onset) and `doy_field` (day of year per cell).
+    """
+
+    month_day: str | None = None
+    table: pd.DataFrame | None = field(default=None, compare=False)
+    computed: xr.DataArray | None = field(default=None, compare=False)
+    statistic: str | None = None
+
+    def __post_init__(self):
+        """Exactly one source."""
+        if sum(x is not None for x in (self.month_day, self.table, self.computed)) != 1:
+            raise ValueError("a reference onset is exactly one of a month-day, a table or a computed day of year")
+
+    @classmethod
+    def from_onsets(cls, doy: xr.DataArray, how: str = "mean") -> "ReferenceOnset":
+        """The mean or median of the onset days of year `doy` (dims year, *spatial) over the years (reduce_onset_days)."""
+        return cls(computed=reduce_onset_days(doy, how), statistic=how)
+
+    @classmethod
+    def read(cls, path, *, date_col: str | None = None, year_col: str | None = None, day_col: str | None = None,
+             base_date: str | None = None, unit_col: str | None = None) -> "ReferenceOnset":
+        """A table of reference onset dates from a CSV: a date column, or a year and a day offset from `base_date`.
+
+        Keyed by the unit-id column `unit_col` and/or the `year_col` (at least one); dates are datetime.date.
+        """
+        table = pd.read_csv(path, dtype={unit_col: str} if unit_col else None)
+        if date_col and date_col in table.columns:
+            table["ref_onset_date"] = pd.to_datetime(table[date_col], errors="coerce").dt.date
+        elif year_col and day_col and base_date and year_col in table.columns and day_col in table.columns:
+            table["ref_onset_date"] = table.apply(
+                lambda row: (pd.to_datetime(f"{int(row[year_col])}-{base_date}")
+                             + pd.Timedelta(days=int(row[day_col]))).date(), axis=1)
+        else:
+            raise ValueError("ref_onset file needs either a parseable 'date_col', or 'year_col'+'day_col'+'base_date'.")
+        keys = []
+        if unit_col:
+            if unit_col not in table.columns:
+                raise ValueError(f"ref_onset unit_col '{unit_col}' not in file columns {table.columns.tolist()}")
+            table = table.rename(columns={unit_col: "id"})
+            table["id"] = ids.normalize(table["id"], context="reference-onset IDs")
+            keys.append("id")
+        if year_col and year_col in table.columns:
+            table = table.rename(columns={year_col: "year"})
+            table["year"] = table["year"].astype(int)
+            keys.append("year")
+        if not keys:
+            raise ValueError("ref_onset file needs a 'year_col' and/or 'unit_col' to key on.")
+        return cls(table=table[keys + ["ref_onset_date"]].drop_duplicates())
+
+    def dates(self, unit_ids, years) -> np.ndarray:
+        """The reference onset date (datetime64[ns], NaT without one) of each (unit, year) pair, row by row.
+
+        A computed field needs `unit_ids` to be its unit coordinate (a `unit` dim) and gives each year's Jan 1 plus
+        its day of year.
+        """
+        years = np.asarray(years, dtype=int)
+        none = np.full(len(years), np.datetime64("NaT"), dtype="datetime64[ns]")
+        if self.month_day is not None:
+            distinct, codes = np.unique(years, return_inverse=True)
+            dates = pd.to_datetime(pd.Series([f"{y}-{self.month_day}" for y in distinct]), errors="coerce").to_numpy()
+            return dates[codes].astype("datetime64[ns]")
+        if self.computed is not None:
+            field_ = self.computed
+            if field_.ndim != 1 or "unit" not in field_.dims:
+                raise ValueError("dates by unit id need a computed reference onset over a 'unit' dim")
+            doy = field_.sel(unit=np.asarray(unit_ids)).values
+            jan1 = (years - 1970).astype("datetime64[Y]").astype("datetime64[D]")
+            with np.errstate(invalid="ignore"):
+                offset = np.where(np.isfinite(doy), doy, 1).astype(np.int64) - 1
+            out = (jan1 + offset.astype("timedelta64[D]")).astype("datetime64[ns]")
+            return np.where(np.isfinite(doy), out, none)
+        keys = [k for k in ("id", "year") if k in self.table.columns]
+        if not keys:
+            return none
+        table = self.table.drop_duplicates(keys + ["ref_onset_date"])
+        if table.duplicated(keys).any():
+            raise ValueError("The reference onset table gives a unit and year more than one date")
+        pairs = pd.DataFrame({"id": pd.Series(np.asarray(unit_ids, dtype=str)), "year": years})
+        found = pairs[keys].merge(table, on=keys, how="left")["ref_onset_date"]
+        return pd.to_datetime(found).to_numpy().astype("datetime64[ns]")
+
+    def search_start(self, years, unit_ids=None, *, dims: tuple[str, ...] = ("unit",)):
+        """The `search_start` entry of detect_observed / detect_forecast for these years.
+
+        A month-day is the "MM-DD" string. Otherwise a DataArray of dates (NaT for none) over "year" and, for a table
+        keyed by unit, the `dims` of the units (default one "unit" dim holding `unit_ids`); a computed field
+        over its own spatial dims gives each year's date.
+        """
+        years = np.asarray(years, dtype=int)
+        if self.month_day is not None:
+            return self.month_day
+        if self.computed is not None and (unit_ids is None or "unit" not in self.computed.dims):
+            doy = self.computed
+            jan1 = (years - 1970).astype("datetime64[Y]").astype("datetime64[D]")
+            values = np.where(np.isfinite(doy.values)[None], jan1.reshape((-1,) + (1,) * doy.ndim)
+                              + (np.nan_to_num(doy.values, nan=1.0).astype(np.int64) - 1)[None].astype("timedelta64[D]"),
+                              np.datetime64("NaT")).astype("datetime64[ns]")
+            return xr.DataArray(values, dims=("year", *doy.dims), coords={"year": years, **doy.coords})
+        if unit_ids is None:
+            keyed = [k for k in ("id", "year") if k in self.table.columns]
+            if keyed != ["year"]:
+                raise ValueError("a reference onset table keyed by unit needs the unit ids")
+            unit_ids = [""]
+        unit_ids = np.asarray(unit_ids)
+        grid_years = np.repeat(years, len(unit_ids))
+        grid_units = np.tile(unit_ids, len(years))
+        values = self.dates(grid_units, grid_years).reshape(len(years), len(unit_ids))
+        return xr.DataArray(values, dims=("year", dims[0]), coords={"year": years, dims[0]: unit_ids})
+
+    def doy_field(self, like: xr.DataArray) -> xr.DataArray:
+        """The day of year of the reference onset on the grid of `like` (the climatology reference forecast's input).
+
+        A computed field is returned as it is; a month-day is its day of year in a year of 365 days. A table varies by
+        year (and unit), so it has no single day-of-year field.
+        """
+        if self.computed is not None:
+            return self.computed
+        if self.month_day is None:
+            raise ValueError("a reference onset table has dates per year; it gives no day-of-year field")
+        doy = pd.Timestamp(f"2001-{self.month_day}").dayofyear
+        return xr.full_like(like.astype(float), float(doy))

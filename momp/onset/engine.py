@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import importlib
-import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -1145,6 +1144,8 @@ def climatological_onset(definition: Definition, rain: DailyRain, *, thresholds=
     365. onset_doy is NaN where fewer than half of `years` have an onset.
     Variables: onset_doy (float) and n_onset_years (int), dims (season, *spatial).
     """
+    from momp.onset.climatology import reduce_onset_days
+
     ds = detect_observed(definition, rain, thresholds=thresholds, years=years,
                          season_climatology=season_climatology, backend=backend)
     index = ds["onset_index"].values
@@ -1156,11 +1157,8 @@ def climatological_onset(definition: Definition, rain: DailyRain, *, thresholds=
            + (year - season_year) * _year_length(rain.calendar, season_year)).astype(float)
     doy = np.where(found, doy, np.nan)
     n_found = found.sum(axis=0)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        median = np.nanmedian(doy, axis=0)
-    median = np.where(n_found * 2 >= len(ds["year"]), median, np.nan)
     dims = ds["status"].dims[1:]
+    median = reduce_onset_days(xr.DataArray(doy, dims=("year", *dims)), "median").values
     out = xr.Dataset({"onset_doy": (dims, median), "n_onset_years": (dims, n_found.astype(np.int64))},
                      coords={d: ds.coords[d] for d in dims if d in ds.coords})
     out.attrs.update({"definition_id": definition.id, "definition_version": definition.version,

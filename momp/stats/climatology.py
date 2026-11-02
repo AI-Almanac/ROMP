@@ -3,6 +3,7 @@
 from momp.io.input import load_thresholds, obs_years, reference_held, reference_year, release_reference
 from momp.stats.detect import detect_observed_onset
 from momp.lib.onset_config import onset_setup
+from momp.onset.climatology import ReferenceOnset, reduce_onset_days
 from momp.utils.practical import restore_args
 
 import numpy as np
@@ -106,10 +107,7 @@ def compute_climatological_onset(*, years_clim,
 
     # Stack all years and compute mean day of year
     onset_stack = xr.concat(all_onset_days, dim='year')
-    climatological_onset_doy = onset_stack.mean(dim='year')
-
-    # Round to nearest integer day
-    climatological_onset_doy = np.round(climatological_onset_doy)
+    climatological_onset_doy = reduce_onset_days(onset_stack, "mean")   # mean day of year, rounded to a whole day
 
     log.debug(f"Climatological onset computed from {len(all_onset_days)} valid years")
 
@@ -144,7 +142,8 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     Only processes forecasts initialized before the observed onset date.
 
     Parameters:
-    climatological_onset_doy: xarray DataArray with climatological onset day of year
+    climatological_onset_doy: xarray DataArray with climatological onset day of year, or a
+        momp.onset.climatology.ReferenceOnset (its day-of-year field on the grid of observed_onset_da)
     year: int, year to evaluate
     init_dates: pandas DatetimeIndex with initialization dates
     observed_onset_da: xarray DataArray with observed onset dates for filtering
@@ -155,6 +154,8 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     pandas DataFrame with climatology forecast results, one row per (init, lat, lon) in that order for
     cells with an observed onset and an init before it; the climatological onset falls in the year of its init
     """
+    if isinstance(climatological_onset_doy, ReferenceOnset):
+        climatological_onset_doy = climatological_onset_doy.doy_field(observed_onset_da)
     lats = climatological_onset_doy.lat.values
     lons = climatological_onset_doy.lon.values
 
