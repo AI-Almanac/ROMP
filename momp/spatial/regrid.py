@@ -101,7 +101,7 @@ def read_weights(source, context: str = "weights") -> pd.DataFrame:
         path = str(source)
         if not os.path.exists(path):
             raise FileNotFoundError(f"{context} file not found: {path}")
-        table = pd.read_csv(path, dtype=_WEIGHT_TYPES)
+        table = pd.read_csv(path, dtype=_WEIGHT_TYPES, float_precision="round_trip")
     else:
         table = source.copy()
     if "target_id" not in table.columns and "adm3_name" not in table.columns:

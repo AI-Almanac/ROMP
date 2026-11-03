@@ -146,3 +146,19 @@ def test_grid_weights_follow_the_sources_through_longitude_wraps_and_orders():
     np.testing.assert_allclose(cos.diagonal(), np.repeat(np.cos(np.deg2rad(lat)), 3))
     with pytest.raises(ValueError, match="cell_area"):
         regrid.grid_weights(lat, src_lon, lat, dst_lon, cell_area="bogus")
+
+
+def test_weights_are_read_exactly_as_written(tmp_path):
+    """Weights round-trip through CSV to the last bit (pandas' default float parser does not always)."""
+    import numpy as np
+    import pandas as pd
+    from momp.spatial.regrid import read_weights
+
+    rng = np.random.default_rng(3)
+    weights = rng.random(5000) / 7.0
+    table = pd.DataFrame({"target_id": [f"u{i % 50}" for i in range(5000)], "weight": weights,
+                          "source_id": [f"s{i}" for i in range(5000)]})
+    path = tmp_path / "w.csv"
+    table.to_csv(path, index=False, float_format="%.17g")
+    read = read_weights(str(path))
+    np.testing.assert_array_equal(np.sort(read["weight"].to_numpy()), np.sort(weights))

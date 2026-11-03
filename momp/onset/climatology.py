@@ -470,7 +470,7 @@ class ReferenceOnset:
 
         Keyed by the unit-id column `unit_col` and/or the `year_col` (at least one); dates are datetime.date.
         """
-        table = pd.read_csv(path, dtype={unit_col: str} if unit_col else None)
+        table = pd.read_csv(path, dtype={unit_col: str} if unit_col else None, float_precision="round_trip")
         if date_col and date_col in table.columns:
             table["ref_onset_date"] = pd.to_datetime(table[date_col], errors="coerce").dt.date
         elif year_col and day_col and base_date and year_col in table.columns and day_col in table.columns:
