@@ -53,7 +53,7 @@ def create_parser():
 def parse_overrides(cli_args=None) -> dict:
     """The config overrides given on the command line, {flat key: value}; unknown arguments are ignored.
 
-    Only the flags actually given are returned; build.resolve_flat validates and records them as 'command line'.
+    Only the flags actually given are returned; build.resolve validates and records them as 'command line'.
     cli_args is the argument list (sys.argv[1:] when None).
     """
     args, _ = create_parser().parse_known_args(cli_args)

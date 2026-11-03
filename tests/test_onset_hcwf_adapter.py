@@ -1,23 +1,18 @@
 """hcwf.stats.detect keeps the old output schemas; expected values are worked out by hand from the old rules, which
 `hcwf-run convert` writes as a definition (hcwf.lib.convert.flat_onset_to_rule)."""
 
+import typed_io
 import logging
 
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-
-from hcwf.config import flat_bridge
 from hcwf.stats.detect import (
     check_alignment,
-    check_alignment_once,
-    compute_onset_for_all_members,
-    compute_onset_for_deterministic_model,
     detect_deterministic,
     detect_ensemble,
     detect_observed,
-    detect_observed_onset,
 )
 from hcwf.stats import detect
 
@@ -36,7 +31,7 @@ FLAT = old_rule()
 
 def typed(kwargs):
     """(rc, case, select): the typed inputs of the flat kwargs of a test."""
-    return flat_bridge.from_case_kwargs(kwargs)
+    return typed_io.from_case_kwargs(kwargs)
 
 
 def obs_args(kwargs):
@@ -216,31 +211,3 @@ def test_alignment_check_is_quiet_when_aligned(caplog, monkeypatch):
     check_alignment(obs, forecast, *typed({**DEFINITION, "model": "toy", "obs_dir": "x", "check_alignment": True})[:2])
     assert "aligned" in caplog.text
     caplog.clear()
-
-
-# --- the kwargs wrappers give what the typed functions give ------------------------------------------------------------
-
-def test_the_kwargs_wrappers_equal_the_typed_functions():
-    """detect_observed_onset, compute_onset_for_* and check_alignment_once (R2-bridge) rebuild the typed inputs."""
-    rain = [("2020-05-10", 3)]
-    xr.testing.assert_identical(detect_observed_onset(_obs(rain), {}, 2020, **FLAT),
-                                detect_observed(_obs(rain), {}, 2020, *obs_args(FLAT)))
-    forecast = _forecast([{3: 10, 4: 10, 5: 10}, {4: 10, 5: 10, 6: 10}])
-    cfg = {**FLAT, "model": "toy", "members": [0, 1]}
-    pd.testing.assert_frame_equal(compute_onset_for_deterministic_model(forecast.isel(member=0, drop=True), {}, OBS_ONSET, **cfg),
-                                  detect_deterministic(forecast.isel(member=0, drop=True), {}, OBS_ONSET, *typed(cfg)))
-    for wrapped, direct in zip(compute_onset_for_all_members(forecast, {}, OBS_ONSET, **cfg),
-                               detect_ensemble(forecast, {}, OBS_ONSET, *typed(cfg))):
-        pd.testing.assert_frame_equal(wrapped, direct)
-
-
-def test_the_detection_extras_reach_the_typed_function():
-    """search_start, restrict_to_season and onset_count are arguments of detect_forecast and kwargs of the wrapper."""
-    forecast = _forecast([{3: 10, 4: 10, 5: 10}]).isel(member=0, drop=True)
-    cfg = {**FLAT, "model": "toy"}
-    rc, case, select = typed(cfg)
-    direct = detect.detect_forecast(forecast, {}, OBS_ONSET, rc, case, select, restrict_to_season=False)
-    wrapped = detect._detect_forecast(forecast, {}, OBS_ONSET, {**cfg, "restrict_to_season": False})
-    assert direct["day"].tolist() == wrapped["day"].tolist() and direct["status"].tolist() == wrapped["status"].tolist()
-    with pytest.raises(ValueError, match="not config keys or selections: surprise"):
-        detect_observed_onset(_obs([("2020-05-10", 3)]), {}, 2020, **{**FLAT, "surprise": 1})

@@ -1,5 +1,6 @@
 """create_score_results scores a non-climatology reference from the reference model's own data."""
 
+import typed_io
 import numpy as np
 import pandas as pd
 import pytest
@@ -10,7 +11,6 @@ from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
 from hcwf.metrics.skill import create_score_results, prepare_pairs
 from hcwf.stats.bins import climatological_pairs
-from hcwf.config import flat_bridge
 from hcwf.stats.climatology import climatological_onset_dataset
 from hcwf.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
 
@@ -67,7 +67,7 @@ def config(tmp_path, monkeypatch):
 
 def _typed(config):
     """(rc, case, select) of a test's flat config."""
-    return flat_bridge.from_case_kwargs(config)
+    return typed_io.from_case_kwargs(config)
 
 
 def _results(config, prepared=None):

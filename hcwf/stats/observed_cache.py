@@ -6,7 +6,7 @@ the reference and later runs. The entry is keyed by a *fingerprint* of those six
 keeps the entries and reports hits and misses); the backend, models, windows and reference are not in it. Evaluation
 units replace the cells part by a units part (the units specification, the files it names, the units kept), and run
 options that change the numbers (missing-rain policy, resolution, horizon, the reference onset a search starts at) add
-an options part when they are set; without them the fingerprint is the one a grid run always had. While a run is active (``activate``), ``hcwf.stats.detect.detect_observed_onset``
+an options part when they are set; without them the fingerprint is the one a grid run always had. While a run is active (``activate``), ``hcwf.stats.detect.detect_observed``
 asks ``lookup`` first and calls ``store`` after detecting, so each year is detected once per fingerprint.
 
 The fingerprint is computed from typed inputs (``fingerprint_parts(rain, thresh, obs, area, onset, options, select,
@@ -28,7 +28,6 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Codec, Store, file_identity, part_hash
-from hcwf.config import flat_bridge
 from hcwf.config.model import Selection
 
 log = logging.getLogger(__name__)
@@ -138,12 +137,6 @@ def observation_files(obs, files_years, years) -> list:
         else:
             found.append([f"missing {year}"])
     return found
-
-
-def obs_files(kwargs, years) -> list:  # R2-bridge
-    """observation_files with the run's flat kwargs."""
-    rc, _, select = flat_bridge.from_case_kwargs(kwargs)
-    return observation_files(rc.observations, select.obs_files_years, years)
 
 
 def _obs_files_hash(obs, files_years, years) -> str:

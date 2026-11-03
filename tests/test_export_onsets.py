@@ -15,22 +15,18 @@ import xarray as xr
 import yaml
 
 from hcwf import export
-from hcwf.config.flat_bridge import model_kwargs
 from hcwf.config.model import RunConfig
-from hcwf.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
-                           get_initialization_dates, load_history, load_imd_rainfall, load_thresholds)
-from hcwf.config.build import resolve_flat
+from hcwf.io.input import forecast_of, history_of, initialization_dates, observations_of, thresholds_of
+from typed_io import flat_config
 from hcwf.lib.config_yaml import build_config
-from hcwf.lib.onset_config import onset_setup
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.model import Status
-from hcwf.stats.climatology import compute_climatological_onset, compute_climatological_onset_dataset
+from hcwf.stats.climatology import climatological_onset, climatological_onset_dataset
 from hcwf.stats.climatology import compute_climatology_as_forecast
 from hcwf.stats.observed_cache import threshold_hash
 from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
                                                 create_conditional_climatological_forecast_obs_pairs)
-from hcwf.stats.detect import (compute_onset_for_all_members, compute_onset_for_deterministic_model,
-                               detect_observed_onset)
+from hcwf.stats.detect import detect_deterministic, detect_ensemble, detect_observed
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIM_YEARS = range(2006, 2021)
@@ -97,7 +93,7 @@ def world(tmp_path_factory):
     _write_forecast(base / "DET", 0)
     _write_forecast(base / "ENS", MEMBERS)
     raws = {"DET": _raw(base, "DET", False), "ENS": _raw(base, "ENS", True)}
-    cfgs = {name: resolve_flat(raw) for name, raw in raws.items()}
+    cfgs = {name: flat_config(raw) for name, raw in raws.items()}
     paths = {"DET": export.export_onsets(cfgs["DET"], sources=["observed", "DET", "climatology",
                                                                 "conditional_climatology"]),
              "ENS": export.export_onsets(cfgs["ENS"], sources=["ENS"])}
@@ -112,10 +108,10 @@ class SimpleNs:
         self.__dict__.update(kwargs)
 
 
-def _kw(cfg, model, *, reference=False):
-    """The scoring's keyword arguments for one model (or the reference named `model`), first window."""
+def _typed(cfg, model, *, reference=False):
+    """The scoring's run and case for one model (or the reference named `model`), first window."""
     rc = RunConfig.from_flat(cfg, check=False)
-    return model_kwargs(rc, model, reference_as=model if reference else None)
+    return rc, rc.first_case(model, reference_as=model if reference else None)
 
 
 def _open(path):
@@ -152,7 +148,7 @@ def test_observed_layout_dtypes_and_flags(world):
 def test_global_attributes_hold_the_provenance(world):
     """Every file carries the CF convention, definition, thresholds, mask, history mode, lead window, paths and config."""
     cfg = world.cfgs["DET"]
-    defn = onset_setup(_kw(cfg, "DET")).definition
+    defn = _typed(cfg, "DET")[0].onset.definition
     for source, path in world.paths["DET"].items():
         attrs = _open(path).attrs
         assert attrs["Conventions"] == "CF-1.8"
@@ -177,7 +173,7 @@ def test_overrides_and_threshold_hash_are_recorded(world):
     base = world.base
     raw = _raw(base, "DET", False, override={"wet_day": "at least 2 mm"})
     raw["output"]["data_dir"] = str(base / "out_override")
-    cfg = resolve_flat(raw)
+    cfg = flat_config(raw)
     path = export.export_onsets(cfg, sources=["observed"])["observed"]
     attrs = _open(path).attrs
     assert attrs["definition_overrides"] == "wet_day,reject if (dry_spell_check = false)"
@@ -296,7 +292,7 @@ def test_non_standard_calendar_observed_export(tmp_path):
         xr.Dataset({"precip": (("time", "lat", "lon"), rain, {"units": "mm"})},
                    coords={"time": time, "lat": LAT, "lon": LON}).to_netcdf(base / "obs" / f"{year}.nc")
     _write_forecast(base / "DET", 0)
-    cfg = resolve_flat(_raw(base, "DET", False))
+    cfg = flat_config(_raw(base, "DET", False))
     path = export.export_onsets(cfg, sources=["observed"], out=base / "nl")["observed"]
     ds = export.open_onsets(path)
     assert ds.attrs["calendar"] == "noleap"
@@ -324,20 +320,20 @@ def _same_dates(exported, strings):
 
 
 def _scoring_inputs(cfg, model):
-    """What the scoring does per year: kwargs, thresholds and per year (year, rain, observed onsets, history)."""
-    kw = _kw(cfg, model)
-    thresholds = load_thresholds(**kw)
+    """What the scoring does per year: run, case, thresholds and per year (year, rain, observed onsets, history)."""
+    rc, case = _typed(cfg, model)
+    thresholds = thresholds_of(rc, case.model)
     out = []
-    for year in kw["years"]:
-        rain = load_imd_rainfall(year, **kw)
-        out.append((year, rain, detect_observed_onset(rain, thresholds, year, **kw), load_history(year, rain, **kw)))
-    return kw, thresholds, out
+    for year in rc.evaluation.years:
+        rain = observations_of(year, rc)
+        out.append((year, rain, detect_observed(rain, thresholds, year, rc), history_of(year, rain, rc)))
+    return rc, case, thresholds, out
 
 
 def test_observed_equals_the_onsets_the_scoring_detects(world):
-    """Exported observed dates are the (lat, lon) onset arrays detect_observed_onset gives for each year."""
+    """Exported observed dates are the (lat, lon) onset arrays detect_observed gives for each year."""
     ds = _open(world.paths["DET"]["observed"])
-    _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
+    _, _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
     assert len(inputs) == 2
     for year, _, onset_da, _ in inputs:
         got = ds["onset_date"].sel(year=year).isel(season=0).transpose("lat", "lon")
@@ -349,11 +345,11 @@ def test_observed_equals_the_onsets_the_scoring_detects(world):
 def test_deterministic_model_equals_the_scored_table(world):
     """Every row of the table the deterministic scoring consumes is in the file with the same date, day and status."""
     ds = _open(world.paths["DET"]["DET"])
-    kw, thresholds, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
+    rc, case, thresholds, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
     total = 0
     for year, rain, onset_da, history in inputs:
-        p_model = get_forecast_deterministic_twice_weekly(year, **kw)
-        frame = compute_onset_for_deterministic_model(p_model, thresholds, onset_da, history=history, **kw)
+        p_model = forecast_of(year, rc, case.model, ensemble=False)
+        frame = detect_deterministic(p_model, thresholds, onset_da, rc, case, history=history)
         got = _rows(ds, frame, ["onset_date", "onset_day", "onset_doy", "status", "scored"])
         _same_dates(got["onset_date"], frame["onset_date"])
         want_day = frame["onset_day"].astype(float).to_numpy()
@@ -368,11 +364,11 @@ def test_deterministic_model_equals_the_scored_table(world):
 def test_ensemble_model_equals_the_scored_tables(world):
     """Members and the ensemble onset match the member and ensemble tables the probabilistic scoring consumes."""
     ds = _open(world.paths["ENS"]["ENS"])
-    kw, thresholds, inputs = _scoring_inputs(world.cfgs["ENS"], "ENS")
+    rc, case, thresholds, inputs = _scoring_inputs(world.cfgs["ENS"], "ENS")
     total = 0
     for year, rain, onset_da, history in inputs:
-        p_model = get_forecast_probabilistic_twice_weekly(year, **kw)
-        members, ensemble = compute_onset_for_all_members(p_model, thresholds, onset_da, history=history, **kw)
+        p_model = forecast_of(year, rc, case.model, ensemble=True)
+        members, ensemble = detect_ensemble(p_model, thresholds, onset_da, rc, case, history=history)
         got = _rows(ds, members, ["onset_day", "status"])
         assert np.array_equal(got["onset_day"], members["onset_day"].astype(float).to_numpy(), equal_nan=True)
         assert [Status(c).name for c in got["status"]] == members["onset_status"].tolist()
@@ -395,16 +391,17 @@ def test_ensemble_model_equals_the_scored_tables(world):
 def test_climatology_equals_the_scored_table(world):
     """The climatology per-cell onset and per-init forecast match compute_climatology_as_forecast."""
     ds = _open(world.paths["DET"]["climatology"])
-    kw = _kw(world.cfgs["DET"], "climatology", reference=True)
-    clim_doy = compute_climatological_onset(**kw)
+    rc, case = _typed(world.cfgs["DET"], "climatology", reference=True)
+    clim_doy = climatological_onset(rc, case)
     assert np.array_equal(ds["climatological_onset_doy"].isel(season=0).values, clim_doy.values.astype(np.float32),
                           equal_nan=True)
     doy = ds["climatological_onset_date"].isel(season=0)
     assert (doy.dt.dayofyear.values[~np.isnan(clim_doy.values)] == clim_doy.values[~np.isnan(clim_doy.values)]).all()
     total, found = 0, 0
-    _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
+    _, _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
     for year, _, onset_da, _ in inputs:
-        frame = compute_climatology_as_forecast(clim_doy, year, get_initialization_dates(year, **kw), onset_da, **kw)
+        frame = compute_climatology_as_forecast(clim_doy, year, initialization_dates(year, rc.evaluation), onset_da,
+                                                max_forecast_day=rc.evaluation.max_forecast_day)
         got = _rows(ds, frame, ["onset_date", "onset_day", "onset_lead", "onset_doy", "status", "scored"])
         _same_dates(got["onset_date"], frame["onset_date"])
         assert np.array_equal(got["onset_day"], frame["onset_day"].astype(float).to_numpy(), equal_nan=True)
@@ -417,13 +414,15 @@ def test_climatology_equals_the_scored_table(world):
 def test_conditional_climatology_equals_the_scored_table_and_pairs(world):
     """The conditional median onset matches the scored table, and the probability reproduces the scored bin probabilities."""
     ds = _open(world.paths["DET"]["conditional_climatology"])
-    kw = _kw(world.cfgs["DET"], "conditional_climatology", reference=True)
-    clim_onset = compute_climatological_onset_dataset(**kw)
-    _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
+    rc, case = _typed(world.cfgs["DET"], "conditional_climatology", reference=True)
+    clim_onset = climatological_onset_dataset(rc, case)
+    _, _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
     total, found = 0, 0
     for year, _, onset_da, _ in inputs:
-        init_dates = get_initialization_dates(year, **kw)
-        frame = compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, onset_da, **kw)
+        init_dates = initialization_dates(year, rc.evaluation)
+        frame = compute_conditional_climatology_as_forecast(
+            clim_onset, year, init_dates, onset_da, max_forecast_day=rc.evaluation.max_forecast_day,
+            climatology_cv=rc.reference.climatology_cv)
         got = _rows(ds, frame, ["onset_date", "onset_day", "onset_lead", "status"])
         _same_dates(got["onset_date"], frame["onset_date"])
         assert np.array_equal(got["onset_day"], frame["onset_day"].astype(float).to_numpy(), equal_nan=True)

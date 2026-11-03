@@ -1,10 +1,9 @@
 """Phase 7 speed-ups that must not change a result: year-set texts, shared reference rain, pre-warming, one worker pool."""
+import flat_values
 import shutil
 
 import numpy as np
 import typed_io
-
-from hcwf.config import flat_bridge
 from hcwf.stats import bins
 
 
@@ -27,8 +26,8 @@ def test_year_set_texts_equal_the_plain_join():
 
 def _case_kwargs(config):
     """The flat arguments of the config's first case, as the flows hand them to the readers (the run's completed record)."""
-    rc, case, select = flat_bridge.from_case_kwargs(config)
-    return flat_bridge.case_kwargs(rc, case, "deterministic", select)
+    rc, case, select = typed_io.from_case_kwargs(config)
+    return flat_values.case_kwargs(rc, case, "deterministic", select)
 
 
 def _reference_year(config, year, boundary):
@@ -88,7 +87,7 @@ def test_climatology_uses_the_reference_rain_the_thresholds_read(tmp_path, monke
         seen = []
         original = io_input._read_obs_year
         monkeypatch.setattr(io_input, "_read_obs_year", lambda year, *a, **k: seen.append(year) or original(year, *a, **k))
-        results[shared] = climatology.climatological_onset_dataset(*flat_bridge.from_case_kwargs(config))
+        results[shared] = climatology.climatological_onset_dataset(*typed_io.from_case_kwargs(config))
         monkeypatch.setattr(io_input, "_read_obs_year", original)
         reads[shared] = sorted(seen)
         assert not io_input.reference_held()   # freed once the climatology has used it

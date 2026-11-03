@@ -1,7 +1,9 @@
-"""RunConfig (hcwf/config/model.py) and its bridge to the flat dict (hcwf/config/flat_bridge.py): step S3 of
+"""RunConfig (hcwf/config/model.py) against the flat names of the old code (tests/flat_values.py): step S3 of
 docs/review/runconfig_design.md. Parity is checked against the frozen pre-R2 code in tests/_oracle_config.py over the
 fixture configs and, when present, the four regression configs: `case_kwargs` equals the oracle's `{**Setting, **Case}`
 for every case and both reference rules, the typed inputs round-trip, and a RunConfig pickles small and equal."""
+import typed_io
+import flat_values
 import dataclasses
 import pickle
 import subprocess
@@ -12,14 +14,13 @@ from itertools import product
 import pytest
 
 import _oracle_config as old
-from hcwf.config import flat_bridge
-from hcwf.config.build import resolve_flat
+from typed_io import flat_config
 from hcwf.config.model import MetricsSpec, ModelSpec, OutputSpec, RunConfig, Selection
 from hcwf.lib import config_schema as schema
 from hcwf.lib.run_folder import fingerprint
 from test_oracle_config import _norm, _same, configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
 
-FLOWS = flat_bridge.FLOWS
+FLOWS = flat_values.FLOWS
 
 
 @pytest.fixture(scope="module")
@@ -27,7 +28,7 @@ def runs(configs):
     """{name: (resolved flat dict, RunConfig)} of every fixture and regression config."""
     out = {}
     for name, path in configs.items():
-        dic = resolve_flat(path)
+        dic = flat_config(path)
         out[name] = (dic, RunConfig.from_flat(dic))
     return out
 
@@ -64,7 +65,7 @@ def test_case_kwargs_equal_the_oracle_merge(runs, flow):
     for name, (dic, rc) in runs.items():
         for case, (combi, flow_kw) in zip(rc.cases(), old.deterministic_cases(dic)):
             expected = _merge(dic, _oracle_case(dic, combi))
-            kw = flat_bridge.case_kwargs(rc, case, flow)
+            kw = flat_values.case_kwargs(rc, case, flow)
             assert kw == expected == flow_kw, (name, combi)
             assert list(kw) == list(expected), (name, combi)
         if flow == "deterministic":
@@ -79,14 +80,14 @@ def test_case_kwargs_equal_the_oracle_merge(runs, flow):
         assert pairs, name
         for case, expected in pairs:
             assert case.reference
-            assert flat_bridge.case_kwargs(rc, case, flow) == expected, (name, flow, case.name)
+            assert flat_values.case_kwargs(rc, case, flow) == expected, (name, flow, case.name)
 
 
 def test_ensemble_cases_have_the_oracles_prepare_dict(runs):
     """The ensemble flow's prep_cfg is the case_kwargs (full day bins); create_score_results narrows them to the window."""
     for name, (dic, rc) in runs.items():
         for case, (combi, prep, narrowed) in zip(rc.cases(), old.ensemble_cases(dic)):
-            assert flat_bridge.case_kwargs(rc, case, "ensemble") == prep
+            assert flat_values.case_kwargs(rc, case, "ensemble") == prep
             assert case.window.bins(rc.evaluation.day_bins) == narrowed["day_bins"]
 
 
@@ -117,34 +118,34 @@ def test_from_case_kwargs_round_trips(runs, flow):
         cases += rc.reference_cases() if flow == "deterministic" else \
             [c for m in rc.models for c in rc.reference_cases(like=m)]
         for case in cases:
-            kw = flat_bridge.case_kwargs(rc, case, flow)
-            rc2, case2, selection = flat_bridge.from_case_kwargs(kw)
+            kw = flat_values.case_kwargs(rc, case, flow)
+            rc2, case2, selection = typed_io.from_case_kwargs(kw)
             assert selection == Selection()
             assert case2.reference == (case.reference and case.model.name not in dic["model_list"])
             assert case2.name == case.name and case2.window == case.window
-            assert flat_bridge.case_kwargs(rc2, case2, flow) == kw, (name, case.name)
-            assert list(flat_bridge.case_kwargs(rc2, case2, flow)) == list(kw)
+            assert flat_values.case_kwargs(rc2, case2, flow) == kw, (name, case.name)
+            assert list(flat_values.case_kwargs(rc2, case2, flow)) == list(kw)
 
 
 def test_from_case_kwargs_keeps_edits_and_selections(runs):
     """A value edited in place (years, max_forecast_day, the reference keys) is what the rebuilt inputs hold; the
     selection keys come back as a Selection; anything else is refused."""
     dic, rc = runs["model_reference"]
-    kw = flat_bridge.case_kwargs(rc, rc.cases()[0], "deterministic")
+    kw = flat_values.case_kwargs(rc, rc.cases()[0], "deterministic")
     kw.update(years=(2019,), max_forecast_day=7, ref_model_var="other", keep_unit_ids=["a"], lat_select=(1, 2),
               model_files_years=(2019,))
-    rc2, case2, selection = flat_bridge.from_case_kwargs(kw)
+    rc2, case2, selection = typed_io.from_case_kwargs(kw)
     assert rc2.evaluation.years == (2019,) and rc2.evaluation.max_forecast_day == 7 and rc2.reference.var == "other"
     assert selection.keep_unit_ids == ["a"] and selection.lat == (1, 2) and selection.model_files_years == (2019,)
     assert selection.grid_point is None
-    assert flat_bridge.case_kwargs(rc2, case2, "deterministic", selection) == kw
+    assert flat_values.case_kwargs(rc2, case2, "deterministic", selection) == kw
     with pytest.raises(ValueError, match="not config keys or selections: surprise"):
-        flat_bridge.from_case_kwargs({**kw, "surprise": 1})
+        typed_io.from_case_kwargs({**kw, "surprise": 1})
 
 
-def test_to_flat_is_a_copy(runs):
+def test_a_copy_of_the_values_is_independent(runs):
     for name, (dic, rc) in runs.items():
-        flat = flat_bridge.to_flat(rc)
+        flat = dict(rc.values)
         assert flat == dic and flat is not dic
         flat["max_forecast_day"] = -1
         assert rc.values["max_forecast_day"] == dic["max_forecast_day"]
@@ -159,8 +160,8 @@ def test_pickle_is_small_and_equal(runs):
         assert back == rc and back is not rc and hash(back) == hash(rc)
         assert back.models == rc.models and back.evaluation == rc.evaluation and back.onset == rc.onset
         assert back.output == rc.output and back.reference == rc.reference and back.observations == rc.observations
-        assert flat_bridge.case_kwargs(back, back.cases()[0], "ensemble") == \
-            flat_bridge.case_kwargs(rc, rc.cases()[0], "ensemble")
+        assert flat_values.case_kwargs(back, back.cases()[0], "ensemble") == \
+            flat_values.case_kwargs(rc, rc.cases()[0], "ensemble")
     assert RunConfig.from_flat({**dic, "max_forecast_day": 12}, check=False) != rc
 
 
@@ -184,10 +185,10 @@ def test_run_paths_fingerprint_is_the_flat_one(runs):
 
 
 def test_without_files_is_the_write_false_resolve(configs, runs, tmp_path):
-    """without_files(tmp) holds what resolve_flat(write=False, tmp=tmp) gives (outputs off, folders in tmp, no disk cache)."""
+    """without_files(tmp) holds what flat_config(write=False, tmp=tmp) gives (outputs off, folders in tmp, no disk cache)."""
     for name, (dic, rc) in runs.items():
         quiet = rc.without_files(tmp_path)
-        _same(dict(quiet.values), resolve_flat(configs[name], write=False, tmp=tmp_path))
+        _same(dict(quiet.values), flat_config(configs[name], write=False, tmp=tmp_path))
         assert not quiet.paths.write and rc.paths.write
         assert quiet.output.save_fig is False and quiet.output.data_dir == str(tmp_path) and quiet.cache_dir is None
         assert quiet.onset_options.explain_cells is None and quiet.paths.fingerprint == rc.paths.fingerprint
@@ -260,7 +261,7 @@ def test_a_blend_config_has_its_recipe(world, tmp_path):
     raw = raw_config(world, ("DET",))
     raw["blend"] = {"years": {"training": [2019], "cv_holdout": [2020]},
                     "formulas": {"f": "outcome ~ prob_clim_qx"}}
-    dic = resolve_flat(write_config(tmp_path, raw, "blend.yaml"))
+    dic = flat_config(write_config(tmp_path, raw, "blend.yaml"))
     rc = RunConfig.from_flat(dic)
     assert rc.blend is not None and [m.name for m in rc.blend.models] == ["DET"]
     assert rc.paths.fingerprint == fingerprint(dict(rc.values)) and pickle.loads(pickle.dumps(rc)) == rc
@@ -268,7 +269,7 @@ def test_a_blend_config_has_its_recipe(world, tmp_path):
 
 
 def test_importing_the_config_package_stays_light():
-    code = ("import sys, hcwf.config, hcwf.config.model, hcwf.config.flat_bridge\n"
+    code = ("import sys, hcwf.config, hcwf.config.model, hcwf.config.build\n"
             "heavy = [m for m in ('hcwf.io.input', 'hcwf.blend.recipe', 'hcwf.utils.mask') "
             "if m in sys.modules]\n"
             "assert not heavy, heavy\n")

@@ -92,7 +92,7 @@ def calculate_brier_score(forecast_obs_df):
     Parameters:
     -----------
     forecast_obs_df : DataFrame
-        Output from create_forecast_observation_pairs_with_bins()
+        Output from forecast_pairs()
         Must contain columns: 'predicted_prob', 'observed_onset', 'total_members', 'bin_label'
 
     Returns:
@@ -146,7 +146,7 @@ def calculate_auc(forecast_obs_df):
     Parameters:
     -----------
     forecast_obs_df : DataFrame
-        Output from create_forecast_observation_pairs_with_bins()
+        Output from forecast_pairs()
         Must contain columns: 'predicted_prob', 'observed_onset', 'bin_label'
 
     Returns:
@@ -203,7 +203,7 @@ def calculate_rps(forecast_obs_df):
     Parameters:
     -----------
     forecast_obs_df : DataFrame
-        Output from create_forecast_observation_pairs_with_bins()
+        Output from forecast_pairs()
         Must contain columns: 'predicted_prob', 'observed_onset', 'total_members', 'bin_index'
 
     Returns:

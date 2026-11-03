@@ -1,6 +1,6 @@
 """Run independent items (years, files, folds, climatologies) in worker processes; results come back in item order.
 
-`start_items` is the general function; `start_years`/`map_years`/`concat_years` are its year-keyed callers.
+`start_items` is the general function; `start_year_args`/`map_year_args`/`concat_year_args` are its year-keyed callers.
 
 ``parallel: false`` in the config keeps everything in this process. Otherwise the years of a task (pair tables,
 onset tables, climatology pairs) are spread over `worker_count` processes (``parallel: {workers: N}``; default the
@@ -123,16 +123,6 @@ def _years_call(year, func, args, skip):
         return None
 
 
-def _year_call(year, func, args, kwargs, skip):
-    """func(*args, **kwargs with years=[year]); None where it raises the "no data" ValueError of a skipped year."""
-    try:
-        return func(*args, **{**kwargs, "years": [year]})
-    except ValueError as exc:
-        if not skip or not str(exc).startswith(skip):
-            raise
-        return None
-
-
 _pool: dict = {"executor": None, "key": None, "stack": None}
 """The run's worker pool: the executor, what it was made for (size, numba threads, log handlers) and what to close."""
 
@@ -184,7 +174,7 @@ def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
 
 
 class Pending:
-    """Work started by start_items / start_years / start_concat: `result()` waits for it (once) and gives the value."""
+    """Work started by start_items / start_year_args / start_concat_args: `result()` waits for it (once) and gives the value."""
 
     def __init__(self, collect: Callable[[], Any], jobs=()):
         """`collect` produces the value when called; `jobs` are the futures to cancel if it fails."""
@@ -248,64 +238,13 @@ def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, co
     return Pending(collect_results, jobs)
 
 
-def start_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA,
-                prewarm: Callable[[dict], None] | None = None) -> Pending:
-    """Start func(*args, **kwargs with years=[year]) for each year; the Pending gives the results in year order.
-
-    start_items over the years (all in workers when kwargs["parallel"] is on and there is more than one year);
-    `prewarm(kwargs)`, if given, is called here once with all the years before the jobs are sent. `skip` is the start
-    of the ValueError message that means "this year had no data" (a missing file): that year's result is None
-    rather than an error, as the multi-year functions skip such years.
-    """
-    years = list(years)
-    kwargs = {k: v for k, v in kwargs.items() if k != "years"}
-    return start_items(_year_call, years, (func, args, kwargs, skip), config=kwargs, label=int,
-                       prewarm=None if prewarm is None else lambda: prewarm({**kwargs, "years": years}))
-
-
-def map_years(func, years, kwargs: dict, args: tuple = (), skip: str | None = NO_DATA,
-              prewarm: Callable[[dict], None] | None = None) -> list:
-    """func(*args, **kwargs with years=[year]) for each year, results in year order (None for a skipped year).
-
-    start_years, waited for at once; see there for the arguments.
-    """
-    return start_years(func, years, kwargs, args, skip, prewarm).result()
-
-
 def map_items(func, items, args: tuple = (), kwargs: dict | None = None, **options) -> list:
     """func(item, *args, **kwargs) for each item, results in item order (start_items, waited for at once)."""
     return start_items(func, items, args, kwargs, **options).result()
 
 
-def start_concat(func, kwargs: dict, args: tuple = (), prewarm: Callable[[dict], None] | None = None) -> Pending:
-    """Start the pair tables of func(*args, **kwargs) over kwargs["years"]; the Pending gives them concatenated.
-
-    With one worker func runs once on all the years, as it always did, before this returns. Otherwise each year is
-    computed by start_years and the tables joined in year order; a year without data is left out, and
-    ValueError("No data ...") is raised when none has any.
-    """
-    years = kwargs["years"]
-    if worker_count(kwargs, len(years)) <= 1:
-        return Pending.finished(func(*args, **kwargs))
-    pending = start_years(func, years, kwargs, args, prewarm=prewarm)
-
-    def join():
-        """The year tables, concatenated."""
-        parts = [part for part in pending.result() if part is not None]
-        if not parts:
-            raise ValueError(f"{NO_DATA} for any year")
-        return pd.concat(parts, ignore_index=True)
-
-    return Pending(join)
-
-
-def concat_years(func, kwargs: dict, args: tuple = (), prewarm: Callable[[dict], None] | None = None):
-    """The pair tables of func(*args, **kwargs) over kwargs["years"], concatenated in year order (start_concat, waited for)."""
-    return start_concat(func, kwargs, args, prewarm).result()
-
-
 # ----------------------------------------------------------------------------------------------------------------------
-# the typed forms: `args` instead of kwargs, the workers from a ParallelSpec; func(year_list, *args)
+# the year-keyed forms: `args` and a ParallelSpec; func(year_list, *args)
 # ----------------------------------------------------------------------------------------------------------------------
 
 def spec_workers(parallel, tasks: int) -> int:
@@ -318,7 +257,8 @@ def start_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DA
     """Start func([year], *args) for each year; the Pending gives the results in year order.
 
     start_items over the years in workers when `parallel` (a ParallelSpec) allows and there is more than one year;
-    `prewarm()`, if given, is called here once before the jobs are sent. `skip` is as in `start_years`. `args` travel to
+    `prewarm()`, if given, is called here once before the jobs are sent. `skip` is the start of the ValueError message
+    that means "this year had no data" (a missing file): that year's result is None. `args` travel to
     each worker: pass the run and the case, not data.
     """
     years = list(years)

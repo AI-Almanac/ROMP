@@ -1,13 +1,12 @@
 """Onset contingency metrics (TP/FP/FN/TN, MAE) for model or climatology forecasts across years."""
 
-from hcwf.config import flat_bridge
-from hcwf.config.model import Selection, Window
+from hcwf.config.model import Selection
 from hcwf.io import input as io_input
 from hcwf.io.input import initialization_dates, point_dims
 from hcwf.stats.detect import check_alignment, detect_deterministic, detect_ensemble, detect_observed
 from hcwf.stats.observed_cache import threshold_hash
 from hcwf.stats.climatology import climatological_onset, compute_climatology_as_forecast
-from hcwf.stats.bins import counts_back_dated, reports_back_dated
+from hcwf.stats.bins import reports_back_dated
 from hcwf.stats.climatology import climatological_onset_dataset
 from hcwf.stats.conditional_climatology import CONDITIONAL_CLIMATOLOGY, compute_conditional_climatology_as_forecast
 from hcwf.spatial import axes
@@ -20,12 +19,6 @@ import logging
 from hcwf.utils.log import progress
 
 log = logging.getLogger(__name__)
-
-
-def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification_window, **kwargs):  # R2-bridge
-    """onset_metrics of a flat config's window and settings."""
-    return onset_metrics(onset_df, Window(*verification_window, tolerance_days), back_dated=counts_back_dated(kwargs),
-                         default_dims=point_dims(kwargs))
 
 
 def onset_metrics(onset_df, window, *, back_dated, default_dims):
@@ -289,7 +282,3 @@ def compute_metrics(rc, case, select=Selection()):
     tables, extra = onset_tables(rc, case, select, ens=bool(rc.evaluation.probabilistic))
     return _metrics_of_tables(tables, extra, rc, case)
 
-
-def compute_metrics_multiple_years(**kwargs):  # R2-bridge
-    """compute_metrics of a flat config's case."""
-    return compute_metrics(*flat_bridge.from_case_kwargs(kwargs))

@@ -11,7 +11,7 @@ from collections import defaultdict
 
 import pytest
 
-from hcwf.config.build import resolve_flat
+from typed_io import flat_config
 from hcwf.config.model import RunConfig
 from hcwf.lib import config_schema as schema
 from test_oracle_config import configs, world  # noqa: F401  (fixtures)
@@ -62,7 +62,7 @@ ONSET_SETUP_KEYS = {"onset_definition", "onset_override", "onset_rule", "onset_s
 def test_every_schema_key_and_run_key_is_claimed_by_one_projection(configs):
     from hcwf.lib import onset_config
 
-    dic = resolve_flat(configs["model_reference"])
+    dic = flat_config(configs["model_reference"])
     assert set(RUN_KEYS) <= set(dic)
     onset_config._cache.clear()                                   # a cached setup would read no keys
     values = Recording(_full(dic))
@@ -79,6 +79,6 @@ def test_every_schema_key_and_run_key_is_claimed_by_one_projection(configs):
 
 
 def test_a_key_outside_the_schema_is_not_read(configs):
-    values = Recording(_full({**resolve_flat(configs["model_reference"]), "extra_key": 1}))
+    values = Recording(_full({**flat_config(configs["model_reference"]), "extra_key": 1}))
     RunConfig.from_flat(values)
     assert "extra_key" not in values.claims

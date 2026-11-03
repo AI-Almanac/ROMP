@@ -5,8 +5,7 @@ boundaries and thresholds, runs hcwf.onset.engine, and shapes the results into
 the arrays and DataFrames the metrics code expects.
 
 The functions take the typed inputs of hcwf.config.model: the run (`rc`: RunConfig), the case (source and window) and the
-per-call `select` (Selection). The old kwargs forms (`detect_observed_onset(rain, thr, year, **kwargs)` and the others
-marked R2-bridge) stay until step S11 as wrappers that rebuild these inputs with hcwf.config.flat_bridge.
+per-call `select` (Selection).
 """
 
 import warnings
@@ -15,7 +14,6 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.config import flat_bridge
 from hcwf.config.model import Selection
 from hcwf.io.input import ingest_forecast
 from hcwf.lib.onset_config import forecast_reach
@@ -39,14 +37,6 @@ _alignment_done = set()
 def engine_options(rc, forecast=False) -> dict:
     """The run options of the engine a run holds (horizon and missing-rain policy); none given is HCWF's own."""
     return rc.onset_options.engine(rc.observations.units, forecast)
-
-
-def _bridge(kwargs, extras=()):
-    """(rc, case, select, extras): the typed inputs behind flat kwargs, and the per-call keys in `extras` that are not
-    config or selection (R2-bridge)."""
-    kwargs = dict(kwargs)
-    extra = {name: kwargs.pop(name) for name in extras if name in kwargs}
-    return (*flat_bridge.from_case_kwargs(kwargs), extra)
 
 
 def _on_grid(da, lat, lon):
@@ -138,12 +128,6 @@ def detect_observed_dataset(rain_slice, thresh_slice, year, rc, select=Selection
     return result, setup
 
 
-def detect_observed_result(rain_slice, thresh_slice, year, **kwargs):  # R2-bridge
-    """detect_observed_dataset with the run's flat kwargs."""
-    rc, _, select, _ = _bridge(kwargs)
-    return detect_observed_dataset(rain_slice, thresh_slice, year, rc, select)
-
-
 def detect_observed(rain_slice, thresh_slice, year, rc, select=Selection()):
     """Detect observed onset dates for a given year.
 
@@ -179,12 +163,6 @@ def detect_observed(rain_slice, thresh_slice, year, rc, select=Selection()):
             present=(spatial, present), onset_index=(spatial, np.where(found, index + 1, np.nan)))
     observed_cache.store(rain_slice, thresh_slice, year, rc, select, out)
     return out
-
-
-def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):  # R2-bridge
-    """detect_observed with the run's flat kwargs."""
-    rc, _, select, _ = _bridge(kwargs)
-    return detect_observed(rain_slice, thresh_slice, year, rc, select)
 
 
 def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(), *, members=None, history=None,
@@ -257,12 +235,6 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
             "valid": valid, "obs": obs_values, "totals": (int(obs.size * len(init)), int((~np.isnat(obs_values)).sum()))}
 
 
-def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, history=None):  # R2-bridge
-    """detect_forecast with the run's flat kwargs (which may hold search_start, restrict_to_season and onset_count)."""
-    rc, case, select, extra = _bridge(kwargs, ("search_start", "restrict_to_season", "onset_count"))
-    return detect_forecast(p_model, thresh_slice, onset_da, rc, case, select, members=members, history=history, **extra)
-
-
 def count_members(cube, thresh_slice, rc, case, select=Selection(), *, search_start=None):
     """For an ensemble forecast on evaluation units: (counts, start names, init times).
 
@@ -274,12 +246,6 @@ def count_members(cube, thresh_slice, rc, case, select=Selection(), *, search_st
     out = detect_forecast(cube, thresh_slice, None, rc, case, select, search_start=search_start, onset_count=True,
                           restrict_to_season=False)
     return out["counts"], out["start"], out["init"]
-
-
-def member_onset_counts(cube, thresh_slice, **kwargs):  # R2-bridge
-    """count_members with the run's flat kwargs (which may hold search_start)."""
-    rc, case, select, extra = _bridge(kwargs, ("search_start",))
-    return count_members(cube, thresh_slice, rc, case, select, **extra)
 
 
 def _date_strings(values):
@@ -349,11 +315,6 @@ def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selec
     _print_status_counts(out["status"], valid)
     _print_back_dated(out["day"], valid)
     return onset_df
-
-
-def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, history=None, **kwargs):  # R2-bridge
-    """detect_deterministic with the run's flat kwargs."""
-    return detect_deterministic(p_model, thresh_slice, onset_da, *_bridge(kwargs)[:3], history=history)
 
 
 def _ensemble_status(status, threshold, has_onset):
@@ -450,11 +411,6 @@ def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     return onset_df, ensemble_df
 
 
-def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None, **kwargs):  # R2-bridge
-    """detect_ensemble with the run's flat kwargs."""
-    return detect_ensemble(p_model, thresh_slice, onset_da, *_bridge(kwargs)[:3], history=history)
-
-
 def alignment_report(rain_slice, p_model, rc, case):
     """Compare observations with forecast leads 1-3; return (report, note).
 
@@ -497,7 +453,3 @@ def check_alignment(rain_slice, p_model, rc, case):
         warnings.warn(f"{case.model.name} forecasts look shifted against the observations "
                       f"({report.verdict}); check obs_day_boundary and model_lead_label.", UserWarning)
 
-
-def check_alignment_once(rain_slice, p_model, **kwargs):  # R2-bridge
-    """check_alignment with the run's flat kwargs."""
-    check_alignment(rain_slice, p_model, *_bridge(kwargs)[:2])

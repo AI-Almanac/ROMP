@@ -242,8 +242,7 @@ def prepare(paths: RunPaths, overwrite: bool = False) -> None:
 def file_name(paths, kind: str, *parts) -> str:
     """The name of an output file of the given kind: short in run folders, historical for an explicit dir_out.
 
-    `paths` is the run's RunPaths (None: the historical names). R2-bridge: a flat config (its ``short_names``) is read
-    the same way, for export.py until S10.
+    `paths` is the run's RunPaths (None: the historical names).
 
     data kinds: ``overall`` and ``binned`` (score CSVs; parts model, window), ``spatial`` (spatial metrics NetCDF; case
     name), ``climatology`` (climatological onset NetCDF; years text), ``onset`` (onset export; source).
@@ -251,7 +250,7 @@ def file_name(paths, kind: str, *parts) -> str:
     ``climatology_map`` (years text), ``field_map`` (source name, variable, window), ``panel_error`` (first model,
     max forecast day), ``panel_skill`` and ``panel_bar`` (window).
     """
-    short = paths.short_names if isinstance(paths, RunPaths) else bool(paths and paths.get("short_names"))
+    short = paths is not None and paths.short_names
     if kind == "overall":
         model, window = parts
         return f"overall_{model}_{window}.csv" if short else f"overall_skill_scores_{model}_{window}.csv"

@@ -22,10 +22,10 @@ from hcwf.lib import check as check_mod
 from hcwf.lib import dataset_detect as detect
 from hcwf.lib import run_folder
 from hcwf.lib.config_yaml import build_config
-from hcwf.config.flat_bridge import _setting_part, model_kwargs
+import typed_io
 from hcwf.config.model import RunConfig
 from hcwf.lib.dataset_schema import DatasetError, parse_dataset
-from hcwf.config.build import resolve_flat
+from typed_io import flat_config
 from hcwf.params.region_def import domain
 from hcwf.stats import detect as stats_detect
 from hcwf.stats import observed_cache
@@ -283,29 +283,27 @@ def test_daily_boundary_is_a_forecast_dataset_key():
 
     text = resolved_config_text(flat)
     assert "daily_boundary" in text and "since_init" in text   # given by the user: written back
-    case = model_kwargs(RunConfig.from_flat({**flat, "lead_window": (1, 10)}, check=False), "A")
-    assert case["accumulation"] == "since_init" and case["daily_boundary"] == "03 UTC"
+    model = RunConfig.from_flat({**flat, "lead_window": (1, 10)}, check=False).first_case("A").model
+    assert model.accumulation == "since_init" and model.daily_boundary == "03 UTC"
 
 
-def test_ingest_model_forecast_uses_the_models_accumulation_and_boundary():
+def test_ingest_forecast_uses_the_models_accumulation_and_boundary():
     """Accumulated totals are differenced to the same days as per-day data; absent kwargs mean daily as before."""
-    from hcwf.io.input import ingest_model_forecast
-
     rng = np.random.default_rng(1)
     daily = xr.DataArray(rng.gamma(2.0, 3.0, size=(4, 3, 3, 5)), dims=("init_time", "lat", "lon", "step"),
                          coords={"init_time": pd.date_range("2020-05-01", periods=4), "lat": LAT, "lon": LON,
                                  "step": np.arange(1, 6)})
     total = daily.cumsum("step")
     setup = types.SimpleNamespace(forecast_boundary="00 UTC, labelled by start", lead_label="start")
-    plain = ingest_model_forecast(daily, setup, {"model": "m"})
-    differenced = ingest_model_forecast(total, setup, {"model": "m", "accumulation": "since_init"})
+    plain = typed_io.ingest_forecast(daily, setup, {"model": "m"})
+    differenced = typed_io.ingest_forecast(total, setup, {"model": "m", "accumulation": "since_init"})
     assert np.array_equal(plain.tenths, differenced.tenths)
     assert differenced.ingest_info.accumulation == "since_init"
-    wrong = ingest_model_forecast(total, setup, {"model": "m", "accumulation": "daily"})
+    wrong = typed_io.ingest_forecast(total, setup, {"model": "m", "accumulation": "daily"})
     assert not np.array_equal(plain.tenths, wrong.tenths)
     six_hourly = xr.concat([daily.isel(step=0).assign_coords(step=pd.Timedelta(hours=6) * k) for k in range(1, 9)],
                            dim="step")
-    shifted = ingest_model_forecast(six_hourly.assign_coords(step=pd.to_timedelta([6 * k for k in range(1, 9)], "h")),
+    shifted = typed_io.ingest_forecast(six_hourly.assign_coords(step=pd.to_timedelta([6 * k for k in range(1, 9)], "h")),
                                     setup, {"model": "m", "accumulation": "daily", "daily_boundary": "06 UTC"})
     assert shifted.ingest_info.daily_boundary == "06 UTC" and shifted.ingest_info.resolution == "6-hourly"
 
@@ -343,9 +341,7 @@ def test_climatology_cv_reaches_the_conditional_scoring(world, tmp_path, monkeyp
     result = hcwf.run(raw, quiet=True)
     assert set(seen) == {expected} and seen
     assert "conditional_climatology" in set(result.scores["summary"]["model"])
-    assert "climatology_cv" in _setting_part({})
-    kw = model_kwargs(RunConfig.from_flat(result.config, check=False), "DET", reference_as="DET")
-    assert kw["climatology_cv"] == expected
+    assert result.run_config.reference.climatology_cv == expected
 
 
 def test_conditional_climatology_differs_between_the_two_modes(world):
@@ -420,7 +416,7 @@ def test_the_cache_is_inactive_outside_a_run():
 def test_run_folder_name_has_region_definition_years_and_fingerprint(world, tmp_path):
     """The name is <region>_<definition>[+mod]_<years>_<4 hex>, at most 40 characters, next to the config file."""
     path = _fresh(world, tmp_path)
-    dic = resolve_flat(path)
+    dic = flat_config(path)
     paths = dic["run_paths"]
     assert re.fullmatch(r"ethiopia_icpac\+mod_2019-2020_[0-9a-f]{4}", paths.name) and len(paths.name) <= 40   # dry check off
     plain = {"region": "Ethiopia", "start_date": (2019, 5, 1), "end_date": (2020, 5, 31),
@@ -428,7 +424,7 @@ def test_run_folder_name_has_region_definition_years_and_fingerprint(world, tmp_
     assert run_folder.run_name(plain, "ab12cd") == "ethiopia_icpac_2019-2020_ab12"
     assert paths.root == tmp_path / "runs" / paths.name and paths.cache_dir == tmp_path / "runs" / ".cache"
     assert not (tmp_path / "runs").exists()   # planning creates nothing
-    modified = resolve_flat(_fresh(world, tmp_path, onset={"override": {"wet_day": "at least 2 mm"}}))
+    modified = flat_config(_fresh(world, tmp_path, onset={"override": {"wet_day": "at least 2 mm"}}))
     assert re.fullmatch(r"ethiopia_icpac\+mod_2019-2020_[0-9a-f]{4}", modified["run_paths"].name)
     assert modified["run_paths"].name != paths.name
     assert modified["run_paths"].fingerprint != paths.fingerprint
@@ -436,9 +432,9 @@ def test_run_folder_name_has_region_definition_years_and_fingerprint(world, tmp_
 
 def test_fingerprint_follows_results_not_output_switches(world, tmp_path):
     """Plotting and the backend leave the fingerprint alone; windows and data change it."""
-    base = resolve_flat(_fresh(world, tmp_path))
-    plots = resolve_flat(_fresh(world, tmp_path, output={"plot_reliability": True}, onset={"backend": "reference"}))
-    other = resolve_flat(_fresh(world, tmp_path, evaluation={"verification_windows": [[1, 8]], "tolerances": [3]}))
+    base = flat_config(_fresh(world, tmp_path))
+    plots = flat_config(_fresh(world, tmp_path, output={"plot_reliability": True}, onset={"backend": "reference"}))
+    other = flat_config(_fresh(world, tmp_path, evaluation={"verification_windows": [[1, 8]], "tolerances": [3]}))
     assert base["run_paths"].fingerprint == plots["run_paths"].fingerprint != other["run_paths"].fingerprint
 
 
@@ -452,13 +448,13 @@ def test_long_names_are_cut_to_forty_characters():
 
 def test_subfolders_only_when_they_would_hold_more_than_one_file(world, tmp_path):
     """Scores and onsets get folders here; figures (nothing planned) stay in the run folder."""
-    paths = resolve_flat(_fresh(world, tmp_path))["run_paths"]
+    paths = flat_config(_fresh(world, tmp_path))["run_paths"]
     assert paths.dir_out == paths.root / "scores" and paths.onsets == paths.root / "onsets"
     assert paths.dir_fig == paths.root
-    quiet = resolve_flat(_fresh(world, tmp_path, output={
+    quiet = flat_config(_fresh(world, tmp_path, output={
         "save_nc_spatial_far_mr_mae": False, "save_nc_climatology": False}))["run_paths"]
     assert quiet.dir_out == quiet.root
-    figs = resolve_flat(_fresh(world, tmp_path, output={
+    figs = flat_config(_fresh(world, tmp_path, output={
         "plot_spatial_far_mr_mae": True, "plot_climatology_onset": True}))["run_paths"]
     assert figs.dir_fig == figs.root / "figures"
 
@@ -502,7 +498,7 @@ def test_export_goes_to_the_runs_onsets_folder_with_short_names(world, tmp_path)
     """hcwf-run export in a run folder writes onsets/<source>.nc."""
     path = _fresh(world, tmp_path)
     paths = export.export_onsets(path, sources=["observed", "DET"])
-    folder = tmp_path / "runs" / resolve_flat(path)["run_paths"].name / "onsets"
+    folder = tmp_path / "runs" / flat_config(path)["run_paths"].name / "onsets"
     assert {k: v for k, v in paths.items()} == {"observed": folder / "observed.nc", "DET": folder / "DET.nc"}
     assert all(p.exists() for p in paths.values())
 
@@ -630,7 +626,7 @@ def test_help_lists_the_run_control_flags(world, tmp_path):
 
 def _dic(world, tmp_path):
     """The resolved flat config of the synthetic run."""
-    return resolve_flat(_fresh(world, tmp_path))
+    return flat_config(_fresh(world, tmp_path))
 
 
 def test_hint_lat_order_and_grid_mismatch(tmp_path):

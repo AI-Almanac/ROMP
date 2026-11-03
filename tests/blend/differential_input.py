@@ -22,6 +22,7 @@ import pandas as pd
 import xarray as xr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tests/: typed_io
 from _inputs import DAYS, LATS, LONS, grid_weights, id_weights, write_adm3, write_forecast, write_observations  # noqa: E402
 
 INITS = [dt.date(2014, 6, 2), dt.date(2014, 6, 9), dt.date(2014, 6, 16)]
@@ -116,6 +117,8 @@ def _onto_units(forecast, transform, source, feeding, kept_units, domain, post_s
 
 
 def dump_hcwf(root: Path) -> dict:
+    import typed_io
+
     from hcwf.io import input as io_input
     from hcwf.spatial import EvaluationUnits
     from hcwf.spatial.ids import GridIdConvention
@@ -125,12 +128,12 @@ def dump_hcwf(root: Path) -> dict:
     convention = GridIdConvention(2, "fixed", "explicit")
 
     def observations(year, name=None):
-        return io_input.load_imd_rainfall(year, obs_var="precip", obs_unit_cvt=None, region=None,
-                                          obs_paths=[str(root / "obs" / (name or f"{year}.nc"))])
+        return typed_io.observations(year, {"obs_var": "precip", "obs_unit_cvt": None, "region": None,
+                                            "obs_paths": [str(root / "obs" / (name or f"{year}.nc"))]})
 
     out["obs_plain"] = observations(2003).values
-    adm3 = io_input.load_imd_rainfall(2003, obs_var="precip", obs_unit_cvt=None, region=None,
-                                      obs_paths=[str(root / "adm3_2003.nc")])
+    adm3 = typed_io.observations(2003, {"obs_var": "precip", "obs_unit_cvt": None, "region": None,
+                                        "obs_paths": [str(root / "adm3_2003.nc")]})
     out["adm3"], out["adm3_ids"] = adm3.values, adm3["unit"].values.tolist()
     grid = EvaluationUnits.from_weights(root / "weights_grid.csv")
     cells = EvaluationUnits.from_weights(root / "weights_id.csv")

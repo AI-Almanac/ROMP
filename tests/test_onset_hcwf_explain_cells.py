@@ -24,10 +24,10 @@ def rain_year(year):
 
 def config(tmp_path, cells):
     """A RunConfig for explain_cells over 2001-2002 (the fixture world's config, with these values)."""
-    from hcwf.config.build import resolve_flat
+    from typed_io import flat_config
     from hcwf.config.model import RunConfig
 
-    return RunConfig.from_flat({**resolve_flat(_BASE["path"]), "explain_cells": cells, "onset_definition": "icpac",
+    return RunConfig.from_flat({**flat_config(_BASE["path"]), "explain_cells": cells, "onset_definition": "icpac",
                                 "obs_day_boundary": "00 UTC, labelled by start", "dir_fig": str(tmp_path),
                                 "start_date": (2001, 5, 1), "end_date": (2002, 7, 31)}, check=False)
 

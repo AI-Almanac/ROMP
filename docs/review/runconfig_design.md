@@ -1,5 +1,7 @@
 # RunConfig design (wave R2: one config path, typed)
 
+**Status: done (S0-S11, 2026-11-03).**
+
 Status: design, nothing implemented. Scope is R2a (one resolve path, one validation module) and R2b (typed
 frozen `RunConfig` replacing the flat kwargs, `Setting`/`Case` and `control.make_case`). Line numbers are
 from `652d2b0` (branch `monorepo`).

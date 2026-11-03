@@ -1,11 +1,10 @@
 """One units specification, one reader, one threshold path, one detection adapter: the `units:` section of a run config,
 UnitsSpec, reading observations and forecasts onto units, lead selection, and the observed-onset fingerprint."""
+import typed_io
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-
-from hcwf.config import flat_bridge
 from hcwf.io import input as io_input
 from hcwf.lib import config_schema as schema
 from hcwf.onset import regions as rg
@@ -113,7 +112,7 @@ def test_the_fingerprint_of_a_grid_run_has_its_six_parts_and_units_and_options_a
             "obs_day_boundary": "00 UTC, labelled by start", "model_lead_label": "start", "threshold_years": [2000, 2001]}
     rain = xr.DataArray(np.zeros((2, 2, 2)), dims=("time", "lat", "lon"), coords={"lat": [0.0, 1.0], "lon": [2.0, 3.0]})
     def parts(rain, kwargs):
-        rc, _, select = flat_bridge.from_case_kwargs(kwargs)
+        rc, _, select = typed_io.from_case_kwargs(kwargs)
         return observed_cache.fingerprint_parts(rain, {}, rc.observations, rc.area, rc.onset, rc.onset_options, select,
                                                 observed_cache.observed_years(rc.evaluation))
 

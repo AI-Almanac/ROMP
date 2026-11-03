@@ -8,6 +8,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+import typed_io
+from hcwf.config.model import ParallelSpec
 from hcwf.lib.config_schema import ConfigSchemaError
 from hcwf.lib.config_yaml import build_config
 from hcwf.stats import parallel
@@ -19,8 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "data" / "phase7" / "baseline"
 
 
-def square_years(*, years, offset=0, **kwargs):
-    """A picklable stand-in for a multi-year function: one table of the squares of the years."""
+def squares_of(years, offset=0):
+    """A picklable stand-in for a multi-year function, func(year_list, *args): one table of the squares of the years."""
     return pd.DataFrame({"year": list(years), "square": [y * y + offset for y in years]})
 
 
@@ -67,19 +69,8 @@ def test_ordered_prefetch_keeps_order_and_bounds_the_lead():
     assert list(ordered_prefetch(slow, [], 4)) == []
 
 
-def test_map_years_parallel_equals_serial():
-    """Worker processes return the same tables in year order as the serial path."""
-    years = [2001, 2002, 2003, 2004]
-    serial = parallel.concat_years(square_years, {"years": years, "parallel": False, "offset": 1})
-    par = parallel.concat_years(square_years, {"years": years, "parallel": True, "parallel_workers": 3, "offset": 1})
-    pd.testing.assert_frame_equal(serial, par)
-    assert list(par["year"]) == years
-
-
 def test_threaded_obs_reads_of_netcdf_are_serialised(tmp_path):
-    """obs_years over many NetCDF files (parallel on) neither crashes nor reorders; a missing year is an error value."""
-    from hcwf.io.input import obs_years
-
+    """read_obs_years over many NetCDF files (parallel on) neither crashes nor reorders; a missing year is an error value."""
     folder = tmp_path / "obs"
     folder.mkdir()
     lat, lon = np.linspace(10, 22, 4), np.linspace(72, 84, 4)
@@ -90,10 +81,10 @@ def test_threaded_obs_reads_of_netcdf_are_serialised(tmp_path):
                    ).to_netcdf(folder / f"{year}.nc")
     kwargs = {"obs_dir": str(folder), "obs_file_pattern": ("{}.nc",), "obs_var": "RAINFALL", "obs_unit_cvt": None,
               "region": "india", "parallel": True, "years": (), "land_only": False, "shp_only": False}
-    out = list(obs_years(list(range(2001, 2009)), kwargs, hold=False))
+    out = list(typed_io.obs_years(list(range(2001, 2009)), kwargs, hold=False))
     assert [float(rain["RAINFALL"].values.flat[0]) if hasattr(rain, "data_vars") else float(rain.values.flat[0])
             for rain, error in out] == [float(y) for y in range(2001, 2009)]
-    missing = list(obs_years([2008, 2030], kwargs, hold=False))
+    missing = list(typed_io.obs_years([2008, 2030], kwargs, hold=False))
     assert missing[0][1] is None and isinstance(missing[1][1], FileNotFoundError)
 
 
@@ -125,7 +116,7 @@ def test_run_parallel_equals_serial(tmp_path):
         assert (outs["false"] / name).read_bytes() == (outs["true"] / name).read_bytes(), name
 
 
-def noisy_years(*, years, **kwargs):
+def noisy_years(years):
     """A picklable stand-in that warns and logs in the worker, one table row per year."""
     import logging
     import warnings
@@ -143,7 +134,7 @@ def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, qu
 
     logfile = tmp_path / "run.log"
     with logs.session(logs.QUIET if quiet else logs.NORMAL, logfile):
-        parallel.concat_years(noisy_years, {"years": [2001, 2002, 2003], "parallel": True, "parallel_workers": 3})
+        parallel.concat_year_args(noisy_years, [2001, 2002, 2003], (), ParallelSpec(enabled=True, workers=3))
         parallel.shutdown()   # the workers outlive the call (the run's pool); stopping them flushes their records
     text = logfile.read_text()
     out = capsys.readouterr().out
@@ -156,11 +147,11 @@ def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, qu
 
 def test_equal_thresholds_reloaded_each_window_detect_once(configs, monkeypatch):
     """Equal thresholds loaded afresh per window share onset tables (the typed path); a different threshold does not."""
-    from hcwf.config.build import resolve_flat
+    from typed_io import flat_config
     from hcwf.config.model import RunConfig
     from hcwf.stats import benchmark
 
-    rc = RunConfig.from_flat(resolve_flat(configs["two_models_windows"]), check=False)
+    rc = RunConfig.from_flat(flat_config(configs["two_models_windows"]), check=False)
     first, second, *_ = [c for c in rc.cases() if c.model == rc.models[0]]
     assert first.window != second.window
     calls = []
@@ -179,7 +170,7 @@ def test_equal_thresholds_reloaded_each_window_detect_once(configs, monkeypatch)
     benchmark.reset_onset_tables()
 
 
-def pid_years(*, years, **kwargs):
+def pid_years(years):
     """A picklable stand-in that reports which process computed each year."""
     import os
 
@@ -191,11 +182,11 @@ def test_every_year_runs_in_a_worker_and_the_pool_is_reused():
     import os
 
     years = [2001, 2002, 2003]
-    config = {"years": years, "parallel": True, "parallel_workers": 3}
+    spec = ParallelSpec(enabled=True, workers=3)
     try:
-        first = parallel.concat_years(pid_years, config)
+        first = parallel.concat_year_args(pid_years, years, (), spec)
         pool = parallel._pool["executor"]
-        second = parallel.concat_years(pid_years, config)
+        second = parallel.concat_year_args(pid_years, years, (), spec)
         assert parallel._pool["executor"] is pool
         assert os.getpid() not in set(first["pid"]) | set(second["pid"])
         assert set(second["pid"]) <= set(pool._processes)   # the workers booted for the first stage
@@ -205,15 +196,14 @@ def test_every_year_runs_in_a_worker_and_the_pool_is_reused():
 
 
 def test_prewarm_runs_here_once_before_the_years_and_start_returns_before_they_finish():
-    """prewarm(kwargs) is called once, in this process, with all the years; start_years hands back a Pending."""
+    """prewarm() is called once, in this process, before the jobs are sent; start_year_args hands back a Pending."""
     import os
 
     calls = []
-    config = {"parallel": True, "parallel_workers": 2, "offset": 5}
     try:
-        pending = parallel.start_years(square_years, [2001, 2002, 3003], config,
-                                       prewarm=lambda kw: calls.append((os.getpid(), kw["years"], kw["offset"])))
-        assert calls == [(os.getpid(), [2001, 2002, 3003], 5)]
+        pending = parallel.start_year_args(squares_of, [2001, 2002, 3003], (5,), ParallelSpec(enabled=True, workers=2),
+                                           prewarm=lambda: calls.append(os.getpid()))
+        assert calls == [os.getpid()]
         tables = pending.result()
         assert pending.result() is tables
         assert [list(t["year"]) for t in tables] == [[2001], [2002], [3003]]
@@ -223,20 +213,21 @@ def test_prewarm_runs_here_once_before_the_years_and_start_returns_before_they_f
 
 
 def test_serial_start_runs_at_once_and_prewarm_is_skipped():
-    """With parallel off the work is done before start_years returns (as before), in order, and nothing is pre-warmed."""
+    """With parallel off the work is done before start_year_args returns, in order, and nothing is pre-warmed."""
     order = []
 
-    def func(*, years, **kwargs):
+    def func(years):
         """Note the year, return it."""
         order.append(years[0])
         return years[0]
 
-    pending = parallel.start_years(func, [3, 1, 2], {"parallel": False}, prewarm=lambda kw: order.append("warm"))
+    pending = parallel.start_year_args(func, [3, 1, 2], (), ParallelSpec(enabled=False, workers=None),
+                                       prewarm=lambda: order.append("warm"))
     assert order == [3, 1, 2]
     assert pending.result() == [3, 1, 2]
 
 
-def failing_year(*, years, **kwargs):
+def failing_year(years):
     """A picklable stand-in that fails for one year."""
     if years[0] == 2002:
         raise KeyError("boom 2002")
@@ -245,26 +236,19 @@ def failing_year(*, years, **kwargs):
 
 def test_worker_error_is_raised_by_result_and_the_pool_stays_usable():
     """An error in a worker surfaces from result(); the pool then still serves the next stage."""
-    config = {"years": [2001, 2002, 2003], "parallel": True, "parallel_workers": 3}
+    years, spec = [2001, 2002, 2003], ParallelSpec(enabled=True, workers=3)
     try:
-        pending = parallel.start_concat(failing_year, config)
+        pending = parallel.start_concat_args(failing_year, years, (), spec)
         with pytest.raises(KeyError, match="boom 2002"):
             pending.result()
-        again = parallel.concat_years(square_years, config)
+        again = parallel.concat_year_args(squares_of, years, (), spec)
         assert list(again["year"]) == [2001, 2002, 2003]
     finally:
         parallel.shutdown()
 
 
-def squares_of(years, offset):
-    """A picklable stand-in with the typed form: func(year_list, *args)."""
-    return pd.DataFrame({"year": list(years), "square": [y * y + offset for y in years]})
-
-
 def test_year_args_parallel_equals_serial():
     """The args-based helpers: worker processes return the same tables in year order as the serial path."""
-    from hcwf.config.model import ParallelSpec
-
     years = [2001, 2002, 2003, 2004]
     try:
         serial = parallel.concat_year_args(squares_of, years, (1,), ParallelSpec(enabled=False, workers=None))

@@ -32,13 +32,13 @@ def _paths(short):
 def test_figure_names_do_not_depend_on_the_layout():
     for kind, (parts, name) in FIGURES.items():
         assert file_name(None, kind, *parts) == file_name(_paths(True), kind, *parts) == \
-            file_name(_paths(False), kind, *parts) == file_name({"short_names": True}, kind, *parts) == name
+            file_name(_paths(False), kind, *parts) == name
 
 
 def test_data_names_are_short_in_run_folders_and_historical_otherwise():
     for kind, (parts, long, short) in DATA.items():
         assert file_name(None, kind, *parts) == file_name(_paths(False), kind, *parts) == long
-        assert file_name(_paths(True), kind, *parts) == file_name({"short_names": True}, kind, *parts) == short
+        assert file_name(_paths(True), kind, *parts) == short
     with pytest.raises(ValueError):
         file_name(None, "nope")
 
@@ -61,7 +61,7 @@ def test_the_figure_spec_carries_what_the_figures_read(tmp_path):
     names = {f.name for f in fields(FigureSpec)}
     assert {"dir_fig", "region", "shpfile_dir", "polygon", "save_fig", "show_plot", "show_panel", "models",
             "max_forecast_day", "units"} <= names
-    from hcwf.config.flat_bridge import figure_spec
+    from typed_io import figure_spec
 
     spec = figure_spec({"dir_fig": str(tmp_path), "region": "x", "model_list": ["A", "B"], "max_forecast_day": 7})
     assert spec.models == ("A", "B") and spec.max_forecast_day == 7 and spec.units is None and spec.show_plot

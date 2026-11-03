@@ -4,11 +4,9 @@ from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np
-from hcwf.config import flat_bridge
 from hcwf.config.model import Case, Selection
 from hcwf.io import input as io_input
 from hcwf.io.input import initialization_dates
-from hcwf.lib.onset_config import onset_setup
 from hcwf.stats.detect import check_alignment, detect_ensemble, detect_observed
 from hcwf.stats.conditional_climatology import CLIMATOLOGY_REFERENCES
 from hcwf.spatial import axes
@@ -28,11 +26,6 @@ def reports_back_dated(onset, model_name):
     if model_name in CLIMATOLOGY_REFERENCES:
         return False
     return onset.forecast_history == "observed"
-
-
-def counts_back_dated(cfg):
-    """`reports_back_dated` of a flat config."""  # R2-bridge
-    return reports_back_dated(onset_setup(cfg), cfg.get("model"))
 
 
 @dataclass(frozen=True)
@@ -179,9 +172,6 @@ def get_target_bins(brier_forecast, brier_climatology):
 
 
 # Function to create forecast-observation pairs with specified day bins for probabilistic verification
-def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, day_bins, max_forecast_day, **kwargs):  # R2-bridge
-    """forecast_pairs of a flat config's day_bins and back-dated setting."""
-    return forecast_pairs(onset_all_members, onset_da, day_bins, back_dated=counts_back_dated(kwargs))
 
 
 def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
@@ -335,7 +325,7 @@ def _year_set_texts(sorted_years, codes) -> np.ndarray:
 
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
 def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, *,
-                                             day_bins, max_forecast_day, **kwargs):
+                                             day_bins, max_forecast_day):
     """
     Create forecast-observation pairs using climatological ensemble where each year is a member.
     Uses day-of-year instead of calendar dates for onset comparison.
@@ -601,12 +591,6 @@ def start_pairs(rc, model, select=Selection()):
                              prewarm=lambda: io_input.warm_up_of(rc, model, select))
 
 
-def multi_year_forecast_obs_pairs(**kwargs):  # R2-bridge
-    """forecast_obs_pairs of a flat config (its model, over its years)."""
-    rc, case, select = flat_bridge.from_case_kwargs(kwargs)
-    return forecast_obs_pairs(rc, case.model, kwargs["years"], select)
-
-
 def climatological_pairs(clim_onset, rc, *, years, day_bins):
     """Climatological forecast-observation pairs of all target years in years, concatenated.
 
@@ -660,8 +644,3 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
 
     return combined_forecast_obs
 
-
-def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins, **kwargs):  # R2-bridge
-    """climatological_pairs of a flat config."""
-    rc, _, _ = flat_bridge.from_case_kwargs({**kwargs, "years": years, "day_bins": day_bins})
-    return climatological_pairs(clim_onset, rc, years=years, day_bins=day_bins)

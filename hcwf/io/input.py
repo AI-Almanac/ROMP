@@ -7,10 +7,7 @@ conversion are then applied in place on the one array that was read.
 The readers take the typed specs of a run (`hcwf.config.model`): `load_observations(year, obs, area, options, select)`,
 `load_forecast(year, model, ev, area, options, onset, ensemble=...)` and `load_thresholds(onset, obs, area, options, ev,
 output, model=...)`. What a single call chooses and a config does not hold (units to keep, members, issue dates, the
-files' years, a grid point, the implicit masks) is a `Selection`. The old keyword names (`load_imd_rainfall(year,
-**config)`, `get_forecast_*`, `load_thresholds(**config)`, `units_spec(config, source)`, ...) stay as `# R2-bridge`
-wrappers that rebuild the typed inputs with `hcwf.config.flat_bridge` (step S11 deletes them).
-
+files' years, a grid point, the implicit masks) is a `Selection`. 
 A dataset is read from one file per year (`file_pattern` with {} for the year), a zarr store, or an explicit list of
 files (`paths`, any number per year, optionally filtered by `years`): see `year_files`. Data on a string "unit"
 dimension (admin units) is read without a region box; `unit_series` and `read_on_units` aggregate cells onto units
@@ -21,7 +18,6 @@ from __future__ import annotations
 import os
 import threading
 import warnings
-from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
@@ -33,7 +29,7 @@ from hcwf.cache import NETCDF, NETCDF_GROUPS, Store, file_identity
 from hcwf.config.model import Selection
 from hcwf.stats import observed_cache
 from hcwf.utils.workers import ordered_prefetch, worker_count
-from hcwf.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, onset_setup
+from hcwf.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
 from hcwf.lib.dataset_schema import DatasetError, file_year, is_zarr, resolve_paths
@@ -55,13 +51,6 @@ log = logging.getLogger(__name__)
 _NO_SELECTION = Selection()
 
 
-def _bridge():
-    """R2-bridge: the adapter that rebuilds typed inputs from the flat names (imported late: it imports the config)."""
-    from hcwf.config import flat_bridge
-
-    return flat_bridge
-
-
 def steps_needed(max_forecast_day, onset: OnsetSetup | None):
     """The last lead day onset detection reads, or None if it can't be told.
 
@@ -71,11 +60,6 @@ def steps_needed(max_forecast_day, onset: OnsetSetup | None):
     if not isinstance(max_forecast_day, int):
         return None
     return max_forecast_day + forecast_reach(onset) - 1
-
-
-def onset_steps_needed(*, max_forecast_day=None, **kwargs):
-    """`steps_needed` of a flat config."""  # R2-bridge
-    return steps_needed(max_forecast_day, onset_setup(kwargs) if isinstance(max_forecast_day, int) else None)
 
 
 _stores = {}
@@ -179,12 +163,6 @@ def reference_rain_year(year, obs, area, select, boundary):
                      day_boundary=rain.day_boundary, source="observations")
 
 
-def reference_year(year, kwargs, boundary):
-    """`reference_rain_year` of a flat config."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return reference_rain_year(year, got.obs, got.area, got.select, boundary)
-
-
 def _in_memory(da):
     """The DataArray with its data in memory (a no-op for one already read)."""
     return da if da.variable._in_memory else da.load()
@@ -221,12 +199,6 @@ class _LazyRain:
 _reported_ingest = set()
 
 
-def ingest_options(kwargs, forecast=False) -> dict:
-    """`OnsetOptions.ingest` of a flat config (the keyword options of `ingest`, or of `ingest_forecast_info`)."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return got.options.ingest(forecast, got.obs.units, check_units=got.select.check_units)
-
-
 def ingest_forecast(cube, onset, model, options, select=_NO_SELECTION, source=None):
     """Normalise a model's forecast cube (already in mm, dims init_time, [member], lat, lon, step) to ForecastRain.
 
@@ -253,12 +225,6 @@ def ingest_forecast(cube, onset, model, options, select=_NO_SELECTION, source=No
             text += f"; days cut at {info.daily_boundary}"
         log.info(text + "".join(f"; {note}" for note in info.notes))
     return forecast
-
-
-def ingest_model_forecast(cube, setup, kwargs, source=None):
-    """`ingest_forecast` of a flat config."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return ingest_forecast(cube, setup, got.model, got.options, got.select, source)
 
 
 def _obs_source_label(read, onset):
@@ -517,17 +483,12 @@ def _thresholds_key(onset, obs, options, select, model) -> str:
 
 
 def load_thresholds(onset=None, obs=None, area=None, options=None, ev=None, output=None, *, model=None,
-                    select=_NO_SELECTION, parallel=None, cache_dir=None, **kwargs):
+                    select=_NO_SELECTION, parallel=None, cache_dir=None):
     """The definition's named thresholds (what the onset detection takes as thresh_slice).
 
     `model` is the forecast model the thresholds come from when threshold_source is "model". Computed ones are cached
     under `cache_dir`, or the output's data folder; the loaded set is kept for the run (see `_loaded_thresholds`).
-    R2-bridge: called with only the keys of a flat config (`load_thresholds(**config)`) it rebuilds these from them.
     """
-    if onset is None:   # R2-bridge
-        got = _bridge().reader_inputs(kwargs)
-        return load_thresholds(got.onset(), got.obs, got.area, got.options, got.ev, got.output, model=got.model,
-                               select=got.select, parallel=got.parallel, cache_dir=got.cache_dir)
     key = (_setup_key(onset), str(None if model is None else model.name), str(ev.max_forecast_day),
            str(None if not ev.windows else [w.span for w in ev.windows]), str(output.data_dir), str(obs.dir),
            str(obs.var), str(area.region), _thresholds_key(onset, obs, options, select, model))
@@ -599,13 +560,6 @@ def warm_up(onset, obs, area, options, ev, output, *, model=None, select=_NO_SEL
         log.debug(f"model mask pre-warm skipped: {exc}")
 
 
-def prewarm(kwargs):
-    """`warm_up` of a flat config."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return warm_up(got.onset(), got.obs, got.area, got.options, got.ev, got.output, model=got.model,
-                   select=got.select, parallel=got.parallel, cache_dir=got.cache_dir)
-
-
 def thresholds_of(rc, model, select=_NO_SELECTION):
     """`load_thresholds` of a run (`rc`: RunConfig) for the source `model` (ModelSpec)."""
     return load_thresholds(rc.onset, rc.observations, rc.area, rc.onset_options, rc.evaluation, rc.output, model=model,
@@ -669,11 +623,6 @@ def initialization_dates(year, ev):
     """The initialization dates of `year`: the days between ev.start_date and ev.end_date (month/day only) whose weekday
     in ev.date_filter_year is in ev.init_days (0 = Monday)."""
     return _init_dates(year, ev.date_filter_year, ev.init_days, ev.start_date, ev.end_date)
-
-
-def get_initialization_dates(year, *, date_filter_year, init_days, start_date, end_date, **kwargs):
-    """`initialization_dates` from the four keys of a flat config."""  # R2-bridge
-    return _init_dates(year, date_filter_year, init_days, start_date, end_date)
 
 
 def year_files(paths, base, years_filter, year) -> list[str]:
@@ -779,12 +728,6 @@ def read_obs_years(years, obs, area, options, select=_NO_SELECTION, *, onset=Non
     return _obs_years_of(_ObsRead(obs, area, options, select, onset, tuple(run_years), dir_fig, parallel), years, hold)
 
 
-def obs_years(years, kwargs, hold=True):
-    """`read_obs_years` of a flat config."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return read_obs_years(years, got.obs, got.area, got.options, got.select, onset=got.onset_if_units(),
-                          run_years=got.ev.years, dir_fig=got.dir_fig, parallel=got.parallel, hold=hold)
-
 
 def _obs_years_of(read: _ObsRead, years, hold=True):
     """The generator behind `read_obs_years`."""
@@ -855,7 +798,7 @@ def _obs_years_of(read: _ObsRead, years, hold=True):
 
 def _workers(parallel, tasks) -> int:
     """The workers for `tasks` independent tasks under the run's parallel setting (the defaults when it is None)."""
-    config = {} if parallel is None else {"parallel": parallel.enabled, "parallel_workers": parallel.workers}  # R2-bridge
+    config = {} if parallel is None else {"parallel": parallel.enabled, "parallel_workers": parallel.workers}
     return worker_count(config, tasks)
 
 
@@ -929,13 +872,6 @@ def load_observations(year, obs, area, options, select=_NO_SELECTION, *, onset=N
     boundary and lead label their dates are moved by). `select` may pick one grid point and keep some units.
     """
     return _load_observation(year, _ObsRead(obs, area, options, select, onset, tuple(run_years), dir_fig))
-
-
-def load_imd_rainfall(year, **kwargs):
-    """`load_observations` of a flat config."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return load_observations(year, got.obs, got.area, got.options, got.select, onset=got.onset_if_units(),
-                             run_years=got.ev.years, dir_fig=got.dir_fig)
 
 
 def _load_observation(year, read: _ObsRead):
@@ -1106,23 +1042,6 @@ def load_forecast(year, model, ev, area, options, onset, *, ensemble, select=_NO
     return _load_forecast(year, _ForecastRead(model, ev, area, options, select, onset, dir_fig, ensemble))
 
 
-def _flat_forecast(year, kwargs, ensemble):
-    """`load_forecast` of a flat config."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return load_forecast(year, got.model, got.ev, got.area, got.options, got.onset_if_steps(), ensemble=ensemble,
-                         select=got.select, dir_fig=got.dir_fig)
-
-
-def get_forecast_deterministic_twice_weekly(year, **kwargs):
-    """`load_forecast` of a flat config, without members."""  # R2-bridge
-    return _flat_forecast(year, kwargs, False)
-
-
-def get_forecast_probabilistic_twice_weekly(year, **kwargs):
-    """`load_forecast` of a flat config, with the members asked for."""  # R2-bridge
-    return _flat_forecast(year, kwargs, True)
-
-
 def observed_history(year, current, onset, obs, area, options, select=_NO_SELECTION, *, run_years=(), dir_fig=None):
     """The observed rain to stitch before each forecast of `year`, or None when forecast_history is "none".
 
@@ -1140,13 +1059,6 @@ def observed_history(year, current, onset, obs, area, options, select=_NO_SELECT
     except FileNotFoundError:
         return current
     return xr.concat([previous, current], dim="time")
-
-
-def load_history(year, current, **kwargs):
-    """`observed_history` of a flat config."""  # R2-bridge
-    got = _bridge().reader_inputs(kwargs)
-    return observed_history(year, current, got.onset(), got.obs, got.area, got.options, got.select,
-                            run_years=got.ev.years, dir_fig=got.dir_fig)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -1317,38 +1229,35 @@ def read_unit_dim(da, *, block_dim, ids=None, scale=None):
 # Evaluation units: the config's `units:` section, reading a file onto units, lead and member selection
 # ---------------------------------------------------------------------------------------------------------
 
-def _units_of(source, name: str = "observations") -> UnitsSpec | None:
+def _units_of(source) -> UnitsSpec | None:
     """The evaluation units of a source: the UnitsSpec itself, or that of an ObsSpec, ModelSpec or ReferenceSpec (None:
-    the grid cells are used). R2-bridge: a flat config is resolved for source `name` (see `UnitsSpec.from_flat`)."""
-    if isinstance(source, Mapping):
-        return UnitsSpec.from_flat(source, name)
+    the grid cells are used)."""
     return source if source is None or isinstance(source, UnitsSpec) else source.units
 
 
-def units_spec(source, name: str = "observations") -> UnitsSpec | None:
+def units_spec(source) -> UnitsSpec | None:
     """The evaluation units of a source: its resolved UnitsSpec, or None when the config has no `units:` keys (the grid
     cells are used). `source` is the run's ObsSpec, ModelSpec or ReferenceSpec; `UnitsSpec.from_flat` made it once, when the
-    RunConfig was built. R2-bridge: a flat config and a source name ("observations" or a model's name) are resolved
-    the same way."""
-    return _units_of(source, name)
+    RunConfig was built."""
+    return _units_of(source)
 
 
-def units_files(source, name: str = "observations") -> list:
+def units_files(source) -> list:
     """The identities (path, size, time) of the files the source's units specification names; none without units."""
-    spec = _units_of(source, name)
+    spec = _units_of(source)
     return [] if spec is None else [file_identity(p) for p in spec.files()]
 
 
 def point_dims(source) -> tuple:
     """The spatial dims of a run's onset arrays: ("unit",) on evaluation units, else ("lat", "lon") (see hcwf.spatial.axes).
-    `source` is the observations' ObsSpec (or its UnitsSpec; R2-bridge: a flat config)."""
+    `source` is the observations' ObsSpec (or its UnitsSpec)."""
     return axes.UNIT if _units_of(source) is not None else axes.GRID
 
 
 def unit_table(source, ids) -> EvaluationUnits:
     """The run's evaluation units of the string `ids`, in that order: their names, centroids and, for polygons, geometry.
 
-    `source` is the observations' ObsSpec (or its UnitsSpec; R2-bridge: a flat config). Polygon (shapefile) and weights
+    `source` is the observations' ObsSpec (or its UnitsSpec). Polygon (shapefile) and weights
     units come from the specification; ids of cells or of a pre-aggregated file are labelled with the centroids table,
     or with the cell they spell ("<lat>_<lon>").
     """
@@ -1540,11 +1449,7 @@ class UnitForecast:
 
     def __init__(self, path, model, spec: UnitsSpec, *, keep_ids=None, issue_dates=None, select=_NO_SELECTION):
         """`model` is the forecast's ModelSpec (variable, dimension names, unit factor); `select` picks the lead days
-        (first_lead, last_lead, rain_horizon) and members (max_member, member_ids). R2-bridge: a flat config in place of
-        `model` gives both."""
-        if isinstance(model, Mapping):   # R2-bridge
-            got = _bridge().reader_inputs(model)
-            model, select = got.model, got.select
+        (first_lead, last_lead, rain_horizon) and members (max_member, member_ids)."""
         self.path, name = path, Path(path).name
         variable = model.var
         ds, self._close = _open_forecast(None, None, None, None, model.dims_map(), None, file_path=str(path))

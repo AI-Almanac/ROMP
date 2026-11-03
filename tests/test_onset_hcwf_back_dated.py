@@ -5,12 +5,19 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.io.output import add_back_dated_map, save_metrics_to_netcdf, save_score_results
-from hcwf.stats.benchmark import compute_onset_metrics_with_windows
-from hcwf.stats.bins import create_forecast_observation_pairs_with_bins
+from hcwf.config.model import Window
+from hcwf.spatial import axes
+from hcwf.stats.benchmark import onset_metrics
+from hcwf.stats.bins import forecast_pairs
 
-OBSERVED = {"onset_definition": "icpac", "obs_day_boundary": "00 UTC, labelled by start"}
-NONE = {**OBSERVED, "forecast_history": "none"}
+OBSERVED = {"back_dated": True}   # forecast_history "observed" (the default): back-dated onsets are counted
+NONE = {"back_dated": False}      # forecast_history "none": exactly the old tables
 OBS_ONSET = xr.DataArray([[np.datetime64("2020-06-20", "ns")]], coords=[("lat", [0.0]), ("lon", [0.0])])
+
+
+def _metrics(frame, window, *, back_dated):
+    """onset_metrics of a table at (grid) points over the window (first lead, last lead) with 3 days tolerance."""
+    return onset_metrics(frame, Window(*window, 3), back_dated=back_dated, default_dims=axes.GRID)
 
 
 def _frame():
@@ -24,28 +31,27 @@ def _frame():
 
 def test_metrics_count_back_dated_only_in_the_first_window():
     """The column counts back-dated cases for a window starting at lead 1 and is 0 for later windows."""
-    first, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15), **OBSERVED)
-    later, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(16, 30), **OBSERVED)
+    first, _ = _metrics(_frame(), (1, 15), **OBSERVED)
+    later, _ = _metrics(_frame(), (16, 30), **OBSERVED)
     assert first["n_back_dated"].tolist() == [1]
     assert later["n_back_dated"].tolist() == [0]
 
 
 def test_none_history_has_no_column():
     """forecast_history "none" gives exactly the old table."""
-    table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15), **NONE)
+    table, _ = _metrics(_frame(), (1, 15), **NONE)
     assert "n_back_dated" not in table.columns
 
 
 def test_empty_table_still_carries_the_column():
     """No forecast onsets in a year: the empty table has the column in observed mode."""
-    table, _ = compute_onset_metrics_with_windows(pd.DataFrame(), tolerance_days=3, verification_window=(1, 15),
-                                                  **OBSERVED)
+    table, _ = _metrics(pd.DataFrame(), (1, 15), **OBSERVED)
     assert "n_back_dated" in table.columns and table.empty
 
 
 def test_spatial_map_and_global_attribute(tmp_path):
     """The map sums the counts per cell and the file gets the total as a global attribute; history none adds nothing."""
-    table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15), **OBSERVED)
+    table, _ = _metrics(_frame(), (1, 15), **OBSERVED)
     spatial = {"mean_mae": xr.DataArray([[1.0]], coords=OBS_ONSET.coords)}
     add_back_dated_map(spatial, {2020: table, 2021: table}, {2020: OBS_ONSET, 2021: OBS_ONSET})
     assert spatial["n_back_dated"].values.tolist() == [[2.0]]
@@ -53,8 +59,7 @@ def test_spatial_map_and_global_attribute(tmp_path):
     ds = xr.open_dataset(tmp_path / "spatial_metrics_c_1-10.nc")
     assert ds.attrs["n_back_dated_total"] == 2 and "n_back_dated" in ds
 
-    plain_table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15),
-                                                        **NONE)
+    plain_table, _ = _metrics(_frame(), (1, 15), **NONE)
     plain = {"mean_mae": xr.DataArray([[1.0]], coords=OBS_ONSET.coords)}
     add_back_dated_map(plain, {2020: plain_table}, {2020: OBS_ONSET})
     assert list(plain) == ["mean_mae"]
@@ -77,7 +82,7 @@ def _case(model):
 
 def _inputs(tmp_path):
     """The typed output and evaluation specs of a flat config writing to tmp_path."""
-    from hcwf.config.flat_bridge import reader_inputs
+    from typed_io import reader_inputs
 
     return reader_inputs({"dir_out": str(tmp_path), "max_forecast_day": 10, "years": (2020,)})
 
@@ -94,13 +99,13 @@ def _scores():
 
 def test_member_share_column_in_the_overall_csv(tmp_path):
     """One of the two member onsets is back-dated: share 0.5 in observed mode, no column otherwise."""
-    kwargs = dict(day_bins=((1, 5), (6, 10)), max_forecast_day=10)
-    pairs = create_forecast_observation_pairs_with_bins(_members(), OBS_ONSET, **kwargs, **OBSERVED)
+    day_bins = ((1, 5), (6, 10))
+    pairs = forecast_pairs(_members(), OBS_ONSET, day_bins, **OBSERVED)
     assert pairs["back_dated_members"].iloc[0] == 1 and pairs["onset_members"].iloc[0] == 2
     save_score_results({**_scores(), "forecast_obs_df": pairs}, _case("M"), None, _inputs(tmp_path).output)
     assert pd.read_csv(tmp_path / "overall_skill_scores_M_1-10.csv")["back_dated_member_share"].tolist() == [0.5]
 
-    old = create_forecast_observation_pairs_with_bins(_members(), OBS_ONSET, **kwargs, **NONE)
+    old = forecast_pairs(_members(), OBS_ONSET, day_bins, **NONE)
     assert "back_dated_members" not in old.columns
     save_score_results({**_scores(), "forecast_obs_df": old}, _case("L"), None, _inputs(tmp_path).output)
     assert "back_dated_member_share" not in pd.read_csv(tmp_path / "overall_skill_scores_L_1-10.csv").columns

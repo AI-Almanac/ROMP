@@ -11,7 +11,6 @@ from hcwf.lib.onset_config import OnsetConfigError, history_needs_previous_year,
 from hcwf.config.model import Window
 from hcwf.stats.benchmark import onset_metrics
 from hcwf.stats.bins import forecast_pairs
-from hcwf.config import flat_bridge
 from hcwf.stats.detect import detect_deterministic
 
 BOUNDARY = "00 UTC, labelled by start"
@@ -19,7 +18,7 @@ BOUNDARY = "00 UTC, labelled by start"
 
 def typed(kwargs):
     """(rc, case, select): the typed inputs of a test's flat kwargs."""
-    return flat_bridge.from_case_kwargs(kwargs)
+    return typed_io.from_case_kwargs(kwargs)
 
 
 def _cfg(**values):

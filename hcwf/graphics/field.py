@@ -39,7 +39,7 @@ def colorbar_extend(mappable) -> str:
 def units_of(da, spec):
     """The run's units (names, centroids, polygons) of a DataArray over "unit", or None for a grid field.
 
-    `spec` is the run's FigureSpec (or the observations' UnitsSpec or ObsSpec; R2-bridge: a flat config)."""
+    `spec` is the run's FigureSpec (or the observations' UnitsSpec or ObsSpec)."""
     if "unit" not in da.dims:
         return None
     from hcwf.io.input import unit_table

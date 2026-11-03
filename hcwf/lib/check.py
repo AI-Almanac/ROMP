@@ -1,6 +1,6 @@
 """``hcwf-run -p run.yaml --check``: show everything a run would do and run nothing.
 
-``build_report(dic)`` takes the resolved flat config (hcwf.config.build.resolve_flat) and returns a
+``build_report(dic)`` takes the resolved flat config (`resolve(...).values`) and returns a
 ``CheckReport``: the settings with where each value came from, the datasets with what was detected and the
 evidence, the mask, the lead windows, which files exist or are missing, the sampled alignment of each model with
 the observations, sanity hints (each names the key to set), the run folder and the observed-onset cache that a run

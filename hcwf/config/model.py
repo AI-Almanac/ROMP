@@ -1,6 +1,6 @@
 """RunConfig: a resolved run as typed, frozen specs (design: docs/review/runconfig_design.md 2.2, 2.3, 2.8, 2.10).
 
-    rc = RunConfig.from_flat(resolve_flat("run.yaml"))
+    rc = resolve("run.yaml")
     for case in rc.cases():                     # every model with every verification window
         case.model.dir, case.window.span, case.window.tolerance
     rc.reference_cases()                        # the reference, deterministic rule (models[0]'s accumulation)
@@ -545,8 +545,8 @@ class RunConfig:
 
     @classmethod
     def from_flat(cls, values: Mapping, *, check: bool = True, lenient: bool = False) -> RunConfig:
-        """The RunConfig of a resolved flat record (hcwf.config.build.resolve_flat); the record is copied. check=False skips
-        the invariants (for records edited in place, as the bridge rebuilds them). lenient=True (`--check`) builds a
+        """The RunConfig of a resolved flat record (`hcwf.config.build.resolve` builds it); the record is copied. check=False skips
+        the invariants (for records edited in place). lenient=True (`--check`) builds a
         config whose `units:` or `blend:` section is invalid too: the specs of an invalid section are None, and the
         invariants are not checked."""
         run = _project_run(values)
@@ -586,7 +586,7 @@ class RunConfig:
 
     @property
     def values(self) -> Mapping:
-        """The resolved flat record (read-only; ``to_flat`` in hcwf.config.flat_bridge copies it)."""
+        """The resolved flat record (read-only; copy it with ``dict(rc.values)``)."""
         return MappingProxyType(self._values)
 
     def __eq__(self, other) -> bool:

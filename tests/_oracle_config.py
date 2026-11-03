@@ -1037,11 +1037,10 @@ class HCWFValidator:
 
 def check_units_problem(dic):
     """The problem `_units` of check.py reported: the text of the error line, or None."""
-    from hcwf.io.input import units_spec
-    from hcwf.spatial.units import UnitsSpecError
+    from hcwf.spatial.units import UnitsSpec, UnitsSpecError
 
     try:
-        {name: units_spec(dic, name) for name in ["observations", *dic["model_list"]]}
+        {name: UnitsSpec.from_flat(dic, name) for name in ["observations", *dic["model_list"]]}
     except UnitsSpecError as exc:
         return f"units: {exc}"
     return None
@@ -1062,8 +1061,7 @@ def check_blend_problems(dic):
 
 # ======================================================================= hcwf/stats/observed_cache.py (step S7)
 # The observed-onset cache key as it was before the typed fingerprint_parts: the parts of one detection from the flat
-# kwargs. (Calls the live `onset_setup`, `units_spec`, `units_files` and `ingest_options` of the readers, which S7 does
-# not change.)
+# kwargs. (Calls the live `onset_setup`, `UnitsSpec.from_flat`, `units_files` and the typed options of the readers.)
 
 def _fp_years(kwargs):
     years = set()
@@ -1117,9 +1115,10 @@ def _fp_reference_part(reference):
 
 
 def _fp_options(kwargs):
-    from hcwf.io.input import ingest_options
+    from typed_io import reader_inputs
 
-    options = {**ingest_options(kwargs)}
+    got = reader_inputs(kwargs)
+    options = {**got.options.ingest(False, got.obs.units, check_units=got.select.check_units)}
     if kwargs.get("onset_horizon"):
         options["horizon"] = kwargs["onset_horizon"]
     if kwargs.get("reference_onset") is not None:
@@ -1134,14 +1133,15 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
     import numpy as np
 
     from hcwf.cache import part_hash
-    from hcwf.io.input import units_files, units_spec
+    from hcwf.io.input import units_files
+    from hcwf.spatial.units import UnitsSpec
     from hcwf.lib.onset_config import onset_setup
     from hcwf.onset import definition as definition_mod
     from hcwf.stats.observed_cache import threshold_hash
 
     setup = onset_setup(kwargs)
     years = _fp_years(kwargs)
-    spec = units_spec(kwargs, "observations")
+    spec = UnitsSpec.from_flat(kwargs, "observations")
     parts = {
         "obs_files": part_hash(_fp_obs_files(kwargs, years)),
         "obs_ingest": part_hash(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.obs_day_boundary,
@@ -1158,7 +1158,7 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
                                    kwargs.get("lat_select") if kwargs.get("grid_point") else None,
                                    kwargs.get("lon_select") if kwargs.get("grid_point") else None, lat, lon)
     else:
-        parts["units"] = part_hash(repr(spec), units_files(kwargs), kwargs.get("obs_dims"),
+        parts["units"] = part_hash(repr(spec), units_files(spec), kwargs.get("obs_dims"),
                                    sorted(kwargs.get("keep_unit_ids") or ()), setup.lead_label)
     options = _fp_options(kwargs)
     if options:

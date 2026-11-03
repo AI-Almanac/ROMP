@@ -126,8 +126,8 @@ def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
 def with_unit_labels(obj, units):
     """A DataArray or Dataset over "unit" with each unit's name and centroid (unit_name, lat, lon) as coordinates.
 
-    Returned as it is when there is no "unit" dimension. `units` is the observations' UnitsSpec (or their ObsSpec;
-    R2-bridge: a flat config, for export.py and api.py until S10). The names, centroids and polygons are the run's own
+    Returned as it is when there is no "unit" dimension. `units` is the observations' UnitsSpec (or their ObsSpec).
+    The names, centroids and polygons are the run's own
     (hcwf.io.input.unit_table); a unit without a name is called by its id.
     """
     if "unit" not in obj.dims:

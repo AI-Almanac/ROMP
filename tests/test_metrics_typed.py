@@ -1,20 +1,17 @@
 """The typed metrics path (step S8 of docs/review/runconfig_design.md): compute_metrics, prepare_pairs and
 create_score_results on a RunConfig and a case.
 
-Serial and parallel runs give the same tables; the old keyword names (R2-bridge wrappers) give the same results as the typed
-functions; what a worker is sent is small."""
+Serial and parallel runs give the same tables; what a worker is sent is small."""
+import typed_io
 import pickle
 
-import numpy as np
 import pandas as pd
 import pytest
-
-from hcwf.config import flat_bridge
 from hcwf.config.model import Selection
-from hcwf.metrics.skill import CACHE_KEYS, create_score_results, prepare_pairs, prepare_score_cache
+from hcwf.metrics.skill import create_score_results, prepare_pairs
 from hcwf.stats import benchmark, parallel
-from hcwf.stats.benchmark import compute_metrics, compute_metrics_multiple_years
-from hcwf.stats.bins import _pairs_of_years, forecast_obs_pairs, multi_year_forecast_obs_pairs
+from hcwf.stats.benchmark import compute_metrics
+from hcwf.stats.bins import _pairs_of_years
 from old_flat_rule import old_rule
 from test_skill_reference_model import YEARS, DAY_BINS, _write_model, _write_obs
 from tests.test_oracle_config import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
@@ -68,7 +65,7 @@ def test_serial_equals_parallel_on_the_typed_path(config, source):
     results = {}
     try:
         for flag in (False, True):
-            rc, case, select = flat_bridge.from_case_kwargs(dict(config, parallel=flag, parallel_workers=2))
+            rc, case, select = typed_io.from_case_kwargs(dict(config, parallel=flag, parallel_workers=2))
             assert rc.parallel.enabled is flag
             benchmark.reset_onset_tables()
             metrics, onsets = compute_metrics(rc, case, select)
@@ -87,36 +84,11 @@ def test_serial_equals_parallel_on_the_typed_path(config, source):
         assert len(serial[2].forecast["year"].unique()) == len(YEARS)
 
 
-def test_old_names_give_the_typed_results(config):
-    """compute_metrics_multiple_years, multi_year_forecast_obs_pairs, prepare_score_cache and create_score_results with
-    keywords (the R2-bridge wrappers) equal the typed functions."""
-    rc, case, select = flat_bridge.from_case_kwargs(config)
-    benchmark.reset_onset_tables()
-    typed_metrics = compute_metrics(rc, case, select)
-    benchmark.reset_onset_tables()
-    _frames_equal(typed_metrics[0], compute_metrics_multiple_years(**config)[0])
-    _frames_equal(typed_metrics[1], compute_metrics_multiple_years(**config)[1])
-    benchmark.reset_onset_tables()
-
-    _frames_equal(forecast_obs_pairs(rc, case.model, YEARS, select), multi_year_forecast_obs_pairs(**config))
-    prepared = prepare_pairs(rc, case.model, select)
-    cache = prepare_score_cache(**config)
-    assert tuple(cache) == CACHE_KEYS
-    for name, table in zip(CACHE_KEYS, prepared):
-        _frames_equal(table, cache[name])
-    typed = create_score_results(case, prepared, rc.metrics, rc.evaluation)
-    for old in (create_score_results(**config), create_score_results(**config, **cache)):
-        assert list(old) == list(typed)
-        for key in ("BS", "RPS", "AUC", "BS_ref", "RPS_ref", "AUC_ref", "skill_results"):
-            assert repr(old[key]) == repr(typed[key])
-        _frames_equal(old["forecast_obs_df"], typed["forecast_obs_df"])
-
-
 def test_scored_bins_are_the_evaluations(config):
     """create_score_results scores the bins of the evaluation spec it is given (a window's bins, in the ensemble flow)."""
     from dataclasses import replace
 
-    rc, case, select = flat_bridge.from_case_kwargs(config)
+    rc, case, select = typed_io.from_case_kwargs(config)
     prepared = prepare_pairs(rc, case.model, select)
     narrowed = create_score_results(case, prepared, rc.metrics, replace(rc.evaluation, day_bins=DAY_BINS[:1]))
     assert set(narrowed["forecast_obs_df"]["bin_label"]) == {"Days 1-5"}
@@ -127,11 +99,11 @@ def test_scored_bins_are_the_evaluations(config):
 def test_worker_payload_is_small(config, configs):  # noqa: F811
     """What a worker is sent for a year (the function, the year, and the run, source and selection) is under 32 KB, for the
     synthetic config and for the fixture world's configs; and the run round-trips."""
-    from hcwf.config.build import resolve_flat
+    from typed_io import flat_config
     from hcwf.config.model import RunConfig
 
-    runs = [flat_bridge.from_case_kwargs(config)] + [
-        (rc, rc.cases()[0], Selection()) for rc in (RunConfig.from_flat(resolve_flat(configs[name]), check=False)
+    runs = [typed_io.from_case_kwargs(config)] + [
+        (rc, rc.cases()[0], Selection()) for rc in (RunConfig.from_flat(flat_config(configs[name]), check=False)
                                                     for name in ("two_models_windows", "model_reference"))]
     for rc, case, select in runs:
         pairs_args = (rc, case.model, select)

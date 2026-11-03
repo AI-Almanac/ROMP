@@ -1,5 +1,6 @@
 """HCWF scores a conditional-climatology reference end to end on tiny synthetic data, and leaves the climatology reference alone."""
 
+import typed_io
 import numpy as np
 import pandas as pd
 import pytest
@@ -11,7 +12,6 @@ from hcwf.io.dict import extract_pd_bins
 from hcwf.metrics.skill import create_score_results, prepare_pairs
 from hcwf.stats.benchmark import compute_metrics
 from hcwf.stats.bins import climatological_pairs
-from hcwf.config import flat_bridge
 from hcwf.stats.climatology import climatological_onset_dataset, compute_climatology_as_forecast
 from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
                                                 create_conditional_climatological_forecast_obs_pairs)
@@ -25,7 +25,7 @@ DAY_BINS = ((1, 5), (6, 10))
 
 def typed(kwargs):
     """(rc, case, select): the typed inputs of a test's flat kwargs."""
-    return flat_bridge.from_case_kwargs(kwargs)
+    return typed_io.from_case_kwargs(kwargs)
 
 
 def scores(config):
@@ -168,7 +168,7 @@ def test_climatology_reference_is_unchanged(config):
 
     det = dict(config, probabilistic=False, model="climatology")
     metrics, onsets = compute_metrics(*typed(det))
-    init_dates = model_input.get_initialization_dates(TARGET, **det)
+    init_dates = typed_io.initialization_dates(TARGET, det)
     direct = compute_climatology_as_forecast(onsets[TARGET], TARGET, init_dates,
                                              _observed(det), max_forecast_day=10)
     assert len(metrics[TARGET]) == direct[["lat", "lon"]].drop_duplicates().shape[0]
@@ -177,8 +177,8 @@ def test_climatology_reference_is_unchanged(config):
 def _observed(config):
     """The target year's observed onsets (lat, lon)."""
     from hcwf.stats.detect import detect_observed
-    rc, _, select = flat_bridge.from_case_kwargs(config)
-    return detect_observed(model_input.load_imd_rainfall(TARGET, **config), model_input.load_thresholds(**config),
+    rc, _, select = typed_io.from_case_kwargs(config)
+    return detect_observed(typed_io.observations(TARGET, config), typed_io.thresholds(config),
                            TARGET, rc, select)
 
 

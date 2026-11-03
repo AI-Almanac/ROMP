@@ -10,8 +10,10 @@ import pytest
 import xarray as xr
 
 from hcwf.metrics.error import create_spatial_far_mr_mae
-from hcwf.stats.benchmark import compute_onset_metrics_with_windows
-from hcwf.stats.bins import create_climatological_forecast_obs_pairs, create_forecast_observation_pairs_with_bins
+from hcwf.config.model import Window
+from hcwf.spatial import axes
+from hcwf.stats.benchmark import onset_metrics
+from hcwf.stats.bins import create_climatological_forecast_obs_pairs, forecast_pairs
 from hcwf.stats.climatology import compute_climatology_as_forecast
 from itertools import product
 from datetime import datetime, timedelta
@@ -878,7 +880,8 @@ def _observed_onsets(seed=0):
     return _grid(dates, dtype="datetime64[ns]")
 
 
-# The scoring functions read the run's onset settings; these say no back-dated forecasts are counted.
+# The loop versions read the run's onset settings; these say no back-dated forecasts are counted (the vectorised ones take
+# back_dated=False).
 RUN = dict(onset_definition="icpac", obs_day_boundary="00 UTC, labelled by start", forecast_history="none")
 
 
@@ -930,7 +933,7 @@ def test_climatology_as_forecast_without_valid_cases_is_empty():
 
 
 # --------------------------------------------------------------------------------------------
-# compute_onset_metrics_with_windows
+# onset_metrics
 # --------------------------------------------------------------------------------------------
 
 def _onset_frame(seed=0):
@@ -959,7 +962,8 @@ def test_onset_metrics_match_loops(verification_window, tolerance_days):
     assert (pd.to_datetime(onset_df["onset_date"]) <= pd.to_datetime(onset_df["init_time"])).any()
     kwargs = dict(tolerance_days=tolerance_days, verification_window=verification_window, **RUN)
     old_metrics, old_summary = _old_compute_onset_metrics_with_windows(onset_df, **kwargs)
-    new_metrics, new_summary = compute_onset_metrics_with_windows(onset_df, **kwargs)
+    new_metrics, new_summary = onset_metrics(onset_df, Window(*verification_window, tolerance_days), back_dated=False,
+                                             default_dims=axes.GRID)
     _assert_frames_identical(old_metrics, new_metrics)
     assert old_summary.keys() == new_summary.keys()
     for key, value in old_summary.items():
@@ -970,12 +974,12 @@ def test_onset_metrics_of_no_forecasts_match_loops():
     """Onset metrics of an empty forecast frame match the loop version."""
     kwargs = dict(tolerance_days=3, verification_window=(1, 15), **RUN)
     old_metrics, _ = _old_compute_onset_metrics_with_windows(pd.DataFrame([]), **kwargs)
-    new_metrics, _ = compute_onset_metrics_with_windows(pd.DataFrame([]), **kwargs)
+    new_metrics, _ = onset_metrics(pd.DataFrame([]), Window(1, 15, 3), back_dated=False, default_dims=axes.GRID)
     pd.testing.assert_frame_equal(old_metrics, new_metrics)
 
 
 # --------------------------------------------------------------------------------------------
-# create_forecast_observation_pairs_with_bins
+# forecast_pairs
 # --------------------------------------------------------------------------------------------
 
 def _member_frame(seed=0, members=6):
@@ -997,7 +1001,7 @@ def test_forecast_observation_pairs_match_loops():
     onset_da = _observed_onsets()
     kwargs = dict(day_bins=((1, 5), (6, 10), (11, 15)), max_forecast_day=15, **RUN)
     old = _old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs)
-    new = create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs)
+    new = forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False)
     assert len(new) > 0 and (members["onset_day"] <= 0).any()
     _assert_frames_identical(old, new)
 
@@ -1009,7 +1013,7 @@ def test_forecast_observation_pairs_skip_cells_off_the_grid():
     onset_da = _observed_onsets()
     kwargs = dict(day_bins=((1, 7), (8, 14)), max_forecast_day=14, **RUN)
     _assert_frames_identical(_old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs),
-                             create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs))
+                             forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False))
 
 
 # --------------------------------------------------------------------------------------------

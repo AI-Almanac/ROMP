@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent / "blend"))
 import _oracle_config as old  # noqa: E402
 import differential_onsets as synthetic
 from hcwf.config import validate
-from hcwf.config.build import resolve, resolve_flat
+from hcwf.config.build import resolve
+from typed_io import flat_config
 from hcwf.lib.assertion import HCWFConfigError
 from hcwf.lib.check import build_report
 from hcwf.lib.convert_specs import convert_blend
@@ -31,7 +32,7 @@ def world(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def flat(world):
-    return resolve_flat(world[1]["det_climatology"])
+    return flat_config(world[1]["det_climatology"])
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +42,7 @@ def blend_flat(world):
     data.mkdir()
     synthetic.write_data(data)
     (base / "b.yaml").write_text(convert_blend(synthetic.configs(data)["plain"]).to_yaml())
-    return resolve_flat(base / "b.yaml")
+    return flat_config(base / "b.yaml")
 
 
 def old_message(values) -> str | None:
@@ -142,10 +143,10 @@ def test_a_valid_blend_keeps_its_recipe(blend_flat):
 
 def test_a_units_error_fails_at_resolve_before_a_run_folder(world, flat):
     with pytest.raises(HCWFConfigError, match="units mode must be one of"):
-        resolve_flat({**flat, "units_mode": "bogus"})
-    dic, found = resolve_flat({**flat, "units_mode": "bogus"}, check=True)
+        flat_config({**flat, "units_mode": "bogus"})
+    dic, found = flat_config({**flat, "units_mode": "bogus"}, check=True)
     assert dic is not None and found.units
-    dic, found = resolve_flat({**flat, "day_bins": ((6, 2),)}, check=True)
+    dic, found = flat_config({**flat, "day_bins": ((6, 2),)}, check=True)
     assert dic is None and found.fatal
 
 

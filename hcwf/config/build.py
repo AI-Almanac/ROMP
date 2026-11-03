@@ -4,8 +4,7 @@
     rc = resolve(cfg, {"max_forecast_day": 12})                      # with overrides (flat keys, validated)
     rc = resolve_command_line(sys.argv[1:])                          # the command line: -p path and override flags
 
-``resolve`` returns the RunConfig; ``resolve_flat`` and ``resolve_cli`` (R2-bridge) return its flat dict for the
-callers that are not migrated yet. Every entry (hcwf.run / hcwf.check, hcwf-run and --check, hcwf.export, the run-wide
+``resolve`` returns the RunConfig. Every entry (hcwf.run / hcwf.check, hcwf-run and --check, hcwf.export, the run-wide
 config of the apps) goes through the same steps: read the source, apply the overrides (normalised against the schema and recorded in
 ``config_sources``), resolve the paths, plan the lead window and the run folder, then validate. Nothing is created
 on disk: ``flat["run_paths"]`` says where the run will write.
@@ -34,8 +33,9 @@ def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool =
             override_source: str = "override", check: bool = False):
     """The validated RunConfig of a run, finished (paths, lead window, run folder plan); raises HCWFConfigError.
 
-    source is a RunConfig (returned as it is; overrides then raise TypeError) or one of the sources of `resolve_flat`.
-    check=True returns (RunConfig or None, problems) like `resolve_flat`. The other arguments are those of `resolve_flat`.
+    source is a RunConfig (returned as it is; overrides then raise TypeError), a path, a hcwf.config.Config, a mapping,
+    a namespace or a flat dict. check=True returns (RunConfig or None, problems) instead of raising, for `--check`.
+    The other arguments are those of `_resolve_values`.
     """
     from hcwf.config.model import RunConfig
 
@@ -62,16 +62,6 @@ def resolve_command_line(cli_args=None, **kwargs):
 
     return resolve(_get_config_path_pre_parse(cli_args), parse_overrides(cli_args),
                    override_source="command line", **kwargs)
-
-
-def resolve_flat(source, overrides: Mapping[str, Any] | None = None, *, write: bool = True, tmp: Path | None = None,
-                 override_source: str = "override", check: bool = False):
-    """R2-bridge: the flat dict of `resolve`'s RunConfig, for callers that are not migrated (the tests, the apps).
-
-    The validated flat config of a run, finished (paths, lead window, run folder plan); raises HCWFConfigError.
-    resolve_flat is `resolve` without the RunConfig: it takes the same arguments.
-    """
-    return _resolve_values(source, overrides, write=write, tmp=tmp, override_source=override_source, check=check)
 
 
 def _resolve_values(source, overrides, *, write, tmp, override_source, check):
@@ -105,16 +95,6 @@ def _resolve_values(source, overrides, *, write, tmp, override_source, check):
             values["dir_out"] = values["dir_fig"] = str(tmp)
             values["cache_dir"] = None
     return values
-
-
-def resolve_cli(cli_args=None, **kwargs) -> dict:
-    """R2-bridge: `resolve_command_line` as the flat dict. The validated flat config named by -p/--param (or HCWF_CONFIG) of the command line, with its override flags
-    applied and recorded as 'command line' (cli_args is sys.argv[1:] when None)."""
-    from hcwf.lib.loader import _get_config_path_pre_parse
-    from hcwf.lib.parser import parse_overrides
-
-    return resolve_flat(_get_config_path_pre_parse(cli_args), parse_overrides(cli_args),
-                        override_source="command line", **kwargs)
 
 
 def _read(source) -> tuple[dict, str | None]:

@@ -1,5 +1,4 @@
-"""Helpers for resolving file-system paths and restoring keyword-only arguments."""
-import inspect
+"""Helper for resolving file-system paths."""
 from pathlib import Path
 
 
@@ -21,24 +20,3 @@ def set_dir(path_str, work_dir=None):
         resource_target = (wd / p).resolve()
 
     return resource_target
-
-
-def restore_args(func, kwargs, bound_args):
-    """
-    Restore keyword-only parameters of `func` back into kwargs.
-    """
-    sig = inspect.signature(func)
-    new_kwargs = dict(kwargs)
-
-    for name, param in sig.parameters.items():
-        if (
-            param.kind is param.KEYWORD_ONLY
-            and name in bound_args
-            and name not in new_kwargs
-        ):
-            new_kwargs[name] = bound_args[name]
-
-    return new_kwargs
-
-
-

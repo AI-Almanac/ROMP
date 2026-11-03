@@ -3,6 +3,7 @@
 Per flow, the sequence of keyword arguments given to compute_metrics (deterministic flow) and to
 prepare_pairs / create_score_results (ensemble flow) is recorded and compared with the frozen pre-R2 flows of
 tests/_oracle_config.py, on 2 models x 2 windows with a model reference and with a climatology reference."""
+import flat_values
 import dataclasses
 
 import pandas as pd
@@ -10,8 +11,7 @@ import pytest
 
 import _oracle_config as old
 from hcwf.app import bin_skill_score, spatial_far_mr_mae
-from hcwf.config import flat_bridge
-from hcwf.config.build import resolve_flat
+from typed_io import flat_config
 from hcwf.config.model import RunConfig
 from hcwf.metrics import skill
 from hcwf.stats.parallel import Pending
@@ -24,7 +24,7 @@ SWITCHES_OFF = ("save_nc_spatial_far_mr_mae", "plot_spatial_far_mr_mae", "save_n
 
 
 def _run(configs, name, probabilistic):
-    dic = {**resolve_flat(configs[name]), "probabilistic": probabilistic, **{k: False for k in SWITCHES_OFF}}
+    dic = {**flat_config(configs[name]), "probabilistic": probabilistic, **{k: False for k in SWITCHES_OFF}}
     return dic, RunConfig.from_flat(dic, check=False)
 
 
@@ -40,7 +40,7 @@ def test_deterministic_flow_gives_the_oracles_kwargs(configs, monkeypatch, name)
     assert len(seen) == len(expected) == 2 * 2 + 2
     for (rc_, case), want in zip(seen, expected):
         assert rc_ is rc
-        got = flat_bridge.case_kwargs(rc, case, "deterministic")
+        got = flat_values.case_kwargs(rc, case, "deterministic")
         assert got == want
         assert list(got) == list(want) or sorted(got) == sorted(want)
 
@@ -59,7 +59,7 @@ def test_ensemble_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
     cases = old.ensemble_cases(dic)
     assert len(created) == len(cases) == 2 * 2 and len(tables["overall"]) == 4
     for (case, got, metrics, ev), (_, prep, want) in zip(created, cases):
-        assert flat_bridge.case_kwargs(rc, case, "ensemble") == prep
+        assert flat_values.case_kwargs(rc, case, "ensemble") == prep
         assert got is pairs and metrics is rc.metrics and list(ev.day_bins) == list(want["day_bins"])
         assert ev == dataclasses.replace(rc.evaluation, day_bins=ev.day_bins)
     # the pair tables are prepared once per model, from its first window, with every day bin
@@ -69,7 +69,7 @@ def test_ensemble_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
     assert [model.name for _, model in prepared] == list(firsts) == [m.name for m in rc.models]
     assert all(rc_ is rc for rc_, _ in prepared)
     for (_, model), prep in zip(prepared, firsts.values()):
-        assert flat_bridge.case_kwargs(rc, rc.cases()[[c.model.name for c in rc.cases()].index(model.name)],
+        assert flat_values.case_kwargs(rc, rc.cases()[[c.model.name for c in rc.cases()].index(model.name)],
                                        "ensemble") == prep
 
 
@@ -91,7 +91,7 @@ def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
     for combi, kw in old.ensemble_reference_cases(dic):
         firsts.setdefault(combi[0], kw)
     for model in rc.models:
-        assert flat_bridge.case_kwargs(rc, rc.reference_cases(like=model)[0], "ensemble") == firsts[model.name]
+        assert flat_values.case_kwargs(rc, rc.reference_cases(like=model)[0], "ensemble") == firsts[model.name]
 
 
 def test_ensemble_flow_does_nothing_for_a_deterministic_run(configs):

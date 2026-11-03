@@ -1,16 +1,13 @@
 """Climatological onset dates from observed rainfall, and climatology used as a baseline forecast.
 
-The functions take the typed inputs of hcwf.config.model (the run `rc`, the `case` and the per-call `select`); the old
-kwargs forms (marked R2-bridge) stay until step S11 as wrappers that rebuild them with hcwf.config.flat_bridge.
+The functions take the typed inputs of hcwf.config.model (the run `rc`, the `case` and the per-call `select`).
 """
 
-from hcwf.config import flat_bridge
 from hcwf.config.model import Selection
 from hcwf.io.input import observation_years_of, reference_held, reference_rain_year, release_reference, thresholds_of
 from hcwf.stats.detect import detect_observed
 from hcwf.onset.climatology import ReferenceOnset, reduce_onset_days
 from hcwf.spatial import axes
-from hcwf.utils.practical import restore_args
 
 import numpy as np
 import xarray as xr
@@ -135,14 +132,8 @@ def climatological_onset(rc, case, select=Selection()):
     return climatological_onset_doy
 
 
-def compute_climatological_onset(*, years_clim, grid_point=False, lat_select=None, lon_select=None, **kwargs):  # R2-bridge
-    """climatological_onset with the run's flat kwargs."""
-    kwargs = restore_args(compute_climatological_onset, kwargs, locals())
-    return climatological_onset(*flat_bridge.from_case_kwargs(kwargs))
-
-
 def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, observed_onset_da,
-                                   *, max_forecast_day, **kwargs):
+                                   *, max_forecast_day):
     """
     Use climatology as a forecast model for the given initialization dates.
     Only processes forecasts initialized before the observed onset date.
@@ -325,8 +316,3 @@ def climatological_onset_dataset(rc, case, select=Selection()):
     _MEMO[key] = ((thresh_slice, rc.onset), climatological_onset_da)   # held so their ids stay unique
     return climatological_onset_da.copy(deep=True)
 
-
-def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, start_date, years_clim, **kwargs):  # R2-bridge
-    """climatological_onset_dataset with the run's flat kwargs."""
-    kwargs = restore_args(compute_climatological_onset_dataset, kwargs, locals())
-    return climatological_onset_dataset(*flat_bridge.from_case_kwargs(kwargs))

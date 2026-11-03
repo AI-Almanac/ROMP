@@ -3,7 +3,6 @@ from typing import Any, NamedTuple
 
 import pandas as pd
 
-from hcwf.config import flat_bridge
 from hcwf.config.model import Case, Selection
 from hcwf.stats.climatology import climatological_onset_dataset
 from hcwf.stats.bins import climatological_pairs, start_pairs
@@ -15,10 +14,6 @@ from hcwf.stats.parallel import concat_year_args
 import logging
 
 log = logging.getLogger(__name__)
-
-CACHE_KEYS = ("_forecast_obs_df_all", "_ref_obs_df_all", "_clim_onset", "_climatology_obs_df_all")
-"""The keys of the flat form of PreparedPairs (what the kwargs of the old create_score_results carried)."""
-
 
 class PreparedPairs(NamedTuple):
     """The pair tables a model's scores are made from, built once per model (`prepare_pairs`)."""
@@ -86,13 +81,7 @@ def prepare_pairs(rc, model, select=Selection()):
     return PreparedPairs(forecast_obs_df_all, ref_obs_df_all, clim_onset, climatology_obs_df_all)
 
 
-def prepare_score_cache(**kwargs):  # R2-bridge
-    """prepare_pairs of a flat config, as the dict of its tables (CACHE_KEYS)."""
-    rc, case, select = flat_bridge.from_case_kwargs(kwargs)
-    return dict(zip(CACHE_KEYS, prepare_pairs(rc, case.model, select)))
-
-
-def create_score_results(case=None, prepared=None, metrics=None, ev=None, **kwargs):
+def create_score_results(case, prepared, metrics, ev):
     """Compute Brier score, RPS and AUC (as flagged by metrics.BS, .RPS, .AUC) for the forecast model and its reference,
     plus skill scores if metrics.skill_score is set, from the pair tables `prepared` (PreparedPairs).
 
@@ -100,16 +89,7 @@ def create_score_results(case=None, prepared=None, metrics=None, ev=None, **kwar
     climatology (P(onset on lead k | no onset by the init)) when prepared.climatology is set, otherwise another model.
     Returns a dict with forecast_obs_df, climatology_obs_df, BS, RPS, AUC, their
     *_ref counterparts, skill_score and (if skill_score) skill_results.
-
-    R2-bridge: called with only keywords (`create_score_results(**config)`, the pair tables of CACHE_KEYS among them or
-    else built here) it rebuilds these inputs from the flat config.
     """
-    if case is None:   # R2-bridge
-        cache = {key: kwargs.pop(key, None) for key in CACHE_KEYS}
-        rc, case, select = flat_bridge.from_case_kwargs(kwargs)
-        prepared = (PreparedPairs(*cache.values()) if cache["_forecast_obs_df_all"] is not None
-                    else prepare_pairs(rc, case.model, select))
-        return create_score_results(case, prepared, rc.metrics, rc.evaluation)
     BS, RPS, AUC, day_bins = metrics.BS, metrics.RPS, metrics.AUC, ev.day_bins
     results = {}
 

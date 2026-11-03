@@ -15,7 +15,7 @@ from shapely.geometry import MultiPolygon, box  # noqa: E402
 
 import hcwf  # noqa: E402
 from hcwf import export  # noqa: E402
-from hcwf.config.build import resolve_flat  # noqa: E402
+from typed_io import flat_config  # noqa: E402
 
 LAT, LON = [6.0, 7.0, 8.0, 9.0], [38.0, 39.0, 40.0, 41.0]
 STEPS, MAX_LEAD, MEMBERS = 14, 10, 3
@@ -94,7 +94,7 @@ def test_the_result_carries_the_flat_config_and_its_run_config(world):
     base, runs = world
     for name, ens in (("DET", False), ("ENS", True)):
         result = runs[name]
-        again = resolve_flat(_raw(base, name, ens))
+        again = flat_config(_raw(base, name, ens))
         assert isinstance(result.config, dict) and set(result.config) == set(again)
         assert result.config["model_list"] == again["model_list"] and result.config["run_paths"].fingerprint == \
             again["run_paths"].fingerprint
@@ -164,7 +164,7 @@ def test_ensemble_run_writes_the_spatial_products_on_units(world):
 
 def test_pair_tables_are_per_unit_cases():
     """Member onsets of units become (init, unit) cases with bins, and score like grid cases."""
-    from hcwf.stats.bins import create_forecast_observation_pairs_with_bins
+    from hcwf.stats.bins import forecast_pairs
     from hcwf.stats.score import calculate_brier_score, calculate_rps
 
     inits = pd.to_datetime(["2020-05-01", "2020-05-08"])
@@ -172,9 +172,7 @@ def test_pair_tables_are_per_unit_cases():
     members = pd.DataFrame(rows, columns=["init_time", "unit", "member", "onset_day"])
     obs = xr.DataArray(np.array(["2020-05-04", "2020-05-20"], dtype="datetime64[ns]"), dims="unit",
                        coords={"unit": ["a", "b"]})
-    pairs = create_forecast_observation_pairs_with_bins(members, obs, day_bins=[(1, 5), (6, 10)], max_forecast_day=10,
-                                                        onset_definition="icpac", forecast_history="none",
-                                                        obs_day_boundary="00 UTC, labelled by start")
+    pairs = forecast_pairs(members, obs, [(1, 5), (6, 10)], back_dated=False)   # forecast_history "none": no back-dating
     assert "unit" in pairs and "lat" not in pairs
     assert pairs.groupby(["init_time", "unit"]).ngroups == 3   # unit a is scored on the first init only
     assert np.isfinite(calculate_rps(pairs)["rps"]) and np.isfinite(calculate_brier_score(pairs)["brier_score"])
@@ -182,7 +180,7 @@ def test_pair_tables_are_per_unit_cases():
 
 def test_onset_export_per_unit(world):
     base, _ = world
-    cfg = resolve_flat(_raw(base, "DET", False))
+    cfg = flat_config(_raw(base, "DET", False))
     paths = export.export_onsets(cfg, sources=["observed", "DET", "climatology", "conditional_climatology"],
                                  out=base / "onsets_det")
     observed = export.open_onsets(paths["observed"])
@@ -194,7 +192,7 @@ def test_onset_export_per_unit(world):
     assert climatology["climatological_onset_doy"].dims == ("season", "unit")
     conditional = export.open_onsets(paths["conditional_climatology"])
     assert conditional["onset_probability"].dims == ("init_time", "season", "lead", "unit")
-    ens = export.export_onsets(resolve_flat(_raw(base, "ENS", True)), sources=["ENS"],
+    ens = export.export_onsets(flat_config(_raw(base, "ENS", True)), sources=["ENS"],
                                out=base / "onsets_ens")
     members = export.open_onsets(ens["ENS"])
     assert members["ensemble_onset_date"].dims[-1] == "unit" and members["members_by_status"].dims[-1] == "unit"
