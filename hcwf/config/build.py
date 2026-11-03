@@ -1,11 +1,12 @@
 """The one way to turn a run config into the validated flat dict a run uses (design: docs/review/runconfig_design.md 2.4).
 
-    flat = resolve_flat("run.yaml")                                  # a path, hcwf.config.Config, mapping or flat dict
-    flat = resolve_flat(cfg, {"max_forecast_day": 12})               # with overrides (flat keys, validated)
-    flat = resolve_cli(sys.argv[1:])                                 # the command line: -p path and override flags
+    rc = resolve("run.yaml")                                         # a path, hcwf.config.Config, mapping or flat dict
+    rc = resolve(cfg, {"max_forecast_day": 12})                      # with overrides (flat keys, validated)
+    rc = resolve_command_line(sys.argv[1:])                          # the command line: -p path and override flags
 
-Every entry (hcwf.run / hcwf.check, hcwf-run and --check, hcwf.export, the run-wide config of the apps) goes through
-``resolve_flat``: read the source, apply the overrides (normalised against the schema and recorded in
+``resolve`` returns the RunConfig; ``resolve_flat`` and ``resolve_cli`` (R2-bridge) return its flat dict for the
+callers that are not migrated yet. Every entry (hcwf.run / hcwf.check, hcwf-run and --check, hcwf.export, the run-wide
+config of the apps) goes through the same steps: read the source, apply the overrides (normalised against the schema and recorded in
 ``config_sources``), resolve the paths, plan the lead window and the run folder, then validate. Nothing is created
 on disk: ``flat["run_paths"]`` says where the run will write.
 """
@@ -29,9 +30,52 @@ _MODEL_KEYS = tuple(f.key for f in schema.FIELDS if f.internal and f.key.endswit
 """The flat keys that hold one entry per model (selecting models keeps the same entries of each)."""
 
 
+def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool = True, tmp: Path | None = None,
+            override_source: str = "override", check: bool = False):
+    """The validated RunConfig of a run, finished (paths, lead window, run folder plan); raises HCWFConfigError.
+
+    source is a RunConfig (returned as it is; overrides then raise TypeError) or one of the sources of `resolve_flat`.
+    check=True returns (RunConfig or None, problems) like `resolve_flat`. The other arguments are those of `resolve_flat`.
+    """
+    from hcwf.config.model import RunConfig
+
+    if isinstance(source, RunConfig):
+        if overrides:
+            raise TypeError("a RunConfig is already resolved: overrides cannot be applied to it")
+        if check:
+            from hcwf.config import validate
+
+            return source, validate.problems(source.values)
+        return source
+    out = _resolve_values(source, overrides, write=write, tmp=tmp, override_source=override_source, check=check)
+    if not check:
+        return RunConfig.from_flat(out)
+    values, found = out
+    return (None if values is None else RunConfig.from_flat(values, lenient=True)), found
+
+
+def resolve_command_line(cli_args=None, **kwargs):
+    """The validated RunConfig named by -p/--param (or HCWF_CONFIG) of the command line, with its override flags applied and
+    recorded as 'command line' (cli_args is sys.argv[1:] when None); check=True returns (RunConfig or None, problems)."""
+    from hcwf.lib.loader import _get_config_path_pre_parse
+    from hcwf.lib.parser import parse_overrides
+
+    return resolve(_get_config_path_pre_parse(cli_args), parse_overrides(cli_args),
+                   override_source="command line", **kwargs)
+
+
 def resolve_flat(source, overrides: Mapping[str, Any] | None = None, *, write: bool = True, tmp: Path | None = None,
                  override_source: str = "override", check: bool = False):
-    """The validated flat config of a run, finished (paths, lead window, run folder plan); raises HCWFConfigError.
+    """R2-bridge: the flat dict of `resolve`'s RunConfig, for callers that are not migrated (the tests, the apps).
+
+    The validated flat config of a run, finished (paths, lead window, run folder plan); raises HCWFConfigError.
+    resolve_flat is `resolve` without the RunConfig: it takes the same arguments.
+    """
+    return _resolve_values(source, overrides, write=write, tmp=tmp, override_source=override_source, check=check)
+
+
+def _resolve_values(source, overrides, *, write, tmp, override_source, check):
+    """The steps of `resolve`, to the validated flat dict (or (dict or None, problems) with check).
 
     source is the path of a run YAML, a hcwf.config.Config, a nested mapping (as the YAML), a SimpleNamespace or a
     flat dict (finishing a flat dict that is already finished changes nothing). overrides are flat config keys
@@ -64,7 +108,7 @@ def resolve_flat(source, overrides: Mapping[str, Any] | None = None, *, write: b
 
 
 def resolve_cli(cli_args=None, **kwargs) -> dict:
-    """The validated flat config named by -p/--param (or HCWF_CONFIG) of the command line, with its override flags
+    """R2-bridge: `resolve_command_line` as the flat dict. The validated flat config named by -p/--param (or HCWF_CONFIG) of the command line, with its override flags
     applied and recorded as 'command line' (cli_args is sys.argv[1:] when None)."""
     from hcwf.lib.loader import _get_config_path_pre_parse
     from hcwf.lib.parser import parse_overrides

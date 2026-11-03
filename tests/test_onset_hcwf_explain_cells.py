@@ -8,6 +8,7 @@ import pytest
 import xarray as xr
 
 from hcwf.lib import explain_cells
+from test_oracle_config import configs, world  # noqa: F401  (fixtures)
 from hcwf.config import validate
 from hcwf.lib.assertion import HCWFConfigError
 
@@ -22,10 +23,22 @@ def rain_year(year):
 
 
 def config(tmp_path, cells):
-    """A config namespace for explain_cells over 2001-2002."""
-    return SimpleNamespace(explain_cells=cells, onset_definition="icpac",
-                           obs_day_boundary="00 UTC, labelled by start", dir_fig=str(tmp_path), start_date=(2001, 5, 1),
-                           end_date=(2002, 7, 31))
+    """A RunConfig for explain_cells over 2001-2002 (the fixture world's config, with these values)."""
+    from hcwf.config.build import resolve_flat
+    from hcwf.config.model import RunConfig
+
+    return RunConfig.from_flat({**resolve_flat(_BASE["path"]), "explain_cells": cells, "onset_definition": "icpac",
+                                "obs_day_boundary": "00 UTC, labelled by start", "dir_fig": str(tmp_path),
+                                "start_date": (2001, 5, 1), "end_date": (2002, 7, 31)}, check=False)
+
+
+_BASE: dict = {}
+
+
+@pytest.fixture(autouse=True)
+def _base_config(configs):
+    """The path of one fixture config (built once per module)."""
+    _BASE["path"] = configs["model_reference"]
 
 
 @pytest.fixture

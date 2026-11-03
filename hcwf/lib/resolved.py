@@ -74,11 +74,14 @@ def resolved_config_text(cfg: dict) -> str:
     return render_yaml(mapping, comments, header=header)
 
 
-def write_resolved(cfg: dict, directory=None) -> tuple[Path, Path]:
-    """Write the resolved config and definition into directory (default: the run folder, else dir_out).
+def write_resolved(rc, directory=None) -> tuple[Path, Path]:
+    """Write the resolved config and definition of a RunConfig into directory (default: the run folder, else dir_out).
 
     The files are resolved_config.yaml and resolved_definition.yaml, or run.yaml and definition.yaml in a run folder.
     """
+    from hcwf.config.flat_bridge import to_flat
+
+    cfg = to_flat(rc)
     paths = cfg.get("run_paths")
     directory = Path(directory or (paths.root if paths is not None else cfg["dir_out"]))
     directory.mkdir(parents=True, exist_ok=True)

@@ -87,6 +87,23 @@ def world(tmp_path_factory):
     return base, runs
 
 
+def test_the_result_carries_the_flat_config_and_its_run_config(world):
+    """RunResult.config stays the resolved flat dict and run_config is the RunConfig built from it."""
+    from hcwf.config.model import RunConfig
+
+    base, runs = world
+    for name, ens in (("DET", False), ("ENS", True)):
+        result = runs[name]
+        again = resolve_flat(_raw(base, name, ens))
+        assert isinstance(result.config, dict) and set(result.config) == set(again)
+        assert result.config["model_list"] == again["model_list"] and result.config["run_paths"].fingerprint == \
+            again["run_paths"].fingerprint
+        assert result.run_config == RunConfig.from_flat(result.config)
+    quiet = hcwf.run(_raw(base, "DET", False))   # write=False: the same values with every writing step off
+    assert quiet.folder is None and quiet.config["save_fig"] is False and quiet.config["explain_cells"] is None
+    assert quiet.run_config == RunConfig.from_flat(quiet.config) and quiet.run_config.output.save_fig is False
+
+
 def test_deterministic_scores_are_per_unit(world):
     _, runs = world
     spatial = runs["DET"].scores["spatial"]

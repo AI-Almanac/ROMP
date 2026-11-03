@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent / "blend"))
 import _oracle_config as old  # noqa: E402
 import differential_onsets as synthetic
 from hcwf.config import validate
-from hcwf.config.build import resolve_flat
+from hcwf.config.build import resolve, resolve_flat
 from hcwf.lib.assertion import HCWFConfigError
 from hcwf.lib.check import build_report
 from hcwf.lib.convert_specs import convert_blend
@@ -150,9 +150,9 @@ def test_a_units_error_fails_at_resolve_before_a_run_folder(world, flat):
 
 
 def _text(values) -> str:
-    dic, found = resolve_flat(values, check=True)
+    rc, found = resolve(values, check=True)
     with logs.session(logs.QUIET):
-        return build_report(dic, found=found).text()
+        return build_report(rc, found).text()
 
 
 def _golden(name: str, text: str, base: Path) -> None:

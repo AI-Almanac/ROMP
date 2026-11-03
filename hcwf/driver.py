@@ -67,12 +67,12 @@ def _argv_for(argv, path: str) -> list[str]:
 
 def _check(flags, cli_args=None) -> int:
     """`--check`: print the plan of the run (or why the config cannot be resolved); return the exit code."""
-    from hcwf.config.build import resolve_cli
+    from hcwf.config.build import resolve_command_line
     from hcwf.lib.check import build_report
 
     try:
-        dic, found = resolve_cli(cli_args, check=True)
-        if dic is None:
+        rc, found = resolve_command_line(cli_args, check=True)
+        if rc is None:
             raise HCWFConfigError(found.message())
     except ConfigSchemaError as exc:
         print("\n".join(getattr(exc, "report", ())) or "(no datasets described)")
@@ -81,10 +81,8 @@ def _check(flags, cli_args=None) -> int:
     except (HCWFConfigError, FileNotFoundError) as exc:
         print(f"Error: {exc}\n\ncheck: the config cannot be resolved; nothing was run")
         return 1
-    if flags.alignment:
-        dic["check_alignment"] = True
     with logs.session(logs.QUIET):
-        report = build_report(dic, overwrite=flags.overwrite, found=found)
+        report = build_report(rc, found, overwrite=flags.overwrite, alignment=flags.alignment)
     print(report.text())
     return 0 if report.ok else 1
 
@@ -92,17 +90,17 @@ def _check(flags, cli_args=None) -> int:
 def _run(cfg, flags, cli_args=None) -> int:
     """Load (or take) a config and run it; the exit code: 0, or 1 after printing why it failed."""
     from hcwf.api import execute
-    from hcwf.config.build import resolve_cli, resolve_flat
+    from hcwf.config.build import resolve, resolve_command_line
     from hcwf.lib.run_folder import RunExistsError
 
     try:
-        dic = resolve_cli(cli_args) if cfg is None else resolve_flat(cfg)
+        rc = resolve_command_line(cli_args) if cfg is None else resolve(cfg)
     except (HCWFConfigError, FileNotFoundError) as e:
         print(f"Error: {e}")
         return 1
 
     try:
-        execute(dic, write=True, overwrite=flags.overwrite, verbosity=logs.verbosity_from(flags.quiet, flags.verbose))
+        execute(rc, write=True, overwrite=flags.overwrite, verbosity=logs.verbosity_from(flags.quiet, flags.verbose))
     except (RunExistsError, HCWFConfigError) as e:
         print(f"Error: {e}")
         return 1

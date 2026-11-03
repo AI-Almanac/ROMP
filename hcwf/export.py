@@ -673,17 +673,18 @@ def _collect(dic: dict, source: str) -> xr.Dataset:
 def export_onsets(cfg, sources=None, out=None) -> dict:
     """Write the onset dates of each requested source to NetCDF; return {source: path}.
 
-    cfg is the path of a run YAML, a hcwf.config.Config, a mapping or a flat config dict (resolved, validated and
-    planned by hcwf.config.build.resolve_flat).
+    cfg is the path of a run YAML, a hcwf.config.Config, a mapping, a flat config dict (resolved, validated and
+    planned by hcwf.config.build.resolve) or a RunConfig.
     sources is a list or comma-separated text of "observed", model names, "climatology" and
     "conditional_climatology" (default: observed, every model, and the climatology reference the run uses).
     out is the folder (default: the run's onsets folder, dir_out/onsets for an explicit dir_out). Files are named
     onsets_<source>.nc, or <source>.nc inside a run folder. Only the detection is run, with the scoring's own
     functions and settings; nothing is scored.
     """
-    from hcwf.config.build import resolve_flat
+    from hcwf.config.build import resolve
+    from hcwf.config.flat_bridge import to_flat
 
-    dic = resolve_flat(cfg)
+    dic = to_flat(resolve(cfg))
     names = _check_sources(dic, sources)
     folder = Path(out) if out is not None else onsets_folder(dic)
     paths = {}

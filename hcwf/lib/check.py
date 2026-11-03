@@ -569,12 +569,18 @@ def _cache(dic: dict, report: CheckReport) -> None:
         report.add(f"observed onsets: expectation not available ({exc})")
 
 
-def build_report(dic: dict, overwrite: bool = False, found=None) -> CheckReport:
-    """Check a resolved flat config (see the module text); reads samples of the files and writes nothing.
+def build_report(rc, found=None, overwrite: bool = False, alignment: bool = False) -> CheckReport:
+    """Check a resolved RunConfig (see the module text); reads samples of the files and writes nothing.
 
-    overwrite says whether --overwrite is given (an existing run folder is then not an error). found is the
-    hcwf.config.validate.Problems of the config (resolve_flat(check=True) returns them); they are computed when not given.
+    found is the hcwf.config.validate.Problems of the config (resolve(check=True) returns them); they are computed when
+    not given. overwrite says whether --overwrite is given (an existing run folder is then not an error). alignment
+    runs the alignment check once (`--check --alignment`).
     """
+    from hcwf.config.flat_bridge import to_flat
+
+    dic = to_flat(rc)
+    if alignment:
+        dic["check_alignment"] = True
     if found is None:
         from hcwf.config.validate import problems
 

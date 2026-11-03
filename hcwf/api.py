@@ -38,6 +38,7 @@ from types import SimpleNamespace
 import pandas as pd
 import xarray as xr
 
+from hcwf.config.model import RunConfig
 from hcwf.utils import log as logs
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,8 @@ class RunResult:
 
     observed is an xarray.Dataset (variable onset_date over year, lat, lon; attribute fingerprint) or None.
     scores holds pandas / xarray objects (see the module text). folder is the run folder, or None when
-    write=False. config is the resolved flat config dict. forecasts is computed the first time it is read.
+    write=False. config is the resolved flat config dict and run_config the RunConfig it belongs to. forecasts is
+    computed the first time it is read.
     blend is the TrainingResult of a run with a `blend:` section (None otherwise).
     """
 
@@ -59,6 +61,7 @@ class RunResult:
     config: dict = field(repr=False, default_factory=dict)
     _forecasts: dict | None = field(default=None, repr=False)
     blend: object | None = None
+    run_config: RunConfig | None = field(repr=False, default=None)
 
     @property
     def forecasts(self) -> dict:
@@ -76,15 +79,15 @@ class RunResult:
 
 def check(cfg, overwrite: bool = False, **overrides):
     """The plan of a run as a hcwf.lib.check.CheckReport (``.text()``, ``.errors``, ``.warnings``, ``.ok``); runs nothing."""
-    from hcwf.config.build import resolve_flat
+    from hcwf.config.build import resolve
     from hcwf.lib.assertion import HCWFConfigError
     from hcwf.lib.check import build_report
 
-    dic, found = resolve_flat(cfg, overrides, check=True)
-    if dic is None:
+    rc, found = resolve(cfg, overrides, check=True)
+    if rc is None:
         raise HCWFConfigError(found.message())
     with logs.session(logs.QUIET):
-        return build_report(dic, overwrite=overwrite, found=found)
+        return build_report(rc, found, overwrite=overwrite)
 
 
 def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = False, verbose: bool = False,
@@ -96,12 +99,12 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
     folder that already holds a run unless overwrite=True. quiet and verbose set how much is printed.
     Other keyword arguments override flat config keys.
     """
-    from hcwf.config.build import resolve_flat
+    from hcwf.config.build import resolve
 
     tmp = None if write else Path(tempfile.mkdtemp(prefix="hcwf_"))
     try:
-        dic = resolve_flat(cfg, overrides, write=write, tmp=tmp)
-        return execute(dic, write=write, overwrite=overwrite, verbosity=logs.verbosity_from(quiet, verbose))
+        rc = resolve(cfg, overrides, write=write, tmp=tmp)
+        return execute(rc, write=write, overwrite=overwrite, verbosity=logs.verbosity_from(quiet, verbose))
     finally:
         if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -157,33 +160,35 @@ def _trainer():
     return train
 
 
-def _execute_blend(dic: dict, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
+def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
     """Train the blend a config's `blend:` section describes (`hcwf.blend.training.train(cfg, recipe, setup)`).
 
     The run folder is prepared as for a benchmark (refused when it exists unless overwrite), run.log and the resolved config
     are written, and the TrainingResult is saved into the run folder's blend/ subfolder (artifact names are kept).
     """
     from hcwf.blend.recipe import recipe_from_config
+    from hcwf.config.flat_bridge import to_flat
     from hcwf.lib import run_folder
     from hcwf.lib.onset_config import onset_setup
     from hcwf.lib.resolved import definition_lines, write_resolved
     from hcwf.utils.printing import print_hcwf_banner
 
     train = _trainer()
+    dic = to_flat(rc)
     paths = dic["run_paths"]
     setup = onset_setup(dic)
     recipe = recipe_from_config(dic, setup)
     if write:
         run_folder.prepare(paths, overwrite)
     with logs.session(verbosity, paths.log_file if write else None):
-        print_hcwf_banner(SimpleNamespace(**dic))
+        print_hcwf_banner(rc.project_name)
         log.info("Blend: %s (%s); models %s", recipe.name, "writes into " + str(paths.blend) if write else "nothing is written",
                  ", ".join(recipe.model_names))
         for line in (*onset_setup(dic).lines(), *dic.get("dataset_report", ()), *definition_lines(dic)):
             log.info(f"  {line}")
         if write:
             try:
-                log.info(f"  Resolved config  : {write_resolved(dic)[0]}")
+                log.info(f"  Resolved config  : {write_resolved(rc)[0]}")
             except OSError as exc:
                 log.warning(f"could not write {paths.config_name}: {exc}")
         try:
@@ -200,20 +205,20 @@ def _execute_blend(dic: dict, *, write: bool, overwrite: bool, verbosity: int) -
             parallel.shutdown()
             observed_cache.reset()
         log.info("HCWF blend completed successfully!")
-    return RunResult(observed=None, scores={}, folder=paths.root if write else None, config=dic, blend=result)
+    return RunResult(observed=None, scores={}, folder=paths.root if write else None, config=dic, blend=result,
+                     run_config=rc)
 
 
-def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NORMAL) -> RunResult:
-    """Run the benchmark for a finished flat config (see hcwf.config.build.resolve_flat) and return the RunResult.
+def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = logs.NORMAL) -> RunResult:
+    """Run the benchmark for a resolved RunConfig (see hcwf.config.build.resolve) and return the RunResult.
 
     This is what ``hcwf-run`` and ``hcwf.run`` share: prepare the run folder (refusing or clearing an existing
     one), attach run.log, print the settings, write the resolved config, optionally explain cells and export the
     onsets, activate the observed-onset cache, then score.
     """
-    from hcwf.lib.config_schema import has_blend
-
-    if has_blend(dic):
-        return _execute_blend(dic, write=write, overwrite=overwrite, verbosity=verbosity)
+    if rc.blend is not None:
+        return _execute_blend(rc, write=write, overwrite=overwrite, verbosity=verbosity)
+    from hcwf.config.flat_bridge import to_flat
     from hcwf.app.bin_skill_score import skill_score_in_bins
     from hcwf.app.spatial_far_mr_mae import spatial_far_mr_mae_map
     from hcwf.lib import run_folder
@@ -228,6 +233,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
     from hcwf.utils import mask as mask_mod
     from hcwf.utils.printing import print_hcwf_banner
 
+    dic = to_flat(rc)
     paths = dic["run_paths"]
     if write:
         run_folder.prepare(paths, overwrite)
@@ -239,7 +245,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
         io_input._loaded_thresholds.clear()
         io_input._reported_ingest.clear()
         cfg = SimpleNamespace(**dic)
-        print_hcwf_banner(cfg)
+        print_hcwf_banner(rc.project_name)
         log.info("Onset settings:")
         for line in onset_setup(dic).lines():
             log.info(f"  {line}")
@@ -252,7 +258,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
         if write:
             log.info(f"  Run folder       : {paths.root}")
             try:
-                config_path = write_resolved(dic)[0]
+                config_path = write_resolved(rc)[0]
                 log.info(f"  Resolved config  : {config_path}")
             except OSError as exc:
                 log.warning(f"could not write {paths.config_name}: {exc}")
@@ -262,12 +268,12 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
             with use_config(dic):
                 setting = init_dataclass(Setting, dic)
                 if write:
-                    write_explain_cells(cfg)
+                    write_explain_cells(rc)
                     if dic.get("save_onsets"):
                         try:
                             from hcwf.export import export_onsets
 
-                            export_onsets(dic)
+                            export_onsets(rc)
                         except Exception as exc:  # noqa: BLE001 - the scores matter more than the export
                             log.error(f"output.save_onsets: could not write the onset files: {exc}")
                             log.debug(traceback.format_exc())
@@ -276,7 +282,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
                 results = spatial_far_mr_mae_map(cfg, setting)
                 if write and dic.get("mask"):
                     try:
-                        write_resolved(dic)   # again, now that the masks of each dataset's grid are known
+                        write_resolved(rc)   # again, now that the masks of each dataset's grid are known
                     except OSError as exc:
                         log.warning(f"could not update {paths.config_name} with the masks: {exc}")
                 log.info("HCWF Workflow completed successfully!")
@@ -287,7 +293,7 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
             benchmark.reset_onset_tables()
             climatology.reset_memo()
     return RunResult(observed=observed, scores=_scores(results, tables), folder=paths.root if write else None,
-                     config=dic)
+                     config=dic, run_config=rc)
 
 
 def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=None, write=False,

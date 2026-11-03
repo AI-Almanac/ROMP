@@ -34,10 +34,9 @@ def tuple_to_str_range(item):
 
 
 
-def print_hcwf_banner(cfg):
+def print_hcwf_banner(project_name):
     """Print the HCWF start-up banner with package version, project name and start time."""
     version = pkg_version("hcwf")
-    project_name = cfg.project_name
 
     banner = fr"""
 ================================================================================

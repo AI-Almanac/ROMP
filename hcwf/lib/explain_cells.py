@@ -31,7 +31,7 @@ def _on_grid(thresholds, lat, lon):
     return out
 
 
-def write_explain_cells(cfg) -> list[Path]:
+def write_explain_cells(rc) -> list[Path]:
     """Write dir_fig/explain/<definition>_<cell>_<year>.png and .txt for every cell and year; returns the PNG paths.
 
     Does nothing when explain_cells is unset.
@@ -39,10 +39,12 @@ def write_explain_cells(cfg) -> list[Path]:
     """
     from hcwf.onset.viz.anatomy import anatomy_plot
 
-    cells = getattr(cfg, "explain_cells", None)
+    from hcwf.config.flat_bridge import to_flat
+
+    cells = rc.onset_options.explain_cells
     if not cells:
         return []
-    kwargs = vars(cfg)
+    kwargs = to_flat(rc)
     setup = onset_setup(kwargs)
     out_dir = Path(kwargs["dir_fig"]) / "explain"
     out_dir.mkdir(parents=True, exist_ok=True)

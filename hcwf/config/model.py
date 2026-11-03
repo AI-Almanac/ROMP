@@ -311,13 +311,18 @@ def _project_onset(v):
     return onset_setup(v)
 
 
-def _project_blend(v, onset):
-    """The blend's Recipe, or None when the config trains no blend."""
+def _project_blend(v, onset, lenient: bool = False):
+    """The blend's Recipe, or None when the config trains no blend (or, lenient, when its recipe is invalid)."""
     if not schema.has_blend(v):
         return None
     from hcwf.blend.recipe import recipe_from_config
 
-    return recipe_from_config(v, onset)
+    try:
+        return recipe_from_config(v, onset)
+    except ValueError:   # RecipeError is an HCWFConfigError, a ValueError
+        if not lenient:
+            raise
+        return None
 
 
 def _project_models(v, units) -> tuple[ModelSpec, ...]:
@@ -432,20 +437,28 @@ class RunConfig:
     _values: dict
 
     @classmethod
-    def from_flat(cls, values: Mapping, *, check: bool = True) -> RunConfig:
+    def from_flat(cls, values: Mapping, *, check: bool = True, lenient: bool = False) -> RunConfig:
         """The RunConfig of a resolved flat record (hcwf.config.build.resolve_flat); the record is copied. check=False skips
-        the invariants (for records edited in place, as the bridge rebuilds them)."""
+        the invariants (for records edited in place, as the bridge rebuilds them). lenient=True (`--check`) builds a
+        config whose `units:` or `blend:` section is invalid too: the specs of an invalid section are None, and the
+        invariants are not checked."""
         run = _project_run(values)
-        units = _project_units(values)
+        try:
+            units = _project_units(values)
+        except ValueError:
+            if not lenient:
+                raise
+            units = {name: None for name in ("observations", *_get(values, "model_list"), _get(values, "ref_model"))}
         onset = _project_onset(values)
         models = _project_models(values, units)
         evaluation = _project_evaluation(values)
         rc = cls(area=_project_area(values), observations=_project_obs(values, units),
                  reference=_project_reference(values, units), models=models, evaluation=evaluation, onset=onset,
                  onset_options=_project_onset_options(values), metrics=_project_generated(values, MetricsSpec, "metrics"),
-                 output=_project_generated(values, OutputSpec, "output"), blend=_project_blend(values, onset),
-                 parallel=_project_parallel(values), _values=dict(values), **run)
-        if check:
+                 output=_project_generated(values, OutputSpec, "output"),
+                 blend=_project_blend(values, onset, lenient), parallel=_project_parallel(values),
+                 _values=dict(values), **run)
+        if check and not lenient:
             rc._check()
         return rc
 
