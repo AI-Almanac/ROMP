@@ -1,6 +1,7 @@
 """The onset tables of a run: per year and case, read the data, detect onsets and score them (`onset_metrics`, in
 hcwf.metrics.contingency, is the pure part), cached across the cases that share them."""
 
+from hcwf.cache import memo
 from hcwf.config.model import Selection
 from hcwf.metrics.contingency import onset_metrics
 from hcwf.io import forecasts as forecasts_io
@@ -23,13 +24,9 @@ from hcwf.log import progress
 log = logging.getLogger(__name__)
 
 
-_ONSET_TABLES: dict = {}
-"""The onset tables of the source being scored: {family key: {year: (onset table, observed onsets)}} (see onset_tables)."""
-
-
-def reset_onset_tables() -> None:
-    """Forget the shared onset tables (a new run starts)."""
-    _ONSET_TABLES.clear()
+_ONSET_TABLES = memo("scoring.onset_tables", maxsize=1)
+"""The onset tables of the source being scored: {family key: {year: (onset table, observed onsets)}} (see onset_tables);
+one family is held, the next one's tables replace it."""
 
 
 def _family_key(rc, case, ens, thresh_da, years, select) -> tuple:

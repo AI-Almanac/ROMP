@@ -3,6 +3,7 @@ import shutil
 
 import numpy as np
 import typed_io
+from hcwf.cache import reset_run_state
 from hcwf.io import observations as observations_io
 from hcwf.io import reference as reference_io
 from hcwf.io import thresholds as thresholds_io
@@ -77,9 +78,9 @@ def test_climatology_uses_the_reference_rain_the_thresholds_read(tmp_path, monke
     results, reads = {}, {}
     for shared in (True, False):
         shutil.rmtree(tmp_path / "cache", ignore_errors=True)   # the thresholds are computed afresh, not read from disk
-        reference_io.clear_obs_cache()
+        reset_run_state()
         thresholds_io._loaded_thresholds.clear()
-        climatology.reset_memo()
+        reset_run_state()
         observed_cache.activate(None)
         thresholds = typed_io.thresholds(_case_kwargs(config))
         assert reference_io.reference_held() and thresholds["wet_spell_amount"].notnull().any()
@@ -92,7 +93,7 @@ def test_climatology_uses_the_reference_rain_the_thresholds_read(tmp_path, monke
         monkeypatch.setattr(observations_io, "_read_obs_year", original)
         reads[shared] = sorted(seen)
         assert not reference_io.reference_held()   # freed once the climatology has used it
-        observed_cache.reset()
+        reset_run_state()
     assert reads[True] == [2006]   # only the year outside the thresholds' years is read
     assert set(reads[False]) >= {2000, 2001, 2002, 2003, 2004, 2006}
     assert results[True].equals(results[False]) and results[True].shape[0] == 7
@@ -106,7 +107,7 @@ def test_reference_year_is_the_year_ingested_alone(tmp_path, monkeypatch):
     _obs_files(tmp_path / "obs", range(2000, 2007))
     typed_io.skip_region_cut(monkeypatch)
     config = _reference_config(tmp_path)
-    reference_io.clear_obs_cache()
+    reset_run_state()
     thresholds_io._loaded_thresholds.clear()
     typed_io.thresholds(config)
     boundary = onset_setup(config).obs_day_boundary
@@ -121,7 +122,7 @@ def test_reference_year_is_the_year_ingested_alone(tmp_path, monkeypatch):
         np.testing.assert_array_equal(shared.coords["time"], alone.coords["time"])
     assert _reference_year(config, 2006, boundary) is None                       # outside the reference years
     assert _reference_year({**config, "obs_var": "other"}, 2003, boundary) is None  # other observations
-    reference_io.clear_obs_cache()
+    reset_run_state()
     assert not reference_io.reference_held()
 
 
@@ -135,7 +136,7 @@ def test_shared_reference_rain_keeps_exact_rain_in_millimetres(tmp_path, monkeyp
     _obs_files(tmp_path / "obs", range(2000, 2007))
     typed_io.skip_region_cut(monkeypatch)
     config = {**_reference_config(tmp_path), "rain_resolution": "exact"}
-    reference_io.clear_obs_cache()
+    reset_run_state()
     thresholds_io._loaded_thresholds.clear()
     thresholds = typed_io.thresholds(config)
     boundary = onset_setup(config).obs_day_boundary
@@ -146,9 +147,9 @@ def test_shared_reference_rain_keeps_exact_rain_in_millimetres(tmp_path, monkeyp
         assert shared.tenths.dtype.kind == "f"
         np.testing.assert_array_equal(shared.tenths, alone.tenths)
     tenths = {**config, "rain_resolution": None}
-    reference_io.clear_obs_cache()
+    reset_run_state()
     thresholds_io._loaded_thresholds.clear()
     coarse = typed_io.thresholds(tenths)
     for name in thresholds:   # exact and tenths thresholds agree to the rounding of the daily rain, not by 10x
         np.testing.assert_allclose(thresholds[name].values, coarse[name].values, rtol=0.05, equal_nan=True)
-    reference_io.clear_obs_cache()
+    reset_run_state()

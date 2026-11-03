@@ -7,30 +7,26 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import memo
 from hcwf.config.datasets import file_year, is_zarr, resolve_paths
 from hcwf.io.dims import dim_fmt_model, dim_fmt_model_ensemble, find_dim
 from hcwf.errors import DatasetError
 
 log = logging.getLogger(__name__)
 
-_stores = {}
-
-
-_stores_lock = threading.Lock()
+_stores = memo("io.stores.open", on_clear=lambda dataset: dataset.close())
+"""The open zarr stores of the run, by path; closed when the run's state is reset."""
 
 
 def open_store(path):
-    """The lazy Dataset of a zarr store (chunks=None: nothing is decoded until a selection is loaded), kept open per path."""
+    """The lazy Dataset of a zarr store (chunks=None: nothing is decoded until a selection is loaded), kept open per path
+    for the run."""
     key = str(path)
-    with _stores_lock:
-        if key not in _stores:
-            _stores[key] = xr.open_zarr(key, chunks=None)
-        return _stores[key]
+    return _stores.get_or_make(key, lambda: xr.open_zarr(key, chunks=None))
 
 
 def year_files(paths, base, years_filter, year) -> list[str]:

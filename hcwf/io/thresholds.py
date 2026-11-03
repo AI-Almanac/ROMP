@@ -9,7 +9,7 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 
-from hcwf.cache import NETCDF, NETCDF_GROUPS, Store, file_identity
+from hcwf.cache import NETCDF, NETCDF_GROUPS, Store, file_identity, memo
 from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import Thresholds
 from hcwf.io.forecasts import ForecastRead, ingest_forecast, load_forecast
@@ -176,7 +176,8 @@ def load_onset_thresholds(onset, obs, area, options, ev, output, *, model=None, 
     return thresholds
 
 
-_loaded_thresholds = {}
+_loaded_thresholds = memo("io.thresholds.loaded", maxsize=32, share=True)
+"""The threshold sets loaded for the run, by `load_thresholds`' key; the workers start with the parent's."""
 
 
 def _setup_key(onset) -> str:
@@ -207,10 +208,8 @@ def load_thresholds(onset=None, obs=None, area=None, options=None, ev=None, outp
     key = (_setup_key(onset), str(None if model is None else model.name), str(ev.max_forecast_day),
            str(None if not ev.windows else [w.span for w in ev.windows]), str(output.data_dir), str(obs.dir),
            str(obs.var), str(area.region), _thresholds_key(onset, obs, options, select, model))
-    if key not in _loaded_thresholds:
-        _loaded_thresholds[key] = load_onset_thresholds(onset, obs, area, options, ev, output, model=model,
-                                                        select=select, parallel=parallel, cache_dir=cache_dir)
-    return _loaded_thresholds[key]
+    return _loaded_thresholds.get_or_make(key, lambda: load_onset_thresholds(
+        onset, obs, area, options, ev, output, model=model, select=select, parallel=parallel, cache_dir=cache_dir))
 
 
 def thresholds_of(rc, model, select=NO_SELECTION):

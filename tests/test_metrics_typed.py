@@ -7,6 +7,7 @@ import pickle
 
 import pandas as pd
 import pytest
+from hcwf.cache import reset_run_state
 from hcwf.config.model import Selection
 from hcwf.metrics.skill import create_score_results
 from hcwf.scoring.pairs import prepare_pairs
@@ -69,13 +70,13 @@ def test_serial_equals_parallel_on_the_typed_path(config, source):
         for flag in (False, True):
             rc, case, select = typed_io.from_case_kwargs(dict(config, parallel=flag, parallel_workers=2))
             assert rc.parallel.enabled is flag
-            benchmark.reset_onset_tables()
+            reset_run_state()
             metrics, onsets = compute_metrics(rc, case, select)
             pairs = prepare_pairs(rc, case.model, select) if probabilistic else None
             results[flag] = (metrics, onsets, pairs)
     finally:
         parallel.shutdown()
-        benchmark.reset_onset_tables()
+        reset_run_state()
     serial, par = results[False], results[True]
     assert list(serial[0]) == list(par[0]) == list(YEARS)
     _frames_equal(serial[0], par[0])

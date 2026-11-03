@@ -11,20 +11,29 @@ On disk: ``<root>/<kind>/<fingerprint>/`` holding ``parts.json`` and the payload
 are atomic (a temporary file in the same folder, then ``os.replace``), so worker processes and concurrent runs can
 share a folder: a reader sees a whole file or none, and two writers of one fingerprint write the same content.
 Without a root the store is in memory only. A failure of the disk (read-only folder, damaged entry) is a miss and
-never stops a run.
+never stops a run. `Store.entries` lists a kind's entries (size, age) and `Store.prune` deletes them (`hcwf-run cache`).
+
+The other half of this module is the in-memory side, the state of one run: every table a module keeps for the life of a
+run is a `Memo` made by `memo(name, ...)` and registered here, so that `reset_run_state` clears them all (`run_scope`
+does so at the start and the end of every run entry), the workers' snapshot takes the shared ones (`shared_state`,
+`install_shared_state`) and nothing depends on which tables a caller remembered to clear.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import os
 import pickle
 import shutil
+import threading
+import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 import numpy as np
 import xarray as xr
@@ -33,6 +42,192 @@ log = logging.getLogger(__name__)
 
 _META = frozenset(("zarr.json", ".zmetadata", ".zgroup", ".zattrs", ".zarray"))
 """Names of the metadata files of a zarr store, whose size and mtime are part of a directory's identity."""
+
+
+class Memo:
+    """A registered in-memory table of one run: a small dict that keeps at most `maxsize` items (least recently used out).
+
+    Make one with `memo`, never directly. It holds what a module learns during a run (a loaded threshold set, a built mask,
+    the open zarr stores), keyed by what the value depends on. Every operation takes a lock, so the reader threads of a run
+    can share one. `share` marks a table whose items the workers need (it is part of `shared_state`); `persistent` one that
+    holds only values fixed by the files of the installation (Natural Earth shapes), which a run reset keeps.
+    """
+
+    def __init__(self, name: str, maxsize: int | None, share: bool, persistent: bool, on_clear):
+        self.name, self.maxsize, self.share, self.persistent, self.on_clear = name, maxsize, share, persistent, on_clear
+        self._items: OrderedDict = OrderedDict()
+        self._lock = threading.RLock()
+
+    def __repr__(self) -> str:
+        return f"Memo({self.name!r}, {len(self._items)} items)"
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __contains__(self, key) -> bool:
+        return key in self._items
+
+    def __iter__(self) -> Iterator:
+        with self._lock:
+            return iter(list(self._items))
+
+    def get(self, key, default=None):
+        """The item of `key` (it becomes the most recently used), else `default`."""
+        with self._lock:
+            if key not in self._items:
+                return default
+            self._items.move_to_end(key)
+            return self._items[key]
+
+    def __getitem__(self, key):
+        with self._lock:
+            if key not in self._items:
+                raise KeyError(key)
+            return self.get(key)
+
+    def __setitem__(self, key, value) -> None:
+        with self._lock:
+            self._items[key] = value
+            self._items.move_to_end(key)
+            while self.maxsize is not None and len(self._items) > self.maxsize:
+                self._items.popitem(last=False)
+
+    def setdefault(self, key, value):
+        """The item of `key`, set to `value` first when there is none."""
+        with self._lock:
+            if key not in self._items:
+                self[key] = value
+            return self.get(key)
+
+    def get_or_make(self, key, make: Callable[[], Any]):
+        """The item of `key`; else make() it, keep it and return it (one maker at a time, so a value is built once)."""
+        with self._lock:
+            if key in self._items:
+                return self.get(key)
+            value = make()
+            self[key] = value
+            return value
+
+    def pop(self, key, *default):
+        with self._lock:
+            return self._items.pop(key, *default)
+
+    def items(self) -> list:
+        with self._lock:
+            return list(self._items.items())
+
+    def values(self) -> list:
+        with self._lock:
+            return list(self._items.values())
+
+    def update(self, items: Mapping) -> None:
+        with self._lock:
+            for key, value in dict(items).items():
+                self[key] = value
+
+    def clear(self) -> None:
+        """Drop every item (calling `on_clear` with them first, e.g. to close what they hold)."""
+        with self._lock:
+            held = list(self._items.values())
+            self._items.clear()
+        if self.on_clear is not None:
+            for value in held:
+                try:
+                    self.on_clear(value)
+                except Exception as exc:  # noqa: BLE001 - a failing close never stops a run
+                    log.debug("%s: could not release an item (%s)", self.name, exc)
+
+
+_MEMOS: dict[str, Memo] = {}
+"""Every registered memo, by name."""
+_END_HOOKS: list[Callable[[], None]] = []
+"""What a run does when it ends, before the memos are cleared (flush a cache, stop the worker pool)."""
+_SCOPE = {"depth": 0}
+_SCOPE_LOCK = threading.Lock()
+
+
+def memo(name: str, maxsize: int | None = None, *, share: bool = False, persistent: bool = False,
+         on_clear: Callable[[Any], None] | None = None) -> Memo:
+    """Register and return the in-memory table `name`: the module path under hcwf and what it holds, e.g.
+    "io.thresholds.loaded" in hcwf/io/thresholds.py (a shared table's module is imported by name in the workers).
+
+    maxsize bounds the number of items (None: unbounded, for tables that are the size of one run); share sends the table to
+    the workers (see shared_state); persistent keeps it across runs (only for values fixed by files of the installation);
+    on_clear(item) runs for each item when the table is cleared. Making a name again replaces the earlier table.
+    """
+    table = Memo(name, maxsize, share, persistent, on_clear)
+    _MEMOS[name] = table
+    return table
+
+
+def memos() -> dict[str, Memo]:
+    """The registered memos, by name."""
+    return dict(_MEMOS)
+
+
+def reset_run_state(*, everything: bool = False) -> None:
+    """Clear every registered memo of the run (all of them with everything=True, persistent ones included)."""
+    for table in list(_MEMOS.values()):
+        if everything or not table.persistent:
+            table.clear()
+
+
+def on_run_end(hook: Callable[[], None]) -> Callable[[], None]:
+    """Register `hook()` to run when a run ends, before its memos are cleared (a decorator, or a call)."""
+    if hook not in _END_HOOKS:
+        _END_HOOKS.append(hook)
+    return hook
+
+
+@contextlib.contextmanager
+def run_scope():
+    """One run's state: cleared on entering, the end hooks run and everything cleared again on leaving.
+
+    Every run entry (hcwf.run, the command line, export, blend training and forecasting) is made of one. Scopes nest: only
+    the outermost resets, so a step called inside a run (the onset export of a benchmark) keeps the run's state.
+    """
+    with _SCOPE_LOCK:
+        outermost = _SCOPE["depth"] == 0
+        _SCOPE["depth"] += 1
+    if outermost:
+        reset_run_state()
+    try:
+        yield
+    finally:
+        with _SCOPE_LOCK:
+            _SCOPE["depth"] -= 1
+        if outermost:
+            try:
+                for hook in list(_END_HOOKS):
+                    try:
+                        hook()
+                    except Exception as exc:  # noqa: BLE001 - the end of a run never raises over its result
+                        log.debug("run end hook %s failed (%s)", getattr(hook, "__name__", hook), exc)
+            finally:
+                reset_run_state()
+
+
+def shared_state() -> dict:
+    """The items of every shared memo, {name: {key: item}}: what the workers start from (see hcwf.parallel.snapshot)."""
+    return {name: dict(table.items()) for name, table in _MEMOS.items() if table.share and len(table)}
+
+
+def install_shared_state(state: Mapping) -> None:
+    """Put a `shared_state` into this (worker) process's memos.
+
+    A worker may not have imported the module that makes a memo yet, so a name is a module path under hcwf and the table
+    ("io.thresholds.loaded" is made by hcwf.io.thresholds): the module is imported first.
+    """
+    import importlib
+
+    for name, items in state.items():
+        if name not in _MEMOS and "." in name:
+            try:
+                importlib.import_module("hcwf." + name.rsplit(".", 1)[0])
+            except ImportError:
+                pass
+        if name in _MEMOS:
+            _MEMOS[name].update(items)
 
 
 def file_identity(path) -> list:
@@ -190,6 +385,58 @@ NETCDF_GROUPS = Codec("value.nc", _read_groups, _write_groups)
 """A dict of named DataArrays."""
 
 
+@dataclass(frozen=True)
+class Entry:
+    """One cache entry on disk: its kind, fingerprint, folder, size in bytes and the time (epoch seconds) it was last written."""
+
+    kind: str
+    name: str
+    path: Path
+    size: int
+    mtime: float
+
+
+def _tree_size(path: Path) -> tuple[int, float]:
+    """(bytes in all the files under a folder, newest modification time of the folder and its files)."""
+    size, newest = 0, path.stat().st_mtime
+    for item in path.rglob("*"):
+        try:
+            stat = item.stat()
+        except OSError:
+            continue
+        newest = max(newest, stat.st_mtime)
+        if item.is_file():
+            size += stat.st_size
+    return size, newest
+
+
+def global_root() -> Path:
+    """The folder of the cache shared by every run: $HCWF_CACHE_DIR, else ~/.cache/hcwf."""
+    return Path(os.environ.get("HCWF_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "hcwf"))
+
+
+_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 7 * 86400}
+
+
+def parse_duration(text: str) -> float:
+    """Seconds in a duration written as a number and a unit: 90m, 12h, 30d, 2w (a bare number is days)."""
+    text = str(text).strip().lower()
+    unit = text[-1:] if text[-1:] in _UNITS else "d"
+    number = text[:-1] if text[-1:] in _UNITS else text
+    try:
+        value = float(number)
+    except ValueError:
+        raise ValueError(f"{text!r} is not a duration: write a number and a unit, e.g. 12h, 30d, 2w") from None
+    if value < 0:
+        raise ValueError(f"{text!r} is negative")
+    return value * _UNITS[unit]
+
+
+def store_kinds(root, kinds=None) -> list[Store]:
+    """A Store for each kind folder of a cache root (only the named `kinds` when given), to list or prune its entries."""
+    return [Store(kind, root) for kind in Store.kinds(root) if not kinds or kind in kinds]
+
+
 SCHEMA = {"observed_onsets": 1, "thresholds": 1, "harmonic_seasons": 1, "model_thresholds": 1, "detect": 1, "alignment": 1}
 """The code version of each kind of result. Bump a kind's number in the same commit as any change to how that result is
 computed (onset engine and backends, threshold computation, harmonic seasons, detection): `Store` adds it to the parts of
@@ -299,6 +546,46 @@ class Store:
         if self.memory:
             self._memory[fp] = (parts, value)
         return value
+
+    @staticmethod
+    def kinds(root) -> list[str]:
+        """The kinds with a folder in a cache root (sorted); [] when the root is not there."""
+        root = Path(root)
+        return sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+
+    def entries(self) -> list[Entry]:
+        """The entries of this kind on disk, oldest first (an in-memory store has none)."""
+        folder = self.folder
+        if folder is None or not folder.is_dir():
+            return []
+        found = []
+        for path in folder.iterdir():
+            if path.is_dir():
+                size, newest = _tree_size(path)
+                found.append(Entry(self.kind, path.name, path, size, newest))
+        return sorted(found, key=lambda e: (e.mtime, e.name))
+
+    def prune(self, *, older_than: float | None = None, dry_run: bool = False, now: float | None = None) -> list[Entry]:
+        """Delete this kind's entries last written more than `older_than` seconds ago (None: every entry).
+
+        Returns the entries deleted (with dry_run, the ones that would be, nothing is touched). An entry that cannot be
+        deleted is left and not returned.
+        """
+        now = time.time() if now is None else now
+        chosen = [e for e in self.entries() if older_than is None or now - e.mtime > older_than]
+        if dry_run:
+            return chosen
+        gone = []
+        for entry in chosen:
+            try:
+                shutil.rmtree(entry.path)
+            except OSError as exc:
+                log.debug("%s cache entry %s not deleted (%s)", self.label, entry.path, exc)
+                continue
+            self._memory.pop(entry.name, None)
+            self.announced.discard(entry.name)
+            gone.append(entry)
+        return gone
 
     def nearest(self, hashes: dict, fp: str | None = None) -> tuple[str, list[str]] | None:
         """The other entry sharing most parts with these hashes and the names of the parts that differ, or None."""

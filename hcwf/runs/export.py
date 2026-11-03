@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import run_scope
 from hcwf.io.forecasts import forecast_of, initialization_dates
 from hcwf.io.observations import history_of, observations_of
 from hcwf.io.thresholds import thresholds_of
@@ -478,14 +479,16 @@ def export_onsets(cfg, sources=None, out=None) -> dict:
     functions and settings; nothing is scored.
     """
     from hcwf.config.build import resolve
-    rc = resolve(cfg)
-    names = _check_sources(rc, sources)
-    folder = Path(out) if out is not None else onsets_folder(rc)
-    paths = {}
-    for source in names:
-        log.info(f"Exporting onset dates of {source} ...")
-        ds = _collect(rc, source)
-        path = write_netcdf(ds, folder / file_name(rc.paths, "onset", source.replace(" ", "_")))
-        log.info(f"  wrote {path}")
-        paths[source] = path
-    return paths
+
+    with run_scope():   # inside a run (output.save_onsets) this keeps the run's state; alone it starts and ends its own
+        rc = resolve(cfg)
+        names = _check_sources(rc, sources)
+        folder = Path(out) if out is not None else onsets_folder(rc)
+        paths = {}
+        for source in names:
+            log.info(f"Exporting onset dates of {source} ...")
+            ds = _collect(rc, source)
+            path = write_netcdf(ds, folder / file_name(rc.paths, "onset", source.replace(" ", "_")))
+            log.info(f"  wrote {path}")
+            paths[source] = path
+        return paths

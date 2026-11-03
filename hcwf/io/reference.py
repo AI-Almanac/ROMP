@@ -1,7 +1,7 @@
 """The reference (threshold and climatology) years of the observations, ingested once as one DailyRain.
 
 The thresholds read and ingest the reference years (`reference_rain`) and leave them held for the climatological onsets of those
-years (`reference_rain_year`) until `release_reference`. `clear_obs_cache` clears this and the held observation years.
+years (`reference_rain_year`) until `release_reference` (or the run's state is reset).
 """
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from datetime import date
 import numpy as np
 import xarray as xr
 
+from hcwf.cache import memo
 from hcwf.io.observations import (
-    forget_years,
     mask_text,
     obs_years_of,
     observation_year,
@@ -24,8 +24,9 @@ from hcwf.spatial.select import implicit_masks
 
 log = logging.getLogger(__name__)
 
-_reference = {"key": None, "rain": None, "first": None, "last": None}
-"""The reference (threshold and climatology) years as one ingested DailyRain, kept from the thresholds to the climatology."""
+_reference = memo("io.reference.held", maxsize=1)
+"""The reference (threshold and climatology) years as one ingested DailyRain, kept from the thresholds to the climatology:
+the one item "held" is (key, rain, first year, last year)."""
 
 
 def _reference_key(obs, area, select, boundary):
@@ -38,18 +39,12 @@ def _reference_key(obs, area, select, boundary):
 
 def release_reference():
     """Drop the shared reference rainfall (its memory is the size of the reference years' tenths and flags)."""
-    _reference.update(key=None, rain=None, first=None, last=None)
-
-
-def clear_obs_cache():
-    """Forget the observation years held for the current run, and the shared reference rainfall (called when a run starts and ends)."""
-    forget_years()
-    release_reference()
+    _reference.clear()
 
 
 def reference_held() -> bool:
     """Whether the thresholds left their reference rainfall for the climatology to use (see reference_rain_year)."""
-    return _reference["rain"] is not None
+    return "held" in _reference
 
 
 def reference_rain_year(year, obs, area, select, boundary):
@@ -59,14 +54,15 @@ def reference_rain_year(year, obs, area, select, boundary):
     those years use that same ingested rain instead of reading and converting every year again. The year's rain is
     exactly what ingest gives for the year read on its own.
     """
-    held = _reference
-    if held["rain"] is None or not held["first"] <= year <= held["last"] \
-            or held["key"] != _reference_key(obs, area, select, boundary):
+    held = _reference.get("held")
+    if held is None:
+        return None
+    key, rain, first, last = held
+    if not first <= year <= last or key != _reference_key(obs, area, select, boundary):
         return None
     from hcwf.onset.model import DailyRain
 
-    rain = held["rain"]
-    start = (date(year, 1, 1) - date(held["first"], 1, 1)).days
+    start = (date(year, 1, 1) - date(first, 1, 1)).days
     days = slice(start, start + (date(year, 12, 31) - date(year, 1, 1)).days + 1)
     return DailyRain(tenths=rain.tenths[..., days], missing=rain.missing[..., days], dims=rain.dims,
                      coords={**rain.coords, "time": rain.coords["time"][days]}, year=rain.year[days],
@@ -169,8 +165,8 @@ def reference_rain(onset, years, read):
         except _NotContiguous:
             pass
         else:
-            _reference.update(key=_reference_key(read.obs, read.area, read.select, onset.obs_day_boundary), rain=rain,
-                              first=years[0], last=years[1])
+            _reference["held"] = (_reference_key(read.obs, read.area, read.select, onset.obs_day_boundary), rain,
+                                  years[0], years[1])
             return rain
     return ingest(
         xr.concat([_reference_year(year, read) for year in range(years[0], years[1] + 1)], dim="time"),

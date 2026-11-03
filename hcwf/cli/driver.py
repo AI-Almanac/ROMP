@@ -66,6 +66,13 @@ def _argv_for(argv, path: str) -> list[str]:
 
 def _check(flags, cli_args=None) -> int:
     """`--check`: print the plan of the run (or why the config cannot be resolved); return the exit code."""
+    from hcwf.cache import run_scope
+
+    with run_scope():
+        return _check_in_scope(flags, cli_args)
+
+
+def _check_in_scope(flags, cli_args) -> int:
     from hcwf.config.build import resolve_command_line
     from hcwf.runs.check import build_report
 
@@ -89,25 +96,28 @@ def _check(flags, cli_args=None) -> int:
 def _run(cfg, flags, cli_args=None) -> int:
     """Load (or take) a config and run it; the exit code: 0, or 1 after printing why it failed."""
     from hcwf.api import execute
+    from hcwf.cache import run_scope
     from hcwf.config.build import resolve, resolve_command_line
     from hcwf.errors import RunExistsError
 
-    try:
-        rc = resolve_command_line(cli_args) if cfg is None else resolve(cfg)
-    except (HCWFConfigError, FileNotFoundError) as e:
-        print(f"Error: {e}")
-        return 1
+    with run_scope():   # one config's state, cleared before the next config of a batch
+        try:
+            rc = resolve_command_line(cli_args) if cfg is None else resolve(cfg)
+        except (HCWFConfigError, FileNotFoundError) as e:
+            print(f"Error: {e}")
+            return 1
 
-    try:
-        execute(rc, write=True, overwrite=flags.overwrite, verbosity=logs.verbosity_from(flags.quiet, flags.verbose))
-    except (RunExistsError, HCWFConfigError) as e:
-        print(f"Error: {e}")
-        return 1
-    except Exception as e:
-        print(f"Error: HCWF failed during execution: {e}", file=sys.stderr)
-        traceback.print_exc()
-        return 1
-    return 0
+        try:
+            execute(rc, write=True, overwrite=flags.overwrite,
+                    verbosity=logs.verbosity_from(flags.quiet, flags.verbose))
+        except (RunExistsError, HCWFConfigError) as e:
+            print(f"Error: {e}")
+            return 1
+        except Exception as e:
+            print(f"Error: HCWF failed during execution: {e}", file=sys.stderr)
+            traceback.print_exc()
+            return 1
+        return 0
 
 
 def _batch(paths, argv, flags) -> int:

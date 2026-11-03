@@ -2,6 +2,7 @@
 import logging
 import multiprocessing
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -237,3 +238,91 @@ def test_store_adds_the_code_version_of_its_kind(monkeypatch):
     assert "code_version" not in other._hashes(parts) and "code_version" in store._hashes(parts)
     for kind in ("observed_onsets", "thresholds", "harmonic_seasons", "model_thresholds"):
         assert kind in cache.SCHEMA
+
+
+# --- listing and pruning the folder ------------------------------------------------------------------------------
+
+def _aged(store, parts, days, value=1):
+    """An entry of `store` written `days` ago."""
+    import time
+
+    store.put(parts, value)
+    when = time.time() - days * 86400
+    for path in [store.entry(parts), *store.entry(parts).iterdir()]:
+        os.utime(path, (when, when))
+
+
+def test_entries_list_kind_size_and_age_and_kinds_are_enumerated(tmp_path):
+    thresholds, onsets = Store("thresholds", tmp_path), Store("observed_onsets", tmp_path)
+    _aged(thresholds, {"a": 1}, days=40, value=np.zeros(1000))
+    _aged(thresholds, {"a": 2}, days=1)
+    onsets.put({"a": 1}, "x")
+    assert Store.kinds(tmp_path) == ["observed_onsets", "thresholds"] and Store.kinds(tmp_path / "none") == []
+    entries = thresholds.entries()
+    assert [e.kind for e in entries] == ["thresholds"] * 2 and entries[0].mtime < entries[1].mtime
+    assert entries[0].size > 8000 > entries[1].size and entries[0].path == thresholds.entry({"a": 1})
+    assert [s.kind for s in cache.store_kinds(tmp_path, ["thresholds"])] == ["thresholds"]
+    assert Store("x", None).entries() == []
+
+
+def test_prune_by_age_dry_run_and_all(tmp_path):
+    store = Store("thresholds", tmp_path)
+    _aged(store, {"a": 1}, days=40)
+    _aged(store, {"a": 2}, days=1)
+    assert [e.name for e in store.prune(older_than=cache.parse_duration("30d"), dry_run=True)] == [store.fingerprint({"a": 1})]
+    assert len(store.entries()) == 2                      # a dry run deletes nothing
+    gone = store.prune(older_than=cache.parse_duration("30d"))
+    assert [e.name for e in gone] == [store.fingerprint({"a": 1})]
+    assert [e.name for e in store.entries()] == [store.fingerprint({"a": 2})]
+    assert store.get({"a": 1}, quiet=True) is None        # the in-memory copy went with it
+    assert len(store.prune()) == 1 and store.entries() == []
+
+
+def test_parse_duration():
+    assert cache.parse_duration("90m") == 5400 and cache.parse_duration("2w") == 14 * 86400
+    assert cache.parse_duration("30") == 30 * 86400 and cache.parse_duration("12H") == 43200
+    with pytest.raises(ValueError, match="not a duration"):
+        cache.parse_duration("soon")
+
+
+def _cli(args, monkeypatch, capsys):
+    from hcwf.cli import main
+
+    with pytest.raises(SystemExit) as stop:
+        main(["cache", *args])
+    return stop.value.code, capsys.readouterr()
+
+
+def test_cache_info_and_clean_through_the_command_line(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "shared"
+    _aged(Store("thresholds", root), {"a": 1}, days=40)
+    _aged(Store("thresholds", root), {"a": 2}, days=1)
+    _aged(Store("detect", root), {"a": 1}, days=40)
+    from hcwf.cli import main
+
+    main(["cache", "info", "--dir", str(root)])
+    info = capsys.readouterr().out
+    assert re.search(r"detect\s+1 entries", info) and re.search(r"thresholds\s+2 entries.*oldest 40d.*newest 1d", info)
+    main(["cache", "clean", "--dir", str(root), "--older-than", "30d", "--dry-run"])
+    assert "would delete 1 entries" in capsys.readouterr().out and len(Store("thresholds", root).entries()) == 2
+    main(["cache", "clean", "--dir", str(root), "--kind", "detect", "--all"])
+    assert "deleted 1 entries" in capsys.readouterr().out and Store("detect", root).entries() == []
+    main(["cache", "clean", "--dir", str(root), "--older-than", "30d"])
+    assert [e.name for e in Store("thresholds", root).entries()] == [Store("thresholds", root).fingerprint({"a": 2})]
+    code, out = _cli(["clean", "--dir", str(root)], monkeypatch, capsys)
+    assert code == 2 and "clean needs --all" in out.err and len(Store("thresholds", root).entries()) == 1
+    main(["cache", "clean", "--dir", str(root), "--all"])
+    assert Store("thresholds", root).entries() == []
+
+
+def test_cache_info_defaults_to_the_run_folder_cache_and_the_shared_cache(tmp_path, monkeypatch, capsys):
+    shared = tmp_path / "shared"
+    monkeypatch.setenv("HCWF_CACHE_DIR", str(shared))
+    monkeypatch.chdir(tmp_path)
+    Store("alignment", shared).put({"a": 1}, "x")
+    Store("observed_onsets", tmp_path / "runs" / ".cache").put({"a": 1}, "x")
+    from hcwf.cli import main
+
+    main(["cache", "info"])
+    out = capsys.readouterr().out
+    assert str(tmp_path / "runs" / ".cache") in out and str(shared) in out and "alignment" in out and "observed_onsets" in out

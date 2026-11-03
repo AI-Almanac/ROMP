@@ -11,6 +11,7 @@
     hcwf-run convert --specs ... -o run.yaml        the same from a legacy spec set
     hcwf-run forecast BLEND... --forecast MODEL=PATH [...]   apply trained blends (trained.blend) to live forecasts
     hcwf-run export -p run.yaml     write the gridded onset dates of each source as NetCDF (no scoring)
+    hcwf-run cache info|clean       what the on-disk caches hold (kinds, entries, sizes, ages); delete entries
     hcwf-run onset list|describe|regions|schematic|explain|check-alignment   the onset definitions and regions
     hcwf-run -h                     this help (with a config, -h lists the run-time overrides)
 """
@@ -28,6 +29,7 @@ HELP = """usage: hcwf-run [-p run.yaml] [--check] [--overwrite] [--quiet|--verbo
        hcwf-run convert blend.yml -o run.yaml   convert an onset_blending config (or --specs ...) to run YAML
        hcwf-run forecast BLEND --forecast MODEL=PATH   apply a trained blend to live forecast files
        hcwf-run export -p run.yaml              write the gridded onset dates as NetCDF
+       hcwf-run cache info|clean                list or delete cached results (runs/.cache and ~/.cache/hcwf)
        hcwf-run onset COMMAND                   onset definitions: list, describe, regions, schematic, explain, check-alignment
 
 HCWF (Human-Centered Weather Forecasts) benchmarks rainy-season onset forecasts.
@@ -63,6 +65,10 @@ commands:
              climatology, conditional_climatology) with the dates exactly as HCWF scores them. Options:
              --sources observed,AIFS,climatology (default: all the run uses), --out DIR (default: the run's onsets folder, dir_out/onsets with an explicit data_dir).
              `output.save_onsets: true` in the run file does the same before a normal run's scoring.
+  cache      `hcwf-run cache info [--dir DIR ...]` lists each cache folder (default: runs/.cache here and the shared
+             $HCWF_CACHE_DIR or ~/.cache/hcwf) by kind of result: entries, size, oldest and newest. `hcwf-run cache clean
+             (--all | --kind KIND ... | --older-than 30d) [--dir DIR ...] [--dry-run]` deletes whole entries (what a
+             run needs again is recomputed once); --dry-run lists what would go and deletes nothing.
   onset      the onset component: `list` (definition ids), `describe ID` (the rule in words, hash, status), `regions`,
              `schematic ID --png F`, `explain --obs ... --lat --lon --year` (why one cell got its date),
              `check-alignment` (obs vs forecast day lags). `hcwf-run onset COMMAND -h` lists each one's options.
@@ -123,7 +129,9 @@ def _datasets(argv) -> int:
     except (OSError, yaml.YAMLError) as exc:
         print(f"Error: cannot read {args.param}: {exc}", file=sys.stderr)
         return 1
-    with warnings.catch_warnings():
+    from hcwf.cache import run_scope
+
+    with warnings.catch_warnings(), run_scope():
         warnings.simplefilter("ignore")
         try:
             cfg = build_config(raw, source=args.param)
@@ -276,9 +284,80 @@ def _export(argv) -> int:
 
 def _onset(argv) -> int:
     """`hcwf-run onset ...`: the onset definitions, regions, schematic and one-cell explanations."""
+    from hcwf.cache import run_scope
     from hcwf.cli.onset import main
 
-    return main(argv)
+    with run_scope():
+        return main(argv)
+
+
+def _age(seconds: float) -> str:
+    """A time span as text: 5m, 3h, 12d."""
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{seconds / size:.0f}{unit}"
+    return f"{max(seconds, 0):.0f}s"
+
+
+def _size(nbytes: float) -> str:
+    """A size in bytes as text: 3.2 MB."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if nbytes < 1024 or unit == "GB":
+            return f"{nbytes:.0f} B" if unit == "B" else f"{nbytes:.1f} {unit}"
+        nbytes /= 1024
+
+
+def _cache(argv) -> int:
+    """`hcwf-run cache info|clean`: what the on-disk caches hold, and deleting entries."""
+    import time
+
+    from hcwf import cache as cache_mod
+
+    p = argparse.ArgumentParser(prog="hcwf-run cache", description="List or delete the cached results (observed onsets, "
+                                "thresholds, dataset detection, ...) in the cache folders.")
+    p.add_argument("action", choices=("info", "clean"))
+    p.add_argument("--dir", action="append", default=[], metavar="DIR",
+                   help="a cache folder (repeat for several; default: runs/.cache here and the shared cache, "
+                        "$HCWF_CACHE_DIR or ~/.cache/hcwf)")
+    p.add_argument("--kind", action="append", default=[], metavar="KIND", help="only this kind of result (repeat)")
+    p.add_argument("--older-than", metavar="AGE", help="clean: only entries last written longer ago than this (12h, 30d, 2w)")
+    p.add_argument("--all", action="store_true", help="clean: delete every entry of the chosen kinds")
+    p.add_argument("--dry-run", action="store_true", help="clean: list what would be deleted, delete nothing")
+    args = p.parse_args(argv)
+    older = None
+    if args.older_than is not None:
+        try:
+            older = cache_mod.parse_duration(args.older_than)
+        except ValueError as exc:
+            p.error(str(exc))
+    if args.action == "clean" and not (args.all or args.kind or older is not None):
+        p.error("clean needs --all, --kind KIND or --older-than AGE (nothing is deleted without one of them)")
+    roots = [Path(d).expanduser() for d in args.dir] or [Path.cwd() / "runs" / ".cache", cache_mod.global_root()]
+    now = time.time()
+    total = 0
+    for root in roots:
+        stores = cache_mod.store_kinds(root, args.kind)
+        print(f"{root}" + ("" if root.is_dir() else "  (not there)"))
+        for store in stores:
+            if args.action == "info":
+                entries = store.entries()
+                if not entries:
+                    continue
+                size = sum(e.size for e in entries)
+                print(f"  {store.kind:<18} {len(entries):>6} entries  {_size(size):>10}  oldest {_age(now - entries[0].mtime)}"
+                      f"  newest {_age(now - entries[-1].mtime)}")
+                total += size
+            else:
+                gone = store.prune(older_than=older, dry_run=args.dry_run, now=now)
+                if gone:
+                    size = sum(e.size for e in gone)
+                    print(f"  {store.kind:<18} {'would delete' if args.dry_run else 'deleted'} {len(gone)} entries ({_size(size)})")
+                    total += size
+    if args.action == "info":
+        print(f"total {_size(total)}")
+    else:
+        print(f"{'would free' if args.dry_run else 'freed'} {_size(total)}")
+    return 0
 
 
 def _has_config(argv) -> bool:
@@ -287,7 +366,7 @@ def _has_config(argv) -> bool:
 
 
 COMMANDS = {"init": _init, "datasets": _datasets, "convert": _convert, "export": _export, "forecast": _forecast,
-            "onset": _onset}
+            "cache": _cache, "onset": _onset}
 
 
 def main(argv=None) -> None:

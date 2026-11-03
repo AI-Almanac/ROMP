@@ -40,6 +40,7 @@ from concurrent.futures.process import BrokenProcessPool
 
 import numpy as np
 
+from hcwf import cache
 from hcwf import log as logs
 
 log = logging.getLogger(__name__)
@@ -50,55 +51,40 @@ _tokens = itertools.count(1)
 _installed = {"token": None}
 
 
-def _mask_module():
-    """The mask-building module whose per-grid results are shared with the workers."""
-    from hcwf.spatial import masks as mask
-
-    return mask
-
-
 def snapshot() -> dict:
-    """What the workers need that this process has already read or built (small arrays only, never data cubes)."""
-    from hcwf.io import thresholds as thresholds_io
+    """What the workers need that this process has already read or built: the shared memos (loaded thresholds, built masks
+    and their records, observed-onset tables; small arrays only, never data cubes) and the observed-onset cache's settings."""
     from hcwf.onset import observed_cache
 
-    mask = _mask_module()
-    return {"thresholds": dict(thresholds_io._loaded_thresholds), "observed": observed_cache.export_state(),
-            "masks": (dict(mask._BUILT), dict(mask._RECORDS)), "land": dict(mask._LAND_BOOL)}
+    return {"memos": cache.shared_state(), "observed": observed_cache.export_state()}
 
 
 def install(state: dict, token: int) -> None:
     """Make a snapshot this (worker) process's read-once inputs; does nothing if it already holds that snapshot."""
     if _installed["token"] == token:
         return
-    from hcwf.io import thresholds as thresholds_io
     from hcwf.onset import observed_cache
 
-    mask = _mask_module()
-    thresholds_io._loaded_thresholds.update(state["thresholds"])
+    cache.install_shared_state(state["memos"])
     observed_cache.install_state(state["observed"])
-    mask._BUILT.update(state["masks"][0])
-    mask._RECORDS.update(state["masks"][1])
-    mask._LAND_BOOL.update(state["land"])
     _installed["token"] = token
 
 
 def collect() -> dict:
     """What this (worker) process found since the last call: new observed onsets and masks, to send back."""
     from hcwf.onset import observed_cache
+    from hcwf.spatial import masks
 
-    mask = _mask_module()
-    return {"observed": observed_cache.drain_new(), "records": dict(mask._RECORDS)}
+    return {"observed": observed_cache.drain_new(), "records": masks.records()}
 
 
 def absorb(found: dict) -> None:
     """Take what a worker found into this process (observed onsets into the cache, new mask records)."""
     from hcwf.onset import observed_cache
+    from hcwf.spatial import masks
 
-    mask = _mask_module()
     observed_cache.absorb(found["observed"])
-    for name, record in found["records"].items():
-        mask._RECORDS.setdefault(name, record)
+    masks.absorb_records(found["records"])
 
 
 def _warm() -> int:
@@ -143,6 +129,7 @@ def shutdown() -> None:
 
 
 atexit.register(shutdown)
+cache.on_run_end(shutdown)
 
 
 def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:

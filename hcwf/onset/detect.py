@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import memo
 from hcwf.config.model import Selection
 from hcwf.io.forecasts import ingest_forecast
 from hcwf.config.onset import forecast_reach
@@ -31,7 +32,8 @@ log = logging.getLogger(__name__)
 _GRID_TOLERANCE = 1e-3
 _ALIGNMENT_MAX_INITS = 40
 _ALIGNMENT_MAX_MEMBERS = 10
-_alignment_done = set()
+_alignment_done = memo("onset.detect.alignment_done")
+"""The (model, observations, lead label) alignment checks made this run: {key: True}."""
 
 
 def engine_options(rc, forecast=False) -> dict:
@@ -442,7 +444,7 @@ def check_alignment(rain_slice, p_model, rc, case):
     key = (case.model.name, rc.observations.dir, setup.lead_label)
     if key in _alignment_done or not setup.check_alignment:
         return
-    _alignment_done.add(key)
+    _alignment_done[key] = True
     report, note = alignment_report(rain_slice, p_model, rc, case)
     if report is None:
         log.info(f"Alignment check skipped: {note}")

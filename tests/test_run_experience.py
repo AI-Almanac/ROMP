@@ -16,6 +16,7 @@ import pytest
 import xarray as xr
 import yaml
 
+from hcwf.cache import reset_run_state
 import hcwf
 from hcwf.runs import export
 from hcwf.runs import check as check_mod
@@ -405,7 +406,7 @@ def test_cached_onsets_equal_detected_onsets(world, tmp_path):
 
 def test_the_cache_is_inactive_outside_a_run():
     """Without a run, detect_observed behaves as before: nothing is looked up or stored."""
-    observed_cache.reset()
+    reset_run_state()
     assert observed_cache.lookup(None, None, 2020, None) is None
     observed_cache.store(None, None, 2020, None, None, None)
     assert observed_cache.current() == {}

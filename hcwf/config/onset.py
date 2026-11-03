@@ -9,6 +9,7 @@ import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from hcwf.cache import memo
 from hcwf.errors import OnsetConfigError
 from hcwf.onset import definition as definition_mod
 from hcwf.onset import plan as plan_mod, regions
@@ -161,7 +162,8 @@ def _backend(requested):
     return "reference", reason
 
 
-_cache: dict = {}
+_cache = memo("config.onset.setups", maxsize=32)
+"""The onset setups resolved in the run, by `setup_key`."""
 
 
 _SETUP_KEYS = ("onset_definition", "onset_season", "threshold_years", "thresholds", "obs_day_boundary",
@@ -177,10 +179,7 @@ def setup_key(cfg) -> str:
 
 def onset_setup(cfg) -> OnsetSetup:
     """Resolve the onset settings of a config mapping (memoized)."""
-    key = setup_key(cfg)
-    if key not in _cache:
-        _cache[key] = _definition_setup(cfg)
-    return _cache[key]
+    return _cache.get_or_make(setup_key(cfg), lambda: _definition_setup(cfg))
 
 
 def _dry_check(definition: Definition, cfg) -> tuple[Definition, str, str]:

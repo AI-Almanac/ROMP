@@ -12,6 +12,7 @@ import pytest
 import xarray as xr
 
 from _inputs import write_adm3, write_forecast
+from hcwf.cache import reset_run_state
 from hcwf.config.model import (AreaSpec, EvaluationSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec, Selection,
                                Window)
 from hcwf.io import forecasts as forecasts_io
@@ -32,10 +33,10 @@ LON = np.arange(32.0, 50.0, 1.0)
 @pytest.fixture(autouse=True)
 def fresh():
     """No observation years held and no thresholds loaded before or after a test."""
-    reference_io.clear_obs_cache()
+    reset_run_state()
     thresholds_io._loaded_thresholds.clear()
     yield
-    reference_io.clear_obs_cache()
+    reset_run_state()
     thresholds_io._loaded_thresholds.clear()
 
 
@@ -95,7 +96,7 @@ def test_grid_observations_read_the_same_from_flat_keys(tmp_path):
     flat = dict(obs_dir=str(tmp_path), obs_file_pattern=["{}.nc"], obs_var="rain", obs_unit_cvt=2.0,
                 region="Ethiopia", shp_only=False, years=[2020])
     old = typed_io.observations(2020, flat)
-    reference_io.clear_obs_cache()
+    reset_run_state()
     direct = observations_io.load_observations(
         2020, obs_spec(dir=str(tmp_path), file_pattern=("{}.nc",), unit_cvt=2.0), area_spec("Ethiopia"),
         options_spec(), Selection(shp_only=False), run_years=(2020,))
@@ -111,7 +112,7 @@ def test_zarr_observations_read_the_same_from_flat_keys(tmp_path):
     flat = dict(obs_dir=str(store), obs_file_pattern=["{}.nc"], obs_var="rain", obs_unit_cvt=None, region="Ethiopia",
                 shp_only=False, years=[2020])
     old = typed_io.observations(2020, flat)
-    reference_io.clear_obs_cache()
+    reset_run_state()
     obs, area, options = obs_spec(dir=str(store), file_pattern=("{}.nc",)), area_spec("Ethiopia"), options_spec()
     direct = observations_io.load_observations(2020, obs, area, options, Selection(shp_only=False), run_years=(2020,))
     xr.testing.assert_identical(old, direct)
@@ -145,7 +146,7 @@ def test_unit_observations_read_the_same_from_flat_keys(tmp_path):
     flat = {**ONSET, "obs_dir": str(tmp_path), "obs_file_pattern": ["adm3_{}.nc"], "obs_var": "precip",
             "obs_unit_cvt": None, "region": None, "units_mode": "cells", "years": [2003]}
     old = typed_io.observations(2003, flat)
-    reference_io.clear_obs_cache()
+    reset_run_state()
     obs = obs_spec(dir=str(tmp_path), file_pattern=("adm3_{}.nc",), var="precip", units=UnitsSpec(mode="cells"))
     direct = observations_io.load_observations(2003, obs, area_spec(), options_spec(), Selection(), onset=onset_setup(flat),
                                         run_years=(2003,))
@@ -228,7 +229,7 @@ def test_thresholds_read_the_same_from_flat_keys(tmp_path):
     flat = {**_reference_config(tmp_path), "region": None, "cache_dir": str(tmp_path / "c1")}
     old = typed_io.thresholds(flat)
     thresholds_io._loaded_thresholds.clear()
-    reference_io.clear_obs_cache()
+    reset_run_state()
     obs = obs_spec(dir=str(tmp_path / "obs"), file_pattern=("obs_{}.nc",), day_boundary=flat["obs_day_boundary"])
     ev = evaluation_spec(start_date=(2000, 5, 1), end_date=(2000, 8, 31), years=(2006,), max_forecast_day=10,
                          climatology_years=tuple(range(2000, 2007)), windows=())

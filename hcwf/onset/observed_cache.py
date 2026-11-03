@@ -7,7 +7,8 @@ keeps the entries and reports hits and misses); the backend, models, windows and
 units replace the cells part by a units part (the units specification, the files it names, the units kept), and run
 options that change the numbers (missing-rain policy, resolution, horizon, the reference onset a search starts at) add
 an options part when they are set; without them the fingerprint is the one a grid run always had. While a run is active (``activate``), ``hcwf.onset.detect.detect_observed``
-asks ``lookup`` first and calls ``store`` after detecting, so each year is detected once per fingerprint.
+asks ``lookup`` first and calls ``store`` after detecting, so each year is detected once per fingerprint. The entry is
+written to the folder once per run, when the run ends (``flush``, a `hcwf.cache.run_scope` end hook), not once per year.
 
 The fingerprint is computed from typed inputs (``fingerprint_parts(rain, thresh, obs, area, onset, options, select,
 years)``; ``parts_for`` takes them from a RunConfig). Its parts are the same hashes the kwargs form gave, so entries
@@ -21,22 +22,43 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.cache import Codec, Store, file_identity, part_hash
+from hcwf.cache import Codec, Store, file_identity, memo, on_run_end, part_hash
 from hcwf.config.model import Selection
 
 log = logging.getLogger(__name__)
 
 SUBFOLDER = "observed_onsets"
-_state = {"on": False, "dir": None, "worker": False, "store": None}
-_tables: dict = {}
-_new: list = []
-_memo: dict = {}
+
+
+@dataclass
+class _Run:
+    """The cache of the active run: where it is, its store, the onsets a worker found and the tables not yet written."""
+
+    dir: Path | None = None
+    worker: bool = False
+    store: Store | None = None
+    new: list = field(default_factory=list)
+    dirty: dict = field(default_factory=dict)
+
+
+_state = memo("onset.observed_cache.run", maxsize=1)
+"""The active run's cache: the one item "run" is a `_Run`; none while no run uses the cache."""
+_tables = memo("onset.observed_cache.tables", share=True)
+"""The in-memory table of each fingerprint, read from the cache folder or detected in this run (the workers get a copy)."""
+_hashes = memo("onset.observed_cache.hashes", maxsize=256)
+"""Hashes memoised for the run: the thresholds by object, and the observation files of a dataset."""
+
+
+def _run() -> _Run | None:
+    """The active run's cache, or None."""
+    return _state.get("run")
 
 
 def _empty() -> dict:
@@ -75,24 +97,25 @@ def _new_store(root) -> Store:
 
 def activate(cache_dir=None) -> None:
     """Start using the cache for this run; cache_dir None keeps it in memory. Clears what an earlier run left."""
-    reset()
-    _state.update(on=True, dir=Path(cache_dir) if cache_dir else None, store=_new_store(cache_dir))
+    for table in (_state, _tables, _hashes):
+        table.clear()
+    _state["run"] = _Run(dir=Path(cache_dir) if cache_dir else None, store=_new_store(cache_dir))
 
 
-def reset() -> None:
-    """Stop using the cache and forget the in-memory tables, announcements and memoised parts."""
-    _state.update(on=False, dir=None, worker=False, store=None)
-    _new.clear()
-    _tables.clear()
-    _memo.clear()
-    from hcwf.io.reference import clear_obs_cache
-
-    clear_obs_cache()
+@on_run_end
+def flush() -> None:
+    """Write the tables detected in this run to the cache folder, each once (a failure of the folder is only logged)."""
+    run = _run()
+    if run is None or run.worker:
+        return
+    dirty, run.dirty = run.dirty, {}
+    for parts, table in dirty.values():
+        run.store.put(parts, table)
 
 
 def threshold_hash(thresh) -> str:
     """Hash of the threshold values: the named arrays or the season climatology."""
-    cached = _memo.get(("thresh", id(thresh)))
+    cached = _hashes.get(("thresh", id(thresh)))
     if cached is not None and cached[0] is thresh:
         return cached[1]
     if isinstance(thresh, dict):
@@ -104,7 +127,7 @@ def threshold_hash(thresh) -> str:
         result = part_hash(thresh, {str(name): thresh.coords[name] for name in thresh.coords})
     else:
         result = part_hash(thresh)
-    _memo[("thresh", id(thresh))] = (thresh, result)
+    _hashes[("thresh", id(thresh))] = (thresh, result)
     return result
 
 
@@ -143,9 +166,7 @@ def observation_files(obs, files_years, years) -> list:
 def _obs_files_hash(obs, files_years, years) -> str:
     """Hash of observation_files, memoised for the run."""
     key = ("files", str(obs.dir), str(obs.file_pattern), tuple(years), str(obs.paths), str(files_years))
-    if key not in _memo:
-        _memo[key] = part_hash(observation_files(obs, files_years, years))
-    return _memo[key]
+    return _hashes.get_or_make(key, lambda: part_hash(observation_files(obs, files_years, years)))
 
 
 def _mask_files(area) -> list:
@@ -239,16 +260,18 @@ def fingerprint(parts: dict) -> str:
 
 def _table(parts: dict) -> dict:
     """The in-memory table of these parts, read from the cache the first time (which logs a hit or a miss)."""
-    fp = _state["store"].fingerprint(parts)
-    if fp not in _tables:
-        _tables[fp] = _state["store"].get(parts) or _empty()
-    return _tables[fp]
+    store = _run().store
+    fp = store.fingerprint(parts)
+    table = _tables.get(fp)
+    if table is None:
+        table = _tables[fp] = store.get(parts) or _empty()
+    return table
 
 
 def lookup(rain, thresh, year, rc, select=Selection()):
     """The cached observed onsets of a year as a DataArray over the spatial dims (a per-unit array the onsets carried
     comes back as a coordinate), or None (inactive, or not cached yet)."""
-    if not _state["on"]:
+    if _run() is None:
         return None
     try:
         parts = parts_for(rain, thresh, rc, select)
@@ -274,21 +297,22 @@ def _entry(onset) -> tuple:
 
 def store(rain, thresh, year, rc, select, onset) -> None:
     """Keep the detected onsets of a year (memory, and disk when a cache folder is set)."""
-    if not _state["on"]:
+    run = _run()
+    if run is None:
         return
     try:
         parts = parts_for(rain, thresh, rc, select)
-        fp = _state["store"].fingerprint(parts)
+        fp = run.store.fingerprint(parts)
         table = _table(parts)
         dims, coords, extras = _entry(onset)
         table["years"][int(year)] = np.asarray(onset.values).astype("datetime64[ns]")
         table.update(dims=dims, coords=coords, lat=coords.get("lat"), lon=coords.get("lon"))
         if extras:
             table["extras"][int(year)] = extras
-        if _state["worker"]:   # a worker process: the parent writes the entry (see absorb)
-            _new.append((fp, parts, int(year), table["years"][int(year)], dims, coords, extras))
+        if run.worker:   # a worker process: the parent writes the entry (see absorb)
+            run.new.append((fp, parts, int(year), table["years"][int(year)], dims, coords, extras))
         else:
-            _state["store"].put(parts, table)
+            run.dirty[fp] = (parts, table)   # written once, when the run ends (see flush)
     except Exception as exc:  # noqa: BLE001 - the cache must never break a run
         log.debug("observed-onset cache store failed (%s)", exc)
 
@@ -300,29 +324,33 @@ def current() -> dict:
 
 
 def export_state() -> dict:
-    """The cache as worker processes need it: its folder, the tables read or detected so far and which were announced."""
-    return {"dir": _state["dir"], "tables": dict(_tables), "announced": set(_state["store"].announced if _state["store"] else ())}
+    """The cache as worker processes need it: its folder and which entries were announced (the tables travel as the
+    shared memo `_tables`, see hcwf.cache.shared_state)."""
+    run = _run()
+    return {"dir": None if run is None else run.dir, "announced": set(run.store.announced) if run else set()}
 
 
 def install_state(state: dict) -> None:
     """Start a worker process's cache from the parent's state: reads the same folder, never writes to it."""
-    reset()
-    _state.update(on=True, dir=state["dir"], worker=True, store=_new_store(state["dir"]))
-    _tables.update(state["tables"])
-    _state["store"].announced.update(state["announced"])
+    _state.clear()
+    run = _state["run"] = _Run(dir=state["dir"], worker=True, store=_new_store(state["dir"]))
+    run.store.announced.update(state["announced"])
 
 
 def drain_new() -> list:
     """The onset tables a worker detected since the last call, [(fingerprint, parts, year, values, dims, coords, extras)];
     clears them."""
-    out = list(_new)
-    _new.clear()
+    run = _run()
+    if run is None:
+        return []
+    out, run.new = run.new, []
     return out
 
 
 def absorb(records: list) -> None:
     """Take onsets a worker detected into this process's cache (memory, and the folder when one is set), in order."""
-    if not _state["on"]:
+    run = _run()
+    if run is None:
         return
     for fp, parts, year, values, dims, coords, extras in records:
         table = _table(parts)
@@ -330,4 +358,4 @@ def absorb(records: list) -> None:
         table.update(dims=dims, coords=coords, lat=coords.get("lat"), lon=coords.get("lon"))
         if extras:
             table["extras"][year] = extras
-        _state["store"].put(parts, table)
+        run.dirty[fp] = (parts, table)   # written once, when the run ends (see flush)

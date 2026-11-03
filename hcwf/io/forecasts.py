@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import memo
 from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import forecast_reach
 from hcwf.io.stores import forecast_sources, open_forecast
@@ -62,7 +63,8 @@ class ForecastRead:
     ensemble: bool
 
 
-_reported_ingest = set()
+_reported_ingest = memo("io.forecasts.reported")
+"""The forecast ingests already reported in the log this run: {(model, accumulation, resolution, boundary): True}."""
 
 
 def ingest_forecast(cube, onset, model, options, select=NO_SELECTION, source=None):
@@ -85,7 +87,7 @@ def ingest_forecast(cube, onset, model, options, select=NO_SELECTION, source=Non
     forecast.ingest_info = info
     key = (str(model.name), info.accumulation, info.resolution, info.daily_boundary)
     if key not in _reported_ingest:
-        _reported_ingest.add(key)
+        _reported_ingest[key] = True
         text = f"{model.name or source}: accumulation {info.accumulation} [{info.accumulation_evidence}]; steps {info.resolution}"
         if info.daily_boundary:
             text += f"; days cut at {info.daily_boundary}"

@@ -9,6 +9,7 @@ import pytest
 import xarray as xr
 from shapely.geometry import box, mapping
 
+from hcwf.cache import memo
 from hcwf.config.mapping import build_config
 from hcwf.spatial import masks as mask_mod
 from hcwf.spatial.masks import MaskSpec, build_mask, rasterise
@@ -351,7 +352,7 @@ def test_offline_error_is_clear(monkeypatch):
         raise OSError("network is unreachable")
 
     monkeypatch.setattr(shapereader, "natural_earth", fail)
-    monkeypatch.setattr(mask_mod, "_NE_CACHE", {})
+    monkeypatch.setattr(mask_mod, "_NE_CACHE", memo("test.natural_earth"))
     with pytest.raises(MaskError, match="prefetch_cartopy_data"):
         mask_mod.country_geometry(("Ethiopia",), "50m")
 

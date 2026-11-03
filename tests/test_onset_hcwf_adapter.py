@@ -191,7 +191,7 @@ def _alignment_data(shift):
 
 def test_alignment_check_warns_when_forecasts_look_shifted(caplog, monkeypatch):
     """Lead k holding the observed day init + k labelled "end" (one day late) is reported as shifted, once per model."""
-    monkeypatch.setattr(detect, "_alignment_done", set())
+    detect._alignment_done.clear()
     obs, forecast = _alignment_data(0)
     kwargs = {**DEFINITION, "model": "toy", "obs_dir": "x", "model_lead_label": "end", "check_alignment": True}
     caplog.set_level(logging.INFO)
@@ -205,7 +205,7 @@ def test_alignment_check_warns_when_forecasts_look_shifted(caplog, monkeypatch):
 
 def test_alignment_check_is_quiet_when_aligned(caplog, monkeypatch):
     """Correctly labelled forecasts raise no warning; one that is shifted does (see the test above)."""
-    monkeypatch.setattr(detect, "_alignment_done", set())
+    detect._alignment_done.clear()
     obs, forecast = _alignment_data(0)
     caplog.set_level(logging.INFO)
     check_alignment(obs, forecast, *typed({**DEFINITION, "model": "toy", "obs_dir": "x", "check_alignment": True})[:2])

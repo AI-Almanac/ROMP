@@ -37,6 +37,7 @@ from typing import Union
 import numpy as np
 import xarray as xr
 
+from hcwf.cache import memo
 from hcwf.errors import MaskError
 import logging
 
@@ -258,7 +259,8 @@ def file_hash(path) -> str:
     return digest.hexdigest()
 
 
-_NE_CACHE: dict = {}
+_NE_CACHE = memo("spatial.masks.natural_earth", maxsize=4, persistent=True)
+"""The Natural Earth records read, by (resolution, file): fixed by the installed data, so kept across runs."""
 
 
 def _natural_earth(resolution, category, name):
@@ -281,10 +283,12 @@ def natural_earth_records(resolution, which):
 
     category, name = _NE_COUNTRIES if which == "country" else _NE_LAND
     key = (resolution, name)
-    if key not in _NE_CACHE:
+
+    def read():
         path = _natural_earth(resolution, category, name)
-        _NE_CACHE[key] = (path, list(shapereader.Reader(path).records()))
-    return _NE_CACHE[key]
+        return path, list(shapereader.Reader(path).records())
+
+    return _NE_CACHE.get_or_make(key, read)
 
 
 def country_geometry(names, resolution):
@@ -316,17 +320,19 @@ def country_geometry(names, resolution):
     return shapely.union_all(chosen), matched, path
 
 
-_LAND_GEOMETRY: dict = {}
+_LAND_GEOMETRY = memo("spatial.masks.land_geometry", maxsize=4, persistent=True)
+"""The union of the Natural Earth land shapes, by resolution: fixed by the installed data, so kept across runs."""
 
 
 def land_geometry(resolution):
     """The union of the Natural Earth land polygons and the shapefile path, cached."""
     import shapely
 
-    if resolution not in _LAND_GEOMETRY:
+    def build():
         path, records = natural_earth_records(resolution, "land")
-        _LAND_GEOMETRY[resolution] = (shapely.union_all([_make_valid(r.geometry) for r in records]), path)
-    return _LAND_GEOMETRY[resolution]
+        return shapely.union_all([_make_valid(r.geometry) for r in records]), path
+
+    return _LAND_GEOMETRY.get_or_make(resolution, build)
 
 
 def shape_file_geometry(path):
@@ -657,17 +663,25 @@ def save_mask_png(result: MaskResult, path, title="") -> Path:
 # use in the pipeline
 # ----------------------------------------------------------------------------------------------------------
 
-_BUILT: dict = {}
-_RECORDS: dict = {}
+_BUILT = memo("spatial.masks.built", maxsize=64, share=True)
+"""The mask of each dataset grid built for a `mask:` section, by (mask key, dataset, grid hash); the workers' copy."""
+_RECORDS = memo("spatial.masks.records", share=True)
+"""The record of each dataset's mask (what was kept, from which files), by dataset name."""
 
 
 def records() -> dict:
     """The records of the masks built so far, by dataset name."""
-    return dict(_RECORDS)
+    return dict(_RECORDS.items())
+
+
+def absorb_records(found: dict) -> None:
+    """Take the records a worker built into this process (a dataset already recorded here keeps its record)."""
+    for name, record in found.items():
+        _RECORDS.setdefault(name, record)
 
 
 def reset() -> None:
-    """Forget the built masks and records (for a new run in the same process)."""
+    """Forget the built masks and records: `--check` reads the mask of one sample file on its own, between others."""
     _BUILT.clear()
     _RECORDS.clear()
 
@@ -682,7 +696,8 @@ def region_mask(lat, lon, mask, dataset="data", dir_fig=None) -> np.ndarray:
     lat = np.asarray(lat, dtype=float)
     lon = np.asarray(lon, dtype=float)
     key = (spec.key(), str(dataset), hashlib.sha256(lat.tobytes() + lon.tobytes()).hexdigest())
-    if key not in _BUILT:
+    result = _BUILT.get(key)
+    if result is None:
         result = build_mask(spec, lat, lon, label=str(dataset))
         log.info("\n".join(result.lines))
         if dir_fig:
@@ -691,7 +706,7 @@ def region_mask(lat, lon, mask, dataset="data", dir_fig=None) -> np.ndarray:
             log.info(f"  mask figure: {png}")
         _BUILT[key] = result
         _RECORDS[str(dataset)] = result.record
-    return _BUILT[key].keep
+    return result.keep
 
 
 def apply_region_mask(ds, mask, dataset="data", dir_fig=None):
@@ -732,16 +747,16 @@ def record_lines(rec: dict) -> list[str]:
 
 def mask_attrs() -> dict:
     """NetCDF global attributes describing the masks built so far (empty when no mask is in use)."""
-    if not _RECORDS:
+    if not len(_RECORDS):
         return {}
-    first = next(iter(_RECORDS.values()))
+    first = _RECORDS.values()[0]
     out = {"mask_cell_rule": first["rule"],
            "mask_sources": "; ".join(
                f"{s['part']}={s.get('path') or s['source']}" + (f" sha256:{s['sha256']}" if s.get("sha256") else "")
                for s in first["sources"])}
     if first["rule"] == "overlap_fraction":
         out["mask_overlap_fraction"] = first["overlap_fraction"]
-    for name, rec in _RECORDS.items():
+    for name, rec in records().items():
         out[f"mask_kept_cells_{name}"] = f"{rec['kept']} of {rec['total']}"
     return out
 
@@ -755,10 +770,10 @@ def mask_attrs() -> dict:
 # run's country (shp_only), and the nearest cell of the nc_mask file. The results are cached per grid.
 
 _MAX_DEFAULT = 64
-_RAW_MASKS: dict = {}
-"""The MaskResult of each implicit mask built, by cache key (insertion-ordered, at most _MAX_DEFAULT)."""
-_LAND_BOOL: dict = {}
-"""The read-only boolean cells kept by each implicit mask, by cache key; the workers' copy (parallel.py)."""
+_RAW_MASKS = memo("spatial.masks.implicit_results", maxsize=_MAX_DEFAULT)
+"""The MaskResult of each implicit mask built, by cache key."""
+_LAND_BOOL = memo("spatial.masks.implicit_keep", maxsize=_MAX_DEFAULT, share=True)
+"""The read-only boolean cells kept by each implicit mask, by cache key; the workers' copy."""
 
 
 def _grid_key(lat, lon) -> str:
@@ -766,12 +781,6 @@ def _grid_key(lat, lon) -> str:
     lat = np.ascontiguousarray(np.asarray(lat, dtype="float64"))
     lon = np.ascontiguousarray(np.asarray(lon, dtype="float64"))
     return hashlib.sha256(str(lat.shape).encode() + lat.tobytes() + str(lon.shape).encode() + lon.tobytes()).hexdigest()
-
-
-def clear_land_masks() -> None:
-    """Forget every cached implicit mask (for tests)."""
-    _RAW_MASKS.clear()
-    _LAND_BOOL.clear()
 
 
 def _registry_title(region):
@@ -827,21 +836,18 @@ def default_keep(lat, lon, region=None, land_only=True, shp_only=True, nc_mask=N
     lon = np.asarray(lon, dtype="float64")
     key = (_grid_key(lat, lon), str(region) if shp_only else None, bool(land_only), bool(shp_only),
            str(nc_mask) if nc_mask else None)
-    if key not in _LAND_BOOL:
+    keep = _LAND_BOOL.get(key)
+    if keep is None:
         spec = default_mask(region, land_only, shp_only, nc_mask)
         if spec.land or spec.country or spec.file:
             result = build_mask(spec, lat, lon, label="default")
-            if len(_RAW_MASKS) >= _MAX_DEFAULT:
-                _RAW_MASKS.pop(next(iter(_RAW_MASKS)))
             _RAW_MASKS[key] = result
             keep = np.array(result.keep)
         else:
             keep = np.ones((lat.size, lon.size), dtype=bool)
         keep.setflags(write=False)
-        if len(_LAND_BOOL) >= _MAX_DEFAULT:
-            _LAND_BOOL.pop(next(iter(_LAND_BOOL)))
         _LAND_BOOL[key] = keep
-    return _LAND_BOOL[key]
+    return keep
 
 
 def land_mask_for(lat, lon) -> np.ndarray:

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np
+from hcwf.cache import memo
 from hcwf.spatial import axes
 import logging
 
@@ -252,7 +253,7 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
 
 _YEAR_TEXT_BITS = 10
 """Bits of a year-set code looked up at once when writing its years as text (one table of 2**10 texts per group)."""
-_YEAR_TEXT: dict = {}
+_YEAR_TEXT = memo("metrics.bins.year_text", maxsize=16)
 """Texts of year sets already written, {sorted years: {"groups": {(group, value): text}, "codes": {code: text}}}."""
 
 
@@ -262,18 +263,18 @@ def _year_set_texts(sorted_years, codes) -> np.ndarray:
     Equal to joining the years of the set bits in order, but a set is written from small per-group tables instead of
     looping over every year, and a code already written (by an earlier bin or call with these years) is reused.
     """
-    memo = _YEAR_TEXT.setdefault(tuple(int(y) for y in sorted_years), {"groups": {}, "codes": {}})
-    texts, mask = memo["codes"], (1 << _YEAR_TEXT_BITS) - 1
+    held = _YEAR_TEXT.setdefault(tuple(int(y) for y in sorted_years), {"groups": {}, "codes": {}})
+    texts, mask = held["codes"], (1 << _YEAR_TEXT_BITS) - 1
     n_groups = -(-len(sorted_years) // _YEAR_TEXT_BITS)
 
     def group_text(group, value):
         """The years of the set bits of `value` within one group of the codes."""
         key = (group, value)
-        if key not in memo["groups"]:
+        if key not in held["groups"]:
             base = group * _YEAR_TEXT_BITS
-            memo["groups"][key] = ",".join(str(sorted_years[base + n]) for n in range(_YEAR_TEXT_BITS)
+            held["groups"][key] = ",".join(str(sorted_years[base + n]) for n in range(_YEAR_TEXT_BITS)
                                            if (value >> n) & 1 and base + n < len(sorted_years))
-        return memo["groups"][key]
+        return held["groups"][key]
 
     out = np.empty(len(codes), dtype=object)
     for n, code in enumerate(codes.tolist()):

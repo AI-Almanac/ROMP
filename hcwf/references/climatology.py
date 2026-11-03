@@ -5,6 +5,7 @@ The functions take the typed inputs of hcwf.config.model (the run `rc`, the `cas
 
 from hcwf.config.model import Selection
 from hcwf.io.observations import observation_years_of
+from hcwf.cache import memo
 from hcwf.io.reference import reference_held, reference_rain_year, release_reference
 from hcwf.io.thresholds import thresholds_of
 from hcwf.onset.detect import detect_observed
@@ -18,13 +19,8 @@ import logging
 
 log = logging.getLogger(__name__)
 
-_MEMO: dict = {}
+_MEMO = memo("references.climatology.onsets", maxsize=32)
 """Climatological onset datasets of this run: {key: ((thresholds, onset setup) held so their ids stay unique, dataset)}."""
-
-
-def reset_memo() -> None:
-    """Forget the climatological onsets kept for the run (a new run starts)."""
-    _MEMO.clear()
 
 
 def _read_years(years, rc, select, shared=True):

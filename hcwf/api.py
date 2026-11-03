@@ -35,6 +35,7 @@ from pathlib import Path
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import run_scope
 from hcwf.config.model import RunConfig
 from hcwf import log as logs
 
@@ -70,7 +71,8 @@ class RunResult:
             from hcwf.runs import export
 
             rc = self.run_config
-            self._forecasts = {source: export._collect(rc, source) for source in export.default_sources(rc)[1:]}
+            with run_scope():
+                self._forecasts = {source: export._collect(rc, source) for source in export.default_sources(rc)[1:]}
         return self._forecasts
 
 
@@ -83,7 +85,7 @@ def check(cfg, overwrite: bool = False, **overrides):
     rc, found = resolve(cfg, overrides, check=True)
     if rc is None:
         raise HCWFConfigError(found.message())
-    with logs.session(logs.QUIET):
+    with run_scope(), logs.session(logs.QUIET):
         return build_report(rc, found, overwrite=overwrite)
 
 
@@ -100,8 +102,9 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
 
     tmp = None if write else Path(tempfile.mkdtemp(prefix="hcwf_"))
     try:
-        rc = resolve(cfg, overrides, write=write, tmp=tmp)
-        return execute(rc, write=write, overwrite=overwrite, verbosity=logs.verbosity_from(quiet, verbose))
+        with run_scope():   # the config's detections are part of the run's state too
+            rc = resolve(cfg, overrides, write=write, tmp=tmp)
+            return execute(rc, write=write, overwrite=overwrite, verbosity=logs.verbosity_from(quiet, verbose))
     finally:
         if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -182,20 +185,13 @@ def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: in
                 log.info(f"  Resolved config  : {write_resolved(rc)[0]}")
             except OSError as exc:
                 log.warning(f"could not write {paths.config_name}: {exc}")
-        try:
-            result = train(rc)
-            if write:
-                chosen = {"observations": "observed", "features": "weekly"}   # the recipe's debug outputs that exist
-                extra = {"intermediates": tuple(chosen[n] for n in recipe.outputs.intermediates if n in chosen)} \
-                    if recipe.outputs.intermediates else {}
-                result.save(paths.blend, **extra)
-                log.info(f"  Blend artifacts  : {paths.blend}")
-        finally:
-            from hcwf.onset import observed_cache
-            from hcwf import parallel
-
-            parallel.shutdown()
-            observed_cache.reset()
+        result = train(rc)
+        if write:
+            chosen = {"observations": "observed", "features": "weekly"}   # the recipe's debug outputs that exist
+            extra = {"intermediates": tuple(chosen[n] for n in recipe.outputs.intermediates if n in chosen)} \
+                if recipe.outputs.intermediates else {}
+            result.save(paths.blend, **extra)
+            log.info(f"  Blend artifacts  : {paths.blend}")
         log.info("HCWF blend completed successfully!")
     return RunResult(observed=None, scores={}, folder=paths.root if write else None, config=dict(rc.values),
                      blend=result, run_config=rc)
@@ -208,33 +204,26 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
     one), attach run.log, print the settings, write the resolved config, optionally explain cells and export the
     onsets, activate the observed-onset cache, then score.
     """
-    if rc.blend is not None:
-        return _execute_blend(rc, write=write, overwrite=overwrite, verbosity=verbosity)
+    with run_scope():   # the run's state starts empty and is cleared at the end, whichever flow runs
+        if rc.blend is not None:
+            return _execute_blend(rc, write=write, overwrite=overwrite, verbosity=verbosity)
+        return _execute_benchmark(rc, write=write, overwrite=overwrite, verbosity=verbosity)
+
+
+def _execute_benchmark(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
+    """The benchmark flow of `execute`."""
     from hcwf.scoring.probabilistic import skill_score_in_bins
     from hcwf.scoring.deterministic import spatial_far_mr_mae_map
     from hcwf.runs import folder as run_folder
     from hcwf.onset.explain_cells import write_explain_cells
     from hcwf.runs.resolved import definition_lines, write_resolved
-    from hcwf.scoring import onset_tables as benchmark
-    from hcwf.references import climatology
-    from hcwf.onset import detect
     from hcwf.onset import observed_cache
-    from hcwf import parallel
-    from hcwf.io import forecasts as forecasts_io
-    from hcwf.io import thresholds as thresholds_io
-    from hcwf.spatial import masks as mask_mod
     from hcwf.log import print_hcwf_banner
 
     paths = rc.paths
     if write:
         run_folder.prepare(paths, overwrite)
     with logs.session(verbosity, paths.log_file if write else None):
-        mask_mod.reset()
-        benchmark.reset_onset_tables()
-        climatology.reset_memo()
-        detect._alignment_done.clear()
-        thresholds_io._loaded_thresholds.clear()
-        forecasts_io._reported_ingest.clear()
         print_hcwf_banner(rc.project_name)
         log.info("Onset settings:")
         for line in rc.onset.lines():
@@ -253,33 +242,26 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
             except OSError as exc:
                 log.warning(f"could not write {paths.config_name}: {exc}")
         observed_cache.activate(rc.cache_dir or (Path(rc.output.data_dir) / ".onset_cache" if write else None))
-        results = tables = None
-        try:
-            if write:
-                write_explain_cells(rc)
-                if rc.output.save_onsets:
-                    try:
-                        from hcwf.runs.export import export_onsets
-
-                        export_onsets(rc)
-                    except Exception as exc:  # noqa: BLE001 - the scores matter more than the export
-                        log.error(f"output.save_onsets: could not write the onset files: {exc}")
-                        log.debug(traceback.format_exc())
-            log.info("Starting HCWF Workflow...")
-            tables = skill_score_in_bins(rc)
-            results = spatial_far_mr_mae_map(rc)
-            if write and rc.area.mask is not None:
+        if write:
+            write_explain_cells(rc)
+            if rc.output.save_onsets:
                 try:
-                    write_resolved(rc)   # again, now that the masks of each dataset's grid are known
-                except OSError as exc:
-                    log.warning(f"could not update {paths.config_name} with the masks: {exc}")
-            log.info("HCWF Workflow completed successfully!")
-            observed = _observed_dataset(rc)
-        finally:
-            parallel.shutdown()
-            observed_cache.reset()
-            benchmark.reset_onset_tables()
-            climatology.reset_memo()
+                    from hcwf.runs.export import export_onsets
+
+                    export_onsets(rc)
+                except Exception as exc:  # noqa: BLE001 - the scores matter more than the export
+                    log.error(f"output.save_onsets: could not write the onset files: {exc}")
+                    log.debug(traceback.format_exc())
+        log.info("Starting HCWF Workflow...")
+        tables = skill_score_in_bins(rc)
+        results = spatial_far_mr_mae_map(rc)
+        if write and rc.area.mask is not None:
+            try:
+                write_resolved(rc)   # again, now that the masks of each dataset's grid are known
+            except OSError as exc:
+                log.warning(f"could not update {paths.config_name} with the masks: {exc}")
+        log.info("HCWF Workflow completed successfully!")
+        observed = _observed_dataset(rc)
     return RunResult(observed=observed, scores=_scores(results, tables), folder=paths.root if write else None,
                      config=dict(rc.values), run_config=rc)
 
@@ -303,12 +285,13 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
     from hcwf.blend.trained import TrainedBlend
 
     path = None if isinstance(blend, TrainedBlend) else Path(blend)
-    trained = blend if path is None else TrainedBlend.load(path)
-    result = trained.forecast(forecasts, issue_date=issue_date, fewer_members=fewer_members)
-    if write:
-        if output is None:
-            if path is None:
-                raise ValueError("give output: a TrainedBlend that was not read from a file has no folder to write beside")
-            output = path.resolve().parent / "forecasts" / result.label
-        result.save(output, netcdf=netcdf)
-    return result
+    with run_scope():
+        trained = blend if path is None else TrainedBlend.load(path)
+        result = trained.forecast(forecasts, issue_date=issue_date, fewer_members=fewer_members)
+        if write:
+            if output is None:
+                if path is None:
+                    raise ValueError("give output: a TrainedBlend that was not read from a file has no folder to write beside")
+                output = path.resolve().parent / "forecasts" / result.label
+            result.save(output, netcdf=netcdf)
+        return result

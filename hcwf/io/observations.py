@@ -1,7 +1,7 @@
 """Reading observed daily rainfall a year at a time, from files or a zarr store, on grid cells or on evaluation units.
 
 `load_observations(year, obs, area, options, select)` reads one year. The years a run scores (and the year before each) are read
-once and held for the run (`forget_years`, or `hcwf.io.reference.clear_obs_cache`, drops them). The region's box is selected
+once and held for the run (`hcwf.cache.reset_run_state` drops them). The region's box is selected
 on the lazy array before any data is decoded; the cell mask and the unit conversion are applied in place on the one array that
 was read. Data on a string "unit" dimension (admin units) is read without a region box.
 """
@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import memo
 from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import history_needs_previous_year
 from hcwf.io.dims import dim_fmt, rename_model_dims
@@ -44,16 +45,10 @@ if TYPE_CHECKING:  # pragma: no cover
 
 log = logging.getLogger(__name__)
 
-_obs_years = {}
-
-
+_obs_years = memo("io.observations.years")
+"""The observation years of the run, read once and held (see `years_held`), by file and settings."""
 _obs_lock = threading.Lock()
-
-
-def forget_years():
-    """Forget the observation years held for the current run."""
-    with _obs_lock:
-        _obs_years.clear()
+"""Held while a year is looked up and, if absent, read and stored, so that two reader threads do not read it twice."""
 
 
 @dataclass(frozen=True, eq=False)

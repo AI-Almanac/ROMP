@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.cache import Store, file_identity
+from hcwf.cache import Store, file_identity, global_root, memo
 from hcwf.config.datasets import expand_path, file_year, is_zarr, parse_dataset, resolve_paths, year_match
 from hcwf.onset import ingest
 from hcwf.io.dims import matches
@@ -132,8 +132,8 @@ _SAMPLE_BUDGET = 3_000_000
 """Most values read for the detection sample of one variable (a few MB)."""
 _SAMPLE_CELLS = 96
 """Longest lat or lon stretch read: a centred block of this many cells when the grid is larger."""
-_SAMPLES: dict = {}
-"""Loaded detection samples, per (file, modification time, variable), for the life of the process."""
+_SAMPLES = memo("config.detect.samples", maxsize=32)
+"""Loaded detection samples, per (file, modification time, variable), for the run."""
 
 
 def open_data(path: str) -> xr.Dataset:
@@ -183,11 +183,6 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
     if key is not None:
         _SAMPLES[key] = out
     return out
-
-
-def clear_samples() -> None:
-    """Forget the cached detection samples (for tests, or after the files changed)."""
-    _SAMPLES.clear()
 
 
 def _sample(da: xr.DataArray, roles: dict) -> np.ndarray:
@@ -332,8 +327,7 @@ def _lead_label_sampled(values: dict, sample: str, obs: dict, roles: dict, obs_d
 
 def cache_dir() -> Path:
     """The folder of the on-disk detection cache: $HCWF_CACHE_DIR/detect, else ~/.cache/hcwf/detect."""
-    base = os.environ.get("HCWF_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "hcwf")
-    return Path(base) / "detect"
+    return global_root() / "detect"
 
 
 def _store() -> Store:

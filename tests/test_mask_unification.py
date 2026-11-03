@@ -13,6 +13,7 @@ import pytest
 import xarray as xr
 
 import _oracle_land_mask as old
+from hcwf.cache import reset_run_state
 from hcwf.onset import regions
 from hcwf.spatial import masks as new_mask
 from hcwf.config.model import AreaSpec, Selection
@@ -173,7 +174,7 @@ def test_points_inside_polygon_and_shp_geometry_are_the_old_ones():
 
 
 def test_land_mask_for_is_cached_read_only_and_listed_for_workers():
-    new_mask.clear_land_masks()
+    reset_run_state()
     lat, lon = np.arange(3.0, 15.0, 0.5), np.arange(33.0, 48.0, 0.5)
     a = new_mask.land_mask_for(lat, lon)
     assert new_mask.land_mask_for(lat.copy(), lon.copy()) is a

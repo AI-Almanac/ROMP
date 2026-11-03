@@ -8,6 +8,7 @@ import pytest
 import xarray as xr
 
 import typed_io
+from hcwf.cache import reset_run_state
 from hcwf.config.model import ParallelSpec
 from hcwf.config.mapping import build_config
 from hcwf import parallel
@@ -159,14 +160,14 @@ def test_equal_thresholds_reloaded_each_window_detect_once(configs, monkeypatch)
     monkeypatch.setattr(benchmark.thresholds_io, "thresholds_of",
                         lambda *a, **k: xr.DataArray(np.full((2, 2), fresh["value"]), dims=("lat", "lon"),
                                                      coords={"lat": [1.0, 2.0], "lon": [3.0, 4.0]}))
-    benchmark.reset_onset_tables()
+    reset_run_state()
     benchmark.onset_tables(rc, first)
     benchmark.onset_tables(rc, second)
     assert len(calls) == 1
     fresh["value"] = 25.0
     benchmark.onset_tables(rc, first)
     assert len(calls) == 2
-    benchmark.reset_onset_tables()
+    reset_run_state()
 
 
 def pid_years(years):
