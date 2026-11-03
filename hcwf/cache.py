@@ -190,6 +190,12 @@ NETCDF_GROUPS = Codec("value.nc", _read_groups, _write_groups)
 """A dict of named DataArrays."""
 
 
+SCHEMA = {"observed_onsets": 1, "thresholds": 1, "harmonic_seasons": 1, "model_thresholds": 1, "detect": 1}
+"""The code version of each kind of result. Bump a kind's number in the same commit as any change to how that result is
+computed (onset engine and backends, threshold computation, harmonic seasons, detection): `Store` adds it to the parts of
+every entry of the kind, so older entries, in any shared cache folder, simply miss once. Kinds not listed carry none."""
+
+
 class Store:
     """The entries of one kind of result under ``<root>/<kind>/``; see the module text.
 
@@ -219,9 +225,16 @@ class Store:
         """The hash of each part."""
         return {name: part_hash(value) for name, value in parts.items()}
 
+    def _hashes(self, parts: Mapping) -> dict:
+        """The hash of each part, and of the code version of this store's kind (see SCHEMA) when it has one."""
+        hashes = self.hash_parts(parts)
+        if self.kind in SCHEMA:
+            hashes["code_version"] = part_hash(SCHEMA[self.kind])
+        return hashes
+
     def fingerprint(self, parts: Mapping) -> str:
         """The fingerprint of a dict of parts: the prefix and 12 hex characters of the hash of their hashes."""
-        return self._fingerprint(self.hash_parts(parts))
+        return self._fingerprint(self._hashes(parts))
 
     def entry(self, parts: Mapping) -> Path | None:
         """The entry folder of these parts (it may not exist), or None for an in-memory store."""
@@ -232,7 +245,7 @@ class Store:
 
         A miss names the parts that differ from the nearest cached entry. quiet=True logs nothing.
         """
-        hashes = self.hash_parts(parts)
+        hashes = self._hashes(parts)
         fp = self._fingerprint(hashes)
         value = self._read(fp)
         if not quiet and fp not in self.announced:
@@ -242,7 +255,7 @@ class Store:
 
     def put(self, parts: Mapping, value: Any) -> None:
         """Keep `value` under these parts (memory, and disk when there is a root); a disk failure is only logged."""
-        hashes = self.hash_parts(parts)
+        hashes = self._hashes(parts)
         fp = self._fingerprint(hashes)
         if self.memory:
             self._memory[fp] = (hashes, value)

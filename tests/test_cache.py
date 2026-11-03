@@ -224,3 +224,16 @@ def test_a_threshold_cache_key_does_not_load_the_lazy_reference_rain():
 
     parts = ThresholdCache(None).parts("spec", _LazyRain(probe, load), (2000, 2001), "thr")
     assert parts["source"] == "obs" and "resolution" not in parts
+
+
+def test_store_adds_the_code_version_of_its_kind(monkeypatch):
+    """A kind in SCHEMA gets its version as a part, so bumping it makes every older entry miss; other kinds carry none."""
+    parts = {"x": 1}
+    store = Store("thresholds")
+    before = store.fingerprint(parts)
+    monkeypatch.setitem(cache.SCHEMA, "thresholds", cache.SCHEMA["thresholds"] + 1)
+    assert store.fingerprint(parts) != before
+    other = Store("not_versioned")
+    assert "code_version" not in other._hashes(parts) and "code_version" in store._hashes(parts)
+    for kind in ("observed_onsets", "thresholds", "harmonic_seasons", "model_thresholds"):
+        assert kind in cache.SCHEMA

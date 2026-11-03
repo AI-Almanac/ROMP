@@ -343,10 +343,6 @@ def _lead_label_sampled(values: dict, sample: str, obs: dict, roles: dict, obs_d
     return None, f"the alignment check is not conclusive ({detail})"
 
 
-_CACHE_VERSION = 1
-"""Bump when detection changes what it reports, to drop old cache entries."""
-
-
 def cache_dir() -> Path:
     """The folder of the on-disk detection cache: $HCWF_CACHE_DIR/detect, else ~/.cache/hcwf/detect."""
     base = os.environ.get("HCWF_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "hcwf")
@@ -380,7 +376,7 @@ def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | Non
     identities = [file_identity(path) for path in files]
     if not identities or any(i[1] is None for i in identities):
         return None
-    return {"version": _CACHE_VERSION, "kind": kind, "lead_label_default": lead_label_default,
+    return {"kind": kind, "lead_label_default": lead_label_default,
             "entry": {k: repr(v) for k, v in entry.items()}, "sources": {k: repr(v) for k, v in (sources or {}).items()},
             "files": identities}
 
