@@ -50,10 +50,8 @@ _ID_RE = re.compile(r"^[a-z0-9_]+$")
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 OBS_DIMS = ("time", "lat", "lon", "unit")
 FORECAST_DIMS = ("init_time", "step", "member", "lat", "lon", "unit")
-FILE_YEAR_RE = re.compile(r"(19|20)\d{2}")
-"""The year of a file named in ``paths``: the first 19xx or 20xx anywhere in its name (as onset_blending reads it)."""
-UNIT_FACTORS = {"mm": None, "m": 1000}
-"""Factor taking a ``units`` value to mm (None: already mm)."""
+_YEAR_ANYWHERE = re.compile(r"(19|20)\d{2}")
+_YEAR_WHOLE = re.compile(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)")
 
 TEMPLATES = {
     "obs": """\
@@ -165,10 +163,17 @@ def expand_path(text: str, origin: str = "") -> str:
     return str(Path(expand_env(str(text), origin)).expanduser())
 
 
-def file_year(path) -> int | None:
-    """The year a file holds: the first 19xx or 20xx in its name, or None."""
-    match = FILE_YEAR_RE.search(Path(str(path)).name)
-    return int(match.group()) if match else None
+def year_match(name: str, whole_number: bool = False):
+    """The match of the year in a file name, or None: the first 19xx or 20xx anywhere in it (as onset_blending reads
+    it, so 20200101.nc holds 2020); with whole_number, the first 18xx, 19xx or 20xx that is not inside a longer run
+    of digits (the year of a ``{}`` file pattern). group(0) is the year's text and span() its place."""
+    return (_YEAR_WHOLE if whole_number else _YEAR_ANYWHERE).search(name)
+
+
+def file_year(path, whole_number: bool = False) -> int | None:
+    """The year a file holds (see year_match), or None."""
+    match = year_match(Path(str(path)).name, whole_number)
+    return int(match.group(0)) if match else None
 
 
 def parse_years(value, origin: str = "years") -> tuple[int, ...]:
@@ -242,11 +247,14 @@ def resolve_paths(paths, base=None, years=None, origin: str = "paths") -> list[P
 
 
 def unit_factor(units: str, origin: str) -> float | None:
-    """The multiplier to mm for a units name; unknown names are an error that asks for unit_cvt."""
-    if units not in UNIT_FACTORS:
-        raise DatasetError(f"{origin}: units {units!r} is not known (known: {', '.join(UNIT_FACTORS)}). "
+    """The multiplier to mm for a units name (None: already mm), from ingest's table; unknown names are an error."""
+    from hcwf.onset.ingest import MM_PER_UNIT
+
+    factor = MM_PER_UNIT.get(" ".join(str(units).lower().split()))
+    if factor is None:
+        raise DatasetError(f"{origin}: units {units!r} is not known (known: {', '.join(MM_PER_UNIT)}). "
                            "Fix: convert the data to mm or m first and set units accordingly")
-    return UNIT_FACTORS[units]
+    return None if factor == 1.0 else factor
 
 
 def _fail(origin: str, message: str):

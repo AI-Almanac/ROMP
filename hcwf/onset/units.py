@@ -12,10 +12,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
+from hcwf.lib.assertion import HCWFConfigError
 from hcwf.onset.model import Amount, Comparison, DayRef, DryRun, DryWindow, Op, Span
 
 
-class UnitsError(ValueError):
+class UnitsError(HCWFConfigError):
     """Text that does not follow the onset grammar; the message ends with how to fix it."""
 
 

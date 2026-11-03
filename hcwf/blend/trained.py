@@ -40,6 +40,7 @@ import pandas as pd
 import xarray as xr
 import yaml
 
+from hcwf.lib.assertion import HCWFConfigError
 from hcwf.blend.samples import ObservedOnsets
 from hcwf.cache import atomic_write, file_identity
 from hcwf.lib import dataset_detect
@@ -61,7 +62,7 @@ _MANIFEST = "manifest.json"
 TRAINED_FILENAME = "trained.blend"
 
 
-class BlendFileError(ValueError):
+class BlendFileError(HCWFConfigError):
     """A trained-blend file that cannot be used (damaged, another format or version, no longer rebuilds)."""
 
 
@@ -152,7 +153,6 @@ def frozen_config(mapping: dict, definition_text: str | None = None):
     cfg["daily_boundary_list"] = tuple(m.get("daily_boundary") for m in models)
     cfg["accumulation_detected"] = tuple(False for _ in models)
     cfg = schema.apply_defaults(cfg, [])      # what only a run's data would complete (observation files) is not needed
-    cfg["onset_legacy"] = False
     if definition_text is not None:
         cfg["onset_rule"] = yaml.safe_load(definition_text)
         cfg["onset_definition"] = None
@@ -586,13 +586,6 @@ class TrainedBlend:
                    provenance=manifest.get("provenance", {}), format=OLD_FORMAT, **common)
 
     # -- operations ---------------------------------------------------------------------------------------------
-
-    def check_forecast_files(self, forecasts: dict[str, list], *, fewer_members: bool = False) -> list[str]:
-        """Every way the live files differ from what the blend was trained on (fewer_members: see
-        `hcwf.lib.dataset_detect.signature_differences`)."""
-        from hcwf.blend import forecast as forecast_module
-
-        return forecast_module.check_files(self, forecasts, fewer_members=fewer_members)
 
     def forecast(self, forecasts: dict, *, issue_date=None, fewer_members: bool = False, workers: int | None = None):
         """Blended onset probabilities from live forecast files (see `hcwf.blend.forecast.run`): `forecasts` maps each

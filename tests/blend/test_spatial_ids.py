@@ -57,15 +57,6 @@ def test_id_columns_are_the_legacy_ones(frame):
     pd.testing.assert_frame_equal(new.with_id_column(frame), old.ensure_spatial_id_col(frame))
 
 
-def test_with_ids_fast_path_equals_with_id_column():
-    frame = pd.DataFrame({"lat": np.repeat(LAT, 3), "lon": np.tile(LON, 3)})
-    convention = new.GridIdConvention(2, "fixed", "spec")
-    fast = new.with_ids(frame, convention)
-    slow = new.with_id_column(frame, convention=convention)
-    pd.testing.assert_series_equal(fast["id"], slow["id"])
-    assert new.with_ids(fast, convention) is fast
-
-
 @pytest.mark.parametrize("bad", [[None, "a"], ["a", ""], ["a", " "]])
 def test_missing_or_empty_ids_are_refused(bad):
     with pytest.raises(ValueError, match="missing or empty"):

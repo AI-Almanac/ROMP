@@ -174,7 +174,7 @@ def test_progress_uses_tqdm_when_installed_and_on_a_terminal(monkeypatch, capsys
 
 def test_no_print_is_left_on_the_run_path():
     """The run path logs instead of printing (the CLI front end, onset explain and init print on purpose)."""
-    allowed = {"hcwf/cli.py", "hcwf/onset/__main__.py", "hcwf/lib/init_config.py", "hcwf/utils/printing.py",
+    allowed = {"hcwf/cli.py", "hcwf/onset/cli.py", "hcwf/lib/init_config.py", "hcwf/utils/printing.py",
                "hcwf/lib/assertion.py", "hcwf/driver.py"}
     pattern = re.compile(r"(?<![\w.])print\(")
     offenders = []
@@ -190,10 +190,9 @@ def test_no_print_is_left_on_the_run_path():
 # --- region names ---------------------------------------------------------------------------------------------
 
 def test_region_box_comes_from_the_registry_for_any_case():
-    """Lowercase and alias names work; the four old names keep their boxes; unknown names are errors."""
+    """Lowercase and alias names work whatever the case; unknown names are errors."""
     assert domain("ethiopia") == domain("Ethiopia") == (3, 15, 33, 48)
-    assert domain("India") == (6.46, 35.51, 68.11, 91.4)
-    assert domain("india") == (6.5, 38.5, 66.5, 100)
+    assert domain("India") == domain("india") == (6.5, 38.5, 66.5, 100)
     from hcwf.onset import regions
 
     with pytest.raises(regions.RegionError):
@@ -279,10 +278,7 @@ def test_daily_boundary_is_a_forecast_dataset_key():
                                      "daily_boundary": "03 UTC"}],
                          "evaluation": {"start_date": [2019, 5, 1], "end_date": [2019, 6, 1]}})
     assert flat["daily_boundary_list"] == ("03 UTC",) and flat["accumulation_list"] == ("since_init",)
-    from hcwf.lib import loader
     from hcwf.lib.resolved import resolved_config_text
-
-    loader._set_onset_mode(flat)
 
     text = resolved_config_text(flat)
     assert "daily_boundary" in text and "since_init" in text   # given by the user: written back
@@ -426,7 +422,7 @@ def test_run_folder_name_has_region_definition_years_and_fingerprint(world, tmp_
     dic = load_run_config(["-p", str(path)])
     paths = dic["run_paths"]
     assert re.fullmatch(r"ethiopia_icpac\+mod_2019-2020_[0-9a-f]{4}", paths.name) and len(paths.name) <= 40   # dry check off
-    plain = {"region": "Ethiopia", "start_date": (2019, 5, 1), "end_date": (2020, 5, 31), "onset_legacy": False,
+    plain = {"region": "Ethiopia", "start_date": (2019, 5, 1), "end_date": (2020, 5, 31),
              "onset_definition": "icpac"}
     assert run_folder.run_name(plain, "ab12cd") == "ethiopia_icpac_2019-2020_ab12"
     assert paths.root == tmp_path / "runs" / paths.name and paths.cache_dir == tmp_path / "runs" / ".cache"
@@ -447,7 +443,7 @@ def test_fingerprint_follows_results_not_output_switches(world, tmp_path):
 
 def test_long_names_are_cut_to_forty_characters():
     """A long region and definition id still give a short name that ends with years and fingerprint."""
-    dic = {"region": "south_asia", "start_date": (2019, 5, 1), "end_date": (2024, 7, 31), "onset_legacy": False,
+    dic = {"region": "south_asia", "start_date": (2019, 5, 1), "end_date": (2024, 7, 31),
            "onset_definition": "moron_robertson_mok", "onset_override": {"a": 1}}
     name = run_folder.run_name(dic, "abcd1234")
     assert len(name) <= 40 and name.endswith("_2019-2024_abcd")

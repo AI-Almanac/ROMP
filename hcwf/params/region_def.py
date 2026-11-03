@@ -9,8 +9,7 @@ def domain(region, **kwargs):
     """Return (lats, latn, lonw, lone) bounds for a named region.
 
     The name is looked up in the region registry (hcwf/onset/regions: ids and aliases, any case) and takes its
-    ``domain`` lat/lon box. ``India`` written exactly so keeps its older box through the entry's
-    ``legacy_domains`` (see ``hcwf.onset.regions.box``).
+    ``domain`` lat/lon box.
     """
     from hcwf.onset import regions
 

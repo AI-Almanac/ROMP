@@ -1,10 +1,7 @@
 """Validation of the HCWF configuration dictionary (consistency and logic checks)."""
-import os
 from datetime import datetime
 from types import SimpleNamespace
 
-
-# dry_extent > dry_spell
 
 # model name no space
 
@@ -12,7 +9,6 @@ from types import SimpleNamespace
 
 # probabilistic -- must be only one window in window_list, window end == max_forecast_day
 
-#Search window (days) after onset to check for the dry spell. Must be >= dry_spell.
 # check trailing comma in _list
 
 
@@ -22,8 +18,8 @@ from types import SimpleNamespace
 # 'plot_bar_bss_rpss_auc' <---  veri window list must be single item
 
 
-class HCWFConfigError(Exception):
-    """Custom exception for configuration failures."""
+class HCWFConfigError(ValueError):
+    """Base of every configuration or validation error (a ValueError); the CLI reports these without a traceback."""
     pass
 
 class HCWFValidator:
@@ -47,7 +43,6 @@ class HCWFValidator:
         self._check_tuple_ranges()
         self._check_forecast_limits()
         self._check_probabilistic_constraints()
-        self._check_monsoon_logic()
         self._check_onset()
         self._check_explain_cells()
 
@@ -127,20 +122,8 @@ class HCWFValidator:
                 self._add_error(f"Window mismatch: Largest verification day \
                         ({max_v_day}) is smaller than largest day_bin ({max_bin_day}).")
 
-    def _check_monsoon_logic(self):
-        """Check dry_extent against dry_spell and that thresh_file exists if given."""
-        if not hasattr(self.cfg, "dry_extent"):
-            return
-
-        if self.cfg.dry_extent > 0 and self.cfg.dry_extent < self.cfg.dry_spell:
-            self._add_error(f"Logic Conflict: \
-                    dry_extent ({self.cfg.dry_extent}) < dry_spell ({self.cfg.dry_spell})")
-
-        if getattr(self.cfg, "thresh_file", None) and not os.path.exists(self.cfg.thresh_file):
-            self._add_error(f"File missing: thresh_file not found at '{self.cfg.thresh_file}'")
-
     def _check_onset(self):
-        """Check the onset settings resolve: no flat keys beside onset_definition, and every needed setting known."""
+        """Check the onset settings resolve: every needed setting is known."""
         from hcwf.lib.onset_config import OnsetConfigError, check_config
 
         try:

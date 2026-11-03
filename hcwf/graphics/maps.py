@@ -108,14 +108,14 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
 
     # Calculate statistics (only calculate CMZ stats if polygon is defined)
     if polygon_defined:
-        cmz_mae_mean, cmz_mae_se, overall_mae_mean, overall_mae_se = calculate_mae_stats_across_years(
+        cmz_mae_mean, cmz_mae_se, _, _ = calculate_mae_stats_across_years(
             spatial_metrics, lons, lats, polygon1_lon, polygon1_lat
         )
 
         cmz_far = calculate_cmz_averages(spatial_metrics['false_alarm_rate'] * 100, polygon1_lon, polygon1_lat)
         cmz_mr = calculate_cmz_averages(spatial_metrics['miss_rate'] * 100, polygon1_lon, polygon1_lat)
     else:
-        cmz_mae_mean, cmz_mae_se, overall_mae_mean, overall_mae_se = calculate_mae_stats_across_years(
+        cmz_mae_mean, cmz_mae_se, _, _ = calculate_mae_stats_across_years(
             spatial_metrics, lons, lats, None, None
         )
         cmz_far = np.nan
@@ -268,17 +268,6 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
     # add colorbar
     ims = [im1, im2, im3]
     for ax, im in zip(axes, ims):
-        # Get position of the subplot
-        pos = ax.get_position()
-
-        # Shorter than the subplot width
-        cbar_width = pos.width * 0.7  # 70% width
-        cbar_height = 0.015           # very thin
-
-        # Centered below the subplot
-        cbar_x = pos.x0 + (pos.width - cbar_width)/2
-        cbar_y = pos.y0 - 0.06        # distance below subplot
-
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         divider = make_axes_locatable(ax)
 

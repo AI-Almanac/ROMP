@@ -1,4 +1,4 @@
-"""Region boxes, the legacy India box, per-region evaluation units and year-crossing seasons."""
+"""Region boxes, per-region evaluation units and year-crossing seasons."""
 import dataclasses
 
 import numpy as np
@@ -64,10 +64,9 @@ def test_lookups_ignore_case_and_use_aliases():
         rg.box("atlantis")
 
 
-def test_legacy_india_box_is_kept_for_the_exact_name():
-    """`India` keeps the old table's box; `india` and INDIA use the registry one; both are the same region."""
-    assert domain("India") == rg.box("India") == (6.46, 35.51, 68.11, 91.4)
-    assert domain("india") == domain("INDIA") == (6.5, 38.5, 66.5, 100)
+def test_india_has_one_box_whatever_the_spelling():
+    """`India`, `india` and `INDIA` are the same region with the registry's box."""
+    assert domain("India") == rg.box("India") == domain("india") == domain("INDIA") == (6.5, 38.5, 66.5, 100)
     assert rg.load_region("India") is rg.load_region("india")
 
 
@@ -78,10 +77,10 @@ def test_box_without_domain_is_an_error(region_dir):
         rg.box("flat")
 
 
-def test_legacy_domains_are_validated(region_dir):
-    """A malformed legacy box names its YAML path."""
+def test_legacy_domains_are_no_longer_a_region_key(region_dir):
+    """The case-sensitive legacy box was retired: a region file naming it is an unknown-key error."""
     (region_dir / "flat.yaml").write_text("id: flat\ntitle: Flat\nkind: region\nlegacy_domains:\n  Flat: {lat: [5, 1], lon: [0, 1]}\n")
-    with pytest.raises(rg.RegionError, match="legacy_domains.Flat.lat"):
+    with pytest.raises(rg.RegionError, match="legacy_domains"):
         rg.load_region("flat")
 
 

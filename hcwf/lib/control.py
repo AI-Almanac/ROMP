@@ -9,6 +9,9 @@ from hcwf.utils.practical import set_dir
 from dataclasses import asdict
 import copy
 
+LAYOUT = ("model", "verification_window")
+"""The dimensions of the processed cases: every model with every verification window."""
+
 
 def init_dataclass(dc, dic):
     """Instantiate dataclass dc from the entries of dic that match its annotated field names."""
@@ -37,9 +40,9 @@ def case_across_list(item, list1, list2):
 
 
 def iter_list(dic, ext="_list"):
-    """Return the dic[field + ext] list for each field named in dic["layout"]."""
+    """Return the dic[field + ext] list for each field of LAYOUT."""
     layout_pool = []
-    for field in dic["layout"]:
+    for field in LAYOUT:
         lst = dic.get(field + ext)
         layout_pool.append(lst)
     return layout_pool
@@ -92,10 +95,10 @@ def take_ensemble_members(
 
 
 def make_case(dataclass, combi, dic):
-    """Build one Case: combi gives the values of the layout fields (in dic["layout"] order)
+    """Build one Case: combi gives the values of the layout fields (in LAYOUT order)
     and the remaining per-model _list entries are looked up by model name.
     """
-    layout = dic["layout"]
+    layout = LAYOUT
 
     layout_dict = {key: None for key in layout}
     layout_dict.update(zip(layout_dict.keys(), combi))

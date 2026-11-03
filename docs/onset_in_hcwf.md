@@ -24,10 +24,10 @@ or a complete definition inline under `onset: {rule: {...}}`. The run prints the
 Look definitions up with the CLI:
 
 ```
-python -m hcwf.onset list                 # definitions
-python -m hcwf.onset describe icpac       # the rule in words, hash, status, notes
-python -m hcwf.onset regions              # regions with their defaults
-python -m hcwf.onset schematic icpac --png icpac.png
+hcwf-run onset list                 # definitions
+hcwf-run onset describe icpac       # the rule in words, hash, status, notes
+hcwf-run onset regions              # regions with their defaults
+hcwf-run onset schematic icpac --png icpac.png
 ```
 
 A rule that differs a little goes in `onset.override`, or in a shared YAML file with `extends: <id>` (set `definition` to its path). A region you define yourself in `params/region_def.py` has no defaults: set `onset_definition` and `obs_day_boundary`.
@@ -55,7 +55,7 @@ Every key can stay unset. Names below are the flat keys; in YAML write them insi
 
 Thresholds (for example the local mean 5-day total) are computed from the observations of `threshold_years` and cached in `runs/.cache` (`dir_out/.onset_cache` with an explicit `dir_out`). Derived seasons (`dunning`) also compute a harmonic season analysis from those years.
 
-`onset_definition` together with any old flat key (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`) is an error. Put the change in a definition with `extends:`.
+The old flat keys (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`) are no longer read; a config that has one is an error that points to `hcwf-run convert` (see "Converting the old flat keys"). Put the change in a definition with `extends:`.
 
 Results carry an `onset_status` column (`ONSET`, `NOT_FOUND`, `CENSORED`, `INSUFFICIENT_DATA`, and `PRIOR` in forecast history, below) and the run prints status counts. `CENSORED` cannot occur: the lead window is shortened so that the whole rule fits.
 
@@ -73,9 +73,9 @@ The run uses the shortest window over its models; it is stored as the `lead_wind
 
 ## Dry-spell check
 
-`dry_spell_check = False` drops the `reject if` vetoes, such as Moron-Robertson's 10-day dry window or ICPAC's 7-day dry run. It suits demos and forecasts too short for the veto window. The run prints `Dry-spell check  : off`, and the title, notes, YAML, sentence and hash in the outputs are those of the variant. A definition without vetoes (or a curve rule) is left alone (`none in this definition`). In legacy mode it has the effect of `dry_extent = 0`.
+`dry_spell_check = False` drops the `reject if` vetoes, such as Moron-Robertson's 10-day dry window or ICPAC's 7-day dry run. It suits demos and forecasts too short for the veto window. The run prints `Dry-spell check  : off`, and the title, notes, YAML, sentence and hash in the outputs are those of the variant. A definition without vetoes (or a curve rule) is left alone (`none in this definition`).
 
-In code: `hcwf.onset.definition.without_dry_spell_check(defn)`. On the CLI: `python -m hcwf.onset describe <id> --no-dry-spell-check`. Generated configs: `HCWF_DRY_SPELL_CHECK`.
+In code: `hcwf.onset.definition.without_dry_spell_check(defn)`. On the CLI: `hcwf-run onset describe <id> --no-dry-spell-check`. Generated configs: `HCWF_DRY_SPELL_CHECK`.
 
 ## Forecast history
 
@@ -108,7 +108,7 @@ Each model's `accumulation` (`daily`, `since_init` or `auto`) and `daily_boundar
 
 ## Alignment check
 
-Once per model at the start of a run, HCWF compares the first year's forecasts (leads 1-3) with the observations at lags -3 to +3 and prints the result. If the forecasts look shifted by a day it warns; the usual cause is a wrong `model_lead_label` or `obs_day_boundary`. The check never stops a run; `check_alignment = False` skips it. The same check is available as `python -m hcwf.onset check-alignment` (see `--help`).
+Once per model at the start of a run, HCWF compares the first year's forecasts (leads 1-3) with the observations at lags -3 to +3 and prints the result. If the forecasts look shifted by a day it warns; the usual cause is a wrong `model_lead_label` or `obs_day_boundary`. The check never stops a run; `check_alignment = False` skips it. The same check is available as `hcwf-run onset check-alignment` (see `--help`).
 
 Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `"start"` (lead k is init + k - 1); IMD (day ending at 03 UTC, labelled by end) lines up with `"end"`. HCWF used to assume `"end"` always, so Ethiopia forecast onsets were one day late against CHIRPS.
 
@@ -136,7 +136,7 @@ xarray cannot decode masked dates on a non-standard calendar and decodes `units:
 ## Looking inside a result
 
 * `explain_cells` (above) writes one anatomy plot and explain log per cell and year during a run.
-* `python -m hcwf.onset explain ...` does the same for one cell and year from the command line.
+* `hcwf-run onset explain ...` does the same for one cell and year from the command line.
 * In Python, `hcwf.onset.viz` has `anatomy_plot`, `schematic`, `compare_definitions`, `forecast_vs_truth` and `drill_down`; `hcwf.onset.explain` has `trace_observed`, `trace_forecast` and `explain`.
 
 ## Region masks
@@ -162,11 +162,11 @@ All given parts intersect. Shapes (land, countries, a shapefile) are intersected
 
 **Old keys.** Without `mask:`, the flat `nc_mask` (and the implicit land and country masks of `region_select`) behave exactly as before. `mask` and `nc_mask` together are a config error; `mask: {file: x.nc}` replaces `nc_mask: x.nc` and does not apply the implicit land and country masks.
 
-## Legacy mode
+## Converting the old flat keys
 
-A YAML config with the old flat keys at the top level and no `onset.definition` runs as before and raises a `FutureWarning`; `hcwf-run convert old.in` produces such a YAML from an old config.in. `scripts/generate_config.py` writes such configs (YAML) unless an onset environment variable is set. The keys are translated by `hcwf.onset.legacy.from_flat_config`. Lead k of a forecast is dated init + k (`"end"`). Day boundaries are only needed for the alignment check, which is skipped with a note when they are unknown.
+Earlier versions read the rule from flat keys at the top level of the YAML (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`, `mok`) and ran a legacy mode. That mode is gone: every run needs an onset definition (explicit or the region's). `hcwf-run convert old.yaml -o new.yaml` rewrites such a run YAML with an `onset.rule` (and `onset.thresholds` for a `thresh_file`) that reproduces the old detection; `hcwf.lib.convert.flat_onset_to_rule` does the translation. Set `model_lead_label: end` in the converted file to keep the old dating of leads (lead k is init + k). `scripts/generate_config.py` writes definition configs only; its flat `HCWF_WET_*`, `HCWF_DRY_*` and `HCWF_THRESH_FILE` variables are refused.
 
-Translation: a wet day has at least `wet_init` mm. The search runs from `earliest_onset_date` (or the month and day of `start_date`) to the month and day of `end_date` plus 47 days minus `wet_spell - 1`. A candidate needs all `wet_spell` days wet and a total above the threshold. With `dry_extent > wet_spell` and `dry_extent >= dry_spell`, a dry run of `dry_spell` days within days 2 to `dry_extent + 1` after the candidate cancels it.
+Translation: a wet day has at least `wet_init` mm. The season runs from `earliest_onset_date` (or the month and day of `start_date`) to the month and day of `end_date` plus 47 days minus `wet_spell - 1` (written as a fixed date). A candidate needs all `wet_spell` days wet and a total above the threshold. With `dry_extent > wet_spell` and `dry_extent >= dry_spell`, a dry run of `dry_spell` days within days 2 to `dry_extent + 1` after the candidate cancels it.
 
 Deliberate differences from the old code:
 
@@ -175,6 +175,6 @@ Deliberate differences from the old code:
 * Input is rounded to 0.1 mm; `wet_init` and `wet_threshold` must be whole tenths of a mm.
 * Negative forecast values are set to 0 (the old code summed them as negative rain).
 * `dry_threshold` was never used and still is not; `fallback_date` is no longer used.
-* A veto window may read observations beyond `end_date + 47` days (the old code cut the data there and treated unseen days as having no dry spell).
+* A veto window may read observations beyond the season's end (the old code cut the data at `end_date + 47` days and treated unseen days as having no dry spell).
 * A series that starts after the search start gives `INSUFFICIENT_DATA`.
 * Forecast candidates are limited to the season.

@@ -12,8 +12,7 @@ log = logging.getLogger(__name__)
 def spatial_onset(year, **kwargs):
     """Detect observed onset for a year, map it as day of year, and return the day-of-year DataArray.
 
-    kwargs is the run configuration, in definition mode (onset_definition, ...) or legacy mode (wet_init,
-    wet_spell, ... flat keys); the onset keys are resolved by detect_observed_onset, not named here.
+    kwargs is the run configuration; the onset keys are resolved by detect_observed_onset, not named here.
     """
     thresh_slice = load_thresholds(**kwargs)
 

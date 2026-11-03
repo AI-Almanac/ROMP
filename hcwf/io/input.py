@@ -22,7 +22,7 @@ import xarray as xr
 from hcwf.cache import NETCDF, NETCDF_GROUPS, Store, file_identity
 from hcwf.stats import observed_cache
 from hcwf.utils.workers import ordered_prefetch, worker_count
-from hcwf.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, is_legacy, onset_setup, setup_key
+from hcwf.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, onset_setup, setup_key
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
 from hcwf.lib.dataset_schema import DatasetError, file_year, resolve_paths
@@ -38,18 +38,12 @@ import logging
 log = logging.getLogger(__name__)
 
 
-def onset_steps_needed(*, max_forecast_day=None, wet_spell=None, dry_extent=None, **kwargs):
+def onset_steps_needed(*, max_forecast_day=None, **kwargs):
     """The last lead day onset detection reads, or None if it can't be told.
 
-    With a definition, the largest day any requirement or veto of the compiled
-    plan reads for the last candidate day max_forecast_day, so loading never
-    truncates what the rule reads. For the old flat keys, the formula of the
-    old detection: max_forecast_day + max(wet_spell - 1, dry_extent).
+    The largest day any requirement or veto of the compiled plan reads for the last candidate day
+    max_forecast_day, so loading never truncates what the rule reads.
     """
-    if is_legacy(kwargs):
-        if not all(isinstance(value, int) for value in (max_forecast_day, wet_spell, dry_extent)):
-            return None
-        return max_forecast_day + max(wet_spell - 1, dry_extent)
     if not isinstance(max_forecast_day, int):
         return None
     return max_forecast_day + forecast_reach(onset_setup(kwargs)) - 1
@@ -144,17 +138,6 @@ def _scale_in_place(da, factor):
         data = da.values
         np.multiply(data, factor, out=data)
     return da
-
-
-def load_thresh_file(*, thresh_file, thresh_var, wet_threshold, region, **kwargs):
-    """Return the region-selected 2-D threshold from thresh_file, or the scalar wet_threshold if no file is given."""
-    if thresh_file:
-        thresh_da = read_threshold_grid(
-            thresh_file, thresh_var, select=lambda da: region_select(da, region=region, **{**kwargs, "mask": None}))
-    else:
-        thresh_da = wet_threshold
-
-    return thresh_da
 
 
 class _LazyRain:
@@ -453,9 +436,7 @@ def _thresholds_key(kwargs) -> str:
 
 
 def load_thresholds(**kwargs):
-    """The threshold the onset detection takes as thresh_slice: the old scalar or 2-D threshold for the flat keys, else the definition's named thresholds."""
-    if is_legacy(kwargs):
-        return load_thresh_file(**kwargs)
+    """The definition's named thresholds (what the onset detection takes as thresh_slice)."""
     setup = onset_setup(kwargs)
     key = (setup_key(kwargs), str(kwargs.get("model")), str(kwargs.get("max_forecast_day")), str(kwargs.get("verification_window_list")), str(kwargs.get("dir_out")), str(kwargs.get("obs_dir")), str(kwargs.get("obs_var")),
            str(kwargs.get("region")), _thresholds_key(kwargs))
@@ -981,8 +962,6 @@ def load_history(year, current, **kwargs):
     added when a season or the rule's look-back reaches before 1 January; a missing
     previous file is skipped, which makes the earliest searches INSUFFICIENT_DATA.
     """
-    if is_legacy(kwargs):
-        return None
     setup = onset_setup(kwargs)
     if setup.forecast_history != "observed":
         return None

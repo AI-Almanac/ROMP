@@ -6,6 +6,7 @@ import pytest
 import xarray as xr
 
 import hcwf.io.input as model_input
+from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
 from hcwf.metrics.skill import create_score_results, prepare_score_cache
 from hcwf.stats.bins import multi_year_climatological_forecast_obs_pairs
@@ -48,16 +49,17 @@ def config(tmp_path, monkeypatch):
     _write_model(tmp_path / "a", seed=1)
     _write_model(tmp_path / "b", seed=2)
     return dict(
-        BS=True, RPS=True, AUC=True, skill_score=True, probabilistic=True, parallel=False, onset_legacy=True,
+        BS=True, RPS=True, AUC=True, skill_score=True, probabilistic=True, parallel=False,
         model="A", model_dir=str(tmp_path / "a"), model_var="tp", file_pattern="m_{}.nc", unit_cvt=None,
         model_dims={"init_time": "time", "step": "step", "member": "number"},
         ref_model="B", ref_model_dir=str(tmp_path / "b"), ref_model_var="tp",
         ref_model_file_pattern="m_{}.nc", ref_model_unit_cvt=None,
         years=(2002,), years_clim=YEARS, obs_dir=str(tmp_path / "obs"), obs_file_pattern=["obs_{}.nc"],
-        obs_var="rain", obs_unit_cvt=None, thresh_file=None, thresh_var=None, wet_threshold=20.0,
-        date_filter_year=2000, init_days=(0, 2, 4), start_date=(2000, 5, 1), end_date=(2000, 5, 31),
-        wet_init=1.0, wet_spell=2, dry_spell=1, dry_threshold=1.0, dry_extent=1, fallback_date=None,
-        earliest_onset_date=None, members=None, onset_percentage_threshold=0.3, max_forecast_day=10,
+        obs_var="rain", obs_unit_cvt=None,
+        date_filter_year=2000, init_days=(0, 2, 4), dir_out=str(tmp_path / "out"),
+        **old_rule(wet_init=1.0, wet_spell=2, dry_spell=1, dry_extent=1, wet_threshold=20.0,
+                   start_date=(2000, 5, 1), end_date=(2000, 5, 31)),
+        **{"members": None, "onset_percentage_threshold": 0.3, "max_forecast_day": 10},
         day_bins=DAY_BINS, region="x", nc_mask=None, check_alignment=False, grid_point=False,
     )
 

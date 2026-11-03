@@ -57,7 +57,7 @@ def test_defaults_produce_the_demo_config(tmp_path):
     assert config["members"] == "All"
     assert config["probabilistic"] is False
     assert config["nc_mask"] is None
-    assert config["wet_threshold"] == 20
+    assert config["onset_definition"] is None   # the region's default definition
 
 
 def test_job_settings_are_parsed_into_typed_values(tmp_path):
@@ -66,7 +66,7 @@ def test_job_settings_are_parsed_into_typed_values(tmp_path):
         tmp_path,
         HCWF_INIT_DAYS="2, 5",
         HCWF_MEMBERS="0,1,2",
-        HCWF_WET_THRESHOLD="25.0",
+        HCWF_ONSET_DEFINITION="icpac",
         HCWF_PROBABILISTIC="True",
         HCWF_NC_MASK="/data/masks/ethiopia mask.nc",
         HCWF_DATE_FILTER_YEAR="2020",
@@ -77,7 +77,7 @@ def test_job_settings_are_parsed_into_typed_values(tmp_path):
 
     assert config["init_days"] == (2, 5)
     assert config["members"] == (0, 1, 2)
-    assert config["wet_threshold"] == 25.0
+    assert config["onset_definition"] == "icpac"
     assert config["probabilistic"] is True
     assert config["nc_mask"] == "/data/masks/ethiopia mask.nc"
     assert config["date_filter_year"] == 2020
@@ -105,8 +105,8 @@ def test_text_settings_stay_inert_strings(tmp_path, name):
         "HCWF_INIT_DAYS",
         "HCWF_MEMBERS",
         "HCWF_START_DATE",
-        "HCWF_WET_THRESHOLD",
-        "HCWF_DRY_SPELL",
+        "HCWF_THRESHOLD_YEARS",
+        "HCWF_CHECK_ALIGNMENT",
         "HCWF_PROBABILISTIC",
         "HCWF_PARALLEL",
         "HCWF_UNIT_CVT",
@@ -164,8 +164,8 @@ def test_malformed_model_dims_are_rejected(tmp_path, value):
     assert "HCWF_MODEL_DIMS" in result.stderr
 
 
-def test_onset_definition_variables_replace_the_flat_keys(tmp_path):
-    """Setting HCWF_ONSET_DEFINITION writes the definition keys and no flat onset keys."""
+def test_onset_definition_variables_are_written(tmp_path):
+    """HCWF_ONSET_DEFINITION and the other onset variables are written as the definition keys."""
     result = _generate(tmp_path, HCWF_ONSET_DEFINITION="icpac", HCWF_THRESHOLD_YEARS="1998-2024",
                        HCWF_CHECK_ALIGNMENT="False")
     assert result.returncode == 0
@@ -179,19 +179,12 @@ def test_onset_definition_variables_replace_the_flat_keys(tmp_path):
     assert "wet_init" not in config and "thresh_file" not in config
 
 
-def test_flat_onset_variables_cannot_be_mixed_with_a_definition(tmp_path):
-    """A flat onset variable beside HCWF_ONSET_DEFINITION fails with a message naming it."""
-    result = _generate(tmp_path, HCWF_ONSET_DEFINITION="icpac", HCWF_WET_SPELL="4")
+@pytest.mark.parametrize("name", ["HCWF_WET_INIT", "HCWF_WET_THRESHOLD", "HCWF_WET_SPELL", "HCWF_DRY_SPELL",
+                                  "HCWF_DRY_EXTENT", "HCWF_THRESH_FILE"])
+def test_the_removed_flat_onset_variables_are_refused(tmp_path, name):
+    """A flat onset variable fails with a message naming it, whether or not a definition is set."""
+    for extra in ({}, {"HCWF_ONSET_DEFINITION": "icpac"}):
+        result = _generate(tmp_path, **{name: "4"}, **extra)
 
-    assert result.returncode == 1
-    assert "HCWF_WET_SPELL" in result.stderr
-
-
-def test_defaults_keep_the_flat_onset_keys(tmp_path):
-    """Without onset definition variables the config has the flat keys and no onset_definition (legacy mode)."""
-    assert _generate(tmp_path).returncode == 0
-
-    config = _exec_config(tmp_path)
-
-    assert "onset_definition" not in config
-    assert config["wet_spell"] == 3
+        assert result.returncode == 1
+        assert name in result.stderr and "HCWF_ONSET_DEFINITION" in result.stderr

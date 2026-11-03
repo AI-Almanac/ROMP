@@ -204,7 +204,7 @@ def test_convert_refuses_a_run_config_and_bad_blending_configs(tmp_path, capsys)
     run.write_text("region: ethiopia\n")
     with pytest.raises(SystemExit):
         cli_main(["convert", str(run), "-o", str(tmp_path / "o.yaml")])
-    assert "not an onset_blending config" in capsys.readouterr().err
+    assert "nothing to convert" in capsys.readouterr().err
     bad = tmp_path / "bad.yml"
     bad.write_text(yaml.safe_dump({"name": "x", "observations": {"files": {"folder": "o"}, "variable": "r"},
                                    "models": [], "onset": {"threshold": {"mm": 1}, "defintion": {}},

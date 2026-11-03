@@ -42,11 +42,10 @@ def _obs_files(folder, years):
 
 def _reference_config(tmp_path):
     """Definition-mode settings with thresholds computed from the observations of 2000-2005."""
-    return dict(onset_legacy=False, onset_definition="moron_robertson_mok", obs_day_boundary="00 UTC, labelled by start",
+    return dict(onset_definition="moron_robertson_mok", obs_day_boundary="00 UTC, labelled by start",
                 obs_dir=str(tmp_path / "obs"), obs_file_pattern=["obs_{}.nc"], obs_var="rain", obs_unit_cvt=None,
-                thresh_file=None, thresh_var=None, wet_threshold=20.0, wet_init=1.0, wet_spell=2, dry_spell=1,
-                dry_threshold=1.0, dry_extent=1, start_date=(2000, 5, 1), end_date=(2000, 8, 31), fallback_date=None,
-                earliest_onset_date=None, threshold_years=(2000, 2005), years_clim=tuple(range(2000, 2007)),
+                start_date=(2000, 5, 1), end_date=(2000, 8, 31),
+                threshold_years=(2000, 2005), years_clim=tuple(range(2000, 2007)),
                 years=(2006,), region="x", dir_out=str(tmp_path / "out"), cache_dir=str(tmp_path / "cache"),
                 max_forecast_day=10, model="M", grid_point=False, parallel=False)
 

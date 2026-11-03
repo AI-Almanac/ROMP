@@ -136,7 +136,7 @@ def compute_climatological_onset(*, years_clim,
 
 
 def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, observed_onset_da,
-                                   *, max_forecast_day, earliest_onset_date, **kwargs):
+                                   *, max_forecast_day, **kwargs):
     """
     Use climatology as a forecast model for the given initialization dates.
     Only processes forecasts initialized before the observed onset date.
@@ -148,7 +148,6 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     init_dates: pandas DatetimeIndex with initialization dates
     observed_onset_da: xarray DataArray with observed onset dates for filtering
     max_forecast_day: int, maximum forecast day to consider
-    earliest_onset_date: optional (month, day) tuple; if set, only onsets on or after that date count (falsy = no filter)
 
     Returns:
     pandas DataFrame with climatology forecast results, one row per (init, lat, lon) (or (init, unit)) in that order for
@@ -188,10 +187,6 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     clim_at = clim_date.astype("datetime64[ns]")
     in_window = (~no_clim & (init_at + np.timedelta64(1, "D") <= clim_at)
                  & (clim_at <= init_at + np.timedelta64(int(max_forecast_day), "D")))
-    if earliest_onset_date:
-        earliest = (init_year.astype("datetime64[Y]").astype("datetime64[M]") + np.timedelta64(earliest_onset_date[0] - 1, "M")
-                    ).astype("datetime64[D]") + np.timedelta64(earliest_onset_date[1] - 1, "D")
-        in_window &= clim_date >= earliest
     onsets_forecasted = int(in_window.sum())
 
     def dates(values):
@@ -220,9 +215,6 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     log.debug(f"Onsets forecasted: {onsets_forecasted}")
     log.debug(f"Forecast rate: {onsets_forecasted/valid_inits:.3f}" if valid_inits > 0 else "Forecast rate: 0.000")
 
-    if earliest_onset_date:
-        log.debug(f"Note: Only onsets on or after {earliest_onset_date[0]:02d}-{earliest_onset_date[1]:02d} (MM-DD) were counted due to earliest_onset_date")
-
     return climatology_forecast_df
 
 # def compute_climatology_metrics_with_windows same as stats.benchmark.compute_onset_metrics_with_windows
@@ -232,9 +224,7 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
 ###=========  for bin climatology ============
 
 ## This function computes onset dates for all available years in IMD folder and creates a climatological onset dataset
-def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, thresh_file, thresh_var, wet_threshold, 
-                                         wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, start_date,
-                                         fallback_date, earliest_onset_date, years_clim, **kwargs):
+def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, start_date, years_clim, **kwargs):
     """
     Compute onset dates for all available years in IMD folder and create a climatological dataset.
 
@@ -246,8 +236,6 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
         Rainfall threshold for each grid point
     years_clim : list, optional
         Specific years to process. If None, will auto-detect available years
-    earliest_onset_date : tuple or None
-        Optional (month, day) date filter for onsets (falsy = no filter)
 
     Returns:
     --------
@@ -294,9 +282,9 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
             onset_arrays.append(onset_da.values)
             valid_years.append(year)
 
-        except Exception as e:
-            log.error(f"Error processing year {year}: {e}")
-            continue
+        except Exception as e:   # a dataset over fewer years would be a different one: stop, naming the year
+            e.add_note(f"climatological onset dataset, year {year}")
+            raise
 
     if not onset_arrays:
         raise ValueError("No years were successfully processed")
@@ -311,7 +299,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
         name='climatological_onset_dates',
         attrs={
             'description': 'Onset dates for climatological ensemble',
-            'method': f'earliest onset date {earliest_onset_date[0]:02d}-{earliest_onset_date[1]:02d} (MM-DD) filter' if earliest_onset_date else 'no date filter',
+            'method': 'no date filter',
             'years_processed': valid_years,
             'total_years': len(valid_years)
         }

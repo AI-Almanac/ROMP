@@ -253,16 +253,6 @@ def build_observed_jobs(definition: Definition, rain: DailyRain, years=None,
     return jobs, JobLayout(shape, preset.ravel(), names, n_series)
 
 
-def _is_leap(calendar: str, year: np.ndarray) -> np.ndarray:
-    """Whether each year has a Feb 29 in the given calendar."""
-    year = np.asarray(year, dtype=np.int64)
-    if calendar in ("noleap", "365_day", "360_day"):
-        return np.zeros(year.shape, dtype=bool)
-    if calendar in ("all_leap", "366_day"):
-        return np.ones(year.shape, dtype=bool)
-    if calendar == "julian":
-        return year % 4 == 0
-    return (year % 4 == 0) & ((year % 100 != 0) | (year % 400 == 0))
 
 
 def _add_days(calendar: str, year, month, day, offsets: np.ndarray):
@@ -1098,50 +1088,3 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     ds.attrs.update(attrs or {})
     return ds
 
-
-def regional(rain: DailyRain, mask, weights: str = "cos_lat") -> DailyRain:
-    """Average the cells inside mask into one series (dims ("time",)) and re-round to tenths.
-
-    mask is a boolean array (or DataArray) over the spatial dims. weights is
-    "equal" or "cos_lat" (needs a "lat" dim with coordinates). Rain is averaged
-    in float mm and rounded half to even (left unrounded at exact resolution). A day is missing only if every cell
-    in the mask is missing on that day; with partial missing, the average runs
-    over the cells that have data, with their weights renormalised.
-
-    The mean is the one-unit transform of hcwf.spatial (EvaluationUnits.from_region, then
-    SparseTransform.observed_mean) over the tenths, NaN where missing.
-    """
-    spatial_dims = rain.dims[:-1]
-    if isinstance(mask, xr.DataArray):
-        mask = mask.transpose(*spatial_dims).values
-    mask = np.asarray(mask, dtype=bool)
-    if mask.shape != rain.tenths.shape[:-1]:
-        raise ValueError(f"mask shape {mask.shape} does not match the spatial shape {rain.tenths.shape[:-1]}")
-    if weights not in ("cos_lat", "equal"):
-        raise ValueError(f"weights must be 'cos_lat' or 'equal', got {weights!r}")
-    if weights == "cos_lat" and ("lat" not in spatial_dims or "lat" not in rain.coords):
-        raise ValueError("cos_lat weights need a lat dim with coordinates")
-    if spatial_dims == ("lat", "lon"):
-        from hcwf.spatial import EvaluationUnits
-
-        lat, lon = (np.asarray(rain.coords[d], dtype=float) for d in ("lat", "lon"))
-        transform = EvaluationUnits.from_region(mask, lat, lon, weights=weights).transform(lat, lon)
-    else:
-        from scipy import sparse
-
-        from hcwf.spatial import SparseTransform
-
-        if weights != "equal" or not mask.any():
-            raise ValueError("mask selects no cells" if not mask.any() else
-                             "cos_lat weights need the spatial dims (lat, lon)")
-        transform = SparseTransform(sparse.csr_matrix(mask.reshape(1, -1).astype(float)), None, ("region",),
-                                    keys="coordinate", grid=None)
-    n_time = rain.tenths.shape[-1]
-    values = np.where(rain.missing, np.nan, rain.tenths.astype(float)).reshape(-1, n_time)
-    mean = transform.observed_mean(values)[0]
-    all_missing = np.isnan(mean)
-    mean = np.nan_to_num(mean)
-    tenths = mean if resolution_of(rain.tenths) == "exact" else np.rint(mean).astype(np.int32)
-    coords = {"time": rain.coords["time"]} if "time" in rain.coords else {}
-    return DailyRain(tenths, all_missing, ("time",), coords, rain.year, rain.month, rain.day, rain.calendar,
-                     rain.day_boundary, rain.source, rain.missing_policy)

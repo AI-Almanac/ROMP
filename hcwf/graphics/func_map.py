@@ -10,7 +10,7 @@ import cartopy.crs as ccrs
 from matplotlib import colors as mcolors
 from matplotlib import colormaps
 
-from hcwf.utils.visual import cbar_season, set_basemap
+from hcwf.utils.visual import cbar_season, contrast_text_color, set_basemap
 from hcwf.utils.land_mask import shp_mask, add_polygon
 from hcwf.utils.visual import box_boundary
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
@@ -46,11 +46,6 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
     log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Plot parameters
-    map_lw = 0.75
-    polygon_lw = 1.25
-    panel_linewidth = 0.5
-    tick_length = 3
-    tick_width = 0.8
     if units is not None or abs(lat_diff) < 0.99:   # no values are written on polygons
         txt_fsize = None
     elif abs(lat_diff - 2.0) < 0.1:
@@ -71,16 +66,8 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
     if None in (vmin, vmax):
         vmin, vmax = da.quantile([0.1, 0.9], dim=None, skipna=True).values
 
-    text_color_bw = da.quantile(0.5, dim=None, skipna=True).item()
-
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
     cmap_obj = plt.get_cmap(cmap)
-
-    def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
-        """Return 'black' or 'white', whichever contrasts better with the colormap color of value."""
-        r, g, b, _ = cmap_obj(norm(value)) # background color
-        luminance = 0.2126*r + 0.7152*g + 0.0722*b # perceived luminance (WCAG standard)
-        return 'black' if luminance > threshold else 'white'
 
     levels = np.linspace(vmin, vmax, n_colors)
 
@@ -222,6 +209,6 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
 
 def doy_to_mmm_dd(doy, date_filter_year=2024):
     """Convert day of year to 'MMM DD' format"""
-    # Use 2018 (not a leap year) as reference to handle all possible DOYs
+    # 2024 is a leap year, so every day of year 1-366 exists
     date = pd.to_datetime(f"{date_filter_year}-{int(doy):03d}", format="%Y-%j")
     return date.strftime("%b %d")

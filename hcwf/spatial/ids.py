@@ -244,19 +244,3 @@ def with_id_column(df: pd.DataFrame, id_col: str = "id", explicit: GridIdConvent
         )
     return out
 
-
-def with_ids(df: pd.DataFrame, convention: GridIdConvention | None) -> pd.DataFrame:
-    """df with an `id` column: kept if present, else "<lat>_<lon>" from each
-    row's coordinates. Each distinct coordinate is formatted once; a grid has
-    thousands of cells where its rows run to tens of millions."""
-    if "id" in df.columns:
-        return df
-    if convention is None or not {"lat", "lon"} <= set(df.columns):
-        return with_id_column(df, context="input spatial IDs")
-    lat_codes, lats = pd.factorize(df["lat"].to_numpy(dtype=np.float64))
-    lon_codes, lons = pd.factorize(df["lon"].to_numpy(dtype=np.float64))
-    lat_text = np.array([format_coord_component(v, convention) for v in lats], dtype=object)
-    lon_text = np.array([format_coord_component(v, convention) for v in lons], dtype=object)
-    pair_codes, pairs = pd.factorize(lat_codes * len(lons) + lon_codes)
-    labels = np.array([f"{lat_text[p // len(lons)]}_{lon_text[p % len(lons)]}" for p in pairs], dtype=object)
-    return df.assign(id=pd.Series(labels[pair_codes], index=df.index).astype(str))

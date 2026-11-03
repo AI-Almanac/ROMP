@@ -1,10 +1,7 @@
 """Resolve HCWF's onset settings (definition, season, years, day boundary, lead label, backend) from a config dict.
 
 Order of precedence for every setting: the explicit config value, then the
-region's default (hcwf.onset.regions), then an error naming the missing key. A
-config with no ``onset_definition`` key but the old flat keys (wet_init,
-wet_spell, ...) is in legacy mode: the flat keys are translated by
-hcwf.onset.legacy and lead k is dated init + k.
+region's default (hcwf.onset.regions), then an error naming the missing key.
 """
 from __future__ import annotations
 
@@ -14,17 +11,11 @@ from pathlib import Path
 
 from hcwf.lib.assertion import HCWFConfigError
 from hcwf.onset import definition as definition_mod
-from hcwf.onset import legacy, plan as plan_mod, regions
+from hcwf.onset import plan as plan_mod, regions
 from hcwf.onset.ingest import parse_day_boundary
 from hcwf.onset.model import Definition, DerivedSeasons, FirstPassage
 
-FLAT_KEYS = ("wet_init", "wet_threshold", "wet_spell", "dry_threshold", "dry_spell", "dry_extent",
-             "thresh_file", "thresh_var", "earliest_onset_date")
-"""The old flat onset keys; they conflict with onset_definition."""
-
 BACKENDS = ("numba", "reference", "gpu")
-LEGACY_BOUNDARY = "00 UTC, labelled by start"
-"""Placeholder day boundary for legacy ingestion; detection ignores it."""
 FORECAST_BOUNDARY = "00 UTC, labelled by {label}"
 """Declared day boundary of forecast accumulations: 24 h after a 00 UTC init, labelled per lead_label."""
 
@@ -43,7 +34,6 @@ class Thresholds(dict):
 class OnsetSetup:
     """The resolved onset settings; sources says where each value came from."""
 
-    legacy: bool
     definition: Definition
     season: str
     threshold_years: tuple[int, int] | None
@@ -63,8 +53,7 @@ class OnsetSetup:
     @property
     def uses_thresholds(self) -> bool:
         """Whether the definition needs per-cell thresholds or derived seasons computed or loaded."""
-        return not self.legacy and (bool(self.definition.thresholds)
-                                    or isinstance(self.definition.seasons, DerivedSeasons))
+        return bool(self.definition.thresholds) or isinstance(self.definition.seasons, DerivedSeasons)
 
     @property
     def derived_seasons(self) -> bool:
@@ -74,7 +63,7 @@ class OnsetSetup:
     @property
     def ingest_boundary(self) -> str:
         """The day boundary handed to ingestion."""
-        return self.obs_day_boundary or LEGACY_BOUNDARY
+        return self.obs_day_boundary
 
     @property
     def forecast_boundary(self) -> str:
@@ -86,11 +75,8 @@ class OnsetSetup:
         d = self.definition
         src = self.sources
         out = []
-        if self.legacy:
-            out.append(f"Onset definition : legacy flat keys ({d.id}, deprecated)  [{src.get('definition')}]")
-        else:
-            changed = f", overridden: {', '.join(self.overrides)}" if self.overrides else ""
-            out.append(f"Onset definition : {d.id} v{d.version} ({d.status}){changed}  [{src.get('definition')}]")
+        changed = f", overridden: {', '.join(self.overrides)}" if self.overrides else ""
+        out.append(f"Onset definition : {d.id} v{d.version} ({d.status}){changed}  [{src.get('definition')}]")
         out.append(f"Season           : {self.season}  [{src.get('season')}]")
         years = f"{self.threshold_years[0]}-{self.threshold_years[1]}" if self.threshold_years else "not used"
         out.append(f"Threshold years  : {years}  [{src.get('threshold_years')}]")
@@ -101,31 +87,6 @@ class OnsetSetup:
         out.append(f"Threshold source : {self.threshold_source}  [{src.get('threshold_source')}]")
         out.append(f"Backend          : {self.backend}  [{src.get('backend')}]")
         return out
-
-
-def is_legacy(cfg) -> bool:
-    """Whether cfg uses the old flat keys: the loader's onset_legacy flag, else no onset_definition key at all."""
-    flag = cfg.get("onset_legacy")
-    return bool(flag) if flag is not None else "onset_definition" not in cfg
-
-
-def detect_legacy(dic: dict) -> bool:
-    """For a raw config dict: legacy iff there is no onset_definition key and an old flat key is set."""
-    if "onset_definition" in dic:
-        return False
-    return any(key in dic and (key != "earliest_onset_date" or dic[key]) for key in FLAT_KEYS)
-
-
-def check_conflicts(dic: dict) -> None:
-    """Raise if onset_definition is combined with an old flat key."""
-    if "onset_definition" not in dic:
-        return
-    clash = [key for key in FLAT_KEYS if dic.get(key) is not None]
-    if clash:
-        raise OnsetConfigError(
-            f"{', '.join(clash)} cannot be combined with onset_definition. Fix: remove "
-            f"{'it' if len(clash) == 1 else 'them'} from the config and put the rule in a definition "
-            "(a YAML file with 'extends: <id>' and the changed values; see docs/onset_in_hcwf.md)")
 
 
 def _chain(cfg):
@@ -222,14 +183,8 @@ def setup_key(cfg) -> str:
     return repr([cfg.get(k) for k in _SETUP_KEYS])
 
 
-def onset_setup(cfg, thresh_slice=None) -> OnsetSetup:
-    """Resolve the onset settings of a config mapping (memoized in definition mode).
-
-    In legacy mode thresh_slice, when given, is the threshold the call site loaded:
-    a number of mm, or a per-cell DataArray (the "legacy_threshold").
-    """
-    if is_legacy(cfg):
-        return _legacy_setup(cfg, thresh_slice)
+def onset_setup(cfg) -> OnsetSetup:
+    """Resolve the onset settings of a config mapping (memoized)."""
     key = setup_key(cfg)
     if key not in _cache:
         _cache[key] = _definition_setup(cfg)
@@ -252,16 +207,13 @@ def _dry_check(definition: Definition, cfg) -> tuple[Definition, str, str]:
     return replace(definition, rule=replace(definition.rule, reject_if=())), "off", source
 
 
-def _choices(cfg, key, allowed, default, legacy_mode):
-    """Validate forecast_history / threshold_source; legacy mode only allows the previous behaviour."""
+def _choices(cfg, key, allowed, default):
+    """Validate forecast_history / threshold_source and say where the value came from."""
     value = cfg.get(key)
     if value is None:
         return default, "default"
     if value not in allowed:
         raise OnsetConfigError(f"{key} = {value!r} must be one of: {', '.join(repr(a) for a in allowed)}")
-    if legacy_mode and value != default:
-        raise OnsetConfigError(f"{key} = {value!r} needs an onset_definition; the old flat keys only work with "
-                               f"{key} = {default!r}. Fix: set onset_definition, or remove {key}")
     return value, f"config {key}"
 
 
@@ -286,36 +238,6 @@ def history_needs_previous_year(setup: OnsetSetup) -> bool:
         return True
     doy = datetime.date(2001, start.month, start.day).timetuple().tm_yday + start.offset_days
     return doy - history_lookback(setup.definition) < 1
-
-
-def _legacy_setup(cfg, thresh_slice) -> OnsetSetup:
-    """Translate the flat keys; the day boundary is only known from an explicit key or the region."""
-    flat = dict(cfg)
-    if thresh_slice is not None:
-        if getattr(thresh_slice, "ndim", 0):
-            flat["thresh_file"] = "<array>"
-        else:
-            flat["wet_threshold"], flat["thresh_file"] = float(thresh_slice), None
-    try:
-        definition = legacy.from_flat_config(flat)
-    except legacy.LegacyConfigError as exc:
-        raise OnsetConfigError(str(exc)) from None
-    chain, _ = _chain(cfg)
-    boundary, origin = cfg.get("obs_day_boundary"), "config obs_day_boundary"
-    if boundary is None:
-        boundary, region_id = _region_value(chain, "day_boundary")
-        origin = f"region default ({region_id})" if boundary else "unknown"
-    definition, dry_check, dry_source = _dry_check(definition, cfg)
-    history, history_source = _choices(cfg, "forecast_history", ("observed", "none"), "none", True)
-    source, source_source = _choices(cfg, "threshold_source", ("observations", "model"), "observations", True)
-    backend, note = _backend(cfg.get("onset_backend") or "numba")
-    sources = {"dry_check": dry_source, "forecast_history": "legacy mode", "threshold_source": "legacy mode",
-               "definition": "old flat keys", "season": "from start_date/earliest_onset_date to end_date + 47 days",
-               "threshold_years": "legacy mode", "obs_day_boundary": origin,
-               "lead_label": "legacy convention: lead k is init + k",
-               "backend": note or "config onset_backend"}
-    return OnsetSetup(True, definition, legacy.LEGACY_SEASON, None, (), boundary, "end", backend,
-                      bool(cfg.get("check_alignment", False)), dry_check, (), history, source, sources)
 
 
 def _changed_keys(changes: dict) -> list[str]:
@@ -370,7 +292,7 @@ def _definition_setup(cfg) -> OnsetSetup:
             why = region_problem if not chain else f"region '{chain[0].title}' has no default definition"
             raise OnsetConfigError(
                 f"onset_definition is not set and there is no region default ({why}). "
-                "Fix: set onset_definition = \"icpac\" (an id from `python -m hcwf.onset list`) or the path of a YAML file")
+                "Fix: set onset_definition = \"icpac\" (an id from `hcwf-run onset list`) or the path of a YAML file")
         ref, sources["definition"] = default, f"region default ({chain[0].id})"
     definition, overrides = _load_definition(cfg, ref, sources)
     if chain:
@@ -439,9 +361,9 @@ def _definition_setup(cfg) -> OnsetSetup:
     definition, dry_check, sources["dry_check"] = _dry_check(definition, cfg)
     if dry_check == "off":
         overrides = (*overrides, "reject if (dry_spell_check = false)")
-    history, sources["forecast_history"] = _choices(cfg, "forecast_history", ("observed", "none"), "observed", False)
+    history, sources["forecast_history"] = _choices(cfg, "forecast_history", ("observed", "none"), "observed")
     source, sources["threshold_source"] = _choices(cfg, "threshold_source", ("observations", "model"),
-                                                   "observations", False)
+                                                   "observations")
     if source == "model":
         for name, spec in definition.thresholds:
             if name not in covered and spec.kind not in ("mean_total", "mean_daily"):
@@ -451,19 +373,14 @@ def _definition_setup(cfg) -> OnsetSetup:
                     "Fix: set threshold_source = 'observations' or give that threshold in thresholds = {...}")
     backend, note = _backend(cfg.get("onset_backend") or "numba")
     sources["backend"] = note or "config onset_backend"
-    return OnsetSetup(False, definition, season, years, files, boundary, label, backend,
+    return OnsetSetup(definition, season, years, files, boundary, label, backend,
                       bool(cfg.get("check_alignment", False)), dry_check, tuple(overrides), history, source, sources,
                       constants)
 
 
 def check_config(dic: dict) -> None:
-    """Validate the onset part of a raw config dict: conflicts, then a full resolution."""
-    check_conflicts(dic)
-    cfg = dict(dic)
-    cfg["onset_legacy"] = detect_legacy(dic)
-    if not cfg["onset_legacy"]:
-        cfg.setdefault("onset_definition", None)
-    onset_setup(cfg)
+    """Validate the onset part of a raw config dict with a full resolution."""
+    onset_setup({"onset_definition": None, **dic})
 
 
 def forecast_reach(setup: OnsetSetup) -> int:

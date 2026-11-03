@@ -1,18 +1,17 @@
 """Onset settings resolve as explicit value, then region default, then an error naming the key."""
 
-import warnings
 
 import pytest
 
 from hcwf.lib.assertion import HCWFValidator
-from hcwf.lib.onset_config import OnsetConfigError, check_conflicts, detect_legacy, is_legacy, onset_setup
+from hcwf.lib.onset_config import OnsetConfigError, onset_setup
 
 BOUNDARY = "00 UTC, labelled by start"
 
 
 def _cfg(**values):
-    """A definition-mode config with the loader's flags set."""
-    return {"onset_legacy": False, "onset_definition": None, **values}
+    """A config with no onset definition unless given."""
+    return {"onset_definition": None, **values}
 
 
 def test_region_defaults_fill_every_setting():
@@ -128,47 +127,12 @@ def test_definition_outside_its_region_warns():
         onset_setup(_cfg(region="india", onset_definition="icpac"))
 
 
-def test_legacy_mode_needs_flat_keys_and_no_onset_definition():
-    """Legacy mode is no onset_definition key plus old flat keys; the loader flag wins when present."""
-    assert detect_legacy({"wet_init": 1})
-    assert not detect_legacy({"wet_init": 1, "onset_definition": None})
-    assert not detect_legacy({"region": "india"})
-    assert not detect_legacy({"earliest_onset_date": None})
-    assert is_legacy({"wet_init": 1}) and not is_legacy({"onset_definition": None})
-    assert not is_legacy({"onset_legacy": False, "wet_init": 1})
-
-
-def test_legacy_setup_uses_the_old_conventions():
-    """Legacy: lead k is init + k, no thresholds, and the day boundary comes from the region if known."""
-    cfg = dict(wet_init=1, wet_threshold=20, wet_spell=3, dry_spell=7, dry_extent=0, end_date=(2019, 7, 31),
-               region="India")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        setup = onset_setup(cfg)
-        unknown = onset_setup({**cfg, "region": "atlantis"})
-    assert setup.legacy and setup.lead_label == "end" and setup.threshold_years is None
-    assert setup.obs_day_boundary == "03 UTC, labelled by end"
-    assert unknown.obs_day_boundary is None and unknown.ingest_boundary == BOUNDARY
-
-
-@pytest.mark.parametrize("flat", [{"wet_init": 1}, {"wet_spell": 3}, {"thresh_file": "t.nc"}, {"earliest_onset_date": (6, 2)}])
-def test_flat_keys_beside_a_definition_are_an_error(flat):
-    """Any set flat key together with onset_definition is an error pointing to extends."""
-    with pytest.raises(OnsetConfigError, match=r"cannot be combined with onset_definition.*extends"):
-        check_conflicts({"onset_definition": "icpac", **flat})
-
-
-def test_unset_flat_keys_do_not_conflict():
-    """Flat keys left at None are not a conflict."""
-    check_conflicts({"onset_definition": "icpac", "thresh_file": None, "earliest_onset_date": None})
-
-
 def test_the_validator_reports_onset_errors():
     """HCWFValidator collects the onset errors with the other config errors."""
     base = dict(start_date=(2019, 5, 1), end_date=(2019, 7, 31), start_year_clim=1998, end_year_clim=2024,
                 model_list=("AIFS",), verification_window_list=((1, 15),), tolerance_days_list=(3,),
                 day_bins=((1, 5),), max_forecast_day=30, probabilistic=False)
-    validator = HCWFValidator({**base, "onset_definition": "icpac", "wet_init": 1, "region": "ethiopia"})
-    with pytest.raises(Exception, match="cannot be combined with onset_definition"):
+    validator = HCWFValidator({**base, "onset_definition": "no_such_definition", "region": "ethiopia"})
+    with pytest.raises(Exception, match="no_such_definition"):
         validator.validate()
     assert HCWFValidator({**base, "onset_definition": None, "region": "ethiopia"}).validate()

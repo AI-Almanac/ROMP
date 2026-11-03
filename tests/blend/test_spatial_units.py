@@ -6,7 +6,6 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
-from hcwf.onset import engine, model as m
 from hcwf.spatial import EvaluationUnits, GridIdConvention
 from hcwf.utils import mask as mask_mod
 
@@ -153,7 +152,6 @@ def test_restricting_keeps_order_subsets_and_weights(tmp_path):
     assert kept.ids.tolist() == ["B2", "C3"] and kept.subsets["dissemination"].tolist() == [False, True]
     assert kept.column("name").tolist() == ["Beta", "Gamma"] and len(kept.geometry) == 2
     assert kept.transform(LAT, LON).target_ids == ("B2", "C3")
-    assert units.to_frame()["training"].tolist() == [False, True, True]
     assert len(units) == 3  # the original is untouched
 
 
@@ -175,36 +173,30 @@ def test_region_box_handles_longitudes_on_the_0_360_convention():
 
 # -- regions ------------------------------------------------------------------------------------------------
 
-def make_rain(values, missing, lat):
-    index = pd.date_range("2000-01-01", periods=values.shape[-1], freq="D")
-    return m.DailyRain(values, missing, ("lat", "lon", "time"),
-                       {"lat": lat, "lon": np.arange(values.shape[1]) * 1.0, "time": np.asarray(index)},
-                       index.year.to_numpy(), index.month.to_numpy(), index.day.to_numpy(), "standard",
-                       "00 UTC, labelled by start")
-
-
 @pytest.mark.parametrize("weights", ["cos_lat", "equal"])
-def test_a_region_is_the_one_row_transform_engine_regional_computes(weights):
-    """engine.regional == rint(observed_mean of the tenths, NaN where missing) of a one-row transform."""
+def test_a_region_is_a_one_row_transform_of_the_weighted_cell_mean(weights):
+    """A region's one-row transform gives the (cos-lat or equal) weighted mean of its cells' present values."""
     rng = np.random.default_rng(7)
     lat = np.array([0.0, 20.0, 40.0, 60.0])
+    lon = np.array([1.0, 2.0, 3.0])
     shape = (4, 3, 40)
-    tenths = rng.integers(0, 400, shape).astype(np.int32)
+    tenths = rng.integers(0, 400, shape).astype(float)
     missing = rng.random(shape) < 0.3
     missing[:, :, 5] = True
-    tenths[missing] = 0
     keep = rng.random((4, 3)) < 0.7
     keep[0, 0] = True
-    rain = make_rain(tenths, missing, lat)
 
-    expected = engine.regional(rain, keep, weights=weights)
+    cell_weight = np.cos(np.deg2rad(lat))[:, None] * np.ones((1, 3)) if weights == "cos_lat" else np.ones((4, 3))
+    w = (cell_weight * keep)[:, :, None] * ~missing
+    with np.errstate(invalid="ignore"):
+        expected = (w * tenths).sum(axis=(0, 1)) / w.sum(axis=(0, 1))
 
-    region = EvaluationUnits.from_region(keep, lat, rain.coords["lon"], weights=weights)
-    transform = region.transform(lat, rain.coords["lon"])
-    values = np.where(missing, np.nan, tenths.astype(float)).reshape(-1, shape[-1])
+    region = EvaluationUnits.from_region(keep, lat, lon, weights=weights)
+    transform = region.transform(lat, lon)
+    values = np.where(missing, np.nan, tenths).reshape(-1, shape[-1])
     mean = transform.observed_mean(values)[0]
-    np.testing.assert_array_equal(np.isnan(mean), expected.missing)
-    np.testing.assert_array_equal(np.rint(np.nan_to_num(mean)).astype(np.int32), expected.tenths)
+    np.testing.assert_array_equal(np.isnan(mean), np.isnan(expected))
+    np.testing.assert_allclose(mean[~np.isnan(mean)], expected[~np.isnan(expected)], rtol=1e-9)
 
 
 def test_a_region_on_another_grid_is_the_conservative_mean_of_its_cells():

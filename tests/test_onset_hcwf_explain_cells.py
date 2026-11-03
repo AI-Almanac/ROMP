@@ -1,6 +1,5 @@
-"""HCWF explain_cells: the files are written per cell and year, legacy mode is skipped, and bad values are rejected."""
+"""HCWF explain_cells: the files are written per cell and year, and bad values are rejected."""
 
-import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -22,8 +21,8 @@ def rain_year(year):
 
 
 def config(tmp_path, cells):
-    """A definition-mode config namespace for explain_cells over 2001-2002."""
-    return SimpleNamespace(explain_cells=cells, onset_legacy=False, onset_definition="icpac",
+    """A config namespace for explain_cells over 2001-2002."""
+    return SimpleNamespace(explain_cells=cells, onset_definition="icpac",
                            obs_day_boundary="00 UTC, labelled by start", dir_fig=str(tmp_path), start_date=(2001, 5, 1),
                            end_date=(2002, 7, 31))
 
@@ -49,14 +48,6 @@ def test_unset_writes_nothing(tmp_path, data):
     """explain_cells = None is a no-op."""
     assert explain_cells.write_explain_cells(config(tmp_path, None)) == []
     assert not (tmp_path / "explain").exists()
-
-
-def test_legacy_mode_is_skipped_with_a_note(tmp_path, data, monkeypatch, caplog):
-    """With the old flat keys it prints a note and writes nothing."""
-    caplog.set_level(logging.INFO)
-    monkeypatch.setattr(explain_cells, "onset_setup", lambda kwargs: SimpleNamespace(legacy=True))
-    assert explain_cells.write_explain_cells(config(tmp_path, [(9.0, 38.0)])) == []
-    assert "skipped" in caplog.text
 
 
 @pytest.mark.parametrize("value", [(9.0, 38.0), [(9.0,)], [(9.0, "a")], [(9.0, 38.0, 1.0)], "x"])

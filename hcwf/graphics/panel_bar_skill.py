@@ -47,13 +47,13 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig,
     bss_col = np.array([146, 197, 222]) / 256
 
     # Plot AUC bars on top
-    bars3 = ax2.barh(y_pos + height, auc, height,
+    ax2.barh(y_pos + height, auc, height,
                     label='AUC', alpha=0.8, color=auc_col)
 
     # Plot skill scores on bottom axis
-    bars1 = ax.barh(y_pos, bss, height,
+    ax.barh(y_pos, bss, height,
                    label='BSS', alpha=0.8, color=bss_col)
-    bars2 = ax.barh(y_pos - height, rps, height,
+    ax.barh(y_pos - height, rps, height,
                    label='RPSS', alpha=0.8, color=rpss_col)
 
     # Plot Climatology AUC as vertical line
@@ -67,7 +67,6 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig,
     ax.set_yticklabels(model_list, rotation=0, ha='right', fontsize=15)
 
     min_val = np.min(np.concatenate([rps, bss, auc])) *1.05
-    max_val = np.max(np.concatenate([rps, bss, auc])) *1.3
     ax.set_xlim(min_val, 25) 
     ax.set_ylim(-0.5, 1.5)
 

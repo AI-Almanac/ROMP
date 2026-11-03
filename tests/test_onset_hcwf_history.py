@@ -15,8 +15,8 @@ BOUNDARY = "00 UTC, labelled by start"
 
 
 def _cfg(**values):
-    """A definition-mode config with the loader's flags set."""
-    return {"onset_legacy": False, "onset_definition": "icpac", "obs_day_boundary": BOUNDARY, **values}
+    """A config with the ICPAC definition."""
+    return {"onset_definition": "icpac", "obs_day_boundary": BOUNDARY, **values}
 
 
 # --- configuration ---------------------------------------------------------------------------------
@@ -60,16 +60,6 @@ def test_model_thresholds_need_mean_based_thresholds(tmp_path):
         onset_setup(_cfg(onset_definition=str(file), threshold_source="model", threshold_years=(2000, 2010)))
 
 
-@pytest.mark.parametrize(("key", "value"), [("forecast_history", "observed"), ("threshold_source", "model")])
-def test_legacy_mode_rejects_the_new_choices(key, value):
-    """Old flat-key configs only work with history "none" and observation thresholds."""
-    flat = dict(wet_init=1, wet_threshold=20, wet_spell=3, dry_spell=7, dry_extent=0, end_date=(2019, 7, 31))
-    with pytest.raises(OnsetConfigError, match=key):
-        onset_setup({**flat, key: value})
-    setup = onset_setup({**flat, "forecast_history": "none"})
-    assert setup.forecast_history == "none"
-
-
 def test_previous_year_is_needed_for_wrapping_seasons_only(tmp_path):
     """A season ending before it starts, or starting within the look-back of 1 January, needs last year's file."""
     assert not history_needs_previous_year(onset_setup(_cfg()))
@@ -102,13 +92,11 @@ def test_load_history_adds_the_previous_year_only_when_needed(tmp_path, monkeypa
     file.write_text("id: wrap\nversion: 1\ntitle: t\nstatus: draft\nextends: icpac\nseason: {from: 11-01, to: 02-28}\n")
     history = hcwf_input.load_history(2020, current, **_cfg(onset_definition=str(file)))
     assert loaded == [2019] and history.sizes["time"] == 365 + 366
-    flat = dict(wet_init=1, wet_threshold=20, wet_spell=3, dry_spell=7, dry_extent=0, end_date=(2019, 7, 31))
-    assert hcwf_input.load_history(2020, current, **flat) is None
 
 
 # --- adapter in stitched mode -----------------------------------------------------------------------
 
-DEFINITION = dict(onset_definition="icpac", onset_legacy=False, obs_day_boundary=BOUNDARY, model_lead_label="start",
+DEFINITION = dict(onset_definition="icpac", obs_day_boundary=BOUNDARY, model_lead_label="start",
                   onset_backend="reference", max_forecast_day=20, onset_percentage_threshold=0.5, members=None,
                   dry_spell_check=False, forecast_history="observed")
 OBS_ONSET = xr.DataArray([[np.datetime64("2020-06-20", "ns")]], coords=[("lat", [0.0]), ("lon", [0.0])])
@@ -185,6 +173,9 @@ def test_history_from_the_previous_year_serves_a_wrapping_season(tmp_path):
 
 # --- scoring of back-dated onsets -------------------------------------------------------------------
 
+NONE = _cfg(forecast_history="none")
+
+
 def _frame(model_onset, obs_onset, init="2020-05-25"):
     """A one-row deterministic onset table."""
     return pd.DataFrame([{"init_time": pd.Timestamp(init), "lat": 0.0, "lon": 0.0, "onset_day": None,
@@ -194,13 +185,13 @@ def _frame(model_onset, obs_onset, init="2020-05-25"):
 def test_back_dated_onsets_are_scored_in_the_first_window_only():
     """An onset on or before the init counts as a first-lead onset in a window starting at lead 1, and is ignored later."""
     first, _ = compute_onset_metrics_with_windows(_frame("2020-05-23", "2020-05-30"), tolerance_days=3,
-                                                  verification_window=(1, 15))
+                                                  verification_window=(1, 15), **NONE)
     assert (first["false_positive"].iloc[0], first["true_positive"].iloc[0], first["false_negative"].iloc[0]) == (1, 0, 0)
     near, _ = compute_onset_metrics_with_windows(_frame("2020-05-24", "2020-05-26"), tolerance_days=3,
-                                                 verification_window=(1, 15))
+                                                 verification_window=(1, 15), **NONE)
     assert (near["true_positive"].iloc[0], near["false_positive"].iloc[0]) == (1, 0)
     later, _ = compute_onset_metrics_with_windows(_frame("2020-05-23", "2020-06-20"), tolerance_days=5,
-                                                  verification_window=(16, 30))
+                                                  verification_window=(16, 30), **NONE)
     counted = later[["true_positive", "false_positive", "false_negative", "true_negative"]].iloc[0].sum()
     assert counted == 0
 
@@ -210,7 +201,7 @@ def test_back_dated_members_fall_in_the_before_day_one_bin():
     members = pd.DataFrame({"init_time": pd.Timestamp("2020-05-25"), "lat": 0.0, "lon": 0.0, "member": [0, 1],
                             "onset_day": [-2.0, 3.0], "obs_onset_date": "2020-06-20"})
     pairs = create_forecast_observation_pairs_with_bins(members, OBS_ONSET, day_bins=((1, 5), (6, 10)),
-                                                        max_forecast_day=10)
+                                                        max_forecast_day=10, **NONE)
     before = pairs[pairs["bin_label"] == "Before day 1"].iloc[0]
     assert (before["predicted_prob"], before["observed_onset"]) == (0.5, 0)
     assert pairs[pairs["bin_label"] == "Days 1-5"]["predicted_prob"].iloc[0] == 0.5

@@ -10,13 +10,14 @@ import pytest
 import xarray as xr
 
 from hcwf.io import input as hcwf_input
+from old_flat_rule import old_rule
 from hcwf.utils.region import mask_region_loaded, region_select
 
 LAT = np.arange(2.0, 17.0, 1.0)
 LON = np.arange(32.0, 50.0, 1.0)
-CFG = dict(region="Ethiopia", shp_only=False, date_filter_year=2024, init_days=[0, 3], start_date=(2020, 5, 1),
-           end_date=(2020, 6, 30), max_forecast_day=10, wet_spell=3, dry_extent=2, wet_init=1, wet_threshold=20,
-           dry_spell=7, model="M", model_var="tp", unit_cvt=1000.0, file_pattern="{}.nc", members=None)
+CFG = dict(region="Ethiopia", shp_only=False, date_filter_year=2024, init_days=[0, 3], max_forecast_day=10,
+           model="M", model_var="tp", unit_cvt=1000.0, file_pattern="{}.nc", members=None,
+           **old_rule(dry_extent=2, end_date=(2020, 6, 30)))
 
 
 def obs_year(year, seed):

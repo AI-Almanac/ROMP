@@ -35,7 +35,7 @@ import xarray as xr
 
 from hcwf.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
                            get_initialization_dates, load_history, load_imd_rainfall, load_thresholds)
-from hcwf.lib.control import init_dataclass, iter_list, make_case
+from hcwf.lib.control import LAYOUT, init_dataclass, iter_list, make_case
 from hcwf.lib.convention import Case, Setting
 from hcwf.lib.onset_config import onset_setup
 from hcwf.lib.run_folder import file_name
@@ -59,8 +59,6 @@ log = logging.getLogger(__name__)
 
 OBSERVED = "observed"
 CLIMATOLOGY = "climatology"
-SOURCE_FILE = "onsets_{}.nc"
-"""File name of a source's export with an explicit dir_out ({} is the source); see run_folder.file_name."""
 DATE_UNITS = "days since 1970-01-01"
 DATE_FILL = -2147483648
 _EPOCH = np.datetime64("1970-01-01")
@@ -86,14 +84,11 @@ def load_cfg(path) -> dict:
 
 
 def _complete(dic: dict) -> dict:
-    """Finish a flat config the way the loader does (mode flag, paths, lead window); dicts that are done pass through."""
+    """Finish a flat config the way the loader does (paths, lead window); dicts that are done pass through."""
     from hcwf.lib import loader
     from hcwf.lib.lead_window import apply_lead_window
 
-    if "onset_legacy" not in dic:
-        loader._rename_deprecated_keys(dic)
-        loader._set_onset_mode(dic)
-        loader._resolve_paths(dic)
+    loader._resolve_paths(dic)
     if "lead_window" not in dic:
         apply_lead_window(dic)
     return dic
@@ -121,7 +116,7 @@ def case_kwargs(dic: dict, model: str, *, reference: bool = False) -> dict:
     if reference:
         dic["model_list"] = (model,)
     pool = iter_list(dic)
-    combi = tuple(model if field == "model" else values[0] for field, values in zip(dic["layout"], pool))
+    combi = tuple(model if field == "model" else values[0] for field, values in zip(LAYOUT, pool))
     case = make_case(Case, combi, dic)
     if reference:
         case.update({"model_dir": dic["ref_model_dir"], "model_var": case.ref_model_var,
@@ -326,7 +321,7 @@ def _provenance(dic: dict, kw: dict, source: str, kind: str, thresholds, mask: d
         "hcwf_version": _version(), "source_name": source, "source_kind": kind,
         "definition_id": d.id, "definition_version": d.version, "definition_hash": definition_mod.definition_hash(d),
         "definition_sentence": describe(d), "definition_yaml": d.source_yaml or "",
-        "definition_overrides": ",".join(setup.overrides), "definition_legacy": setup.legacy,
+        "definition_overrides": ",".join(setup.overrides),
         "dry_spell_check": setup.dry_check, "onset_season": setup.season, "onset_backend": setup.backend,
         "threshold_source": setup.threshold_source,
         "threshold_years": f"{setup.threshold_years[0]}-{setup.threshold_years[1]}" if setup.threshold_years and setup.uses_thresholds else "",
@@ -657,7 +652,7 @@ def collect_conditional_climatology(dic: dict) -> xr.Dataset:
 
     onset_date, onset_doy, onset_lead, onset_day, status and scored (init_time, season, lat, lon) come from
     compute_conditional_climatology_as_forecast (the first lead whose conditional CDF reaches 0.5; no onset
-    when it does not, when the cell has no KDE or the date is before earliest_onset_date). onset_probability
+    when it does not or when the cell has no KDE). onset_probability
     (init_time, season, lead, lat, lon) is that conditional CDF, P(onset on or before the lead | no onset by
     the init), for leads 0 to max_forecast_day (0 at lead 0), NaN for cells without a KDE.
     """

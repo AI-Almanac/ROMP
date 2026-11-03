@@ -9,7 +9,7 @@ Usage:
     hcwf-run -p run.yaml [--check] [--overwrite] [--quiet | --verbose]
     hcwf-run -p a.yaml -p b.yaml     (or -p 'runs/*.yaml'): several run files, one after another
     or
-    python -m hcwf.driver -p run.yaml
+    python -m hcwf.driver -p run.yaml   (the same as hcwf-run)
 
 ``--check`` validates and resolves the config, prints the plan and runs nothing (exit 1 on errors). The run
 itself is hcwf.api.execute, which ``hcwf.run`` (notebooks) shares.
@@ -148,12 +148,6 @@ def run_hcwf(cfg=None, setting=None):
         cfg: A loaded configuration (dict or namespace) to run instead of reading one from the command line.
         setting: Unused; kept for compatibility (the Setting is built from the config).
     """
-    if cfg is None and setting is None:
-        from hcwf.cli import handled_without_run
-
-        if handled_without_run(sys.argv[1:]):
-            return
-
     flags = _flags(sys.argv[1:])
     if cfg is None:
         try:
@@ -174,4 +168,6 @@ def run_hcwf(cfg=None, setting=None):
 # EXECUTION BLOCK
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
-    run_hcwf()
+    from hcwf.cli import main
+
+    main()

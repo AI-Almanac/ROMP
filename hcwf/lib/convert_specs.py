@@ -666,10 +666,6 @@ class _Convert:
         models = [m for m in data.get("models") or [] if isinstance(m, dict)]
         onset, years, rule = self._onset_with_windows()
         mapping: dict = {"project_name": str(data["name"]), "region": self.region}
-        evaluation_years = sorted(set(self.years(self.get("evaluation.years.training"), "")) |
-                                  set(self.years(self.get("evaluation.years.cv_holdout"), "")) |
-                                  set(self.years(self.get("evaluation.years.true_holdout"), "")))
-        mapping["years"] = evaluation_years
         mapping["observations"] = self.observations()
         mapping["models"] = [self.model_entry(m, i) for i, m in enumerate(models)]
         mapping["onset"] = onset
@@ -685,7 +681,6 @@ class _Convert:
         self.comments.update({
             ("region",): "no region: the whole domain of the data, as onset_blending reads it; name a region to use its box "
                          "and defaults",
-            ("years",): "every year of the blend (training and holdout)",
             ("observations", "unit_cvt"): "onset_blending reads observations as millimetres (declared units still win)",
             ("onset", "rule"): "onset_blending's onset.definition as an HCWF definition; registry ids moron_robertson_blend "
                                "and icpac_blend are its readings of the two papers",
@@ -730,7 +725,6 @@ def validate_conversion(conversion: Conversion):
     if errors:
         raise ConvertError(errors)
     cfg["model_list"] = tuple(m["name"] for m in mapping["models"])
-    cfg["onset_legacy"] = False
     try:
         setup = onset_setup(cfg)
         return cfg, recipe_from_config(cfg, setup), setup

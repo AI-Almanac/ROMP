@@ -1,7 +1,7 @@
 """The schema of an HCWF YAML run config: every key with its type, allowed values, default and help.
 
-A YAML config is a mapping whose keys are either the flat config keys (the names used in
-config.in, e.g. ``obs_dir``) or sections that group them for readability::
+A YAML config is a mapping whose keys are either the flat config keys (e.g.
+``obs_dir``) or sections that group them for readability::
 
     observations:  dataset, name, path, paths, years, file_pattern, variable, units, unit_cvt, dims, day_boundary
     reference:     dataset, model, path, file_pattern, variable, units, dims, climatology_cv
@@ -301,13 +301,6 @@ def _thresholds(value):
     return dict(value)
 
 
-def _years(value):
-    """'All', a list of years (returned as a tuple), or null."""
-    if value == "All":
-        return value
-    return _integers(value)
-
-
 MASK_KEYS = {
     "land": ("true or false", "keep land cells only (Natural Earth land polygons from cartopy)"),
     "country": ("a country name or a list of them", "keep the cells of these countries (Natural Earth "
@@ -429,7 +422,6 @@ KINDS: dict[str, tuple[str, Callable]] = {
     "cells": ("a list of [lat, lon] pairs, e.g. [[9.0, 38.75]]", _cells),
     "thresholds": ("a mapping of threshold names to 'path.nc:variable' (a grid), a table file (by unit id) or a "
                    "number of mm", _thresholds),
-    "years": ("'All' or a list of years", _years),
     "mask": ("a mapping of land, country, file, variable, keep_value, condition, cell_rule, overlap_fraction, "
              "resolution", _mask),
     "unit_mode": ("one of 'cells', 'regrid', 'cell_transform', or a mapping of source name to one of them",
@@ -457,25 +449,13 @@ _TOGGLES = (
 )
 
 
-def _default_pkg_dir(_config) -> str:
-    """The folder that contains the hcwf package (informational only)."""
-    from pathlib import Path
-
-    import hcwf
-
-    return str(Path(hcwf.__file__).resolve().parent.parent)
-
-
 def _fields() -> tuple[Field, ...]:
     """Build the table of every config key."""
     top = [
         Field("project_name", "str", "name shown in the run banner", "HCWF run"),
-        Field("work_dir", "path", "folder relative paths are meant from (informational)", "."),
-        Field("pkg_dir", "path", "your HCWF checkout (informational)", _default_pkg_dir),
-        Field("layout", "strs", "dimensions of the processed cases; leave as is", ("model", "verification_window")),
         Field("dataset_files", "paths", "YAML files describing your datasets, referenced by id with `dataset:`", ()),
         Field("catalog_dirs", "paths", "folders of <id>.yaml dataset files, referenced by id with `dataset:`", ()),
-        Field("region", "str", "target region id or alias, see `python -m hcwf.onset regions`; null: no region (no box, "
+        Field("region", "str", "target region id or alias, see `hcwf-run onset regions`; null: no region (no box, "
               "no region defaults; what a converted onset_blending config uses)", REQUIRED, nullable=True),
         Field("nc_mask", "path", "NetCDF mask of 1s and 0s limiting the evaluated cells", None, nullable=True),
         Field("mask", "mask", "cells to evaluate, on each dataset's own grid; the parts given intersect: "
@@ -486,11 +466,6 @@ def _fields() -> tuple[Field, ...]:
               "write `parallel: {workers: N}` to choose the number", True),
         Field("parallel_workers", "workers", "worker processes when parallel is on (parallel.workers); null: the "
               "cores available, never more than there are years", None, nullable=True, fill=False),
-        Field("debug", "bool", "developer mode: keep going on invalid config", False),
-        Field("years", "years", "reserved: years to evaluate instead of start/end dates", None, nullable=True),
-        Field("years_clim", "years", "reserved: climatology years instead of start/end", None, nullable=True),
-        Field("fallback_date", "month_day", "reserved: date buffer for onsets before the start date", None,
-              nullable=True),
         # the models list, as flat keys (the `models:` section builds these)
         Field("model_list", "strs", "model names (use the `models:` section instead)", REQUIRED, internal=True),
         Field("model_dir_list", "paths", "forecast folder of each model", REQUIRED, internal=True),
@@ -502,16 +477,6 @@ def _fields() -> tuple[Field, ...]:
         Field("model_paths_list", "paths_list", "the files of each model, resolved from models[].paths and years "
               "(a blend reads every file of each model)", fill=False, internal=True),
         Field("model_dims_list", "dims_list", "dimension names of each model's files", None, fill=False, internal=True),
-        # old flat onset keys (legacy mode; they cannot be combined with onset.definition)
-        Field("wet_init", "number", "legacy: rain (mm) of the first potential wet day", fill=False, nullable=True),
-        Field("wet_threshold", "number", "legacy: total rain (mm) of the wet spell", fill=False, nullable=True),
-        Field("wet_spell", "int", "legacy: days of the wet spell", fill=False, nullable=True),
-        Field("dry_threshold", "number", "legacy: rain (mm) below which a day is dry", fill=False, nullable=True),
-        Field("dry_spell", "int", "legacy: dry run (days) that rejects an onset", fill=False, nullable=True),
-        Field("dry_extent", "int", "legacy: days after onset searched for the dry run", fill=False, nullable=True),
-        Field("thresh_file", "path", "legacy: NetCDF of per-cell thresholds", fill=False, nullable=True),
-        Field("thresh_var", "str", "legacy: variable in thresh_file", fill=False, nullable=True),
-        Field("earliest_onset_date", "month_day", "legacy: earliest onset, [month, day]", fill=False, nullable=True),
     ]
     obs = [
         Field("obs", "str", "observation dataset name (default: 'obs')", "obs",
@@ -752,12 +717,26 @@ def _where(name: str) -> str:
     return ", ".join(dict.fromkeys(homes))
 
 
+_ONSET_KEYS_REMOVED = ("The old flat onset keys (wet_init, wet_threshold, wet_spell, dry_threshold, dry_spell, dry_extent, "
+                       "thresh_file, thresh_var, earliest_onset_date, mok) are no longer read. Fix: write the rule as an "
+                       "onset definition; `hcwf-run convert old.yaml -o new.yaml` translates a config that still has them")
+REMOVED_KEYS = {
+    **dict.fromkeys(("wet_init", "wet_threshold", "wet_spell", "dry_threshold", "dry_spell", "dry_extent", "thresh_file",
+                     "thresh_var", "earliest_onset_date", "mok"), _ONSET_KEYS_REMOVED),
+    **dict.fromkeys(("layout", "work_dir", "pkg_dir", "debug", "years", "years_clim", "fallback_date"),
+                    "This key was removed: it had no effect. Fix: delete it"),
+}
+"""Top-level keys that earlier versions read; naming one gets a specific message instead of a spelling suggestion."""
+
+
 def unknown_key_message(name: str, section: str | None = None) -> str:
     """Error text for an unknown key, with a 'did you mean' suggestion and where it may belong."""
     if section:
         candidates = section_names(section)
         return (f"unknown key '{section}.{name}'.{suggest(name, candidates)} "
                 f"Keys of {section}: {', '.join(candidates)}")
+    if name in REMOVED_KEYS:
+        return f"unknown key '{name}'. {REMOVED_KEYS[name]}"
     candidates = [k for k, f in BY_KEY.items() if not f.internal] + list(SECTIONS)
     hint = suggest(name, candidates)
     home = _where(name)

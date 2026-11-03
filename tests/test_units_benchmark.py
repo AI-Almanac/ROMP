@@ -155,7 +155,9 @@ def test_pair_tables_are_per_unit_cases():
     members = pd.DataFrame(rows, columns=["init_time", "unit", "member", "onset_day"])
     obs = xr.DataArray(np.array(["2020-05-04", "2020-05-20"], dtype="datetime64[ns]"), dims="unit",
                        coords={"unit": ["a", "b"]})
-    pairs = create_forecast_observation_pairs_with_bins(members, obs, day_bins=[(1, 5), (6, 10)], max_forecast_day=10)
+    pairs = create_forecast_observation_pairs_with_bins(members, obs, day_bins=[(1, 5), (6, 10)], max_forecast_day=10,
+                                                        onset_definition="icpac", forecast_history="none",
+                                                        obs_day_boundary="00 UTC, labelled by start")
     assert "unit" in pairs and "lat" not in pairs
     assert pairs.groupby(["init_time", "unit"]).ngroups == 3   # unit a is scored on the first init only
     assert np.isfinite(calculate_rps(pairs)["rps"]) and np.isfinite(calculate_brier_score(pairs)["brier_score"])

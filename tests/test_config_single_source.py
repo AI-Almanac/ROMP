@@ -1,6 +1,5 @@
 """Run-config paths of the `units:` section start at the config file; Setting has one field per schema key."""
 import dataclasses
-from pathlib import Path
 
 from hcwf.lib import config_schema as schema
 from hcwf.lib import loader
@@ -9,7 +8,7 @@ from hcwf.lib.convention import Case, Setting
 
 
 def _dic(**values):
-    return {"work_dir": ".", "pkg_dir": ".", **values}
+    return dict(values)
 
 
 def test_relative_units_files_start_at_the_folder_of_the_config(tmp_path, monkeypatch):
@@ -32,7 +31,6 @@ def test_relative_units_files_start_at_the_folder_of_the_config(tmp_path, monkey
 def test_units_files_are_left_alone_without_a_config_file_or_a_value(tmp_path):
     dic = loader._resolve_paths(_dic(units_shapefile="units.shp", units_weights=None))
     assert dic["units_shapefile"] == "units.shp" and dic["units_weights"] is None
-    assert loader._resolve_paths(_dic(config_file=str(tmp_path / "r.yaml")))["work_dir"] == Path(".").resolve()
 
 
 def test_setting_has_a_field_for_every_schema_key_that_a_case_does_not_own():
@@ -41,7 +39,7 @@ def test_setting_has_a_field_for_every_schema_key_that_a_case_does_not_own():
     case_names = {f.name for f in dataclasses.fields(Case)}
     assert {f.key for f in schema.FIELDS} - case_names <= names
     assert not names & case_names   # a Setting is merged over a Case: it must not overwrite the case's own values
-    assert {"cache_dir", "short_names", "lead_window", "onset_legacy"} <= names
+    assert {"cache_dir", "short_names", "lead_window"} <= names
     given = init_dataclass(Setting, {"units_mode": "regrid", "missing": "zero", "not_a_key": 1})
     assert (given.units_mode, given.missing, given.cache_dir) == ("regrid", "zero", None)
     given.update({"short_names": True, "not_a_key": 2})

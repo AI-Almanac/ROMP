@@ -1,14 +1,14 @@
-"""Convert between the flat config dict and the nested YAML run config; read old config.in files.
+"""Convert between the flat config dict and the nested YAML run config; translate the old flat onset keys.
 
 ``flat_to_mapping`` turns the flat dict the pipeline uses into the nested mapping of a run YAML
 (sections, a `models:` list); ``render_yaml`` writes a mapping as readable YAML, optionally with
-a comment per value saying where it came from (used for resolved_config.yaml). ``read_legacy``
-exec()s an old-style config.in; it exists only for `hcwf-run convert`, which writes the
-equivalent YAML. Nothing else in HCWF reads config.in any more.
+a comment per value saying where it came from (used for resolved_config.yaml). ``convert_flat_onset``
+is the only reader of the flat onset keys (wet_init, wet_spell, ...) of earlier versions; `hcwf-run convert` uses it
+to write the equivalent onset definition.
 """
 from __future__ import annotations
 
-import importlib.resources
+import datetime
 from pathlib import Path
 
 import yaml
@@ -18,12 +18,11 @@ from hcwf.lib.config_schema import ConfigSchemaError
 from hcwf.lib.dataset_schema import suggest
 
 SECTION_ORDER = ("observations", "reference", "models", "onset", "units", "blend", "evaluation", "metrics", "output")
-INTERNAL_KEYS = ("dataset_report", "config_sources", "onset_legacy", "lead_window", "onset_lead_lines", "run_paths",
+INTERNAL_KEYS = ("dataset_report", "config_sources", "lead_window", "onset_lead_lines", "run_paths",
                  "config_file", "cache_dir", "short_names", "run_overrides", "accumulation_detected")
 """Keys the loader adds; they are not part of a run config."""
 _MODEL_LISTS = ("model_list", "model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list",
                 "model_dims_list", "model_paths_list")
-_LEGACY_RENAMES = {"mok": "earliest_onset_date"}
 _UNIT_KEYS = ("obs_unit_cvt", "ref_model_unit_cvt")
 _OBS_LISTED = {"obs_paths": "paths", "obs_dims": "dims"}
 _MODEL_EXTRA = ("accumulation_list", "daily_boundary_list", "accumulation_detected")
@@ -37,25 +36,6 @@ def units_from_cvt(cvt, where: str) -> str:
         return "m"
     raise ConfigSchemaError(f"{where} = {cvt!r} cannot be written as units (only mm or m). Fix: HCWF no longer "
                             "takes a free multiplier; convert the data to mm or m, or tell us what it is")
-
-
-def read_legacy(path) -> dict:
-    """Read an old-style config.in (Python assignments) into a flat dict; the only place that exec()s a config."""
-    from hcwf.utils.practical import set_dir
-
-    item = set_dir(str(path))
-    if not item.exists():
-        raise FileNotFoundError(f"Could not find config file: {path}")
-    text = item.read_text()
-    text = "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
-    local: dict = {}
-    exec(text, {}, local)  # noqa: S102 - old config.in files are Python by definition; this is the converter
-    excluded = {"f", "config_file_path", "params_in"}
-    flat = {k: v for k, v in local.items() if not k.startswith("__") and not callable(v) and k not in excluded}
-    for old, new in _LEGACY_RENAMES.items():
-        if old in flat:
-            flat[new] = flat.pop(old)
-    return flat
 
 
 def plain(value):
@@ -83,7 +63,7 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
     comments: dict = {}
     errors = []
     for key, value in flat.items():
-        if key in INTERNAL_KEYS or (key == "earliest_onset_date" and value is None):
+        if key in INTERNAL_KEYS:
             continue
         if key in _UNIT_KEYS or key in _MODEL_EXTRA:
             continue
@@ -181,20 +161,122 @@ def render_yaml(mapping: dict, comments: dict | None = None, header: str = "") -
     return "\n".join(lines) + "\n"
 
 
-def convert_file(source, target, force: bool = False) -> Path:
-    """Convert an old config.in to a YAML run config at target; refuses to overwrite unless force."""
-    flat = read_legacy(source)
-    flat.setdefault("model_lead_label", flat.get("model_lead_label"))
-    mapping, _ = flat_to_mapping(flat)
+FLAT_ONSET_KEYS = ("wet_init", "wet_threshold", "wet_spell", "dry_threshold", "dry_spell", "dry_extent",
+                   "thresh_file", "thresh_var", "earliest_onset_date", "mok")
+"""The flat onset keys earlier versions read at the top level of a run config; only `hcwf-run convert` reads them now."""
+EXTEND_END_DAYS = 47
+"""The old observed search read rain this many days past end_date; the converted season ends where the last wet spell fit."""
+THRESHOLD_NAME = "legacy_threshold"
+"""The name the converted definition gives the per-cell threshold of a thresh_file."""
+
+
+def _tenths(flat: dict, key: str) -> int:
+    """The value of `key` in whole tenths of a mm, or an error if it is finer than 0.1 mm."""
+    value = flat[key]
+    try:
+        tenths = round(float(value) * 10)
+        exact = abs(float(value) * 10 - tenths) < 1e-6
+    except (TypeError, ValueError):
+        raise ConfigSchemaError(f"{key} = {value!r} is not a number of mm. Fix: set {key} to a number") from None
+    if not exact:
+        raise ConfigSchemaError(f"{key} = {value!r} is not a whole number of tenths of a mm; the onset component "
+                                f"works on 0.1 mm. Fix: round {key} to 0.1 mm, e.g. {tenths / 10}")
+    return tenths
+
+
+def _mm(tenths: int) -> str:
+    """An amount in tenths of a mm as definition text, e.g. 'at least 20 mm'."""
+    return f"{tenths // 10} mm" if tenths % 10 == 0 else f"{tenths / 10:.1f} mm"
+
+
+def _days(flat: dict, key: str, minimum: int) -> int:
+    """The value of `key` as a whole number of at least `minimum`."""
+    value = flat[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value or value < minimum:
+        raise ConfigSchemaError(f"{key} = {value!r} must be a whole number of at least {minimum}")
+    return int(value)
+
+
+def flat_onset_to_rule(flat: dict) -> tuple[dict, dict]:
+    """The onset definition (a mapping, for `onset.rule`) and the `onset.thresholds` the old flat onset keys describe.
+
+    Needs wet_init, wet_spell, dry_spell, dry_extent and end_date (a [year, month, day] list) and, without thresh_file,
+    wet_threshold; reads start_date (1 January if absent), earliest_onset_date (or its old name mok), thresh_file and
+    thresh_var. The rule reproduces the old detection with these differences: dry_threshold was never used and is
+    dropped; the old forecast dry window was one day shorter than the observed one, the observed one (days 2 to
+    dry_extent + 1 after the candidate) is used for both; the season ends where the old observed search ended, the
+    last candidate whose wet spell fit in the data read up to end_date + 47 days.
+    """
+    flat = {key: value for key, value in flat.items() if value is not None}
+    if "mok" in flat:
+        if "earliest_onset_date" in flat:
+            raise ConfigSchemaError("the config sets both 'mok' and 'earliest_onset_date'. Fix: remove 'mok'")
+        flat["earliest_onset_date"] = flat.pop("mok")
+    missing = [key for key in ("wet_init", "wet_spell", "dry_spell", "dry_extent", "end_date") if key not in flat]
+    if "thresh_file" not in flat and "wet_threshold" not in flat:
+        missing.append("wet_threshold")
+    if missing:
+        raise ConfigSchemaError(f"the flat onset keys lack {', '.join(missing)}. Fix: add them, then convert again")
+    wet_init = _tenths(flat, "wet_init")
+    window = _days(flat, "wet_spell", 1)
+    dry_spell = _days(flat, "dry_spell", 1)
+    dry_extent = _days(flat, "dry_extent", 0)
+    amount = THRESHOLD_NAME if "thresh_file" in flat else _mm(_tenths(flat, "wet_threshold"))
+    onset: dict = {"window": f"{window} days",
+                   "require": [{"all days": "wet"}, {"total": f"more than {amount}"}]}
+    onset["reject if"] = ([{"dry run": f"at least {dry_spell} days", "within": f"days 2 to {dry_extent + 1}"}]
+                          if dry_extent > window and dry_extent >= dry_spell else [])
+    start = flat.get("earliest_onset_date") or (flat.get("start_date") or (None, 1, 1))[1:]
+    end = datetime.date(2001, *flat["end_date"][1:]) + datetime.timedelta(days=EXTEND_END_DAYS - (window - 1))
+    if end.year != 2001:
+        raise ConfigSchemaError(f"end_date {list(flat['end_date'])} plus {EXTEND_END_DAYS - (window - 1)} days falls in "
+                                "the next year, which the old search read but a season cannot. Fix: set the season "
+                                "of the definition by hand")
+    rule = {"id": "converted_flat_onset", "version": 1, "title": "Converted from the flat onset keys",
+            "citation": "TODO", "wording": "TODO", "status": "draft",
+            "notes": "Written by `hcwf-run convert` from wet_init, wet_threshold, wet_spell, dry_spell, dry_extent, "
+                     "thresh_file and earliest_onset_date.",
+            "wet_day": f"at least {_mm(wet_init)}",
+            "season": {"from": f"{start[0]:02d}-{start[1]:02d}", "to": f"{end.month:02d}-{end.day:02d}"}}
+    thresholds = {}
+    if "thresh_file" in flat:
+        rule["thresholds"] = {THRESHOLD_NAME: {"mean total over": f"{window} days"}}
+        thresholds[THRESHOLD_NAME] = f"{flat['thresh_file']}:{flat['thresh_var']}" if flat.get("thresh_var") \
+            else str(flat["thresh_file"])
+    rule["onset"] = onset
+    return rule, thresholds
+
+
+def convert_flat_onset(source, target, force: bool = False) -> Path:
+    """Write a copy of the run config `source` with its flat onset keys turned into an `onset: {rule: ...}` section.
+
+    The keys are the ones earlier versions read at the top level (FLAT_ONSET_KEYS); the rule is checked by loading it
+    as a definition. Refuses to overwrite target unless force.
+    """
+    from hcwf.onset import definition as definition_mod
+
     target = Path(target)
     if target.exists() and not force:
         raise FileExistsError(f"{target} exists. Pass --force to overwrite it")
-    header = (f"# Converted from {Path(source).name} by `hcwf-run convert`. Check it, then run:\n"
-              f"#   hcwf-run -p {target.name}\n")
-    text = render_yaml(mapping, header=header)
-    schema_check = yaml.safe_load(text)
-    from hcwf.lib.config_yaml import build_config
-
-    build_config(schema_check, source=str(target))
-    target.write_text(text)
+    raw = yaml.safe_load(Path(source).read_text())
+    if not isinstance(raw, dict):
+        raise ConfigSchemaError(f"{source} is not a run config (expected a mapping of keys at the top level)")
+    flat = {key: raw.pop(key) for key in FLAT_ONSET_KEYS if key in raw}
+    if all(value is None for value in flat.values()):
+        raise ConfigSchemaError(f"{source} has no flat onset keys ({', '.join(FLAT_ONSET_KEYS)}); nothing to convert")
+    evaluation = raw.get("evaluation") if isinstance(raw.get("evaluation"), dict) else {}
+    for key in ("start_date", "end_date"):
+        flat[key] = evaluation.get(key, raw.get(key))
+    onset = raw.setdefault("onset", {})
+    clash = [key for key in ("definition", "rule") if onset.get(key) is not None]
+    if clash:
+        raise ConfigSchemaError(f"the config has flat onset keys and onset.{clash[0]}. Fix: keep one of them")
+    rule, thresholds = flat_onset_to_rule(flat)
+    definition_mod.loads(yaml.safe_dump(rule, sort_keys=False))
+    onset["rule"] = rule
+    if thresholds:
+        onset["thresholds"] = thresholds
+    header = (f"# Converted from {Path(source).name} by `hcwf-run convert`: the flat onset keys became onset.rule.\n"
+              f"# Check it, then run: hcwf-run -p {target.name} --check\n")
+    target.write_text(header + yaml.safe_dump(raw, sort_keys=False, width=120))
     return target

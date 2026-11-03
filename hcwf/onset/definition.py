@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+from hcwf.lib.assertion import HCWFConfigError
 from hcwf.onset import units
 from hcwf.onset.model import (
     Comparison, Condition, Curve, DayRef, Definition, DerivedSeasons, FirstPassage,
@@ -32,7 +33,7 @@ _ID_RE = re.compile(r"^[a-z0-9_]+$")
 _REQUIRE_KEYS = ("first day", "all days", "wet days", "total")
 
 
-class DefinitionError(ValueError):
+class DefinitionError(HCWFConfigError):
     """An onset definition that is malformed or ambiguous; the message names the YAML path and the fix."""
 
 

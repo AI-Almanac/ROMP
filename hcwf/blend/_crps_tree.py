@@ -435,10 +435,6 @@ class CRPSForest:
     def predict(self, X):
         return np.array([v.mean() for v in self.predict_members(X)], dtype=float)
 
-    def predict_quantiles(self, X, quantiles=(0.1, 0.5, 0.9)):
-        q = np.asarray(quantiles, dtype=float)
-        return np.vstack([np.quantile(v, q) for v in self.predict_members(X)])
-
     def predict_lead_day_distribution(self, X, max_day=28):
         """(n, max_day + 1) shares of pooled leaf members per lead day 1..max_day, then > max_day.
 

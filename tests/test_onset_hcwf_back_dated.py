@@ -8,8 +8,8 @@ from hcwf.io.output import add_back_dated_map, save_metrics_to_netcdf, save_scor
 from hcwf.stats.benchmark import compute_onset_metrics_with_windows
 from hcwf.stats.bins import create_forecast_observation_pairs_with_bins
 
-OBSERVED = {"onset_legacy": False, "onset_definition": "icpac", "obs_day_boundary": "00 UTC, labelled by start"}
-LEGACY = {"onset_legacy": True}
+OBSERVED = {"onset_definition": "icpac", "obs_day_boundary": "00 UTC, labelled by start"}
+NONE = {**OBSERVED, "forecast_history": "none"}
 OBS_ONSET = xr.DataArray([[np.datetime64("2020-06-20", "ns")]], coords=[("lat", [0.0]), ("lon", [0.0])])
 
 
@@ -30,11 +30,10 @@ def test_metrics_count_back_dated_only_in_the_first_window():
     assert later["n_back_dated"].tolist() == [0]
 
 
-def test_legacy_and_none_history_have_no_column():
-    """Legacy configs and forecast_history "none" give exactly the old table."""
-    for cfg in (LEGACY, {**OBSERVED, "forecast_history": "none"}, {}):
-        table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15), **cfg)
-        assert "n_back_dated" not in table.columns
+def test_none_history_has_no_column():
+    """forecast_history "none" gives exactly the old table."""
+    table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15), **NONE)
+    assert "n_back_dated" not in table.columns
 
 
 def test_empty_table_still_carries_the_column():
@@ -45,7 +44,7 @@ def test_empty_table_still_carries_the_column():
 
 
 def test_spatial_map_and_global_attribute(tmp_path):
-    """The map sums the counts per cell and the file gets the total as a global attribute; legacy adds nothing."""
+    """The map sums the counts per cell and the file gets the total as a global attribute; history none adds nothing."""
     table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15), **OBSERVED)
     spatial = {"mean_mae": xr.DataArray([[1.0]], coords=OBS_ONSET.coords)}
     add_back_dated_map(spatial, {2020: table, 2021: table}, {2020: OBS_ONSET, 2021: OBS_ONSET})
@@ -54,10 +53,10 @@ def test_spatial_map_and_global_attribute(tmp_path):
     ds = xr.open_dataset(tmp_path / "spatial_metrics_c.nc")
     assert ds.attrs["n_back_dated_total"] == 2 and "n_back_dated" in ds
 
-    legacy_table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15),
-                                                         **LEGACY)
+    plain_table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15),
+                                                        **NONE)
     plain = {"mean_mae": xr.DataArray([[1.0]], coords=OBS_ONSET.coords)}
-    add_back_dated_map(plain, {2020: legacy_table}, {2020: OBS_ONSET})
+    add_back_dated_map(plain, {2020: plain_table}, {2020: OBS_ONSET})
     assert list(plain) == ["mean_mae"]
 
 
@@ -86,7 +85,7 @@ def test_member_share_column_in_the_overall_csv(tmp_path):
                        dir_out=str(tmp_path))
     assert pd.read_csv(tmp_path / "overall_skill_scores_M_1-10.csv")["back_dated_member_share"].tolist() == [0.5]
 
-    old = create_forecast_observation_pairs_with_bins(_members(), OBS_ONSET, **kwargs, **LEGACY)
+    old = create_forecast_observation_pairs_with_bins(_members(), OBS_ONSET, **kwargs, **NONE)
     assert "back_dated_members" not in old.columns
     save_score_results({**_scores(), "forecast_obs_df": old}, model="L", verification_window=(1, 10),
                        dir_out=str(tmp_path))

@@ -98,7 +98,7 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         found, evidence = detect.detect_region(obs_res.extent)
         if found != "unknown":
             region_line = f"region: {regions.load_region(found).title}  # [detected: {evidence}]"
-    region_line = region_line or "region: Ethiopia  # TODO: your region, see `python -m hcwf.onset regions`"
+    region_line = region_line or "region: Ethiopia  # TODO: your region, see `hcwf-run onset regions`"
     region_name = region_line.split(":")[1].split("#")[0].strip()
     try:
         regions.load_region(region_name)
@@ -135,7 +135,7 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         out += ["onset:", f"  definition: {definition}", ""]
     else:
         out += [f"# onset:  # the region's definition is used (default here: {default or 'none'});",
-                "#   definition: <registry id or path>  # choose another, see `python -m hcwf.onset list`",
+                "#   definition: <registry id or path>  # choose another, see `hcwf-run onset list`",
                 "#   override: {season: {from: 05-15}}  # change part of a definition",
                 ""]
     out += ["observations:"] + obs_lines + ["", "models:"] + model_blocks + [

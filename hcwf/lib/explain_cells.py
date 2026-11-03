@@ -43,9 +43,6 @@ def write_explain_cells(cfg) -> list[Path]:
         return []
     kwargs = vars(cfg)
     setup = onset_setup(kwargs)
-    if setup.legacy:
-        log.info("explain_cells: skipped, it needs an onset definition (the old flat onset keys are in use)")
-        return []
     out_dir = Path(kwargs["dir_fig"]) / "explain"
     out_dir.mkdir(parents=True, exist_ok=True)
     thresholds = load_thresholds(**kwargs)

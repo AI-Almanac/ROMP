@@ -114,13 +114,11 @@ def _flat(source, overrides: dict) -> dict:
 
 
 def _prepare(source, overrides: dict, write: bool, tmp: Path | None) -> dict:
-    """The flat config of a run, finished (mode, paths, lead window, run folder plan) and validated."""
+    """The flat config of a run, finished (paths, lead window, run folder plan) and validated."""
     from hcwf.lib import loader
     from hcwf.lib.assertion import HCWFValidator
 
     dic = _flat(source, overrides)
-    dic = loader._rename_deprecated_keys(dic)
-    dic = loader._set_onset_mode(dic)
     dic = loader._resolve_paths(dic)
     loader.plan_run(dic, dic.get("config_file"), write)
     HCWFValidator(dic).validate()
@@ -300,9 +298,8 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
             log.info(f"  {line}")
         for line in dic.get("dataset_report", ()):
             log.info(f"  {line}")
-        if not dic.get("onset_legacy", False):
-            for line in definition_lines(dic):
-                log.info(f"  {line}")
+        for line in definition_lines(dic):
+            log.info(f"  {line}")
         if write:
             log.info(f"  Run folder       : {paths.root}")
             try:

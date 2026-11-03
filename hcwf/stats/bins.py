@@ -7,7 +7,7 @@ import numpy as np
 from hcwf.io.input import load_thresholds, load_history, get_initialization_dates
 from hcwf.io.input import get_forecast_probabilistic_twice_weekly
 from hcwf.io.input import load_imd_rainfall
-from hcwf.lib.onset_config import is_legacy, onset_setup
+from hcwf.lib.onset_config import onset_setup
 from hcwf.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
 from hcwf.stats.conditional_climatology import CLIMATOLOGY_REFERENCES
 from hcwf.spatial import axes
@@ -19,12 +19,11 @@ log = logging.getLogger(__name__)
 
 
 def counts_back_dated(cfg):
-    """Whether score outputs report back-dated forecast onsets: definition mode with forecast_history "observed".
+    """Whether score outputs report back-dated forecast onsets: forecast_history "observed".
 
-    Legacy configs and the climatology baselines (whose onsets come from no forecast) return False,
-    so their outputs stay exactly as before.
+    The climatology baselines (whose onsets come from no forecast) return False, so their outputs stay as they are.
     """
-    if is_legacy(cfg) or cfg.get("model") in CLIMATOLOGY_REFERENCES:
+    if cfg.get("model") in CLIMATOLOGY_REFERENCES:
         return False
     return onset_setup(cfg).forecast_history == "observed"
 
@@ -500,10 +499,8 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
 
 # This function creates the observed forecast pairs for multiple years (core monsoon zone grids) and combines them
 def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
-                                  thresh_file, thresh_var, wet_threshold,
                                   date_filter_year, init_days, start_date, end_date,
                                   model_dir, model_var, unit_cvt, file_pattern,
-                                  wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, fallback_date, earliest_onset_date,
                                   members, onset_percentage_threshold, max_forecast_day, day_bins, **kwargs):
     """Main function to perform multi-year reliability analysis."""
 

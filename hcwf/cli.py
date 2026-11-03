@@ -6,11 +6,12 @@
                                     (a run file with a `blend:` section trains the blend)
     hcwf-run init [...]             write a starting run.yaml, detecting dataset values from your paths
     hcwf-run datasets -p run.yaml   show what the config's datasets resolve to, with checks
-    hcwf-run convert old.in -o run.yaml   convert an old config.in to YAML
+    hcwf-run convert old.yaml -o run.yaml   convert a run YAML with the old flat onset keys (wet_init, ...)
     hcwf-run convert blend.yml -o run.yaml          convert an onset_blending config to a run YAML with a blend: section
     hcwf-run convert --specs ... -o run.yaml        the same from a legacy spec set
     hcwf-run forecast BLEND... --forecast MODEL=PATH [...]   apply trained blends (trained.blend) to live forecasts
     hcwf-run export -p run.yaml     write the gridded onset dates of each source as NetCDF (no scoring)
+    hcwf-run onset list|describe|regions|schematic|explain|check-alignment   the onset definitions and regions
     hcwf-run -h                     this help (with a config, -h lists the run-time overrides)
 """
 from __future__ import annotations
@@ -23,10 +24,11 @@ from pathlib import Path
 HELP = """usage: hcwf-run [-p run.yaml] [--check] [--overwrite] [--quiet|--verbose] [overrides]      run the config
        hcwf-run init [options]                  write a starting run.yaml
        hcwf-run datasets -p run.yaml            show how the config's datasets resolve
-       hcwf-run convert old.in -o run.yaml      convert an old config.in to YAML
+       hcwf-run convert old.yaml -o run.yaml    convert a run YAML with the old flat onset keys
        hcwf-run convert blend.yml -o run.yaml   convert an onset_blending config (or --specs ...) to run YAML
        hcwf-run forecast BLEND --forecast MODEL=PATH   apply a trained blend to live forecast files
        hcwf-run export -p run.yaml              write the gridded onset dates as NetCDF
+       hcwf-run onset COMMAND                   onset definitions: list, describe, regions, schematic, explain, check-alignment
 
 HCWF (Human-Centered Weather Forecasts) benchmarks rainy-season onset forecasts.
 One YAML run config describes a run; point hcwf-run at it with -p (or HCWF_CONFIG).
@@ -42,7 +44,8 @@ commands:
              evidence written next to each value. Also: --region, --years Y0 Y1, --definition ID, -o FILE,
              --force, --dataset-template obs|forecast.
   datasets   resolve the datasets of a config (detections with their evidence, warnings, problems).
-  convert    read an old config.in, an onset_blending config (YAML) or a legacy spec set (--specs) and write the
+  convert    read a run YAML with the old flat onset keys (wet_init, wet_spell, ...), an onset_blending config (YAML)
+             or a legacy spec set (--specs) and write the
              equivalent run YAML (-o FILE, --force, --region ID for blending configs, which have none). Blending
              configs and specs become `onset: {rule: ...}` with the parity options, `units:` and a `blend:`
              section; what is not carried over is listed in comments at the top.
@@ -60,6 +63,9 @@ commands:
              climatology, conditional_climatology) with the dates exactly as HCWF scores them. Options:
              --sources observed,AIFS,climatology (default: all the run uses), --out DIR (default: the run's onsets folder, dir_out/onsets with an explicit data_dir).
              `output.save_onsets: true` in the run file does the same before a normal run's scoring.
+  onset      the onset component: `list` (definition ids), `describe ID` (the rule in words, hash, status), `regions`,
+             `schematic ID --png F`, `explain --obs ... --lat --lon --year` (why one cell got its date),
+             `check-alignment` (obs vs forecast day lags). `hcwf-run onset COMMAND -h` lists each one's options.
 """
 
 
@@ -133,12 +139,12 @@ def _datasets(argv) -> int:
 
 
 def _convert(argv) -> int:
-    """`hcwf-run convert SOURCE -o run.yaml`: an old config.in, a BlendConfig YAML, or (--specs) a legacy spec set."""
+    """`hcwf-run convert SOURCE -o run.yaml`: a run YAML with flat onset keys, a BlendConfig YAML, or (--specs) a legacy spec set."""
     import yaml
 
-    p = argparse.ArgumentParser(prog="hcwf-run convert", description="Convert an old config.in, an onset_blending "
+    p = argparse.ArgumentParser(prog="hcwf-run convert", description="Convert a run YAML with the old flat onset keys, an onset_blending "
                                 "config (YAML) or a legacy spec set (--specs) to a YAML run config.")
-    p.add_argument("source", nargs="?", help="the old config.in, or the onset_blending config YAML")
+    p.add_argument("source", nargs="?", help="the run YAML with flat onset keys, or the onset_blending config YAML")
     p.add_argument("-o", "--output", default="run.yaml")
     p.add_argument("--force", action="store_true", help="overwrite an existing file")
     p.add_argument("--region", help="HCWF region id of the converted blending config (default: none, the data's whole "
@@ -183,15 +189,14 @@ def _convert(argv) -> int:
             from hcwf.lib.convert_specs import convert_blend_file, is_blend_config, validate_conversion
 
             if not is_blend_config(yaml.safe_load(Path(args.source).read_text())):
-                raise ValueError(f"{args.source} is not an onset_blending config (no observations.files, onset and "
-                                 "evaluation); an HCWF run config needs no conversion")
+                from hcwf.lib.convert import convert_flat_onset
+
+                return _converted(convert_flat_onset(args.source, args.output, force=args.force))
             conversion = convert_blend_file(args.source, region=args.region)
             validate_conversion(conversion)
             text = conversion.to_yaml({"config": args.source})
         else:
-            from hcwf.lib.convert import convert_file
-
-            return _converted(convert_file(args.source, args.output, force=args.force))
+            raise ValueError(f"{args.source} is not a YAML file. Only YAML configs are read; start one with `hcwf-run init`")
         target.write_text(text)
     except Exception as exc:  # noqa: BLE001 - report any conversion problem with its message
         print(f"Error: {exc}", file=sys.stderr)
@@ -266,37 +271,37 @@ def _export(argv) -> int:
     return 0
 
 
+def _onset(argv) -> int:
+    """`hcwf-run onset ...`: the onset definitions, regions, schematic and one-cell explanations."""
+    from hcwf.onset.cli import main
+
+    return main(argv)
+
+
 def _has_config(argv) -> bool:
     """Whether a config is named by -p/--param in argv or HCWF_CONFIG."""
     return any(a in ("-p", "--param") or a.startswith("--param=") for a in argv) or bool(os.environ.get("HCWF_CONFIG"))
 
 
-def handled_without_run(argv) -> bool:
-    """Run init/datasets/convert/export or print the top-level help; True if that was the whole job.
-
-    `run` is dropped from sys.argv. -h with a config falls through so the run parser lists its overrides.
-    """
-    command = argv[0] if argv else None
-    commands = {"init": _init, "datasets": _datasets, "convert": _convert, "export": _export, "forecast": _forecast}
-    if command in commands:
-        code = commands[command](argv[1:])
-        if code:
-            sys.exit(code)
-        return True
-    if command == "run":
-        sys.argv = [sys.argv[0], *argv[1:]]
-        return False
-    if any(a in ("-h", "--help") for a in argv) and not _has_config(argv):
-        print(HELP, end="")
-        return True
-    return False
+COMMANDS = {"init": _init, "datasets": _datasets, "convert": _convert, "export": _export, "forecast": _forecast,
+            "onset": _onset}
 
 
 def main(argv=None) -> None:
-    """Entry point of `hcwf-run`."""
+    """Entry point of `hcwf-run`: a subcommand, the top-level help, or (the default) a run of the config(s)."""
     if argv is not None:
         sys.argv = [sys.argv[0], *argv]
-    if handled_without_run(sys.argv[1:]):
+    args = sys.argv[1:]
+    command = args[0] if args else None
+    if command in COMMANDS:
+        code = COMMANDS[command](args[1:])
+        if code:
+            sys.exit(code)
+        return
+    if command == "run":
+        sys.argv = [sys.argv[0], *args[1:]]
+    elif any(a in ("-h", "--help") for a in args) and not _has_config(args):
+        print(HELP, end="")
         return
     from hcwf.driver import run_hcwf
 

@@ -160,9 +160,9 @@ def test_config_objects_carry_units_and_blend_sections_and_listed_files():
 def test_check_says_which_box_a_region_name_selects():
     from hcwf.lib.check import _box_text
 
-    assert "legacy domain 'India'" in _box_text({"region": "India"}) and "lat 6.46 to 35.51" in _box_text({"region": "India"})
     plain = _box_text({"region": "india"})
-    assert "legacy" not in plain and "the domain of region india" in plain and "lat 6.5 to 38.5" in plain
+    assert _box_text({"region": "India"}) == plain   # the spelling does not matter
+    assert "the domain of region india" in plain and "lat 6.5 to 38.5" in plain
     assert "no region" in _box_text({"region": None}) and "not in the registry" in _box_text({"region": "nowhere"})
 
 

@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import argparse
 import sys
-import warnings
 
 from hcwf.utils.practical import set_dir
 from hcwf.lib.control import init_dataclass
@@ -54,42 +53,17 @@ def _read_config(config_path):
         raise FileNotFoundError(f"Could not find config file: {config_path}")
     if not is_yaml_path(config_item):
         raise HCWFConfigError(
-            f"{config_path} is not a YAML config. hcwf-run reads YAML only. Convert an old config.in with "
-            f"`hcwf-run convert {config_path} -o run.yaml`, or start a new one with `hcwf-run init`.")
+            f"{config_path} is not a YAML config. hcwf-run reads YAML only. Start a new one with `hcwf-run init`.")
     return Config.from_yaml(config_item).to_flat(source=str(config_item))
-
-
-def _rename_deprecated_keys(dic):
-    """Map the old India-specific ``mok`` key to ``earliest_onset_date``, which defaults to None (no filter)."""
-    if "mok" in dic:
-        if "earliest_onset_date" in dic:
-            raise HCWFConfigError("Config sets both 'mok' and 'earliest_onset_date'; remove 'mok'.")
-        warnings.warn("Config key 'mok' is deprecated; rename it to 'earliest_onset_date'.", FutureWarning)
-        dic["earliest_onset_date"] = dic.pop("mok")
-    dic.setdefault("earliest_onset_date", None)
-    return dic
-
-
-def _set_onset_mode(dic):
-    """Flag configs that use the old flat onset keys; other configs get onset_definition = None if it is unset."""
-    from hcwf.lib.onset_config import detect_legacy
-
-    dic["onset_legacy"] = detect_legacy(dic)
-    if not dic["onset_legacy"]:
-        dic.setdefault("onset_definition", None)
-    return dic
 
 
 def _resolve_paths(dic):
     """Resolve relative paths in config dict to absolute paths."""
-    dic["work_dir"] = Path(dic["work_dir"]).expanduser().resolve()
-    dic["pkg_dir"] = Path(dic["pkg_dir"]).expanduser().resolve()
-
     for key in ["ref_model_dir", "dir_out", "dir_fig", "obs_dir"]:
         if key in dic and not Path(str(dic[key])).is_absolute():
             dic[key] = set_dir(dic[key])
 
-    for key in ["thresh_file", "shpfile_dir", "nc_mask"]:
+    for key in ["shpfile_dir", "nc_mask"]:
         if dic.get(key) is not None:
             if not Path(str(dic[key])).is_absolute():
                 dic[key] = set_dir(dic[key])
@@ -165,8 +139,6 @@ def build_cfg(cli_args=None):
     """
     config_path = ensure_config_exists(_get_config_path_pre_parse(cli_args))
     dic = _read_config(config_path)
-    dic = _rename_deprecated_keys(dic)
-    dic = _set_onset_mode(dic)
     dic["config_file"] = str(config_path)
     dic = _resolve_paths(dic)
 
@@ -215,7 +187,7 @@ def use_config(dic):
 
 
 def get_cfg(cli_args=None):
-    """Return the validated config as a SimpleNamespace, built once and cached; exits on invalid config unless debug."""
+    """Return the validated config as a SimpleNamespace, built once and cached; exits on invalid config."""
     global _cfg
     if _cfg is None:
         _cfg = build_cfg(cli_args)
@@ -228,8 +200,7 @@ def get_cfg(cli_args=None):
             apply_lead_window(_cfg)
     except HCWFConfigError as e:
         log.info(f"Error: Invalid Config!!! {e}")
-        if not _cfg.get('debug'):
-            sys.exit(1)
+        sys.exit(1)
 
     return SimpleNamespace(**_cfg)
 

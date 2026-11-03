@@ -150,10 +150,10 @@ def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids)
 def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, threshold_name):
     """One forecast file's member onset counts per lead day, a run of issues at a time.
 
-    Returns (data, spread), or None when `issue_dates` is given and the file has none of them: data holds, over (issue, unit, day), count_base / count_fixed_cutoff / count_ref (uint8:
+    Returns the data, or None when `issue_dates` is given and the file has none of them: data holds, over (issue, unit, day), count_base / count_fixed_cutoff / count_ref (uint8:
     members with their onset on each lead day, from the search starting at lead 1, at the fixed cutoff date and at
     the reference onset), plus members (per issue), onset_threshold (unit) and rain_mean (the members' mean rainfall in
-    the file's dtype); spread says whether any unit's members differ.
+    the file's dtype).
     """
     with io_input.UnitForecast(path, kwargs, spec, keep_ids=kwargs.get("keep_unit_ids"),
                                issue_dates=kwargs.get("issue_dates")) as file:
@@ -163,13 +163,11 @@ def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, thre
         n_issue, n_unit, n_day = len(issues), len(ids), len(days)
         variants = ("base", "fixed_cutoff", "ref")
         counts = {v: np.zeros((n_issue, n_unit, n_day), dtype=np.uint8) for v in variants}
-        members, summary, spread = np.zeros(n_issue, dtype=np.uint8), None, False
+        members, summary = np.zeros(n_issue, dtype=np.uint8), None
         run_kwargs = {**kwargs, "max_forecast_day": n_day}
         for start, stop, rain in file.runs():
             values = np.asarray(rain.values)
             n_member = values.shape[1]
-            if not spread and n_member >= 2:
-                spread = bool(((~np.isnan(values)).sum(axis=1) >= 2).any())
             found, order, _ = detect.member_onset_counts(
                 rain, thresholds, **run_kwargs,
                 search_start=forecast_starts(fixed_cutoff, reference, issues[start:stop], ids))
@@ -185,7 +183,7 @@ def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, thre
                  "year": (("issue",), pd.DatetimeIndex(issues).year.to_numpy(dtype=np.int64)),
                  **{f"count_{v}": (("issue", "unit", "day"), counts[v]) for v in variants},
                  "rain_mean": (("issue", "unit", "day"), summary)}
-    return xr.Dataset(variables, coords={"issue": issues, "unit": ids.astype(object), "day": np.asarray(days)}), spread
+    return xr.Dataset(variables, coords={"issue": issues, "unit": ids.astype(object), "day": np.asarray(days)})
 
 
 def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference, *, keep_ids=None, member_ids=None,
@@ -217,10 +215,10 @@ def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference
     results = map_items(_forecast_file, paths, (kwargs, units, thresholds, recipe.onset.fixed_cutoff, reference, name),
                         workers=count)
     results = [r for r in results if r is not None]
-    names = [tuple(data["unit"].values) for data, _ in results]
+    names = [tuple(data["unit"].values) for data in results]
     if len(set(names)) > 1:
         raise ValueError(f"model {model}: its files cover different units")
-    data = (xr.concat([d for d, _ in results], dim="issue", data_vars="minimal", coords="minimal", compat="equals",
+    data = (xr.concat(results, dim="issue", data_vars="minimal", coords="minimal", compat="equals",
                       join="exact") if results else None)
     if data is not None:
         issues = pd.DatetimeIndex(data["issue"].values)
@@ -230,7 +228,7 @@ def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference
                              f"{'…' if len(repeated) > 5 else ''}): one initialisation per date")
         if not issues.is_monotonic_increasing:
             data = data.sortby("issue")
-    return ForecastOnsets(model=model, data=data, has_spread=any(spread for _, spread in results))
+    return ForecastOnsets(model=model, data=data)
 
 
 # ---------------------------------------------------------------------------------------------------------------

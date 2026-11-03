@@ -57,17 +57,63 @@ def test_vectorised_matches_pairwise(shift, label):
             assert report.per_lead[lead].correlations[lag] == pytest.approx(r, abs=1e-4)
 
 
-def test_fingerprint_changes_with_label_and_data(tmp_path):
+def test_cache_parts_change_with_label_and_data(tmp_path):
     """The cache fingerprint depends on the lead label and on the dataset files."""
     folder = tmp_path / "obs"
     folder.mkdir()
     (folder / "2001.nc").write_bytes(b"a")
     kw = {"obs_dir": str(folder), "model_dir": str(folder), "obs_var": "x", "model_var": "y"}
-    base = align_sample.fingerprint(kw, "start", "b", "f")
-    assert base == align_sample.fingerprint(kw, "start", "b", "f")
-    assert base != align_sample.fingerprint(kw, "end", "b", "f")
+    store = align_sample._store()
+
+    def fingerprint(label):
+        return store.fingerprint(align_sample.cache_parts(kw, label, "b", "f"))
+
+    base = fingerprint("start")
+    assert base == fingerprint("start")
+    assert base != fingerprint("end")
     (folder / "2001.nc").write_bytes(b"abc")
-    assert base != align_sample.fingerprint(kw, "start", "b", "f")
+    assert base != fingerprint("start")
+
+
+def test_cache_parts_follow_listed_files(tmp_path):
+    """A dataset given by paths is fingerprinted by those files, not by a folder."""
+    one, two = tmp_path / "a_2001.nc", tmp_path / "b_2001.nc"
+    one.write_bytes(b"a")
+    two.write_bytes(b"b")
+    kw = {"obs_paths": [str(one)], "model_paths": [str(two)], "obs_var": "x", "model_var": "y"}
+    store = align_sample._store()
+    base = store.fingerprint(align_sample.cache_parts(kw, "start", "b", "f"))
+    two.write_bytes(b"bcd")
+    assert base != store.fingerprint(align_sample.cache_parts(kw, "start", "b", "f"))
+
+
+def _write_listed(tmp_path):
+    """Synthetic observations and forecasts as yearly files in two layouts: a folder, and files named in paths."""
+    obs_da, fc_da = _synthetic(0)
+    (tmp_path / "obs").mkdir()
+    (tmp_path / "model").mkdir()
+    obs_da.to_dataset(name="rain").to_netcdf(tmp_path / "obs" / "2001.nc")
+    fc_da.to_dataset(name="tp").to_netcdf(tmp_path / "model" / "2001.nc")
+    return tmp_path / "obs" / "2001.nc", tmp_path / "model" / "2001.nc"
+
+
+def test_datasets_given_by_paths_are_read(tmp_path, monkeypatch):
+    """The sampled check reads datasets listed in obs_paths and model_paths, and gives the folder read's report."""
+    monkeypatch.setenv("HCWF_CACHE_DIR", str(tmp_path / "cache"))
+    obs_file, model_file = _write_listed(tmp_path)
+    common = dict(obs_var="rain", model_var="tp", probabilistic=False, region=None)
+    by_folder = align_sample.check_labels(
+        dict(obs_dir=str(obs_file.parent), obs_file_pattern=["{}.nc"], model_dir=str(model_file.parent),
+             file_pattern="{}.nc", **common), ("start",), obs_boundary=START, use_cache=False)["start"][0]
+    listed = dict(obs_paths=[str(obs_file)], model_paths=[str(model_file)], **common)
+    by_paths, cached = align_sample.check_labels(listed, ("start",), obs_boundary=START)["start"]
+    assert not cached
+    assert by_paths.verdict == by_folder.verdict
+    for lead, report in by_folder.per_lead.items():
+        for lag, r in report.correlations.items():
+            assert by_paths.per_lead[lead].correlations[lag] == pytest.approx(r, rel=1e-9)
+    again, cached = align_sample.check_labels(listed, ("start",), obs_boundary=START)["start"]
+    assert cached and again.verdict == by_paths.verdict
 
 
 DATA = Path(os.environ.get("HCWF_TEST_DATA", "/nonexistent"))

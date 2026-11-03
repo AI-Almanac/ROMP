@@ -31,20 +31,6 @@ def create_parser(config, cli_args=None):
         help="Max forecast day (default: {config['max_forecast_day']})"
     )
 
-    # The flat onset keys exist only in legacy configs (see hcwf.lib.onset_config).
-    flat_options = (
-        ("wet_init", float, "Rain threshold (mm) for first potential wet day"),
-        ("wet_threshold", float, "Rainfall threshold (mm) if no thresh_file provided"),
-        ("wet_spell", int, "Min days rainfall must stay above threshold"),
-        ("dry_threshold", float, "Max rainfall (mm) to define a dry day"),
-        ("dry_spell", int, "Max consecutive dry days allowed after onset"),
-        ("dry_extent", int, "Search window (days) after onset to check for dry spell"),
-    )
-    for name, kind, text in flat_options:
-        if name in config:
-            parser.add_argument(f"--{name}", type=kind, default=config[name],
-                                help=f"{text} (default: {config[name]})")
-
     if "dry_spell_check" in config:
         parser.add_argument(
             "--dry_spell_check",
@@ -121,13 +107,6 @@ def create_parser(config, cli_args=None):
         type=str2bool,
         default=config['probabilistic'],
         help=f"Ensemble evaluation toggle, True or False (default: {config['probabilistic']})"
-    )
-
-    parser.add_argument(
-        "--debug",
-        type=str2bool,
-        default=config['debug'],
-        help="debug model for developers only, True of False (default: {config['debug']})"
     )
 
     parser.add_argument(

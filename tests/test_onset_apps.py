@@ -1,4 +1,4 @@
-"""The onset apps (spatial map and time series) run with a definition-mode config and with the old flat keys."""
+"""The onset apps (spatial map and time series) run with a config that has an onset definition."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -25,7 +25,7 @@ def obs(tmp_path, monkeypatch):
 
 
 def base(obs, tmp_path):
-    """The config keys both modes share."""
+    """The config keys of the apps' runs."""
     return dict(obs_dir=str(obs), obs_file_pattern=["{}.nc"], obs_var="pr", obs_unit_cvt=None, region="x",
                 dir_out=str(tmp_path / "out"), dir_fig=str(tmp_path), verification_window_list=[(1, 10)],
                 obs_day_boundary=BOUNDARY, start_date=(2020, 5, 1), end_date=(2020, 7, 31),
@@ -33,24 +33,17 @@ def base(obs, tmp_path):
 
 
 def definition_cfg(obs, tmp_path):
-    """A definition-mode config: onset_definition and no flat onset keys."""
-    return {**base(obs, tmp_path), "onset_legacy": False, "onset_definition": "icpac"}
+    """A config with onset_definition icpac."""
+    return {**base(obs, tmp_path), "onset_definition": "icpac"}
 
 
-def legacy_cfg(obs, tmp_path):
-    """A legacy config: the old flat onset keys and no onset_definition."""
-    return {**base(obs, tmp_path), "onset_legacy": True, "thresh_file": None, "thresh_var": None, "wet_threshold": 20,
-            "wet_init": 1, "wet_spell": 3, "dry_spell": 7, "dry_threshold": 1, "dry_extent": 0, "fallback_date": None,
-            "earliest_onset_date": None}
+@pytest.fixture
+def cfg(obs, tmp_path):
+    """The run configuration."""
+    return definition_cfg(obs, tmp_path)
 
 
-@pytest.fixture(params=[definition_cfg, legacy_cfg], ids=["definition", "legacy"])
-def cfg(request, obs, tmp_path):
-    """Each mode's config in turn."""
-    return request.param(obs, tmp_path)
-
-
-def test_spatial_onset_runs_in_both_modes(cfg, monkeypatch):
+def test_spatial_onset_runs(cfg, monkeypatch):
     """spatial_onset returns the day-of-year map (onset on 1 June, day 153) and hands it to the map plot."""
     mapped = []
     monkeypatch.setattr(onset_spatial, "spatial_metrics_map", lambda da, *args, **kwargs: mapped.append(da))
@@ -59,8 +52,8 @@ def test_spatial_onset_runs_in_both_modes(cfg, monkeypatch):
     assert (doy.values == 153).all()
 
 
-def test_time_series_runs_in_both_modes(cfg, monkeypatch):
-    """obs_onset_analysis returns the season's rainfall and the onset dates, without any flat onset key in its signature."""
+def test_time_series_runs(cfg, monkeypatch):
+    """obs_onset_analysis returns the season's rainfall and the onset dates."""
     plotted = []
     monkeypatch.setattr(onset_time_series, "plot_rainfall_timeseries_with_onset_and_wetspell",
                         lambda *args, **kwargs: plotted.append(kwargs["save_path"]))
@@ -71,7 +64,7 @@ def test_time_series_runs_in_both_modes(cfg, monkeypatch):
 
 
 def test_time_series_with_climatology(cfg, monkeypatch):
-    """The climatological onset (one year, so equal to 2020's) is computed in both modes too."""
+    """The climatological onset (one year, so equal to 2020's) is computed too."""
     plotted = []
     monkeypatch.setattr(onset_time_series, "plot_rainfall_timeseries_with_onset_and_wetspell",
                         lambda *args, **kwargs: plotted.append(kwargs["onset_clim"]))

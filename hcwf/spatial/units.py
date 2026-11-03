@@ -6,8 +6,8 @@ table describes them, whatever the kind: an ordered, unique string `id`, a centr
 
 `EvaluationUnits.transform(source_lat, source_lon)` gives the `SparseTransform` from the cells of a source grid
 (observations or a model) to the units, compiled once per grid. Rain is read on the source grid, averaged with
-`observed_mean` onto the units in float mm and only then rounded to tenths (see `hcwf.onset.engine.regional`
-for the one-unit case), so the engine runs on a ("unit",) spatial axis unchanged.
+`observed_mean` onto the units in float mm and only then rounded to tenths (`EvaluationUnits.from_region` is the
+one-unit case), so the engine runs on a ("unit",) spatial axis unchanged.
 
 How the transform comes about:
 
@@ -23,13 +23,14 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from hcwf.lib.assertion import HCWFConfigError
 from . import ids as unit_ids
 from . import regrid
 from .regrid import SparseTransform
@@ -42,11 +43,11 @@ _LAT_NAMES = ("lat", "center_lat", "latitude")
 _LON_NAMES = ("lon", "center_lon", "longitude")
 
 
-class AreaError(ValueError):
+class AreaError(HCWFConfigError):
     """No unit falls inside the area of interest."""
 
 
-class UnitsSpecError(ValueError):
+class UnitsSpecError(HCWFConfigError):
     """A units specification that cannot be used (an unset environment variable in a path, no source for a mode)."""
 
 
@@ -187,13 +188,6 @@ class EvaluationUnits:
         """An optional column (name, parent), None when the units have none."""
         return self.table[name].to_numpy() if name in self.table.columns else None
 
-    def to_frame(self) -> pd.DataFrame:
-        """The table with each subset as a boolean column."""
-        out = self.table.copy()
-        for name, mask in self.subsets.items():
-            out[name] = mask
-        return out
-
     # -- constructors --------------------------------------------------------------------------------------
 
     @classmethod
@@ -263,7 +257,7 @@ class EvaluationUnits:
     def from_region(cls, keep, lat, lon, *, id: str = "region", name: str | None = None,
                     weights: str = "cos_lat") -> "EvaluationUnits":
         """One unit averaging the cells of a boolean (nlat, nlon) mask: cos(latitude) weights, or equal ones.
-        This is what `hcwf.onset.engine.regional` computes. The centroid is the cells' mean position."""
+        The centroid is the cells' mean position."""
         if weights not in ("cos_lat", "equal"):
             raise ValueError(f"weights must be 'cos_lat' or 'equal', got {weights!r}")
         lat, lon = np.asarray(lat, dtype=float).reshape(-1), np.asarray(lon, dtype=float).reshape(-1)
@@ -435,10 +429,6 @@ class EvaluationUnits:
             matrix = sparse.csr_matrix(matrix.sum(axis=0))
         return SparseTransform(matrix, None, targets, keys="coordinate", grid=(lat, lon))
 
-    def clear_transforms(self) -> None:
-        """Forget the compiled transforms (they are kept per source grid)."""
-        self._transforms.clear()
-
 
 # ---------------------------------------------------------------------------------------------------------------
 # Where the units come from: one specification for a region's `units:` block and a run's `units:` section
@@ -531,10 +521,6 @@ class UnitsSpec:
         named = [self.shapefile, self.weights, self.centroids, self.dissemination, self.outline]
         found = [self.resolve_path(n) for n in named if n]
         return sorted(p for p in found if p.is_file())
-
-    def with_weights(self, weights) -> "UnitsSpec":
-        """The same specification with another weights table (one source's own, as a model on its own grid has)."""
-        return self if weights is None else replace(self, weights=str(weights), shapefile=None)
 
     def build(self, lat=None, lon=None, ids=None) -> EvaluationUnits:
         """The units of a source: of the file's `ids` when it has a "unit" dimension (centroids from the spec's table),

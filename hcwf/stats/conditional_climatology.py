@@ -222,15 +222,14 @@ def _detect_observed_onset(year, kwargs):
 
 
 def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, observed_onset_da, *,
-                                                max_forecast_day, earliest_onset_date, climatology_cv=None, **kwargs):
+                                                max_forecast_day, climatology_cv=None, **kwargs):
     """The conditional median onset as a deterministic forecast, one row per (init, lat, lon), as compute_climatology_as_forecast.
 
     For each init before a cell's observed onset, the forecast onset is the
     first lead (1..max_forecast_day) where the conditional CDF, the running
     sum of the conditional probabilities, reaches 0.5. There is no forecast
     onset (NaN day, no date) when it does not within max_forecast_day, when the
-    cell has no KDE, or when the date is before earliest_onset_date (a
-    (month, day) tuple; falsy for no filter).
+    cell has no KDE.
     """
     cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
     spatial = axes.spatial_dims(observed_onset_da.dims)
@@ -251,11 +250,6 @@ def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, ob
     has_onset = reached.any(axis=1)
     init_at = init_ns[init_case]
     onset_at = init_at + lead.astype("timedelta64[D]").astype("timedelta64[ns]")
-    if earliest_onset_date:
-        init_year = init_at.astype("datetime64[Y]")
-        earliest = ((init_year.astype("datetime64[M]") + np.timedelta64(earliest_onset_date[0] - 1, "M")
-                     ).astype("datetime64[D]") + np.timedelta64(earliest_onset_date[1] - 1, "D"))
-        has_onset &= onset_at.astype("datetime64[D]") >= earliest
 
     def dates(values):
         """Format datetime values as an object array of YYYY-MM-DD strings."""

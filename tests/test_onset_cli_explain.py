@@ -1,9 +1,9 @@
-"""python -m hcwf.onset explain and schematic."""
+"""hcwf-run onset explain and schematic."""
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.onset.__main__ import main
+from hcwf.onset.cli import main
 
 
 def write_obs(path):

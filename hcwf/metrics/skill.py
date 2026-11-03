@@ -93,10 +93,8 @@ def prepare_score_cache(**kwargs):
 def create_score_results(*, BS, RPS, AUC, skill_score,
                          ref_model, ref_model_dir, ref_model_var, ref_model_file_pattern, ref_model_unit_cvt,
                          years, years_clim, obs_dir, obs_file_pattern, obs_var,
-                         thresh_file, thresh_var, wet_threshold,
                          date_filter_year, init_days, start_date, end_date,
                          model_dir, model_var, unit_cvt, file_pattern,
-                         wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, fallback_date, earliest_onset_date,
                          members, onset_percentage_threshold, max_forecast_day, day_bins, **kwargs):
     """Compute Brier score, RPS and AUC (as flagged by BS, RPS, AUC) for the forecast model and its reference, plus skill scores if skill_score is set.
 

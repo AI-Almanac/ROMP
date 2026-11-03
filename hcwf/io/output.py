@@ -157,7 +157,7 @@ def save_unit_tables(ds, kwargs, stem):
 
 def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='spatial_metrics',
                            allowed_attrs = ['model', 'years', 'tolerance_days', 'verification_window',
-                                            'max_forecast_day', 'earliest_onset_date', 'lead_window']):
+                                            'max_forecast_day', 'lead_window']):
     """
     Create an xarray Dataset from spatial_metrics, attach global attributes,
     and save to a NetCDF file.

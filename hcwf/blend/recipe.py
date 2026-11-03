@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+from hcwf.lib.assertion import HCWFConfigError
 from hcwf.lib.dataset_schema import DatasetError, parse_years, suggest
 
 from hcwf.blend.design import Formula, WindowVariant
@@ -45,7 +46,7 @@ _RAIN_TRANSFORMS = ("identity", "none", "", "sqrt", "fourth_root", "log1p")
 _MODEL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)*")
 
 
-class RecipeError(ValueError):
+class RecipeError(HCWFConfigError):
     """A recipe that cannot be used; lists every problem found."""
 
     def __init__(self, problems: list[str]):

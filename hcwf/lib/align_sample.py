@@ -12,29 +12,32 @@ whole year. It reads a small, deterministic sample once and gets every lag from 
   observations and gives the pooled correlation of every lag and lead at once.
 
 The verdicts are those of ``hcwf.onset.alignment.check_forecast_alignment`` (spec section 8). The result is
-cached next to the detection cache (``<cache>/alignment``) under a fingerprint of both datasets, the lead label,
-the day boundaries and the sample specification; ``check_models`` runs several models in parallel threads.
+cached next to the detection cache (a ``hcwf.cache.Store`` of kind "alignment") under the parts of both datasets (their
+files), the lead label, the day boundaries and the sample specification; ``check_models`` runs several models in
+parallel threads. Files are found as the run finds them (``hcwf.io.input``), so datasets given by ``paths`` are read.
 
 The keyword arguments are those of ``hcwf.export.case_kwargs`` (obs_dir, obs_file_pattern, obs_var,
 obs_unit_cvt, model_dir, model_var, unit_cvt, file_pattern, model_dims, probabilistic, members, accumulation,
-daily_boundary, region, start_date, end_date, init_days, years).
+daily_boundary, region, start_date, end_date, init_days, years) and, for datasets given as lists of files,
+obs_paths, obs_files_years, model_paths and model_files_years.
 """
 from __future__ import annotations
 
-import hashlib
 import os
-import pickle
 import threading
 import warnings
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import Store, file_identity
+from hcwf.io.input import _forecast_sources as _year_sources
+from hcwf.io.input import _obs_source, is_zarr, open_store
+from hcwf.lib.dataset_schema import DatasetError, file_year, resolve_paths
 from hcwf.onset import ingest as ing
 from hcwf.onset.alignment import (ForecastAlignmentReport, _match_axis, _sqrt_field,
                                   forecast_alignment_from_samples)
@@ -54,8 +57,6 @@ _MIN_COVER = 0.5
 """A cell is kept when at least this share of its sampled values are present in both datasets."""
 _NETCDF_LOCK = threading.Lock()
 """Held while NetCDF files are read: the NetCDF/HDF5 libraries are not safe to use from several threads."""
-_CACHE_VERSION = 1
-"""Bump when the check changes what it reports, to drop old cached verdicts."""
 
 
 @dataclass
@@ -81,28 +82,38 @@ def _patterns(value) -> tuple:
 def _years_in(folder, pattern: str) -> tuple:
     """The years of the files in a folder that match a file pattern ({} is the year), sorted."""
     import glob
-    import re
 
-    years = set()
-    for path in glob.glob(os.path.join(str(folder), pattern.replace("{}", "*"))):
-        match = re.search(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)", os.path.basename(path))
-        if match:
-            years.add(int(match.group(1)))
-    return tuple(sorted(years))
+    return tuple(sorted({y for y in (file_year(f, whole_number=True)
+                                     for f in glob.glob(os.path.join(str(folder), pattern.replace("{}", "*"))))
+                         if y is not None}))
 
 
-def _is_zarr(path) -> bool:
-    """True if path is a zarr store (see hcwf.io.input.is_zarr)."""
-    from hcwf.io.input import is_zarr
+def _listed_years(paths, base, years_filter) -> tuple:
+    """The years of the files a dataset lists in `paths`, sorted."""
+    try:
+        files = resolve_paths(paths, base, years_filter)
+    except DatasetError as exc:
+        raise ValueError(str(exc)) from None
+    return tuple(sorted({y for y in map(file_year, files) if y is not None}))
 
-    return is_zarr(path)
+
+_SIDES = {"obs": ("obs_dir", "obs_paths", "obs_files_years", "obs_file_pattern"),
+          "model": ("model_dir", "model_paths", "model_files_years", "file_pattern")}
+"""The kwargs of each side: folder, listed files, years filter of the listed files, file pattern."""
 
 
-def _open_store(path) -> xr.Dataset:
-    """The lazy Dataset of a zarr store, shared per path (hcwf.io.input.open_store)."""
-    from hcwf.io.input import open_store
+def _is_store(kw: dict, side: str) -> bool:
+    """True when the side's dataset is a zarr store (a dataset given by paths is files)."""
+    folder, paths, _, _ = _SIDES[side]
+    return not kw.get(paths) and is_zarr(kw.get(folder))
 
-    return open_store(path)
+
+def _dataset_years(kw: dict, side: str) -> tuple:
+    """The years of a side's files: those of its listed files, or those found in its folder by the file pattern."""
+    folder, paths, years_filter, pattern = _SIDES[side]
+    if kw.get(paths):
+        return _listed_years(kw[paths], kw.get(folder) or None, kw.get(years_filter))
+    return _years_in(kw[folder], _patterns(kw.get(pattern))[0])
 
 
 def _box_indices(values: np.ndarray, lo: float, hi: float, wrap: bool = False) -> np.ndarray:
@@ -141,15 +152,18 @@ def _standardise(ds: xr.Dataset, kw: dict) -> xr.Dataset:
 
 
 def _forecast_sources(kw: dict) -> list:
-    """The standardised forecast Datasets to read: the zarr store, or the yearly files of the run's years."""
-    folder = kw["model_dir"]
-    if _is_zarr(folder):
-        return [(None, _standardise(_open_store(folder), kw), lambda: None)]
+    """The standardised forecast Datasets to read: the zarr store, or the files of the run's years (any number a year)."""
+    folder = kw.get("model_dir")
+    if _is_store(kw, "model"):
+        return [(None, _standardise(open_store(folder), kw), lambda: None)]
     out = []
     pattern = _patterns(kw.get("file_pattern"))[0]
-    for year in kw.get("years") or _years_in(folder, pattern):
-        path = os.path.join(folder, pattern.format(year))
-        if os.path.exists(path):
+    for year in kw.get("years") or _dataset_years(kw, "model"):
+        try:
+            paths = _year_sources(year, folder, pattern, kw.get("model_paths"), kw.get("model_files_years"))
+        except FileNotFoundError:
+            continue
+        for path in paths:
             raw = xr.open_dataset(path)
             out.append((year, _standardise(raw, kw), raw.close))
     return out
@@ -282,22 +296,24 @@ def _forecast_field(forecast, leads) -> np.ndarray:
 
 
 def _obs_segments(kw: dict, years) -> list:
-    """The standardised observation Datasets to read: the zarr store, or the yearly files with data for the years."""
+    """The standardised observation Datasets to read: the zarr store, or the files with data for the years."""
     from hcwf.utils.standard import dim_fmt
 
-    folder = kw["obs_dir"]
-    if _is_zarr(folder):
-        return [(dim_fmt(_open_store(folder)), lambda: None)]
+    folder = kw.get("obs_dir")
+    if _is_store(kw, "obs"):
+        return [(dim_fmt(open_store(folder)), lambda: None)]
     out = []
     if not years:
-        years = _years_in(folder, _patterns(kw.get("obs_file_pattern"))[0])[:1]
+        years = _dataset_years(kw, "obs")[:1]
     for year in sorted(years):
-        for pattern in _patterns(kw.get("obs_file_pattern")):
-            path = os.path.join(folder, pattern.format(year))
-            if os.path.exists(path):
-                raw = xr.open_dataset(path)
-                out.append((dim_fmt(raw), raw.close))
-                break
+        try:
+            _, found = _obs_source(year, folder, _patterns(kw.get("obs_file_pattern")), kw.get("obs_paths"),
+                                   kw.get("obs_files_years"))
+        except FileNotFoundError:
+            continue
+        for path in (found if isinstance(found, tuple) else (found,)):
+            raw = xr.open_dataset(path)
+            out.append((dim_fmt(raw), raw.close))
     return out
 
 
@@ -361,7 +377,7 @@ def read_sample(kw: dict) -> Sample:
 
     Reading NetCDF files is serialised across threads (zarr stores are read concurrently).
     """
-    both_zarr = _is_zarr(kw["obs_dir"]) and _is_zarr(kw["model_dir"])
+    both_zarr = _is_store(kw, "obs") and _is_store(kw, "model")
     with nullcontext() if both_zarr else _NETCDF_LOCK:
         return _read_sample(kw)
 
@@ -415,73 +431,39 @@ def sample_report(sample: Sample, lead_label: str, *, obs_boundary: str = "", fo
 
 # --- the cache ---------------------------------------------------------------------------------------------------
 
-def cache_dir() -> Path:
-    """The folder of the cached verdicts: next to the detection cache, as <cache>/alignment."""
+_KEYS = ("obs_dir", "obs_var", "obs_unit_cvt", "obs_paths", "obs_files_years", "model_dir", "model_var", "unit_cvt",
+         "model_paths", "model_files_years", "model_dims", "region", "probabilistic", "members", "accumulation",
+         "daily_boundary", "start_date", "end_date", "init_days", "years")
+"""The kwargs the verdict depends on, beside the files and file patterns."""
+
+
+def _store() -> Store:
+    """The verdict cache: a hcwf.cache.Store of kind "alignment" next to the detection cache (fresh copies)."""
     from hcwf.lib.dataset_detect import cache_dir as detect_dir
 
-    return detect_dir().parent / "alignment"
+    return Store("alignment", detect_dir().parent, label="Alignment", memory=False)
 
 
-def _signature(path, patterns) -> list:
-    """What identifies a dataset's content: sizes and mtimes of its files, or the metadata of a zarr store."""
-    folder = Path(str(path))
-    out = []
+def _files(kw: dict, side: str) -> list:
+    """What identifies a side's content: the identity of its listed files, its zarr store, or its NetCDF files."""
+    folder, paths, _, _ = _SIDES[side]
+    if kw.get(paths):
+        return [file_identity(f) for f in kw[paths]]
+    if _is_store(kw, side):
+        return [file_identity(kw[folder])]
     try:
-        if _is_zarr(folder):
-            for meta in ("zarr.json", ".zmetadata", ".zgroup", ".zattrs"):
-                if (folder / meta).exists():
-                    st = (folder / meta).stat()
-                    out.append((meta, st.st_size, st.st_mtime_ns, (folder / meta).read_bytes()[:200000]))
-            for child in sorted(folder.iterdir()):
-                if child.is_dir():
-                    for meta in ("zarr.json", ".zarray"):
-                        if (child / meta).exists():
-                            st = (child / meta).stat()
-                            out.append((f"{child.name}/{meta}", st.st_size, st.st_mtime_ns))
-        else:
-            names = {p.name for p in folder.iterdir() if ".nc" in p.name}
-            for name in sorted(names):
-                st = (folder / name).stat()
-                out.append((name, st.st_size, st.st_mtime_ns))
+        return [file_identity(f) for f in sorted(os.scandir(kw[folder]), key=lambda e: e.name) if ".nc" in f.name]
     except OSError:
-        return [("unreadable", str(path))]
-    return out
+        return [[str(kw.get(folder)), None, None]]
 
 
-def fingerprint(kw: dict, lead_label: str, obs_boundary: str, forecast_boundary: str) -> str:
-    """A hash of both datasets, the lead label, the day boundaries and the sample specification."""
-    keys = ("obs_dir", "obs_var", "obs_unit_cvt", "model_dir", "model_var", "unit_cvt", "model_dims", "region",
-            "probabilistic", "members", "accumulation", "daily_boundary", "start_date", "end_date", "init_days",
-            "years")
-    text = repr((_CACHE_VERSION, lead_label, obs_boundary, forecast_boundary,
-                 [(k, repr(kw.get(k))) for k in keys], _patterns(kw.get("obs_file_pattern")),
-                 _patterns(kw.get("file_pattern")), _signature(kw["obs_dir"], None),
-                 _signature(kw["model_dir"], None),
-                 (SAMPLE_INITS, SAMPLE_CELLS, SAMPLE_MEMBERS, LEADS, MAX_LAG)))
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
-def _load(key: str):
-    """The cached report for a fingerprint, or None."""
-    try:
-        with open(cache_dir() / f"{key}.pkl", "rb") as fh:
-            out = pickle.load(fh)
-    except Exception:  # noqa: BLE001 - a missing or corrupt entry is a miss
-        return None
-    return out if isinstance(out, ForecastAlignmentReport) else None
-
-
-def _store(key: str, report: ForecastAlignmentReport) -> None:
-    """Write a report to the cache; failures (read-only home, full disk) are ignored."""
-    try:
-        folder = cache_dir()
-        folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / f"{key}.{os.getpid()}.{id(report)}.tmp"
-        with open(tmp, "wb") as fh:
-            pickle.dump(report, fh)
-        os.replace(tmp, folder / f"{key}.pkl")
-    except Exception:  # noqa: BLE001
-        pass
+def cache_parts(kw: dict, lead_label: str, obs_boundary: str, forecast_boundary: str) -> dict:
+    """What a cached verdict depends on: both datasets (their files), the lead label, the day boundaries, the sample."""
+    return {"lead_label": lead_label, "boundaries": [obs_boundary, forecast_boundary],
+            "keys": {k: kw.get(k) for k in _KEYS},
+            "patterns": [_patterns(kw.get("obs_file_pattern")), _patterns(kw.get("file_pattern"))],
+            "obs_files": _files(kw, "obs"), "model_files": _files(kw, "model"),
+            "sample": [SAMPLE_INITS, SAMPLE_CELLS, SAMPLE_MEMBERS, LEADS, MAX_LAG]}
 
 
 def check_labels(kw: dict, labels=("start",), *, obs_boundary: str = "", forecast_boundary_format: str = "{label}",
@@ -493,11 +475,12 @@ def check_labels(kw: dict, labels=("start",), *, obs_boundary: str = "", forecas
     ValueError (or the reader's error) when the sample cannot be made.
     """
     out, todo = {}, []
-    keys = {label: fingerprint(kw, label, obs_boundary, forecast_boundary_format.format(label=label))
-            for label in labels} if use_cache else {}
+    store = _store()
+    parts = {label: cache_parts(kw, label, obs_boundary, forecast_boundary_format.format(label=label))
+             for label in labels} if use_cache else {}
     for label in labels:
-        hit = _load(keys[label]) if use_cache else None
-        if hit is not None:
+        hit = store.get(parts[label], quiet=True) if use_cache else None
+        if isinstance(hit, ForecastAlignmentReport):
             out[label] = (hit, True)
         else:
             todo.append(label)
@@ -507,7 +490,7 @@ def check_labels(kw: dict, labels=("start",), *, obs_boundary: str = "", forecas
             report = sample_report(sample, label, obs_boundary=obs_boundary, source=source,
                                    forecast_boundary=forecast_boundary_format.format(label=label))
             if use_cache:
-                _store(keys[label], report)
+                store.put(parts[label], report)
             out[label] = (report, False)
     return out
 

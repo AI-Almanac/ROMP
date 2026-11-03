@@ -8,7 +8,8 @@ from hcwf.stats.benchmark import compute_onset_metrics_with_windows
 def test_year_with_no_forecast_onsets_yields_empty_metrics():
     """An empty onset table gives an empty metrics frame and zeroed summary counts."""
     metrics_df, summary = compute_onset_metrics_with_windows(
-        pd.DataFrame(), tolerance_days=3, verification_window=(1, 15)
+        pd.DataFrame(), tolerance_days=3, verification_window=(1, 15), onset_definition="icpac",
+        obs_day_boundary="00 UTC, labelled by start", forecast_history="none"
     )
     assert metrics_df.empty
     assert list(metrics_df.columns[:2]) == ["lat", "lon"]

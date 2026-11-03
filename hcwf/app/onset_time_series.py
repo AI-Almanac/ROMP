@@ -14,10 +14,8 @@ log = logging.getLogger(__name__)
 
 
 def _season_window(kwargs):
-    """The ((month, day), (month, day)) window to plot: start_date/end_date in legacy mode, else the chosen season's fixed bounds; None (the whole record) for derived seasons."""
+    """The ((month, day), (month, day)) window to plot: the chosen season's fixed bounds; None (the whole record) for derived seasons."""
     setup = onset_setup(kwargs)
-    if setup.legacy:
-        return tuple(kwargs["start_date"][1:]), tuple(kwargs["end_date"][1:])
     if setup.derived_seasons:
         return None
     season = next(s for s in setup.definition.seasons if s.name == setup.season)

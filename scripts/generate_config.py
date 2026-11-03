@@ -23,29 +23,18 @@ Optional env vars (with defaults matching the demo config):
                           (default: None, infer from names)
   HCWF_REGION           - target region (default: Ethiopia)
   HCWF_NC_MASK          - path to land/region mask NetCDF (default: None)
-  (variables marked [legacy] apply only when no definition-mode variable is set)
-  HCWF_THRESH_FILE      - path to spatial threshold NetCDF (default: None) [legacy]
-  HCWF_WET_THRESHOLD    - scalar rainfall threshold mm (default: 20) [legacy]
-  HCWF_WET_INIT         - minimum wet day threshold mm (default: 1) [legacy]
-  HCWF_WET_SPELL        - wet spell length days (default: 3) [legacy]
-  HCWF_DRY_SPELL        - dry spell length days (default: 7) [legacy]
-  HCWF_DRY_EXTENT       - dry spell search window days (default: 0) [legacy]
-  HCWF_ONSET_DEFINITION - onset definition id or YAML path (default: unset, flat keys below).
-                          Setting this, or any other variable of the onset group (HCWF_ONSET_SEASON,
-                          HCWF_THRESHOLD_YEARS, HCWF_THRESHOLDS, HCWF_OBS_DAY_BOUNDARY, HCWF_MODEL_LEAD_LABEL,
-                          HCWF_CHECK_ALIGNMENT, HCWF_ONSET_BACKEND, HCWF_FORECAST_HISTORY, HCWF_THRESHOLD_SOURCE),
-                          selects definition mode; the flat HCWF_WET_* / HCWF_DRY_* (except HCWF_DRY_SPELL_CHECK) /
-                          HCWF_THRESH_FILE variables must then be unset. With none of the group set, a legacy
-                          flat-key config is written
+  HCWF_ONSET_DEFINITION - onset definition id or YAML path (default: the region's default definition)
+                          (the old flat variables HCWF_WET_*, HCWF_DRY_SPELL, HCWF_DRY_EXTENT and HCWF_THRESH_FILE
+                          are no longer read; setting one is an error)
   HCWF_ONSET_SEASON     - season name for definitions with several seasons (default: None)
   HCWF_THRESHOLD_YEARS  - first-last years for climatological thresholds, e.g. 1998-2024 (default: region)
   HCWF_THRESHOLDS       - JSON object {"name": "path.nc:variable"} of precomputed thresholds (default: None)
   HCWF_OBS_DAY_BOUNDARY - e.g. "00 UTC, labelled by start" (default: region)
   HCWF_MODEL_LEAD_LABEL - start or end (default: from the day boundary)
   HCWF_CHECK_ALIGNMENT  - True/False (default: True)
-  HCWF_DRY_SPELL_CHECK  - False drops the definition's dry-spell condition (default: True; both modes)
-  HCWF_FORECAST_HISTORY - observed or none (default: observed; definition mode only)
-  HCWF_THRESHOLD_SOURCE - observations or model (default: observations; definition mode only)
+  HCWF_DRY_SPELL_CHECK  - False drops the definition's dry-spell condition (default: True)
+  HCWF_FORECAST_HISTORY - observed or none (default: observed)
+  HCWF_THRESHOLD_SOURCE - observations or model (default: observations)
   HCWF_ONSET_BACKEND    - numba, reference or gpu (default: numba)
   HCWF_START_DATE       - evaluation start as YYYY-MM-DD (default: 2019-05-01)
   HCWF_END_DATE         - evaluation end as YYYY-MM-DD (default: 2024-07-31)
@@ -165,11 +154,9 @@ def parse_model_dims(val: str) -> dict | None:
     return dims
 
 
-ONSET_ENV = ("HCWF_ONSET_DEFINITION", "HCWF_ONSET_SEASON", "HCWF_THRESHOLD_YEARS", "HCWF_THRESHOLDS",
-             "HCWF_OBS_DAY_BOUNDARY", "HCWF_MODEL_LEAD_LABEL", "HCWF_CHECK_ALIGNMENT", "HCWF_ONSET_BACKEND",
-             "HCWF_FORECAST_HISTORY", "HCWF_THRESHOLD_SOURCE")
 FLAT_ONSET_ENV = ("HCWF_WET_INIT", "HCWF_WET_THRESHOLD", "HCWF_WET_SPELL", "HCWF_DRY_SPELL", "HCWF_DRY_EXTENT",
                   "HCWF_THRESH_FILE")
+"""Variables of the removed flat onset keys; they are refused with a message instead of being ignored."""
 
 
 def parse_years(val: str) -> tuple | None:
@@ -201,23 +188,11 @@ def parse_choice(*allowed):
 
 
 def onset_values() -> dict:
-    """The onset part of the config: flat legacy keys, or the onset_definition keys when any of those is set."""
-    dry_spell_check = {"dry_spell_check": _parsed("HCWF_DRY_SPELL_CHECK", "True", parse_bool)}
-    if not any(name in os.environ for name in ONSET_ENV):
-        return {**dry_spell_check,
-            "wet_init": _parsed("HCWF_WET_INIT", "1", parse_number),
-            "wet_threshold": _parsed("HCWF_WET_THRESHOLD", "20", parse_number),
-            "wet_spell": _parsed("HCWF_WET_SPELL", "3", int),
-            "dry_threshold": 1,
-            "dry_spell": _parsed("HCWF_DRY_SPELL", "7", int),
-            "dry_extent": _parsed("HCWF_DRY_EXTENT", "0", int),
-            "thresh_file": _parsed("HCWF_THRESH_FILE", "", optional_path),
-            "thresh_var": None,
-        }
+    """The onset part of the config (onset definition keys; unset ones take the region's defaults)."""
     clash = [name for name in FLAT_ONSET_ENV if name in os.environ]
     if clash:
-        raise ConfigError(f"{', '.join(clash)} cannot be combined with the onset definition variables; "
-                          "put the rule in a definition file (extends: <id>) instead")
+        raise ConfigError(f"{', '.join(clash)} no longer apply: the flat onset keys were removed. "
+                          "Put the rule in a definition file (extends: <id>) and set HCWF_ONSET_DEFINITION")
     return {
         "onset_definition": _parsed("HCWF_ONSET_DEFINITION", "", optional_path),
         "onset_season": _parsed("HCWF_ONSET_SEASON", "", optional_path),
@@ -229,7 +204,7 @@ def onset_values() -> dict:
         "onset_backend": opt("HCWF_ONSET_BACKEND", "numba"),
         "forecast_history": _parsed("HCWF_FORECAST_HISTORY", "observed", parse_choice("observed", "none")),
         "threshold_source": _parsed("HCWF_THRESHOLD_SOURCE", "observations", parse_choice("observations", "model")),
-        **dry_spell_check,
+        "dry_spell_check": _parsed("HCWF_DRY_SPELL_CHECK", "True", parse_bool),
     }
 
 
@@ -249,9 +224,6 @@ def config_values() -> dict:
 
     return {
         "project_name": "HCWF container run",
-        "work_dir": dir_out,
-        "pkg_dir": "/app",
-        "layout": ("model", "verification_window"),
         "model_list": (model_name,),
         "obs": opt("HCWF_OBS", "CHIRPS_IMERG"),
         "obs_dir": obs_dir,
@@ -312,7 +284,6 @@ def config_values() -> dict:
         "show_plot": False,
         "show_panel": False,
         "parallel": _parsed("HCWF_PARALLEL", "True", parse_bool),
-        "debug": False,
     }
 
 

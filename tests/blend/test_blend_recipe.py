@@ -21,7 +21,7 @@ def test_the_shipped_configs_translate(path):
     window = (data["onset"].get("definition") or {}).get("window", 5)
     count = ((data.get("features") or {}).get("bins") or {}).get("count", 4)
     assert t.recipe.name == data["name"] and t.setup.definition.windows()["trigger"] == window
-    assert t.cfg["onset_legacy"] is False and t.cfg["rain_resolution"] == "exact"
+    assert t.cfg["rain_resolution"] == "exact"
     assert t.recipe.outcome_labels() == [*(f"week{w}" for w in range(1, count + 1)), "later"]
 
 

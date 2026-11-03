@@ -1,7 +1,6 @@
 """Spatial map of climatological onset day of year, plus a script entry point that plots it."""
 import numpy as np
 import os
-import pandas as pd
 import matplotlib.pyplot as plt
 import copy
 from hcwf.graphics.maps import calculate_cmz_averages
@@ -11,7 +10,7 @@ from matplotlib import colors as mcolors
 
 from hcwf.utils.visual import cbar_season, set_basemap
 from hcwf.utils.land_mask import shp_mask, add_polygon
-from hcwf.graphics.func_map import spatial_metrics_map
+from hcwf.graphics.func_map import doy_to_mmm_dd, spatial_metrics_map
 from hcwf.utils.visual import box_boundary
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
 import logging
@@ -37,11 +36,6 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
     log.debug(f"Detected resolution: {lat_diff:.1f} degrees")
 
     # Plot parameters
-    map_lw = 0.75
-    polygon_lw = 1.25
-    panel_linewidth = 0.5
-    tick_length = 3
-    tick_width = 0.8
     if units is not None or abs(lat_diff) < 0.99:   # no values are written on polygons
         txt_fsize = None
     elif abs(lat_diff - 2.0) < 0.1:
@@ -156,19 +150,6 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         plt.show()
 
     return fig, ax, plot_path
-
-
-def doy_to_date_string(doy, date_filter_year=2024):
-    """Convert day of year to dd/mm format"""
-    # Assuming non-leap year for consistency
-    date = datetime(date_filter_year, 1, 1) + timedelta(days=int(doy) - 1)
-    return date.strftime('%d/%m')
-
-def doy_to_mmm_dd(doy, date_filter_year=2024):
-    """Convert day of year to 'MMM DD' format"""
-    # Use 2018 (not a leap year) as reference to handle all possible DOYs
-    date = pd.to_datetime(f"{date_filter_year}-{int(doy):03d}", format="%Y-%j")
-    return date.strftime("%b %d")
 
 
 if __name__ == "__main__":

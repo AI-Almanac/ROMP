@@ -185,15 +185,14 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
     from hcwf.lib.onset_config import onset_setup
     from hcwf.onset import definition as definition_mod
 
-    setup = onset_setup(kwargs, thresh)
+    setup = onset_setup(kwargs)
     years = _years(kwargs)
     spec = units_spec(kwargs, "observations")
     parts = {
         "obs_files": _obs_files_hash(kwargs, years),
         "obs_ingest": part_hash(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.ingest_boundary,
                                 kwargs.get("obs_file_pattern")),
-        "definition": part_hash(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check,
-                                setup.legacy),
+        "definition": part_hash(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check),
         "thresholds": threshold_hash(thresh),
         "years": part_hash(years),
     }

@@ -390,8 +390,7 @@ detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
   season window. The data end is the last lead. `history` stitches observed
   rain before lead 1 (section 13); `threshold_windows` gives the start leads of
   per-window thresholds.
-* `regional(rain, mask, weights="cos_lat"|"equal")` area-averages the cells
-  in `mask` into one series before detection.
+* A domain average is a one-unit `EvaluationUnits.from_region(mask, lat, lon, weights="cos_lat"|"equal")`.
 
 ## 7. Climatology (`hcwf.onset.climatology`)
 
@@ -519,10 +518,9 @@ hcwf/onset/
   engine.py       jobs from seasons and leads, detect_observed / detect_forecast, output, save
   calendar.py     date keys and season bounds
   regions.py      region registry (section 12); regions/*.yaml
-  legacy.py       old flat HCWF keys -> a Definition
   explain.py      trace_observed / trace_forecast and explain(): why a cell got its onset
   viz/            anatomy_plot, schematic, compare_definitions, forecast_vs_truth, drill_down
-  __main__.py     python -m hcwf.onset: list, describe, regions, check-alignment, explain, schematic
+  cli.py          hcwf-run onset (python -m hcwf.onset delegates): list, describe, regions, check-alignment, explain, schematic
 ```
 
 ## 12. Regions and countries

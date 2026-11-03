@@ -19,16 +19,6 @@ class Case:
     ref_model: Optional[str] = field(default=None)
     ref_model_var: Optional[str] = field(default=None)
 
-    thresh_file: Optional[str] = field(default=None)
-    thresh_var: Optional[str] = field(default=None)
-
-    wet_init: float = field(default=1.0)
-    wet_threshold: float = field(default=20.0)
-    wet_spell: int = field(default=3)
-    dry_threshold: float = field(default=1.0)
-    dry_spell: int = field(default=0)
-    dry_extent: int = field(default=0)
-
     probabilistic: bool = field(default=False)
     members: Optional[tuple[int, ...]] = field(default=None)
 
@@ -41,8 +31,6 @@ class Case:
 
     years: Optional[Union[tuple[int, ...], str]] = field(default=None)
     years_clim: Optional[Union[tuple[int, ...], str]] = field(default=None)
-
-    earliest_onset_date: Optional[tuple[int, int]] = field(default=None)
 
     region: str = field(default=None)
 
@@ -63,9 +51,8 @@ class Case:
 
 _RUNTIME_SETTINGS = (
     # Set by the run, not config keys: the shared cache folder (None: next to dir_out), whether output file names are
-    # short, the (first, last) leads searched (set by the loader in definition mode) and whether the config uses the old
-    # flat onset keys (set by the loader).
-    ("cache_dir", None), ("short_names", False), ("lead_window", None), ("onset_legacy", False))
+    # short and the (first, last) leads searched (set by the loader).
+    ("cache_dir", None), ("short_names", False), ("lead_window", None))
 
 
 def _setting_fields() -> list:

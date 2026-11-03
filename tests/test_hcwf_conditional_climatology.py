@@ -6,6 +6,7 @@ import pytest
 import xarray as xr
 
 import hcwf.io.input as model_input
+from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
 from hcwf.metrics.skill import create_score_results, prepare_score_cache
 from hcwf.stats.benchmark import compute_metrics_multiple_years
@@ -51,16 +52,17 @@ def config(tmp_path, monkeypatch):
     _write_obs(tmp_path / "obs")
     _write_model(tmp_path / "a")
     return dict(
-        BS=True, RPS=True, AUC=True, skill_score=True, probabilistic=True, parallel=False, onset_legacy=True,
+        BS=True, RPS=True, AUC=True, skill_score=True, probabilistic=True, parallel=False,
         model="A", model_dir=str(tmp_path / "a"), model_var="tp", file_pattern="m_{}.nc", unit_cvt=None,
         model_dims={"init_time": "time", "step": "step", "member": "number"},
         ref_model="conditional_climatology", ref_model_dir=str(tmp_path / "obs"), ref_model_var="rain",
         ref_model_file_pattern="obs_{}.nc", ref_model_unit_cvt=None,
         years=(TARGET,), years_clim=CLIM_YEARS, obs_dir=str(tmp_path / "obs"), obs_file_pattern=["obs_{}.nc"],
-        obs_var="rain", obs_unit_cvt=None, thresh_file=None, thresh_var=None, wet_threshold=20.0,
-        date_filter_year=2000, init_days=(0, 2, 4), start_date=(2000, 5, 1), end_date=(2000, 5, 31),
-        wet_init=1.0, wet_spell=2, dry_spell=1, dry_threshold=1.0, dry_extent=1, fallback_date=None,
-        earliest_onset_date=None, members=None, onset_percentage_threshold=0.3, max_forecast_day=10,
+        obs_var="rain", obs_unit_cvt=None,
+        date_filter_year=2000, init_days=(0, 2, 4), dir_out=str(tmp_path / "out"),
+        **old_rule(wet_init=1.0, wet_spell=2, dry_spell=1, dry_extent=1, wet_threshold=20.0,
+                   start_date=(2000, 5, 1), end_date=(2000, 5, 31)),
+        **{"members": None, "onset_percentage_threshold": 0.3, "max_forecast_day": 10},
         day_bins=DAY_BINS, region="x", nc_mask=None, check_alignment=False, grid_point=False,
         save_nc_climatology=False, tolerance_days=3, verification_window=(1, 10),
     )
@@ -122,7 +124,7 @@ def test_deterministic_reference_is_the_conditional_median(config):
     clim_onset = compute_climatological_onset_dataset(**config)
     inits = pd.date_range(f"{TARGET}-05-01", f"{TARGET}-07-30", freq="5D")
     table = compute_conditional_climatology_as_forecast(
-        clim_onset, TARGET, inits, onsets[TARGET], max_forecast_day=10, earliest_onset_date=None)
+        clim_onset, TARGET, inits, onsets[TARGET], max_forecast_day=10)
     forecast = table.dropna(subset=["onset_day"])
     assert len(forecast) and forecast["onset_day"].between(1, 10).all()
     pairs = create_conditional_climatological_forecast_obs_pairs(clim_onset, TARGET, inits, onsets[TARGET],
@@ -154,7 +156,7 @@ def test_climatology_reference_is_unchanged(config):
     metrics, onsets = compute_metrics_multiple_years(**det)
     init_dates = model_input.get_initialization_dates(TARGET, **det)
     direct = compute_climatology_as_forecast(onsets[TARGET], TARGET, init_dates,
-                                             _observed(det), max_forecast_day=10, earliest_onset_date=None)
+                                             _observed(det), max_forecast_day=10)
     assert len(metrics[TARGET]) == direct[["lat", "lon"]].drop_duplicates().shape[0]
 
 

@@ -113,7 +113,6 @@ class ForecastOnsets:
 
     model: str
     data: xr.Dataset | None
-    has_spread: bool = False
     years: list[int] = field(default_factory=list)
 
     def __post_init__(self):

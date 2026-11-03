@@ -86,7 +86,7 @@ def test_the_parity_options_and_sources_are_written_out(tmp_path):
     assert run["observations"]["day_boundary"] == "00 UTC, labelled by end"
     [model] = run["models"]
     assert (model["unit_cvt"], model["accumulation"]) == (1000.0, "daily") and model["paths"][0].endswith("m/*.nc")
-    assert run["years"] == [2001, 2002, 2003] and run["blend"]["years"] == {"training": "2001:2003", "cv_holdout": 2003}
+    assert "years" not in run and run["blend"]["years"] == {"training": "2001:2003", "cv_holdout": 2003}
 
 
 def test_a_computed_threshold_counts_partial_years_and_keeps_every_unit(tmp_path):

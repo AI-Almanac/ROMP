@@ -1,4 +1,4 @@
-"""YAML run configs reproduce old config.in runs byte for byte; init, datasets, convert and resolved_config work."""
+"""A YAML run config and its resolved_config.yaml give the same run; init, datasets, convert and resolved_config work."""
 
 import filecmp
 import subprocess
@@ -14,86 +14,78 @@ from hcwf.lib.resolved import write_resolved
 from tests.synthetic_data import write_forecast, write_obs
 
 ROOT = Path(__file__).resolve().parents[1]
-OLD_CONFIG = f'''
-project_name = "tiny"
-work_dir = "."
-pkg_dir = "{ROOT}"
-layout = ("model", "verification_window")
-model_list = ("AIFS",)
-obs = "IMD"
-obs_dir = "{ROOT}/demo/data/obs"
-obs_file_pattern = ("{{}}.nc",)
-obs_var = "RAINFALL"
-obs_unit_cvt = None
-ref_model = "climatology"
-ref_model_dir = "{ROOT}/demo/data/obs"
-ref_model_file_pattern = "{{}}.nc"
-ref_model_var = "RAINFALL"
-ref_model_unit_cvt = None
-model_dir_list = ("{ROOT}/demo/data/aifs",)
-model_var_list = ("tp",)
-unit_cvt_list = (None,)
-file_pattern_list = ("{{}}.nc",)
-region = "India"
-nc_mask = None
-shpfile_dir = None
-polygon = False
-onset_definition = "moron_robertson_mok"
-onset_season = None
-threshold_years = (2013, 2020)
-thresholds = None
-obs_day_boundary = None
-model_lead_label = None
-check_alignment = False
-dry_spell_check = False
-forecast_history = "none"
-threshold_source = "observations"
-onset_backend = "reference"
-onset_percentage_threshold = 0.5
-explain_cells = None
-start_date = (2015, 5, 1)
-end_date = (2015, 6, 30)
-start_year_clim = 2013
-end_year_clim = 2020
-init_days = (2, 5)
-date_filter_year = 2015
-verification_window_list = ((1, 15),)
-tolerance_days_list = (3,)
-max_forecast_day = 15
-day_bins = ((1, 5), (6, 10), (11, 15))
-FAR = True
-MAE = True
-MR = True
-probabilistic = False
-members = "All"
-BS = True
-RPS = True
-AUC = True
-Reliability = True
-skill_score = True
-dir_out = "out"
-dir_fig = "fig"
-save_fig = False
-save_nc_spatial_far_mr_mae = True
-save_csv_score = True
-save_nc_climatology = True
-plot_spatial_far_mr_mae = False
-plot_heatmap_bss_auc = False
-plot_reliability = False
-plot_climatology_onset = False
-plot_panel_heatmap_error = False
-plot_panel_heatmap_skill = False
-plot_bar_bss_rpss_auc = False
-show_plot = False
-show_panel = False
-parallel = False
-debug = False
-'''
-OLD_RUN = ("import sys\nimport hcwf.lib.loader as L\nfrom hcwf.lib.convert import read_legacy\n"
-           "L._read_config = read_legacy\nsys.argv = ['hcwf-run', '-p', 'c.in']\n"
-           "from hcwf.driver import run_hcwf\nrun_hcwf()\n")
-
-
+# The flat config of the demo run, as the old config.in held it (now a dict: config.in files are no longer read).
+FLAT = {
+    'project_name': 'tiny',
+    'model_list': ('AIFS',),
+    'obs': 'IMD',
+    'obs_dir': f'{ROOT}/demo/data/obs',
+    'obs_file_pattern': ('{}.nc',),
+    'obs_var': 'RAINFALL',
+    'obs_unit_cvt': None,
+    'ref_model': 'climatology',
+    'ref_model_dir': f'{ROOT}/demo/data/obs',
+    'ref_model_file_pattern': '{}.nc',
+    'ref_model_var': 'RAINFALL',
+    'ref_model_unit_cvt': None,
+    'model_dir_list': (f'{ROOT}/demo/data/aifs',),
+    'model_var_list': ('tp',),
+    'unit_cvt_list': (None,),
+    'file_pattern_list': ('{}.nc',),
+    'region': 'india',
+    'nc_mask': None,
+    'shpfile_dir': None,
+    'polygon': False,
+    'onset_definition': 'moron_robertson_mok',
+    'onset_season': None,
+    'threshold_years': (2013, 2020),
+    'thresholds': None,
+    'obs_day_boundary': None,
+    'model_lead_label': None,
+    'check_alignment': False,
+    'dry_spell_check': False,
+    'forecast_history': 'none',
+    'threshold_source': 'observations',
+    'onset_backend': 'reference',
+    'onset_percentage_threshold': 0.5,
+    'explain_cells': None,
+    'start_date': (2015, 5, 1),
+    'end_date': (2015, 6, 30),
+    'start_year_clim': 2013,
+    'end_year_clim': 2020,
+    'init_days': (2, 5),
+    'date_filter_year': 2015,
+    'verification_window_list': ((1, 15),),
+    'tolerance_days_list': (3,),
+    'max_forecast_day': 15,
+    'day_bins': ((1, 5), (6, 10), (11, 15)),
+    'FAR': True,
+    'MAE': True,
+    'MR': True,
+    'probabilistic': False,
+    'members': 'All',
+    'BS': True,
+    'RPS': True,
+    'AUC': True,
+    'Reliability': True,
+    'skill_score': True,
+    'dir_out': 'out',
+    'dir_fig': 'fig',
+    'save_fig': False,
+    'save_nc_spatial_far_mr_mae': True,
+    'save_csv_score': True,
+    'save_nc_climatology': True,
+    'plot_spatial_far_mr_mae': False,
+    'plot_heatmap_bss_auc': False,
+    'plot_reliability': False,
+    'plot_climatology_onset': False,
+    'plot_panel_heatmap_error': False,
+    'plot_panel_heatmap_skill': False,
+    'plot_bar_bss_rpss_auc': False,
+    'show_plot': False,
+    'show_panel': False,
+    'parallel': False,
+}
 def _run(cwd, *args, code=None):
     """Run hcwf in a subprocess in cwd, returning the completed process."""
     cmd = [sys.executable, "-c", code] if code else [sys.executable, "-m", "hcwf.cli", *args]
@@ -110,61 +102,48 @@ def _same_outputs(a: Path, b: Path):
 
 @pytest.fixture(scope="module")
 def runs(tmp_path_factory):
-    """Run the demo once with the old loader on config.in, once from the converted YAML, once from its resolved config."""
+    """Run the demo once from a YAML config, once from the resolved config that run wrote."""
     base = tmp_path_factory.mktemp("runs")
-    old, new, again = base / "old", base / "new", base / "again"
-    for d in (old, new, again):
+    new, again = base / "new", base / "again"
+    for d in (new, again):
         d.mkdir()
-    (old / "c.in").write_text(OLD_CONFIG)
-    done = _run(old, code=OLD_RUN)
-    assert done.returncode == 0, done.stderr[-2000:]
-    (new / "c.in").write_text(OLD_CONFIG)
-    done = _run(new, "convert", "c.in", "-o", "run.yaml")
-    assert done.returncode == 0, done.stderr
+    mapping, _ = convert.flat_to_mapping(FLAT)
+    (new / "run.yaml").write_text(convert.render_yaml(mapping))
     done = _run(new, "-p", "run.yaml")
     assert done.returncode == 0, done.stderr[-2000:]
     resolved = yaml.safe_load((new / "out" / "resolved_config.yaml").read_text())
     resolved["output"].update(data_dir="out", figure_dir="fig")
-    resolved["work_dir"] = "."
     (again / "r.yaml").write_text(yaml.safe_dump(resolved))
     done = _run(again, "-p", "r.yaml")
     assert done.returncode == 0, done.stderr[-2000:]
-    return old, new, again
-
-
-def test_converted_yaml_reproduces_the_old_config_byte_for_byte(runs):
-    """hcwf-run on the converted YAML writes the same NetCDF files as the old config.in with the old loader."""
-    old, new, _ = runs
-    _same_outputs(old, new)
+    return new, again
 
 
 def test_resolved_config_reproduces_the_run(runs):
     """Re-running resolved_config.yaml gives the same outputs, and the definition and its hash are recorded."""
-    old, new, again = runs
-    _same_outputs(old, again)
+    new, again = runs
+    _same_outputs(new, again)
     text = (new / "out" / "resolved_definition.yaml").read_text()
     assert "hash:" in text and "id: moron_robertson_mok" in text
     config = (new / "out" / "resolved_config.yaml").read_text()
     assert "# region default (india)" in config and "definition: moron_robertson_mok" in config
 
 
-def test_converted_flat_dict_matches_the_old_one(tmp_path):
-    """The flat dict from the converted YAML equals the old config's, apart from the keys YAML adds."""
-    (tmp_path / "c.in").write_text(OLD_CONFIG)
-    old = convert.read_legacy(tmp_path / "c.in")
+def test_the_flat_dict_survives_the_yaml_round_trip():
+    """The flat dict written as YAML sections and built again equals the original, apart from the keys YAML adds."""
+    old = FLAT
     mapping, _ = convert.flat_to_mapping(old)
     new = build_config(mapping)
     extra = {"dataset_report", "config_sources", "model_dims_list", "accumulation_list", "catalog_dirs",
-             "dataset_files", "climatology_cv", "years", "years_clim", "fallback_date", "daily_boundary_list",
-             "accumulation_detected"}
+             "dataset_files", "climatology_cv", "daily_boundary_list", "accumulation_detected"}
     for key, value in old.items():
         assert new[key] == value, key
     assert set(new) - set(old) <= extra | {"plot_portrait", "save_onsets"}
 
 
-def test_convert_maps_units_and_rejects_free_multipliers(tmp_path):
+def test_convert_maps_units_and_rejects_free_multipliers():
     """unit_cvt 1000 becomes units m; an odd multiplier is an error asking the user."""
-    flat = convert.read_legacy(_write(tmp_path, OLD_CONFIG.replace("unit_cvt_list = (None,)", "unit_cvt_list = (1000,)")))
+    flat = {**FLAT, "unit_cvt_list": (1000,)}
     mapping, _ = convert.flat_to_mapping(flat)
     assert mapping["models"][0]["units"] == "m" and mapping["observations"]["units"] == "mm"
     flat["unit_cvt_list"] = (25.4,)
@@ -172,19 +151,15 @@ def test_convert_maps_units_and_rejects_free_multipliers(tmp_path):
         convert.flat_to_mapping(flat)
 
 
-def _write(tmp_path, text, name="c.in"):
-    """Write text to tmp_path/name and return the path."""
-    path = tmp_path / name
-    path.write_text(text)
-    return path
-
-
 def test_convert_refuses_to_overwrite(tmp_path):
-    """convert and init refuse an existing target unless --force."""
-    (tmp_path / "c.in").write_text(OLD_CONFIG)
+    """convert refuses an existing target unless --force."""
+    flat = {"wet_init": 1, "wet_threshold": 20, "wet_spell": 3, "dry_spell": 7, "dry_extent": 0,
+            "region": "ethiopia", "evaluation": {"start_date": [2020, 5, 1], "end_date": [2020, 7, 31]}}
+    (tmp_path / "old.yaml").write_text(yaml.safe_dump(flat))
     (tmp_path / "run.yaml").write_text("x")
-    assert _run(tmp_path, "convert", "c.in", "-o", "run.yaml").returncode == 1
-    assert _run(tmp_path, "convert", "c.in", "-o", "run.yaml", "--force").returncode == 0
+    assert _run(tmp_path, "convert", "old.yaml", "-o", "run.yaml").returncode == 1
+    assert _run(tmp_path, "convert", "old.yaml", "-o", "run.yaml", "--force").returncode == 0
+    assert "rule" in yaml.safe_load((tmp_path / "run.yaml").read_text())["onset"]
 
 
 def test_top_level_help_works_without_a_config(tmp_path):
@@ -196,10 +171,10 @@ def test_top_level_help_works_without_a_config(tmp_path):
 
 
 def test_old_config_in_is_rejected_by_run(tmp_path):
-    """hcwf-run -p old.in stops and points at convert."""
-    (tmp_path / "c.in").write_text(OLD_CONFIG)
+    """hcwf-run -p old.in stops: only YAML configs are read."""
+    (tmp_path / "c.in").write_text("model_list = ('A',)\n")
     done = _run(tmp_path, "-p", "c.in")
-    assert done.returncode == 1 and "hcwf-run convert" in done.stdout
+    assert done.returncode == 1 and "reads YAML only" in done.stdout
 
 
 @pytest.fixture
@@ -255,7 +230,7 @@ def test_write_resolved_records_overrides(tmp_path):
     """An onset override and dry_spell_check = false show up in the printed and recorded override list."""
     from hcwf.lib.resolved import definition_lines
 
-    cfg = {"region": "ethiopia", "onset_legacy": False, "onset_definition": "icpac", "obs_day_boundary": None,
+    cfg = {"region": "ethiopia", "onset_definition": "icpac", "obs_day_boundary": None,
            "onset_override": {"wet_day": "at least 2 mm"}, "dry_spell_check": False, "dir_out": str(tmp_path),
            "config_sources": {}}
     lines = "\n".join(definition_lines(cfg))

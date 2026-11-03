@@ -166,8 +166,6 @@ def portrait_plot(
     xaxis_tick_labels_top_and_bottom=False,
     xticklabel_rotation=45,
     title="",
-    inner_line_color="k",
-    inner_line_width=0.5,
     cmap="RdBu_r",
     cmap_bounds=None,
     cbar_label=None,
@@ -211,8 +209,6 @@ def portrait_plot(
     - `yaxis_fontsize`: number, default=12, font size for yaxis tick labels.  Optional.
     - `xaxis_tick_labels_top_and_bottom`: bool, default=False, if true duplicate xaxis tick label to the other side.  Optional.
     - `xticklabel_rotation`: int or float, default=45, degree of angle to rotate x-axis tick label.  Optional
-    - `inner_line_color`: string, default="k" (black), color for inner lines (triangle edge lines).  Optional.
-    - `inner_line_width`: float, default=0.5, line width for inner lines (triangle edge lines).  Optional.
     - `cmap`: string, default="RdBu_r", name of matplotlib colormap.  Optional.
     - `cmap_bounds`: list of numbers.  If given, discrete colors are applied.  Optional.
     - `cbar_label`: string, default=None, label for colorbar.  Optional.
@@ -572,7 +568,6 @@ def annotate_heatmap(
     kw.update(textkw)
 
     # adjust annote fontsize according to # of heat blocks
-    total_num = data.size
     x_num = data.shape[1]
     fontsize = kw.get('fontsize')
     fontsize *= 2/x_num
@@ -589,13 +584,6 @@ def annotate_heatmap(
     vmin, vmax = np.nanquantile(data, [0.1, 0.9])
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
     cmap_obj = plt.get_cmap(cmap)
-
-    def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
-        """Return black or white, whichever contrasts better with the colormap color at `value`."""
-        r, g, b, _ = cmap_obj(norm(value)) # background color
-        luminance = 0.2126*r + 0.7152*g + 0.0722*b # perceived luminance (WCAG standard)
-        return 'black' if luminance > threshold else 'white'
-
 
     texts = []
     for i in range(data.shape[0]):
@@ -617,6 +605,13 @@ def annotate_heatmap(
             texts.append(text)
 
     return ax
+
+
+def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
+    """Return black or white, whichever contrasts better with the colormap color at `value`."""
+    r, g, b, _ = cmap_obj(norm(value))  # background color
+    luminance = 0.2126*r + 0.7152*g + 0.0722*b  # perceived luminance (WCAG standard)
+    return 'black' if luminance > threshold else 'white'
 
 
 # ======================================================================

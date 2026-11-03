@@ -9,7 +9,7 @@ from hcwf.onset import definition as definition_mod
 
 def _cfg(**values):
     """A definition-mode config for Ethiopia."""
-    return {"onset_legacy": False, "region": "ethiopia", "obs_day_boundary": None, **values}
+    return {"region": "ethiopia", "obs_day_boundary": None, **values}
 
 
 def test_override_changes_the_rule_and_is_listed():

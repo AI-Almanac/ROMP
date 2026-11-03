@@ -40,11 +40,12 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Store, file_identity
-from hcwf.lib.dataset_schema import DatasetError, expand_path, file_year, parse_dataset, resolve_paths
+from hcwf.io.input import is_zarr
+from hcwf.lib.dataset_schema import (DatasetError, expand_path, file_year, parse_dataset, resolve_paths,
+                                     year_match)
 from hcwf.onset import ingest
 from hcwf.utils.standard import matches
 
-YEAR_RE = re.compile(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)")
 _PRECIP_RE = re.compile(r"(?i)precip|rain|prcp|(^|_)(tp|pr)($|_)")
 _ORDER = ("path", "paths", "years", "file_pattern", "variable", "units", "unit_cvt", "dims", "day_boundary",
           "lead_label", "accumulation", "daily_boundary", "members")
@@ -77,7 +78,6 @@ class Resolution:
     problems: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     extent: tuple | None = None
-    sample_file: str | None = None
     checked: bool = False
 
     def report(self) -> list[str]:
@@ -92,7 +92,7 @@ def find_pattern(names: list[str]) -> tuple[str | None, str]:
     """The file pattern shared by names (year replaced by {}) and the evidence, or (None, reason)."""
     patterns = Counter()
     for name in names:
-        match = YEAR_RE.search(name)
+        match = year_match(name, whole_number=True)
         if match:
             patterns[name[:match.start()] + "{}" + name[match.end():]] += 1
     if not patterns:
@@ -100,7 +100,7 @@ def find_pattern(names: list[str]) -> tuple[str | None, str]:
     if len(patterns) > 1:
         return None, "several name patterns: " + ", ".join(f"'{p}' ({n} files)" for p, n in patterns.items())
     (pattern, count), = patterns.items()
-    return pattern, f"{count} file(s) named like {pattern!r}, e.g. {next(n for n in names if YEAR_RE.search(n))}"
+    return pattern, f"{count} file(s) named like {pattern!r}, e.g. {next(n for n in names if year_match(n, whole_number=True))}"
 
 
 def _roles(da: xr.DataArray, kind: str, problems: dict) -> dict:
@@ -137,18 +137,9 @@ _SAMPLES: dict = {}
 """Loaded detection samples, per (file, modification time, variable), for the life of the process."""
 
 
-def is_zarr_store(path) -> bool:
-    """True for a zarr store: a name ending in .zarr, or a folder holding zarr metadata."""
-    text = str(path).rstrip("/")
-    if text.endswith(".zarr"):
-        return True
-    folder = Path(text)
-    return folder.is_dir() and any((folder / name).exists() for name in ("zarr.json", ".zgroup", ".zarray"))
-
-
 def open_data(path: str) -> xr.Dataset:
     """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) with xr.open_zarr."""
-    if is_zarr_store(path):
+    if is_zarr(path):
         return xr.open_zarr(path, chunks=None)
     return xr.open_dataset(path)
 
@@ -265,11 +256,8 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
     if obs is None or not obs.get("variable") or not obs.get("day_boundary"):
         return None, "needs the observations (with variable and day_boundary) to compare against"
     if obs.get("paths") or values.get("paths"):
-        year = file_year(sample) if values.get("paths") else None
-        if year is None and not values.get("paths"):
-            match = YEAR_RE.search(os.path.basename(sample))
-            year = int(match.group(1)) if match else None
-        if is_zarr_store(sample) or not obs.get("paths") and is_zarr_store(expand_path(obs["path"])):
+        year = file_year(sample, whole_number=not values.get("paths"))
+        if is_zarr(sample) or not obs.get("paths") and is_zarr(expand_path(obs["path"])):
             return None, "the sampled check does not read datasets given by paths. Fix: set lead_label"
         try:
             listed = dataset_files(obs) if obs.get("paths") else sorted(Path(expand_path(obs["path"])).glob(
@@ -281,12 +269,12 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
             return None, f"no observation file for year {year if year else '?'}"
     else:
         obs_dir = expand_path(obs["path"])
-        if is_zarr_store(sample) or is_zarr_store(obs_dir):
+        if is_zarr(sample) or is_zarr(obs_dir):
             return _lead_label_sampled(values, sample, obs, roles, obs_dir)
-        year = YEAR_RE.search(os.path.basename(sample))
-        files = sorted(glob.glob(os.path.join(obs_dir, obs["file_pattern"].replace("{}", year.group(1) if year else "*"))))
+        year = file_year(sample, whole_number=True)
+        files = sorted(glob.glob(os.path.join(obs_dir, obs["file_pattern"].replace("{}", str(year) if year else "*"))))
         if not files:
-            return None, f"no observation file for year {year.group(1) if year else '?'} in {obs_dir}"
+            return None, f"no observation file for year {year if year else '?'} in {obs_dir}"
     obs_units, fc_units = obs.get("units"), values.get("units")
     try:
         with open_data(files[0]) as ods:
@@ -325,7 +313,7 @@ def _lead_label_sampled(values: dict, sample: str, obs: dict, roles: dict, obs_d
         obs_units, fc_units = obs.get("units"), values.get("units")
         obs_pattern = obs.get("file_pattern") or "{}.nc"
         model_pattern = values.get("file_pattern") or "{}.nc"
-        model_dir = sample if is_zarr_store(sample) else os.path.dirname(sample)
+        model_dir = sample if is_zarr(sample) else os.path.dirname(sample)
         kw = {"obs_dir": obs_dir, "obs_file_pattern": [obs_pattern], "obs_var": obs["variable"],
               "obs_unit_cvt": unit_factor(obs_units, "units") if obs_units else None, "model_dir": model_dir,
               "model_var": values["variable"], "unit_cvt": unit_factor(fc_units, "units") if fc_units else None,
@@ -360,7 +348,7 @@ def dataset_files(entry: dict) -> list[Path]:
     if entry.get("paths"):
         return resolve_paths(entry["paths"], base, entry.get("years"))
     folder = Path(base)
-    return [folder] if is_zarr_store(folder) else sorted(
+    return [folder] if is_zarr(folder) else sorted(
         p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
 
 
@@ -449,7 +437,7 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         specified("path")
     if paths:
         return _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_label, lead_label_default)
-    if is_zarr_store(folder):
+    if is_zarr(folder):
         return _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label, lead_label_default)
     names = sorted(p.name for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr")) \
         if folder.is_dir() else []
@@ -484,7 +472,7 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         problems["file_pattern"] = f"no file in {folder} matches {values.get('file_pattern')!r}"
         return res
     sample = files[0]
-    res.sample_file, res.checked = sample, True
+    res.checked = True
     name = os.path.basename(sample)
     try:
         ds = open_data(sample)
@@ -511,7 +499,7 @@ def _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_lab
         problems["paths"] = str(exc)
         return res
     sample = str(files[0])
-    res.sample_file, res.checked = sample, True
+    res.checked = True
     res.lines.append(Line("file_pattern", "not needed", "detected", f"{len(files)} file(s) listed in paths"))
     try:
         ds = open_data(sample)
@@ -545,7 +533,7 @@ def _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label
     except Exception as exc:  # noqa: BLE001 - any reader error is reported against the path
         problems["path"] = f"cannot open the zarr store {folder}: {exc}"
         return res
-    res.sample_file, res.checked = str(folder), True
+    res.checked = True
     span = _store_years(ds)
     evidence = "zarr store: one dataset holding every year" + (
         f" ({span[1]}-{span[2]} from coordinate '{span[0]}')" if span else "")
@@ -896,9 +884,6 @@ def forecast_signature(path, entry: dict, **options) -> dict:
     return read_forecast_file(path, entry, **options)[0]
 
 
-def forecast_issue_dates(path, entry: dict) -> list:
-    """The issue dates (datetime.date) a forecast file holds."""
-    return read_forecast_file(path, entry, selected=False)[1]
 
 
 def signature_differences(trained: dict, live: dict, *, fewer_members: bool = False) -> list[str]:

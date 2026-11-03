@@ -7,7 +7,7 @@
 # get a run folder (runs/ next to this file, named from region, definition, years and a fingerprint).
 project_name: Demo run with the sample data
 
-region: India
+region: india
 
 # mask:                          # optional: limit the evaluated cells, on each dataset's own grid
 #   country: Ethiopia            # land, country, file, condition intersect; see README "Region masks"

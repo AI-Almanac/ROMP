@@ -170,7 +170,7 @@ def _old_compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verific
 
 
 def _old_compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, observed_onset_da,
-                                   *, max_forecast_day, earliest_onset_date, **kwargs):
+                                   *, max_forecast_day, earliest_onset_date=None, **kwargs):
     """
     Use climatology as a forecast model for the given initialization dates.
     Only processes forecasts initialized before the observed onset date.
@@ -878,6 +878,10 @@ def _observed_onsets(seed=0):
     return _grid(dates, dtype="datetime64[ns]")
 
 
+# The scoring functions read the run's onset settings; these say no back-dated forecasts are counted.
+RUN = dict(onset_definition="icpac", obs_day_boundary="00 UTC, labelled by start", forecast_history="none")
+
+
 def _assert_frames_identical(old, new):
     """Assert two frames are exactly equal in values and dtypes and both have a default integer index."""
     pd.testing.assert_frame_equal(old.reset_index(drop=True), new.reset_index(drop=True), check_dtype=True, check_exact=True)
@@ -888,9 +892,8 @@ def _assert_frames_identical(old, new):
 # compute_climatology_as_forecast
 # --------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("earliest_onset_date", [None, (5, 20)])
 @pytest.mark.parametrize("max_forecast_day", [10, 30])
-def test_climatology_as_forecast_matches_loops(earliest_onset_date, max_forecast_day):
+def test_climatology_as_forecast_matches_loops(max_forecast_day):
     """The vectorised climatology-as-forecast matches the loop version apart from the documented differences."""
     rng = np.random.default_rng(1)
     doy = rng.integers(125, 175, size=(len(LATS), len(LONS))).astype(float)
@@ -899,7 +902,7 @@ def test_climatology_as_forecast_matches_loops(earliest_onset_date, max_forecast
     clim = _grid(doy)
     observed = _observed_onsets()
     args = (clim, 2020, INITS, observed)
-    kwargs = dict(max_forecast_day=max_forecast_day, earliest_onset_date=earliest_onset_date)
+    kwargs = dict(max_forecast_day=max_forecast_day)
     old = _old_compute_climatology_as_forecast(*args, **kwargs)
     new = compute_climatology_as_forecast(*args, **kwargs)
 
@@ -921,7 +924,7 @@ def test_climatology_as_forecast_without_valid_cases_is_empty():
     """Climatology-as-forecast gives an empty frame when no case has a valid onset."""
     clim = _grid(np.full((len(LATS), len(LONS)), 150.0))
     observed = _grid(np.full((len(LATS), len(LONS)), np.datetime64("NaT"), dtype="datetime64[ns]"), dtype="datetime64[ns]")
-    kwargs = dict(max_forecast_day=30, earliest_onset_date=None)
+    kwargs = dict(max_forecast_day=30)
     assert compute_climatology_as_forecast(clim, 2020, INITS, observed, **kwargs).empty
     assert _old_compute_climatology_as_forecast(clim, 2020, INITS, observed, **kwargs).empty
 
@@ -954,7 +957,7 @@ def test_onset_metrics_match_loops(verification_window, tolerance_days):
     """The vectorised onset metrics and summary match the loop version."""
     onset_df = _onset_frame()
     assert (pd.to_datetime(onset_df["onset_date"]) <= pd.to_datetime(onset_df["init_time"])).any()
-    kwargs = dict(tolerance_days=tolerance_days, verification_window=verification_window)
+    kwargs = dict(tolerance_days=tolerance_days, verification_window=verification_window, **RUN)
     old_metrics, old_summary = _old_compute_onset_metrics_with_windows(onset_df, **kwargs)
     new_metrics, new_summary = compute_onset_metrics_with_windows(onset_df, **kwargs)
     _assert_frames_identical(old_metrics, new_metrics)
@@ -965,7 +968,7 @@ def test_onset_metrics_match_loops(verification_window, tolerance_days):
 
 def test_onset_metrics_of_no_forecasts_match_loops():
     """Onset metrics of an empty forecast frame match the loop version."""
-    kwargs = dict(tolerance_days=3, verification_window=(1, 15))
+    kwargs = dict(tolerance_days=3, verification_window=(1, 15), **RUN)
     old_metrics, _ = _old_compute_onset_metrics_with_windows(pd.DataFrame([]), **kwargs)
     new_metrics, _ = compute_onset_metrics_with_windows(pd.DataFrame([]), **kwargs)
     pd.testing.assert_frame_equal(old_metrics, new_metrics)
@@ -992,7 +995,7 @@ def test_forecast_observation_pairs_match_loops():
     """The vectorised forecast-observation pairs match the loop version."""
     members = _member_frame()
     onset_da = _observed_onsets()
-    kwargs = dict(day_bins=((1, 5), (6, 10), (11, 15)), max_forecast_day=15)
+    kwargs = dict(day_bins=((1, 5), (6, 10), (11, 15)), max_forecast_day=15, **RUN)
     old = _old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs)
     new = create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs)
     assert len(new) > 0 and (members["onset_day"] <= 0).any()
@@ -1004,7 +1007,7 @@ def test_forecast_observation_pairs_skip_cells_off_the_grid():
     members = _member_frame(members=3)
     members.loc[members["lat"] == LATS[1], "lat"] = np.float32(50.0)
     onset_da = _observed_onsets()
-    kwargs = dict(day_bins=((1, 7), (8, 14)), max_forecast_day=14)
+    kwargs = dict(day_bins=((1, 7), (8, 14)), max_forecast_day=14, **RUN)
     _assert_frames_identical(_old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs),
                              create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs))
 

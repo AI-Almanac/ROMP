@@ -38,23 +38,22 @@ def resolved_mapping(cfg: dict) -> tuple[dict, dict, object]:
         if sources.get("dir_fig") != "run config":
             flat.pop("dir_fig", None)
     setup = onset_setup(cfg)
-    if not setup.legacy:
-        resolved = {"onset_season": setup.season, "obs_day_boundary": setup.obs_day_boundary,
-                    "model_lead_label": setup.lead_label}
-        if setup.threshold_years:
-            resolved["threshold_years"] = list(setup.threshold_years)
-        if cfg.get("onset_rule") is None:
-            resolved["onset_definition"] = cfg.get("onset_definition") or setup.definition.id
-        for key, source_key in (("onset_definition", "definition"), ("onset_season", "season"),
-                                ("threshold_years", "threshold_years"), ("obs_day_boundary", "obs_day_boundary"),
-                                ("model_lead_label", "lead_label")):
-            if key in resolved:
-                flat[key] = resolved[key]
-                sources[key] = setup.sources.get(source_key, "resolved")
-        flat["forecast_history"] = setup.forecast_history
-        flat["threshold_source"] = setup.threshold_source
-        sources["forecast_history"] = setup.sources.get("forecast_history", "default")
-        sources["threshold_source"] = setup.sources.get("threshold_source", "default")
+    resolved = {"onset_season": setup.season, "obs_day_boundary": setup.obs_day_boundary,
+                "model_lead_label": setup.lead_label}
+    if setup.threshold_years:
+        resolved["threshold_years"] = list(setup.threshold_years)
+    if cfg.get("onset_rule") is None:
+        resolved["onset_definition"] = cfg.get("onset_definition") or setup.definition.id
+    for key, source_key in (("onset_definition", "definition"), ("onset_season", "season"),
+                            ("threshold_years", "threshold_years"), ("obs_day_boundary", "obs_day_boundary"),
+                            ("model_lead_label", "lead_label")):
+        if key in resolved:
+            flat[key] = resolved[key]
+            sources[key] = setup.sources.get(source_key, "resolved")
+    flat["forecast_history"] = setup.forecast_history
+    flat["threshold_source"] = setup.threshold_source
+    sources["forecast_history"] = setup.sources.get("forecast_history", "default")
+    sources["threshold_source"] = setup.sources.get("threshold_source", "default")
     return flat, sources, setup
 
 

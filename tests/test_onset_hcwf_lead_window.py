@@ -9,8 +9,8 @@ from hcwf.lib.onset_config import OnsetConfigError
 
 
 def _cfg(definition="icpac", **values):
-    """A definition-mode config dict with two verification windows and day bins."""
-    return {"onset_legacy": False, "onset_definition": definition, "obs_day_boundary": "00 UTC, labelled by start",
+    """A config dict with two verification windows and day bins."""
+    return {"onset_definition": definition, "obs_day_boundary": "00 UTC, labelled by start",
             "threshold_years": (2000, 2010), "model_list": ("AIFS",), "max_forecast_day": 30,
             "verification_window_list": ((1, 15), (16, 30)), "tolerance_days_list": (3, 5),
             "day_bins": ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30)), **values}
@@ -60,12 +60,6 @@ def test_models_with_different_lengths_use_the_shortest():
     """One line per model, and the run uses the shortest window."""
     cfg = apply_lead_window(_cfg(model_list=("A", "B")), lambda dic, i: (50, 40)[i])
     assert cfg["lead_window"] == (1, 19) and len(cfg["onset_lead_lines"]) == 3
-
-
-def test_legacy_mode_is_untouched():
-    """Flat-key configs keep their windows."""
-    cfg = {"wet_init": 1, "max_forecast_day": 30}
-    assert apply_lead_window(cfg, lambda dic, i: 1) == {"wet_init": 1, "max_forecast_day": 30}
 
 
 def test_count_leads_reads_the_first_year_file(tmp_path):

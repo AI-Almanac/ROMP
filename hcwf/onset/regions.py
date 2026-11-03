@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from hcwf.lib.assertion import HCWFConfigError
 from hcwf.onset.definition import registry_ids as definition_ids
 from hcwf.onset.ingest import parse_day_boundary
 from hcwf.onset.model import Definition
@@ -20,14 +21,14 @@ from hcwf.spatial.units import UnitsSpec, UnitsSpecError
 
 REGIONS_DIR = Path(__file__).parent / "regions"
 
-_KEYS = ("id", "title", "kind", "iso", "aliases", "part_of", "domain", "legacy_domains", "units", "observations",
+_KEYS = ("id", "title", "kind", "iso", "aliases", "part_of", "domain", "units", "observations",
          "climatology", "definitions", "notes")
 _UNITS_KEYS = ("shapefile", "unit_id_col", "unit_name_col", "parent_col", "weights", "centroids", "centroid_id_col",
                "dissemination", "dissemination_id_col")
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 
 
-class RegionError(ValueError):
+class RegionError(HCWFConfigError):
     """A malformed region entry or an unknown region; the message names the YAML path and the fix."""
 
 
@@ -43,7 +44,6 @@ class Region:
     part_of: tuple[str, ...] = ()
     lat: tuple[float, float] | None = None
     lon: tuple[float, float] | None = None
-    legacy_boxes: tuple[tuple[str, tuple[float, float], tuple[float, float]], ...] = ()
     units: UnitsSpec | None = None
     observations_dataset: str | None = None
     day_boundary: str | None = None
@@ -121,18 +121,6 @@ def _parse(text: str, origin: str, base: Path | None = None) -> Region:
             if key not in box:
                 _fail(origin, "domain", f"missing '{key}'. Fix: write 'domain: {{lat: [3, 15], lon: [33, 48]}}'")
         lat, lon = _span(box["lat"], origin, "domain.lat"), _span(box["lon"], origin, "domain.lon")
-    legacy = []
-    if "legacy_domains" in data:
-        if not isinstance(data["legacy_domains"], dict):
-            _fail(origin, "legacy_domains", f"expected a mapping but found {data['legacy_domains']!r}. "
-                                            "Fix: write 'Name: {lat: [..], lon: [..]}' lines")
-        for name, box in data["legacy_domains"].items():
-            path = f"legacy_domains.{name}"
-            box = _mapping(box, origin, path, ("lat", "lon"))
-            for key in ("lat", "lon"):
-                if key not in box:
-                    _fail(origin, path, f"missing '{key}'. Fix: write '{{lat: [3, 15], lon: [33, 48]}}'")
-            legacy.append((str(name), _span(box["lat"], origin, f"{path}.lat"), _span(box["lon"], origin, f"{path}.lon")))
     units = _parse_units(data["units"], origin, base) if "units" in data else None
     dataset = boundary = None
     if "observations" in data:
@@ -167,7 +155,7 @@ def _parse(text: str, origin: str, base: Path | None = None) -> Region:
                 _fail(origin, path, f"'{name}' is not a registry definition (known: {', '.join(known)}). "
                                     "Fix: use the id of a file in hcwf/onset/registry")
     return Region(id=ident, title=data["title"], kind=kind, iso=iso, aliases=aliases, part_of=part_of,
-                  lat=lat, lon=lon, legacy_boxes=tuple(legacy), units=units, observations_dataset=dataset, day_boundary=boundary,
+                  lat=lat, lon=lon, units=units, observations_dataset=dataset, day_boundary=boundary,
                   climatology_years=years, default_definition=default, also_definitions=also,
                   notes=str(data.get("notes", "")))
 
@@ -274,16 +262,8 @@ def check_definition_region(defn: Definition, name: str) -> str | None:
 
 
 def box(name: str) -> tuple[float, float, float, float]:
-    """Return (lats, latn, lonw, lone) of a region's `domain` box.
-
-    A name written exactly as one of the region's `legacy_domains` (case counts) gets that older box, so configs
-    written with it keep selecting the same cells; any other name matches by id or alias, ignoring case.
-    """
-    key = str(name).strip()
-    region = load_region(key)
-    for legacy, lat, lon in region.legacy_boxes:
-        if key == legacy:
-            return lat[0], lat[1], lon[0], lon[1]
+    """Return (lats, latn, lonw, lone) of a region's `domain` box; the name matches by id or alias, ignoring case."""
+    region = load_region(str(name).strip())
     if region.lat is None or region.lon is None:
         _fail(f"{region.id}.yaml", "domain", "the region has no domain (lat/lon box). Fix: add "
                                               "'domain: {lat: [low, high], lon: [low, high]}'")

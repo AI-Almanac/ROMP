@@ -134,8 +134,7 @@ def _settings(dic: dict, report: CheckReport) -> None:
 
 
 def _box_text(dic: dict) -> str:
-    """The box of the region a run selects cells with, and which one it is (a region's `legacy_domains` entry counts when
-    the region is written exactly as it)."""
+    """The box of the region a run selects cells with, and which region it is the domain of."""
     from hcwf.onset import regions
 
     name = dic.get("region")
@@ -144,12 +143,8 @@ def _box_text(dic: dict) -> str:
     box = _box(dic)
     if box is None:
         return f"unknown (region {name!r} is not in the registry)"
-    key = str(name).strip()
-    legacy = next((n for n, _, _ in regions.load_region(key).legacy_boxes if n == key), None)
-    which = (f"the legacy domain '{legacy}' of region {regions.load_region(key).id} (written exactly so; "
-             "any other spelling takes the region's domain)" if legacy else f"the domain of region "
-             f"{regions.load_region(key).id}")
-    return f"lat {box[0]:g} to {box[1]:g}, lon {box[2]:g} to {box[3]:g}  [{which}]"
+    return (f"lat {box[0]:g} to {box[1]:g}, lon {box[2]:g} to {box[3]:g}  "
+            f"[the domain of region {regions.load_region(str(name).strip()).id}]")
 
 
 def _datasets(dic: dict, report: CheckReport) -> None:

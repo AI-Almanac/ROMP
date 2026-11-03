@@ -11,10 +11,8 @@ from hcwf.io.input import onset_steps_needed
 from hcwf.lib.onset_config import OnsetConfigError, onset_setup
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
-from hcwf.onset.legacy import from_flat_config
 
 BOUNDARY = "00 UTC, labelled by start"
-FLAT = dict(wet_init=1, wet_threshold=20, wet_spell=3, dry_spell=7, dry_extent=10, end_date=(2019, 7, 31))
 
 
 def test_override_merges_replaces_and_keeps_provenance():
@@ -57,8 +55,8 @@ def test_without_dry_spell_check_is_a_no_op_without_vetoes(ident):
 
 
 def _cfg(**values):
-    """A definition-mode config."""
-    return {"onset_legacy": False, "onset_definition": "icpac", "obs_day_boundary": BOUNDARY, **values}
+    """A config with a definition."""
+    return {"onset_definition": "icpac", "obs_day_boundary": BOUNDARY, **values}
 
 
 def test_config_switches_the_check_off_and_prints_it():
@@ -78,18 +76,9 @@ def test_dry_spell_check_must_be_a_bool():
         onset_setup(_cfg(dry_spell_check="no"))
 
 
-def test_legacy_mode_drops_the_translated_veto():
-    """In legacy mode False has the effect of dry_extent = 0."""
-    cfg = {**FLAT, "region": "atlantis"}
-    assert len(onset_setup(cfg).definition.rule.reject_if) == 1
-    off = onset_setup({**cfg, "dry_spell_check": False})
-    assert off.dry_check == "off"
-    assert off.definition.rule == from_flat_config({**FLAT, "dry_extent": 0}).rule
-
-
 def test_fewer_leads_are_loaded_without_the_check():
     """ICPAC's 21-day dry run needs 21 more leads than the variant without it."""
-    kw = dict(max_forecast_day=30, wet_spell=3, dry_extent=0)
+    kw = dict(max_forecast_day=30)
     assert onset_steps_needed(**_cfg(**kw)) == 51
     assert onset_steps_needed(**_cfg(dry_spell_check=False, **kw)) == 32
 

@@ -88,7 +88,7 @@ def test_threaded_obs_reads_of_netcdf_are_serialised(tmp_path):
         xr.Dataset({"RAINFALL": (("time", "lat", "lon"), rain)}, coords={"time": time, "lat": lat, "lon": lon}
                    ).to_netcdf(folder / f"{year}.nc")
     kwargs = {"obs_dir": str(folder), "obs_file_pattern": ("{}.nc",), "obs_var": "RAINFALL", "obs_unit_cvt": None,
-              "region": "India", "parallel": True, "years": (), "land_only": False, "shp_only": False}
+              "region": "india", "parallel": True, "years": (), "land_only": False, "shp_only": False}
     out = list(obs_years(list(range(2001, 2009)), kwargs, hold=False))
     assert [float(rain["RAINFALL"].values.flat[0]) if hasattr(rain, "data_vars") else float(rain.values.flat[0])
             for rain, error in out] == [float(y) for y in range(2001, 2009)]
@@ -96,7 +96,13 @@ def test_threaded_obs_reads_of_netcdf_are_serialised(tmp_path):
     assert missing[0][1] is None and isinstance(missing[1][1], FileNotFoundError)
 
 
-@pytest.mark.skipif(not (BASELINE / "demo_mwset_new.yaml").exists(), reason="baseline demo data not present")
+def _baseline_runs():
+    """Whether the untracked baseline config exists and is written for this version (no removed flat onset keys)."""
+    config = BASELINE / "demo_mwset_new.yaml"
+    return config.exists() and "\nwet_init:" not in config.read_text()
+
+
+@pytest.mark.skipif(not _baseline_runs(), reason="baseline demo data not present or still has the removed flat onset keys")
 def test_run_parallel_equals_serial(tmp_path):
     """A whole run gives byte-identical files with parallel on and off."""
     outs = {}

@@ -100,7 +100,7 @@ def plot_reliability_diagram(combined_forecast_obs, *, model, verification_windo
         os.makedirs(dir_fig, exist_ok=True)
         window_str = tuple_to_str(verification_window)
         fig_fn = os.path.join(dir_fig, f'reliability_{model}_{window_str}.png')
-        fig.savefig(fig_fn, dpi=600, bbox_inches='tight')
+        fig.savefig(fig_fn, dpi=300, bbox_inches='tight')
         log.debug(f"Figure saved to: {fig_fn}")
 
     plt.tight_layout()

@@ -60,7 +60,7 @@ plan = hcwf.check("run.yaml")                          # what --check prints
 
 **Blends and batches.** A run file with a `blend:` section trains an onset blend instead of benchmarking (keys: `years`, `cutoff_mode`, `cv_methods`, `formulas`, `final_formula`, `window_variants`, `baselines`, `forecasts`, `mme`, `external_predictions`, `random_forest`, `fixed_cutoff`, `reference_onset`, `bins`, `probability_days`, `trim_after_true_onset`, `rain_transform`, `climatology`, `outputs`, and `models:` for per-model `lead_days`, `max_member`, `rain_horizon`, `rain_predictors`, `rain_transform`; `hcwf-run init --blend` writes a skeleton, `--check` describes it and the evaluation `units:`). Datasets may list their files (`paths`: names or globs, any number per year; `years` keeps those of some years; `unit_cvt` is the multiplier to mm of files that declare no units), `region: null` means no region, and `units.mode` / `units.weights` may be mappings by source. The artifacts go into the run folder's `blend/` subfolder under their own names. `hcwf-run -p a.yaml -p b.yaml` (or `-p 'regions/*.yaml'`) runs several files one after another, one region per file. `hcwf-run convert blend.yml -o run.yaml` (an onset_blending config) and `hcwf-run convert --specs --name N --ground-truth GT --forecast MODEL=SPEC --combine C --connect K --cv-models M -o run.yaml` (a legacy spec set) write the equivalent run YAML with the parity options (`rain_resolution: exact`, `horizon: truncate`, ...), an inline `onset.rule`, `units:` and `blend:`, and list what is not carried over in comments.
 
-**Run folders.** Without `output.data_dir`, a run writes to `runs/<region>_<definition>[+mod]_<years>_<fingerprint>/` next to the config file (at most 40 characters; `+mod` marks an overridden definition; the 4-character fingerprint hashes everything that sets the results, not output switches). The same config is refused unless `--overwrite`, which clears that folder first; a changed config gets its own folder. Inside: `run.yaml` (every value after defaults, region, detection and overrides, each with its source) and `definition.yaml` (with the hash), `run.log`, and `onsets/`, `scores/`, `figures/` (a subfolder only when it would hold more than one file; short file names such as `scores/spatial_AIFS_1-15.nc`). `runs/.cache/` is shared by all runs. With an explicit `data_dir` (and `figure_dir`) the files and their names are the historical ones: `resolved_config.yaml`, `resolved_definition.yaml`, `spatial_metrics_<model>_<window>.nc`, ... in that folder, overwritten on a re-run. Old `config.in` files are no longer read: `hcwf-run convert old.in -o run.yaml` writes the equivalent YAML (same outputs).
+**Run folders.** Without `output.data_dir`, a run writes to `runs/<region>_<definition>[+mod]_<years>_<fingerprint>/` next to the config file (at most 40 characters; `+mod` marks an overridden definition; the 4-character fingerprint hashes everything that sets the results, not output switches). The same config is refused unless `--overwrite`, which clears that folder first; a changed config gets its own folder. Inside: `run.yaml` (every value after defaults, region, detection and overrides, each with its source) and `definition.yaml` (with the hash), `run.log`, and `onsets/`, `scores/`, `figures/` (a subfolder only when it would hold more than one file; short file names such as `scores/spatial_AIFS_1-15.nc`). `runs/.cache/` is shared by all runs. With an explicit `data_dir` (and `figure_dir`) the files and their names are the historical ones: `resolved_config.yaml`, `resolved_definition.yaml`, `spatial_metrics_<model>_<window>.nc`, ... in that folder, overwritten on a re-run. Old `config.in` files are no longer read.
 
 **Observed-onset cache.** Observed onsets are detected once per run and shared by all models, windows and references, and kept across runs in `runs/.cache/observed_onsets/` (`<data_dir>/.onset_cache/` with an explicit `data_dir`), keyed by a fingerprint of the observation files, ingest settings, evaluated cells and mask, definition, thresholds and season climatology, and years (not the backend, models, windows or reference). The run prints a hit or miss and, on a miss, which parts differ from the nearest cached entry.
 
@@ -73,14 +73,14 @@ Export the gridded onset dates (observed, each model, the climatology references
 List, read and draw definitions from the command line:
 
 ```bash
-python -m hcwf.onset list                     # ids, titles, regions
-python -m hcwf.onset describe icpac           # the rule in words, hash, status, notes
-python -m hcwf.onset regions                  # regions and countries with their defaults
-python -m hcwf.onset schematic icpac --png icpac.png
-python -m hcwf.onset explain --obs obs.nc --obs-var RAINFALL \
+hcwf-run onset list                     # ids, titles, regions
+hcwf-run onset describe icpac           # the rule in words, hash, status, notes
+hcwf-run onset regions                  # regions and countries with their defaults
+hcwf-run onset schematic icpac --png icpac.png
+hcwf-run onset explain --obs obs.nc --obs-var RAINFALL \
     --day-boundary "00 UTC, labelled by start" --definition icpac \
     --lat 9.0 --lon 38.75 --year 2020 --png anatomy.png
-python -m hcwf.onset check-alignment --help   # are obs and forecast dates shifted?
+hcwf-run onset check-alignment --help   # are obs and forecast dates shifted?
 ```
 
 `explain` prints why one cell got its onset date (each candidate day, which condition failed). The `hcwf.onset.viz` package also has Python functions for comparing definitions, forecast-versus-truth plots and map drill-downs.
@@ -97,11 +97,11 @@ onset:
 
 `override` is merged like `extends` and validated with the same strict errors; the run prints the definition's description, "icpac v1, overridden: wet_day" and its hash, and records them in `resolved_definition.yaml`. `dry_spell_check: false` is an override too. A path to a shared definition file still works. Regions are YAML files in `hcwf/onset/regions/`. A custom region in `hcwf/params/region_def.py` has no default definition, so set `onset.definition` and `observations.day_boundary` yourself.
 
-Old flat onset keys (`wet_init`, `wet_spell`, `dry_extent`, ...) still run in a legacy mode with a warning (written at the top level of the YAML); they cannot be combined with `onset.definition`.
+The old flat onset keys (`wet_init`, `wet_spell`, `dry_extent`, ...) are no longer read: a config needs an onset definition, and one that still has the keys is refused with a pointer to `hcwf-run convert old.yaml -o new.yaml`, which writes them as an `onset.rule`. The keys `layout`, `work_dir`, `pkg_dir`, `debug`, `years`, `years_clim` and `fallback_date` were removed too (they had no effect).
 
 More:
 
-* `docs/onset_in_hcwf.md`: how HCWF uses the component (config keys, lead windows, forecast history, thresholds, legacy mode).
+* `docs/onset_in_hcwf.md`: how HCWF uses the component (config keys, lead windows, forecast history, thresholds, converting the old flat keys).
 * `docs/onset_spec.md`: the specification (YAML grammar, detection semantics, backends).
 
 ## Region masks

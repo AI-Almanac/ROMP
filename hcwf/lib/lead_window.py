@@ -9,7 +9,7 @@ import os
 
 import xarray as xr
 
-from hcwf.lib.onset_config import OnsetConfigError, forecast_reach, is_legacy, onset_setup
+from hcwf.lib.onset_config import OnsetConfigError, forecast_reach, onset_setup
 from hcwf.utils.practical import set_dir
 from hcwf.utils.standard import dim_fmt_model
 
@@ -46,11 +46,9 @@ def _clip(pairs, last: int):
 def apply_lead_window(dic: dict, n_leads=count_leads) -> dict:
     """Clip max_forecast_day, verification_window_list, tolerance_days_list and day_bins to the usable leads.
 
-    Definition mode only. The run uses the shortest usable window over the models; the
+    The run uses the shortest usable window over the models; the
     printable lines (one per model) go to dic["onset_lead_lines"] and the window to dic["lead_window"].
     """
-    if is_legacy(dic):
-        return dic
     setup = onset_setup(dic)
     reach = forecast_reach(setup)
     wanted = dic["max_forecast_day"]

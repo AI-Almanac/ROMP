@@ -109,7 +109,7 @@ def test_the_fingerprint_of_a_grid_run_has_its_six_parts_and_units_and_options_a
                 "notes": "t", "season": {"from": "01-01", "to": "12-31"}, "wet_day": "at least 1 mm",
                 "dry_day": "less than 1 mm", "onset": {"window": "3 days", "require": [{"first day": "wet"}],
                                                       "reject if": []}},
-            "onset_legacy": False, "obs_day_boundary": "00 UTC, labelled by start", "model_lead_label": "start", "threshold_years": [2000, 2001]}
+            "obs_day_boundary": "00 UTC, labelled by start", "model_lead_label": "start", "threshold_years": [2000, 2001]}
     rain = xr.DataArray(np.zeros((2, 2, 2)), dims=("time", "lat", "lon"), coords={"lat": [0.0, 1.0], "lon": [2.0, 3.0]})
     plain = observed_cache.fingerprint_parts(rain, {}, base)
     assert set(plain) == {"obs_files", "obs_ingest", "cells", "definition", "thresholds", "years"}
