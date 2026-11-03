@@ -48,13 +48,13 @@ commands:
              section; what is not carried over is listed in comments at the top.
   forecast   apply trained blends (the trained.blend a blend run writes into its blend/ folder, or one of
              onset_blending's) to live forecast files: `momp-run forecast BLEND... --forecast MODEL=PATH
-             [--forecast ...] [--issue-date YYYY-MM-DD] [--fewer-members] [-o DIR]`. PATH is a file or a glob;
+             [--forecast ...] [--issue-date YYYY-MM-DD] [--fewer-members] [--netcdf] [-o DIR]`. PATH is a file or a glob;
              give each trained model once (repeat for several files of a model). The live files may
              hold more than the blend was trained on (leads, members, a larger domain) but not less, and must have
              its units, accumulation, grid spacing and issue hour; every difference is reported before anything is
              read. The issue date is the one the files hold, else the latest, and must lie in the blend's issue
-             window. Writes blended_forecast_probabilities.csv (+ .nc), and daily_onset_probabilities.csv (+ .nc)
-             for a random forest blend, into -o DIR (default: forecasts/<issue date>/ beside the blend). Several
+             window. Writes blended_forecast_probabilities.csv, and daily_onset_probabilities.csv for a random forest
+             blend (--netcdf adds a .nc twin of each), into -o DIR (default: forecasts/<issue date>/ beside the blend). Several
              blends (one per region) are applied one after another to the same live files.
   export     run only the onset detection of a config and write one NetCDF per source (observed, each model,
              climatology, conditional_climatology) with the dates exactly as ROMP scores them. Options:
@@ -214,6 +214,7 @@ def _forecast(argv) -> int:
     p.add_argument("--issue-date", help="forecast this issue date only (YYYY-MM-DD); default the one the files hold")
     p.add_argument("--fewer-members", action="store_true",
                    help="allow live ensembles that hold only some of the trained members")
+    p.add_argument("--netcdf", action="store_true", help="also write the probabilities as NetCDF (default: CSV only)")
     p.add_argument("-o", "--output", help="new folder for the forecast (default forecasts/<issue date>/ beside the "
                                           "blend; with several blends, one subfolder each)")
     args = p.parse_args(argv)
@@ -233,7 +234,7 @@ def _forecast(argv) -> int:
                 Path(args.output) / (Path(path).resolve().parent.name or f"blend{index + 1}")
         try:
             written = forecast(path, files, issue_date=args.issue_date, fewer_members=args.fewer_members, output=target,
-                               write=True).folder
+                               write=True, netcdf=args.netcdf).folder
         except (IncompatibleForecast, BlendFileError, FileExistsError, FileNotFoundError, ValueError) as exc:
             print(f"{path}: {exc}", file=sys.stderr)
             failed += 1

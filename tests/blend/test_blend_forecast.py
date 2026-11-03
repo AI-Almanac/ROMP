@@ -124,7 +124,9 @@ def test_the_random_forest_blend_forecasts_by_day(forest_region, tmp_path):
     assert np.allclose(daily["cv_week1"], daily[[f"p_day_{d}" for d in range(1, 8)]].sum(axis=1))
     assert set(forecast.daily["p_day"].dims) == {"time", "id", "day"}
     saved = forecast.save(tmp_path / "forecast")
-    assert (saved / "daily_onset_probabilities.csv").exists() and (saved / "daily_onset_probabilities.nc").exists()
+    assert (saved / "daily_onset_probabilities.csv").exists() and not list(saved.glob("*.nc"))
+    twins = forecast.save(tmp_path / "twins", netcdf=True)
+    assert (twins / "daily_onset_probabilities.nc").exists() and (twins / "blended_forecast_probabilities.nc").exists()
 
 
 def test_a_saved_blend_forecasts_like_its_model(region):
@@ -313,7 +315,7 @@ def test_a_training_run_saves_the_trained_blend_beside_its_artifacts(region):
     root, result, _, path = region
 
     assert path.parent == root / "trained"
-    assert (path.parent / "weekly_features.nc").exists()
+    assert not (path.parent / "weekly_features.nc").exists()   # intermediates are opt-in
     assert not [p for p in path.parent.iterdir() if ".tmp" in p.name]
 
 
@@ -587,8 +589,19 @@ def test_the_command_writes_beside_the_blend_by_default(region, tmp_path, capsys
 
     folder = tmp_path / "forecasts" / "2013-06-05"
     assert code == 0 and f"Wrote {folder}" in capsys.readouterr().out
-    assert (folder / "blended_forecast_probabilities.csv").exists()
+    assert (folder / "blended_forecast_probabilities.csv").exists() and not list(folder.glob("*.nc"))
     assert set(pd.read_csv(folder / "blended_forecast_probabilities.csv")["time"]) == {"2013-06-05"}
+
+
+def test_the_netcdf_twin_is_written_only_when_asked(region, tmp_path):
+    root, _, _, path = region
+    blend = tmp_path / "trained.blend"
+    blend.write_bytes(path.read_bytes())
+
+    code = run_cli([blend, "--forecast", f"ens={root / 'ens' / '2013.nc'}", "--issue-date", "2013-06-05", "--netcdf",
+                    "-o", tmp_path / "out"])
+
+    assert code == 0 and (tmp_path / "out" / "blended_forecast_probabilities.nc").exists()
 
 
 def test_several_blends_are_applied_one_after_another_into_one_folder_each(region, tmp_path, capsys):

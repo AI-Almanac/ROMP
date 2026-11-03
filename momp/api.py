@@ -344,7 +344,8 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
                      config=dic)
 
 
-def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=None, write=False):
+def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=None, write=False,
+             netcdf=False):
     """Apply a trained blend to live forecast files and return the `momp.blend.forecast.Forecast`.
 
         fc = momp.api.forecast("run/blend/trained.blend", {"aifs": "live/aifs_2026-06-09.nc"})
@@ -356,7 +357,8 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
     trained on (lead days, members, a larger domain), never less, and must have its units, accumulation, grid spacing and
     issue hour (`momp.blend.forecast.IncompatibleForecast` lists every difference); `issue_date` picks one issue of files
     holding several, `fewer_members` lets an ensemble hold only some of the trained members. With `write` the forecast
-    is saved into `output`, default `forecasts/<issue date>/` beside the blend file (`Forecast.folder`).
+    is saved into `output`, default `forecasts/<issue date>/` beside the blend file (`Forecast.folder`); the CSVs
+    are the product, `netcdf` adds a NetCDF twin of the probabilities.
     """
     from momp.blend.trained import TrainedBlend
 
@@ -368,5 +370,5 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
             if path is None:
                 raise ValueError("give output: a TrainedBlend that was not read from a file has no folder to write beside")
             output = path.resolve().parent / "forecasts" / result.label
-        result.save(output)
+        result.save(output, netcdf=netcdf)
     return result

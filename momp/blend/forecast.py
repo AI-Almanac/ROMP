@@ -103,9 +103,9 @@ class Forecast:
                                   ).transpose("time", "id", "day")
         return data
 
-    def save(self, directory) -> Path:
+    def save(self, directory, *, netcdf: bool = False) -> Path:
         """Write the forecast's files into a new directory, all or nothing: blending's contract CSVs (weekly, and daily
-        for a random forest blend) and the probabilities as NetCDF."""
+        for a random forest blend). `netcdf` also writes the probabilities as NetCDF (off by default: nothing reads it)."""
         directory = Path(directory)
         if directory.exists() and any(directory.iterdir()):
             raise FileExistsError(f"{directory} exists and is not empty")
@@ -113,10 +113,12 @@ class Forecast:
         staging = Path(tempfile.mkdtemp(prefix=f".{directory.name}.", dir=directory.parent))
         try:
             self.weekly_table.to_csv(staging / WEEKLY_FILENAME, index=False)
-            self.weekly.to_netcdf(staging / WEEKLY_NETCDF)
+            if netcdf:
+                self.weekly.to_netcdf(staging / WEEKLY_NETCDF)
             if self.daily_table is not None:
                 self.daily_table.to_csv(staging / DAILY_FILENAME, index=False)
-                self.daily.to_netcdf(staging / DAILY_NETCDF)
+                if netcdf:
+                    self.daily.to_netcdf(staging / DAILY_NETCDF)
             if directory.exists():
                 directory.rmdir()
             os.replace(staging, directory)
