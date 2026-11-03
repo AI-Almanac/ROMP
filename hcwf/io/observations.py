@@ -30,7 +30,14 @@ from hcwf.spatial.onto_units import (
     select_units,
     units_files,
 )
-from hcwf.spatial.select import implicit_masks, in_memory, region_box, region_select, scale_in_place
+from hcwf.spatial.select import (
+    implicit_keep,
+    implicit_masks,
+    in_memory,
+    region_box,
+    region_select,
+    scale_in_place,
+)
 from hcwf.spatial.units import UnitsSpec
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -89,17 +96,18 @@ def _locate(year, read: ObsRead):
     return observation_source(year, read.obs.dir, read.obs.file_pattern, read.obs.paths, read.select.obs_files_years)
 
 
-def _read_obs_range(first, last, store, read: ObsRead):
+def _read_obs_range(first, last, store, read: ObsRead, cells=False):
     """The region's box of a zarr store's observations from Jan 1 of first to Dec 31 of last, read in one pass.
 
     Equal, year by year, to _read_obs_year (the same cells masked, the same unit factor); an archive chunked over
-    the whole time axis is decoded once for all the years instead of once per year.
+    the whole time axis is decoded once for all the years instead of once per year. `cells`: see _read_obs_year.
     """
     obs = read.obs
     ds = dim_fmt(open_store(store))
     ds = ds[[obs.var]].sel(time=slice(f"{first}-01-01", f"{last}-12-31"))
     da = region_select(ds[[obs.var]], area=read.area, select=read.select, read_by="time",
-                       dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig)[obs.var]
+                       dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig, skip_masked=cells,
+                       compact=cells)[obs.var]
     return scale_in_place(in_memory(da), obs.unit_cvt)
 
 
@@ -141,8 +149,12 @@ def read_obs_years(years, obs, area, options, select=NO_SELECTION, *, onset=None
     return obs_years_of(ObsRead(obs, area, options, select, onset, tuple(run_years), dir_fig, parallel), years, hold)
 
 
-def obs_years_of(read: ObsRead, years, hold=True):
-    """The generator behind `read_obs_years`."""
+def obs_years_of(read: ObsRead, years, hold=True, cells=False):
+    """The generator behind `read_obs_years`.
+
+    With `cells` a year that is not held and not already in the run's cache is read as only the cells the region's masks
+    keep (dims time, "cell", see _read_obs_year); the held years stay whole, as the run's cache has them.
+    """
     years = list(years)
     if not years:
         return
@@ -177,7 +189,8 @@ def obs_years_of(read: ObsRead, years, hold=True):
         for start in range(0, len(years), per_block):
             group = years[start:start + per_block]
             need = [year for year in group if held(year) is None]
-            block = _read_obs_range(min(need), max(need), store, read) if need else None
+            compact = cells and not any(year in keep for year in need)
+            block = _read_obs_range(min(need), max(need), store, read, compact) if need else None
             for year in group:
                 try:
                     rainfall = held(year)
@@ -199,7 +212,7 @@ def obs_years_of(read: ObsRead, years, hold=True):
             rainfall = held(year)
             if rainfall is None:
                 _, store, path = locate(year)
-                rainfall = _read_obs_year(year, store, path, read)
+                rainfall = _read_obs_year(year, store, path, read, cells and year not in keep)
             return rainfall, None
         except Exception as exc:  # noqa: BLE001 - handed to the caller, which decides what a missing year means
             return None, exc
@@ -225,32 +238,57 @@ def _open_year(year, store, path, read: ObsRead):
     return dim_fmt(rename_model_dims(xr.open_dataset(path), read.obs.dims_map()))
 
 
+def _observation_box(year, read: ObsRead, keep=False):
+    """The region's box (or the one grid point) of the year's lazy observations: ({"lat", "lon"} values, dims of the
+    variable, the cells the implicit masks keep or None). Nothing of the rainfall is read."""
+    store, path = _locate(year, read)
+    ds = _open_year(year, store, path[0] if isinstance(path, tuple) else path, read)
+    try:
+        box = region_box(ds[[read.obs.var]], region=read.area.region)
+        dims = tuple(box[read.obs.var].dims)
+        if read.select.grid_point:
+            box = box.sel(lat=[read.select.lat], lon=[read.select.lon])
+        kept = implicit_keep(box, read.area, read.select) if keep else None
+        return {name: np.asarray(box[name].values) for name in ("lat", "lon")}, dims, kept
+    finally:
+        if path is not None:
+            ds.close()
+
+
 def observation_grid(year, read: ObsRead):
     """{"lat": ..., "lon": ...}, the cells `load_observations` gives for the year, from the file's coordinates alone.
 
     Nothing of the rainfall is read: the region's box (or the one grid point) of the lazy dataset, which is where the
     loaded array's cells come from (the masks set cells to NaN and keep them). Data without a box has no such grid.
     """
-    store, path = _locate(year, read)
-    ds = _open_year(year, store, path[0] if isinstance(path, tuple) else path, read)
-    try:
-        box = region_box(ds[[read.obs.var]], region=read.area.region)
-        if read.select.grid_point:
-            box = box.sel(lat=[read.select.lat], lon=[read.select.lon])
-        return {name: np.asarray(box[name].values) for name in ("lat", "lon")}
-    finally:
-        if path is not None:
-            ds.close()
+    return _observation_box(year, read)[0]
 
 
-def _read_obs_year(year, store, path, read: ObsRead):
+def reference_cells(year, read: ObsRead):
+    """(lat and lon of the box, its spatial dims in the file's order, the boolean (lat, lon) array of the cells the
+    implicit masks keep) when the reference years can be held as only their kept cells, else None.
+
+    That is gridded (not unit) observations of a region's whole box (not one grid point) on the dims (time, lat, lon) in
+    some order, where the land and country masks (not a `mask` section or nc_mask) drop some cells and keep some.
+    """
+    if read.obs.units is not None or read.select.grid_point or read.area.region is None:
+        return None
+    grid, dims, keep = _observation_box(year, read, keep=True)
+    if keep is None or not keep.any() or set(dims) != {"time", "lat", "lon"} or len(dims) != 3:
+        return None
+    return grid, tuple(d for d in dims if d != "time"), keep
+
+
+def _read_obs_year(year, store, path, read: ObsRead, cells=False):
     """Read one year of one variable: select the year and the region's box on the lazy array, read once, mask in place.
 
-    A tuple of files (a year listed in several files) is read file by file and joined along time.
+    A tuple of files (a year listed in several files) is read file by file and joined along time. With `cells` (gridded
+    data whose implicit masks drop cells; see `reference_cells`) only the kept cells are read: the dims are then
+    (time, "cell") with the cells' lat and lon as coordinates over "cell" (see hcwf.spatial.select.load_blocks).
     """
     obs = read.obs
     if isinstance(path, tuple):
-        parts = [_read_obs_year(year, store, one, read) for one in path]
+        parts = [_read_obs_year(year, store, one, read, cells) for one in path]
         return xr.concat(parts, dim="time").sortby("time")
     ds = _open_year(year, store, path, read)
     if obs.units is not None:
@@ -260,7 +298,8 @@ def _read_obs_year(year, store, path, read: ObsRead):
             if path is not None:
                 ds.close()
     da = region_select(ds[[obs.var]], area=read.area, select=read.select, read_by="time",
-                       dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig)[obs.var]
+                       dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig, skip_masked=cells,
+                       compact=cells)[obs.var]
     da = in_memory(da)
     if path is not None:
         ds.close()

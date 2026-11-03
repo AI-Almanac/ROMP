@@ -40,7 +40,8 @@ def test_a_year_after_cached_ones_restarts_the_read_there(reads):
 
 def test_held_reference_years_are_not_read(reads, monkeypatch):
     monkeypatch.setattr(climatology, "reference_held", lambda: True)
-    monkeypatch.setattr(climatology, "reference_rain_year", lambda year, *a: f"held{year}" if year < 2002 else None)
+    monkeypatch.setattr(climatology, "reference_rain_year", lambda year, *a: SimpleNamespace(
+        cells=None, on_grid=lambda: f"held{year}") if year < 2002 else None)
     readers = climatology._year_readers([2000, 2001, 2002, 2003], RC, None)
     assert [r() for r in readers] == ["held2000", "held2001", "rain2002", "rain2003"]
     assert reads == [[2002, 2003]]

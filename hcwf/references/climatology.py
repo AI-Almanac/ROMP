@@ -36,12 +36,14 @@ class _YearRain:
         self.year, self._rc, self._select, self._read, self._held = year, rc, select, read, held
 
     def __call__(self):
-        return self._held if self._held is not None else self._read(self.year)
+        return self._held.on_grid() if self._held is not None else self._read(self.year)
 
     @property
     def probe(self):
         try:
-            coords = self._held.coords if self._held is not None else observation_grid_of(self.year, self._rc, self._select)
+            held = self._held
+            coords = (held.coords if held.cells is None else held.cells.coords()) if held is not None \
+                else observation_grid_of(self.year, self._rc, self._select)
         except Exception:  # noqa: BLE001 - without a grid the cache is skipped and the year is read
             coords = {}
         return SimpleNamespace(coords=coords)

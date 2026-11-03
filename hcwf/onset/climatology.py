@@ -115,6 +115,11 @@ def _threshold_rows(spec: ThresholdSpec, x: np.ndarray, valid: np.ndarray, windo
     return np.where(missing_days / n_days > max_missing_fraction, np.nan, out)
 
 
+def _cells_of(rain):
+    """The cells a rain holds only some of (hcwf.onset.model.Cells), or None for a rain over its whole grid."""
+    return getattr(rain, "cells", None)
+
+
 def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
                       max_missing_fraction: float = MAX_MISSING_FRACTION, partial_years: bool = False) -> np.ndarray:
     """Per-series threshold in mm (spatial shape) from the reference years y0..y1 inclusive.
@@ -131,7 +136,20 @@ def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
     (a year whose window is only partly in the data counts its days, where by default it is skipped) and
     float rain (rain_resolution "exact": millimetres are used as they are, summed day by day per year and the
     years added with Kahan compensation, the order of blending's per-file totals and groupby sum). The caller sets `days` (blending defaults it to the trigger window).
+
+    A rain that holds only some cells of its grid (`rain.cells`) gives the threshold on the whole grid: the cells it lacks
+    have what a series of masked days gives.
     """
+    cells = _cells_of(rain)
+    kept = _threshold_values(spec, rain, years, max_missing_fraction, partial_years)
+    if cells is None:
+        return kept
+    return cells.spread(kept, _threshold_values(spec, cells.masked(rain), years, max_missing_fraction, partial_years))
+
+
+def _threshold_values(spec: ThresholdSpec, rain, years: tuple[int, int], max_missing_fraction: float,
+                      partial_years: bool) -> np.ndarray:
+    """compute_threshold of the series `rain` holds (their shape)."""
     windows = _year_windows(spec, rain, years, partial_years)
     spatial_shape = rain.tenths.shape[:-1]
     n_time = rain.tenths.shape[-1]
@@ -148,10 +166,19 @@ def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
     return out.reshape(spatial_shape)
 
 
+def _spatial_axes(rain) -> tuple[tuple[str, ...], dict]:
+    """(dims, coordinates) of a per-series result over `rain`: its spatial dims, or the whole grid's for a rain of some cells."""
+    cells = _cells_of(rain)
+    if cells is not None:
+        return cells.dims, cells.coords()
+    dims = rain.dims[:-1]
+    return dims, {d: rain.coords[d] for d in dims}
+
+
 def _threshold_array(name: str, values: np.ndarray, spec: ThresholdSpec, rain, years: tuple[int, int]) -> xr.DataArray:
     """Wrap a threshold field as a DataArray whose attrs record its provenance."""
-    dims = rain.dims[:-1]
-    return xr.DataArray(values, dims=dims, coords={d: rain.coords[d] for d in dims}, name=name,
+    dims, coords = _spatial_axes(rain)
+    return xr.DataArray(values, dims=dims, coords=coords, name=name,
                         attrs={"units": "mm", "source": rain.source, "years": [int(years[0]), int(years[1])],
                                "spec": repr(spec)})
 
@@ -335,7 +362,28 @@ def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.D
     """
     if max_seasons not in (1, 2):
         raise ValueError("max_seasons must be 1 or 2")
-    spatial_shape = rain.tenths.shape[:-1]
+    cells = _cells_of(rain)
+    n_seasons, onset, cessation = _harmonic_values(rain, years, max_seasons)
+    if cells is not None:   # the cells the rain lacks have what a series of masked days gives
+        fill = _harmonic_values(cells.masked(rain), years, max_seasons)
+        n_seasons, onset, cessation = (cells.spread(kept, one) for kept, one in zip((n_seasons, onset, cessation), fill))
+    else:
+        spatial_shape = rain.tenths.shape[:-1]
+        n_seasons, onset, cessation = (n_seasons.reshape(spatial_shape), onset.reshape((max_seasons,) + spatial_shape),
+                                       cessation.reshape((max_seasons,) + spatial_shape))
+    dims, coords = _spatial_axes(rain)
+    coords_season = {**coords, "season": np.arange(1, max_seasons + 1)}
+    return xr.Dataset(
+        {"n_seasons": (dims, n_seasons),
+         "onset_doy": (("season",) + dims, onset),
+         "cessation_doy": (("season",) + dims, cessation)},
+        coords=coords_season,
+        attrs={"source": rain.source, "years": [int(years[0]), int(years[1])], "method": "harmonic (draft)"})
+
+
+def _harmonic_values(rain, years: tuple[int, int], max_seasons: int):
+    """(n_seasons, onset_doy, cessation_doy) of harmonic_seasons over the series `rain` holds, flat: (series) and
+    (season, series) twice."""
     cycle = _mean_cycle(rain, years)
     ok = np.isfinite(cycle).all(axis=1)
     n_cells = cycle.shape[0]
@@ -368,15 +416,7 @@ def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.D
             onset[1, idx] = np.where(two, on[1], np.nan)
             cessation[1, idx] = np.where(two, ce[1], np.nan)
         n_seasons[idx] = np.where(two, 2, 1)
-    dims = rain.dims[:-1]
-    coords = {d: rain.coords[d] for d in dims}
-    coords_season = {**coords, "season": np.arange(1, max_seasons + 1)}
-    return xr.Dataset(
-        {"n_seasons": (dims, n_seasons.reshape(spatial_shape)),
-         "onset_doy": (("season",) + dims, onset.reshape((max_seasons,) + spatial_shape)),
-         "cessation_doy": (("season",) + dims, cessation.reshape((max_seasons,) + spatial_shape))},
-        coords=coords_season,
-        attrs={"source": rain.source, "years": [int(years[0]), int(years[1])], "method": "harmonic (draft)"})
+    return n_seasons, onset, cessation
 
 
 class ThresholdCache:

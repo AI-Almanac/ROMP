@@ -2,6 +2,12 @@
 
 The thresholds read and ingest the reference years (`reference_rain`) and leave them held for the climatological onsets of those
 years (`reference_rain_year`) until `release_reference` (or the run's state is reset).
+
+Where the region's land and country masks drop cells, the years are read and held as only the cells the masks keep (a
+DailyRain with `cells`, dims "cell" and "time"), not the whole box: the thresholds and the harmonic seasons are computed on
+those cells and come out on the whole grid (hcwf.onset.climatology), and a year handed to the climatological onsets is put on
+the whole grid for that one year (`DailyRain.on_grid`), with the dropped cells as ingestion gives them, so that the onsets
+are those of the whole box.
 """
 from __future__ import annotations
 
@@ -17,6 +23,7 @@ from hcwf.io.observations import (
     obs_years_of,
     observation_year,
     observation_year_once,
+    reference_cells,
     years_held,
 )
 from hcwf.onset.ingest import ingest
@@ -52,7 +59,8 @@ def reference_rain_year(year, obs, area, select, boundary):
 
     The thresholds read and ingest the reference years once (see _stream_reference); the climatological onsets of
     those years use that same ingested rain instead of reading and converting every year again. The year's rain is
-    exactly what ingest gives for the year read on its own.
+    exactly what ingest gives for the year read on its own, once it is put on the whole grid with `on_grid` when the
+    reference years are held as only their kept cells (`cells` is then set on it).
     """
     held = _reference.get("held")
     if held is None:
@@ -67,7 +75,7 @@ def reference_rain_year(year, obs, area, select, boundary):
     return DailyRain(tenths=rain.tenths[..., days], missing=rain.missing[..., days], dims=rain.dims,
                      coords={**rain.coords, "time": rain.coords["time"][days]}, year=rain.year[days],
                      month=rain.month[days], day=rain.day[days], calendar=rain.calendar,
-                     day_boundary=rain.day_boundary, source="observations")
+                     day_boundary=rain.day_boundary, source="observations", cells=rain.cells)
 
 
 class LazyRain:
@@ -106,12 +114,43 @@ class _NotContiguous(Exception):
     """The reference years do not follow each other day by day, so they cannot be merged year by year."""
 
 
+def _kept_cells(read, year):
+    """What reference_cells gives for the year, or None when it cannot be looked at (the whole box is then read, and the read
+    reports what is wrong, a missing year or an unknown region, as it always did)."""
+    try:
+        return reference_cells(year, read)
+    except Exception as exc:  # noqa: BLE001 - only a saving of memory: the ordinary read follows
+        log.debug(f"reference cells not looked at: {exc}")
+        return None
+
+
+def _on_kept_cells(rain, rows, cols, flat):
+    """The year's observations on only the kept cells (dims time, "cell"): as they were read that way, else picked from the
+    whole box."""
+    if "cell" in rain.dims:
+        return rain
+    return rain.isel(lat=xr.DataArray(rows, dims="cell"), lon=xr.DataArray(cols, dims="cell")).assign_coords(cell=flat)
+
+
+def _cells_of_reference(one, grid, dims, flat, source, options, onset):
+    """The Cells of reference years ingested as `one` (a year on the kept cells): what the masked cells are as ingestion
+    gives them, found by ingesting one of them."""
+    from hcwf.onset.model import Cells
+
+    time = xr.DataArray(np.full((one.coords["time"].size, 1), np.nan), dims=("time", "cell"),
+                        coords={"time": one.coords["time"], "cell": [0]})
+    masked = ingest(time, day_boundary=onset.obs_day_boundary, units="mm", source=source, **options)
+    return Cells(flat=flat, lat=grid["lat"], lon=grid["lon"], dims=dims, fill_tenths=masked.tenths[0, 0].item(),
+                 fill_missing=bool(masked.missing[0, 0]))
+
+
 def _stream_reference(onset, years, read, source):
     """Ingest the reference years one at a time into one preallocated DailyRain (peak memory: the result plus one year).
 
     Gives what ingest of the concatenated years gives, for standard-calendar years that follow each other
     day by day on one grid; raises _NotContiguous otherwise. Years the run also evaluates stay in the
-    observation cache; the others are read, ingested and dropped.
+    observation cache; the others are read, ingested and dropped. Where the masks drop cells, only the kept cells are
+    read and held (see the module text): the result has `cells`.
     """
     from hcwf.onset.model import DailyRain
 
@@ -119,11 +158,24 @@ def _stream_reference(onset, years, read, source):
     total = (date(years[1], 12, 31) - first).days + 1
     out, offset = None, 0
     options = read.options.ingest(False, read.obs.units)
-    for year, (rain, error) in zip(range(years[0], years[1] + 1), obs_years_of(read, range(years[0], years[1] + 1))):
+    kept = _kept_cells(read, years[0])
+    if kept is not None:
+        grid, spatial, keep = kept
+        flat = np.flatnonzero(keep.reshape(-1))
+        rows, cols = np.divmod(flat, keep.shape[1])
+    cells = None
+    for year, (rain, error) in zip(range(years[0], years[1] + 1),
+                                   obs_years_of(read, range(years[0], years[1] + 1), cells=kept is not None)):
         if error is not None:
             raise error
+        if kept is not None:
+            rain = _on_kept_cells(rain, rows, cols, flat)
         one = ingest(rain, day_boundary=onset.obs_day_boundary, units="mm", source=source, **options)
         del rain
+        if kept is not None:
+            if "cell" not in one.dims or not np.array_equal(one.coords["cell"], flat):
+                raise _NotContiguous
+            cells = cells or _cells_of_reference(one, grid, spatial, flat, source, options, onset)
         if one.calendar != "standard" or one.tenths.shape[-1] != (date(year, 12, 31) - date(year, 1, 1)).days + 1 \
                 or (date(year, 1, 1) - first).days != offset:
             raise _NotContiguous
@@ -133,7 +185,7 @@ def _stream_reference(onset, years, read, source):
                             dims=one.dims, coords={**one.coords, "time": np.empty(total, dtype="datetime64[ns]")},
                             year=np.empty(total, dtype=np.int64), month=np.empty(total, dtype=np.int64),
                             day=np.empty(total, dtype=np.int64), calendar=one.calendar,
-                            day_boundary=one.day_boundary, source=source)
+                            day_boundary=one.day_boundary, source=source, cells=cells)
         elif one.dims != out.dims or any(not np.array_equal(one.coords[d], out.coords[d]) for d in one.dims[:-1]):
             raise _NotContiguous
         n = one.tenths.shape[-1]

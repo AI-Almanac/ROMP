@@ -261,6 +261,53 @@ def resolution_of(values: np.ndarray) -> str:
     return "exact" if values.dtype.kind == "f" else "tenths"
 
 
+@dataclass(frozen=True, eq=False)
+class Cells:
+    """Which cells of a (lat, lon) grid a DailyRain holds when it holds only some: those of the dims ("cell", "time").
+
+    `flat` is the cells' positions in the grid, latitude-major (row * number of longitudes + column), `lat` and `lon`
+    the grid's axes, `dims` its two spatial dims in the order the whole grid has them. A cell the rain lacks is one
+    the region's masks drop: what ingestion gives it (`fill_tenths` mm or tenths, `fill_missing`, the same every day) is
+    what `on_grid` and `spread` put there, so that results on the whole grid are the ones the whole grid gives.
+    """
+
+    flat: np.ndarray
+    lat: np.ndarray
+    lon: np.ndarray
+    dims: tuple[str, ...]
+    fill_tenths: float
+    fill_missing: bool
+
+    def _where(self) -> tuple[np.ndarray, ...]:
+        """The index of each cell along the grid's dims, in `dims` order."""
+        by = {"lat": self.flat // len(self.lon), "lon": self.flat % len(self.lon)}
+        return tuple(by[d] for d in self.dims)
+
+    def shape(self) -> tuple[int, ...]:
+        """The grid's shape in `dims` order."""
+        return tuple(len({"lat": self.lat, "lon": self.lon}[d]) for d in self.dims)
+
+    def coords(self) -> dict[str, np.ndarray]:
+        """The grid's axes by dim name."""
+        return {"lat": self.lat, "lon": self.lon}
+
+    def spread(self, kept: np.ndarray, fill: np.ndarray) -> np.ndarray:
+        """`kept` (leading dims, then the cells) on the whole grid (leading dims, then `dims`); `fill` (leading dims and
+        1) is what every other cell has."""
+        out = np.empty(kept.shape[:-1] + self.shape(), dtype=kept.dtype)
+        out[...] = fill.reshape(fill.shape[:-1] + (1,) * len(self.dims))
+        out[(...,) + self._where()] = kept
+        return out
+
+    def masked(self, rain: "DailyRain") -> "DailyRain":
+        """One cell of the rain's days that the masks dropped, as ingestion gives it."""
+        n = rain.tenths.shape[-1]
+        return DailyRain(tenths=np.full((1, n), self.fill_tenths, dtype=rain.tenths.dtype),
+                         missing=np.full((1, n), self.fill_missing), dims=("cell", "time"), coords={},
+                         year=rain.year, month=rain.month, day=rain.day, calendar=rain.calendar,
+                         day_boundary=rain.day_boundary, source=rain.source, missing_policy=rain.missing_policy)
+
+
 @dataclass
 class DailyRain:
     """Daily rainfall that has passed the ingestion contract, ready for detection.
@@ -269,6 +316,8 @@ class DailyRain:
     tenths. year/month/day label each day in the dataset's own calendar, so
     search windows resolve without datetime arithmetic. With resolution "exact"
     tenths holds float64 millimetres instead of int32 tenths (see hcwf.onset.ingest, rain_resolution).
+    With `cells` the rain holds only some cells of a grid, as the dims ("cell", "time") (see `Cells`); `on_grid` gives
+    the rain of the whole grid.
     """
 
     tenths: np.ndarray
@@ -282,6 +331,7 @@ class DailyRain:
     day_boundary: str
     source: str = ""
     missing_policy: str = "flag"
+    cells: Cells | None = None
 
     def __post_init__(self):
         """Check the arrays agree with each other and with the contract."""
@@ -298,6 +348,22 @@ class DailyRain:
     def resolution(self) -> str:
         """"exact" (float mm) or "tenths" (int32)."""
         return resolution_of(self.tenths)
+
+    def on_grid(self) -> "DailyRain":
+        """The rain of the whole grid (a rain that already is one is returned as it is): the cells it lacks as
+        ingestion gives them."""
+        cells = self.cells
+        if cells is None:
+            return self
+        shape = cells.shape() + (self.tenths.shape[-1],)
+        tenths = np.full(shape, cells.fill_tenths, dtype=self.tenths.dtype)
+        missing = np.full(shape, cells.fill_missing)
+        where = cells._where()
+        tenths[where], missing[where] = self.tenths, self.missing
+        coords = {**cells.coords(), "time": self.coords["time"]}
+        return DailyRain(tenths=tenths, missing=missing, dims=cells.dims + ("time",), coords=coords, year=self.year,
+                         month=self.month, day=self.day, calendar=self.calendar, day_boundary=self.day_boundary,
+                         source=self.source, missing_policy=self.missing_policy)
 
 
 @dataclass
