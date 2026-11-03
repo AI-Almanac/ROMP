@@ -86,7 +86,7 @@ def reset() -> None:
 
 
 def threshold_hash(thresh) -> str:
-    """Hash of the threshold values: the named arrays, the season climatology, or the legacy scalar or map."""
+    """Hash of the threshold values: the named arrays or the season climatology."""
     cached = _memo.get(("thresh", id(thresh)))
     if cached is not None and cached[0] is thresh:
         return cached[1]
@@ -190,7 +190,7 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
     spec = units_spec(kwargs, "observations")
     parts = {
         "obs_files": _obs_files_hash(kwargs, years),
-        "obs_ingest": part_hash(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.ingest_boundary,
+        "obs_ingest": part_hash(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.obs_day_boundary,
                                 kwargs.get("obs_file_pattern")),
         "definition": part_hash(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check),
         "thresholds": threshold_hash(thresh),

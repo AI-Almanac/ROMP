@@ -28,9 +28,9 @@ def compute_onset_metrics_with_windows(onset_df, *, tolerance_days, verification
 
     Returns one row per grid point (or evaluation unit, with a unit column instead of lat and lon), in order of first
     appearance in onset_df, and summary totals.
-    With forecast_history "observed" (definition mode) the rows also have `n_back_dated`: the cases whose
+    With forecast_history "observed" the rows also have `n_back_dated`: the cases whose
     forecast onset is dated on or before the init, which count as the first lead; 0 unless the window
-    starts at lead 1. Legacy and "none" runs get no such column.
+    starts at lead 1. "none" runs get no such column.
     """
     report_back_dated = counts_back_dated(kwargs)
     log.debug(f"Computing onset metrics with tolerance = {tolerance_days} days")

@@ -80,7 +80,7 @@ def test_the_threshold_may_be_a_per_cell_array():
     """A 2-D threshold is compared per cell: the same spell passes 25 mm and fails 35 mm."""
     low = {"legacy_threshold": xr.DataArray([[25.0]], coords=[("lat", [0.0]), ("lon", [0.0])])}
     high = {"legacy_threshold": low["legacy_threshold"] + 10}
-    cfg = old_rule(thresh_file="t.nc")
+    cfg = old_rule(thresh_file="t.nc", thresh_var="mwset")
     assert not pd.isna(detect_observed_onset(_obs([("2020-05-10", 3)]), low, 2020, **cfg).values[0, 0])
     assert pd.isna(detect_observed_onset(_obs([("2020-05-10", 3)]), high, 2020, **cfg).values[0, 0])
 

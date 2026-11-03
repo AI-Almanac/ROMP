@@ -23,7 +23,9 @@ Optional env vars (with defaults matching the demo config):
                           (default: None, infer from names)
   HCWF_REGION           - target region (default: Ethiopia)
   HCWF_NC_MASK          - path to land/region mask NetCDF (default: None)
-  HCWF_ONSET_DEFINITION - onset definition id or YAML path (default: the region's default definition)
+  HCWF_ONSET_DEFINITION - onset definition id or YAML path (default: the region's default definition; the
+                          script prints which one it chose. Before this version the default was the flat rule
+                          1 mm wet day, 3-day spell above 20 mm, 7-day dry spell, no dry extent)
                           (the old flat variables HCWF_WET_*, HCWF_DRY_SPELL, HCWF_DRY_EXTENT and HCWF_THRESH_FILE
                           are no longer read; setting one is an error)
   HCWF_ONSET_SEASON     - season name for definitions with several seasons (default: None)
@@ -208,6 +210,23 @@ def onset_values() -> dict:
     }
 
 
+def onset_choice(values: dict) -> str:
+    """One line saying which onset definition the generated config uses and why."""
+    from hcwf.onset import regions
+
+    given = values.get("onset_definition")
+    if given:
+        return f"Onset definition: {given} (HCWF_ONSET_DEFINITION)"
+    try:
+        default = regions.definitions_for(values["region"])[0]
+    except Exception as exc:  # noqa: BLE001 - an unknown region is reported by hcwf-run
+        return f"Onset definition: none chosen, HCWF_ONSET_DEFINITION is not set and region '{values['region']}' gives no default ({exc})"
+    return (f"Onset definition: {default}, the default of region '{values['region']}' (HCWF_ONSET_DEFINITION is not "
+            "set). Earlier container versions defaulted to the flat rule of 1 mm wet days, a 3-day spell above "
+            "20 mm and a 7-day dry spell; to keep it, convert it (`hcwf-run convert`, docs/onset_in_hcwf.md) and "
+            "set HCWF_ONSET_DEFINITION to the file")
+
+
 def config_values() -> dict:
     """Build the config dictionary from environment variables, applying the documented defaults."""
     obs_dir = require("HCWF_OBS_DIR")
@@ -298,7 +317,8 @@ def render_config(values: dict) -> str:
 def main():
     """Write the generated config file and exit with status 1 on invalid configuration."""
     try:
-        config = render_config(config_values())
+        values = config_values()
+        config = render_config(values)
     except ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -307,6 +327,7 @@ def main():
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(config)
     print(f"Config written to {output_path}")
+    print(onset_choice(values))
 
 
 if __name__ == "__main__":

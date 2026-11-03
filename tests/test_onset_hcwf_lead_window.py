@@ -68,5 +68,5 @@ def test_count_leads_reads_the_first_year_file(tmp_path):
                     coords={"time": np.array(["2015-05-01"], dtype="datetime64[ns]"), "day": np.arange(0, 6),
                             "lat": [0.0], "lon": [0.0]})
     ds.to_netcdf(tmp_path / "2015.nc")
-    dic = {"start_date": (2015, 5, 1), "model_dir_list": (str(tmp_path),), "file_pattern_list": ("{}.nc",)}
+    dic = {"start_date": (2015, 5, 1), "end_date": (2016, 7, 31), "model_dir_list": (str(tmp_path),), "file_pattern_list": ("{}.nc",)}
     assert count_leads(dic, 0) == 5

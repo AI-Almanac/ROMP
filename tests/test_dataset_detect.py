@@ -204,3 +204,13 @@ def test_zarr_detection_is_cached_and_follows_the_store(tmp_path):
     write_obs(tmp_path / "obs_nc", name="2020.nc", var="rain")
     store = _to_zarr(tmp_path / "obs_nc", "obs.zarr")
     assert detect._fingerprint(entry, "observations", False) != first
+
+
+def test_importing_dataset_detect_does_not_pull_in_the_input_stack():
+    """`hcwf-run init` and `datasets` import dataset_detect only; it must not load hcwf.io.input and what it imports."""
+    import subprocess
+    import sys
+
+    code = "import sys, hcwf.lib.dataset_detect; print('hcwf.io.input' in sys.modules)"
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "False"

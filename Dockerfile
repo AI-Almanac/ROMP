@@ -35,4 +35,9 @@ RUN python scripts/prefetch_cartopy_data.py
 # Copy remaining runtime scripts
 COPY scripts/ scripts/
 
+# The container writes its run config from HCWF_* variables (scripts/generate_config.py) and prints which onset
+# definition it chose. Without HCWF_ONSET_DEFINITION that is the region's default (HCWF_REGION, default Ethiopia:
+# ICPAC). Earlier images defaulted to a flat rule (1 mm wet days, a 3-day spell above 20 mm, a 7-day dry spell) and read
+# HCWF_WET_*, HCWF_DRY_*, HCWF_THRESH_FILE; those variables are now refused. Keep the old rule by converting it
+# (`hcwf-run convert`, docs/onset_in_hcwf.md) and pointing HCWF_ONSET_DEFINITION at the file.
 ENTRYPOINT ["scripts/entrypoint.sh"]

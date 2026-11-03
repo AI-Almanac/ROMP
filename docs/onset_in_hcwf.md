@@ -69,7 +69,7 @@ If that is below `max_forecast_day`, then `max_forecast_day`, `verification_wind
 Lead window      : 1-29 for AIFS (icpac reads 22 days from the onset day; forecasts have 50 leads)  [shortened from max_forecast_day 30]
 ```
 
-The run uses the shortest window over its models; it is stored as the `lead_window` attribute of the spatial-metric NetCDFs. If no lead is usable HCWF stops and suggests `dry_spell_check = False`, which shrinks R. Legacy mode keeps the "Not enough forecast time steps" error.
+The run uses the shortest window over its models; it is stored as the `lead_window` attribute of the spatial-metric NetCDFs. If no lead is usable HCWF stops and suggests `dry_spell_check = False`, which shrinks R.
 
 ## Dry-spell check
 
@@ -81,7 +81,7 @@ In code: `hcwf.onset.definition.without_dry_spell_check(defn)`. On the CLI: `hcw
 
 `forecast_history = "observed"` (the default for definitions) searches each forecast together with the observed rain up to the day before its first lead. A wet spell that began in the observations can be completed by the forecast, and a season that started before the init is searched from its start. Nothing observed on or after lead 1's date is read. HCWF also loads the previous year's observations when the season wraps over New Year or the rule looks back past 1 January.
 
-`"none"` searches the forecast leads alone, as earlier runs did. Legacy configs always use it.
+`"none"` searches the forecast leads alone, as earlier (flat-key) runs did; `hcwf-run convert` writes it.
 
 * `PRIOR`: the observations alone already confirm the onset. Nothing is scored for those inits: inits on or after the cell's observed onset produce no rows (a `PRIOR` result in a scored row is counted, warned about and reported as no onset).
 * A forecast may complete an onset that began before the init. The row then has `onset_day <= 0` (days after the init; the date lies in the observed history) and status `ONSET`. These are *back-dated* onsets.
@@ -100,7 +100,7 @@ How many were back-dated is reported (definition mode with `"observed"` only):
 
 `threshold_source = "observations"` computes thresholds from the reference observations. `"model"` computes them from the model's own forecasts: the mean over leads 1 to `max_forecast_day`, over forecast days whose date lies in the threshold's `during` period in `threshold_years`, using HCWF's forecast loader (init days, unit conversion). Each verification window gets its own threshold, pooled from the forecast days at leads inside that window.
 
-Only mean-based thresholds (`mean total over`, `mean daily rain`) support `"model"`; others are an error naming them. Results are cached in the same cache folder by model, years, lead window and definition hash. Legacy configs use observations only.
+Only mean-based thresholds (`mean total over`, `mean daily rain`) support `"model"`; others are an error naming them. Results are cached in the same cache folder by model, years, lead window and definition hash. The old flat-key runs used observations only; `hcwf-run convert` leaves `threshold_source` unset, which is the same.
 
 ## Forecast accumulation, steps and day boundary
 
@@ -164,9 +164,9 @@ All given parts intersect. Shapes (land, countries, a shapefile) are intersected
 
 ## Converting the old flat keys
 
-Earlier versions read the rule from flat keys at the top level of the YAML (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`, `mok`) and ran a legacy mode. That mode is gone: every run needs an onset definition (explicit or the region's). `hcwf-run convert old.yaml -o new.yaml` rewrites such a run YAML with an `onset.rule` (and `onset.thresholds` for a `thresh_file`) that reproduces the old detection; `hcwf.lib.convert.flat_onset_to_rule` does the translation. Set `model_lead_label: end` in the converted file to keep the old dating of leads (lead k is init + k). `scripts/generate_config.py` writes definition configs only; its flat `HCWF_WET_*`, `HCWF_DRY_*` and `HCWF_THRESH_FILE` variables are refused.
+Earlier versions read the rule from flat keys at the top level of the YAML (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`, `mok`) and ran a legacy mode. That mode is gone: every run needs an onset definition (explicit or the region's). `hcwf-run convert old.yaml -o new.yaml` rewrites such a run YAML with an `onset.rule` (and `onset.thresholds` for a `thresh_file`) that reproduces the old detection; `hcwf.lib.convert.flat_onset_to_rule` does the translation. The converter also writes `onset.forecast_history: none` and `onset.lead_label: end` (unless the config sets them), because the old mode always searched the forecast leads alone and dated lead k as init + k; without them the converted run would stitch observed rain before each forecast and could date leads differently. Old `years` / `years_clim` become `evaluation.years` / `evaluation.climatology_years`. `scripts/generate_config.py` writes definition configs only; its flat `HCWF_WET_*`, `HCWF_DRY_*` and `HCWF_THRESH_FILE` variables are refused.
 
-Translation: a wet day has at least `wet_init` mm. The season runs from `earliest_onset_date` (or the month and day of `start_date`) to the month and day of `end_date` plus 47 days minus `wet_spell - 1` (written as a fixed date). A candidate needs all `wet_spell` days wet and a total above the threshold. With `dry_extent > wet_spell` and `dry_extent >= dry_spell`, a dry run of `dry_spell` days within days 2 to `dry_extent + 1` after the candidate cancels it.
+Translation: a wet day has at least `wet_init` mm. The season runs from `earliest_onset_date` (or the month and day of `start_date`) to the month and day of `end_date` plus 47 days minus `wet_spell - 1` (written as a fixed date; dates may be written `YYYY-MM-DD`, `MM-DD`, lists or YAML dates, as before). A candidate needs all `wet_spell` days wet and a total above the threshold. With `dry_extent > wet_spell` and `dry_extent >= dry_spell`, a dry run of `dry_spell` days within days 2 to `dry_extent + 1` after the candidate cancels it.
 
 Deliberate differences from the old code:
 
@@ -178,3 +178,8 @@ Deliberate differences from the old code:
 * A veto window may read observations beyond the season's end (the old code cut the data at `end_date + 47` days and treated unseen days as having no dry spell).
 * A series that starts after the search start gives `INSUFFICIENT_DATA`.
 * Forecast candidates are limited to the season.
+* The season end is one calendar date, where the old end counted days in each file's own calendar. They agree on standard and `noleap` calendars except when the count passes 29 February (an `end_date` from 15 January to 28 February), which the converter refuses with the dates to write by hand; on a `360_day` calendar the end can differ by a day or two, and the converter cannot know the calendar.
+* An `end_date` in the second half of November or later ends the old search in the next year; that becomes a season that wraps into the next year, which is accepted when it ends before it starts and refused (a season cannot be longer than a year) otherwise.
+* The old `earliest_onset_date` also cut the climatology reference (the climatological forecast); it now bounds only the observed and forecast searches, so a climatological day of year may differ by a day in a leap year. The NetCDF attribute `earliest_onset_date` is gone.
+* A `thresh_file` needs `thresh_var` (the grid's variable); without it the path would be read as a table of units.
+* `region: India` selects the registry's India region box, not the old fixed box.

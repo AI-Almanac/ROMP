@@ -137,3 +137,68 @@ def test_every_schema_key_has_help_and_a_unique_flat_key():
     keys = [f.key for f in FIELDS]
     assert len(keys) == len(set(keys)) and all(f.help for f in FIELDS)
     assert len(describe_schema()) == len(FIELDS)
+
+
+def test_an_unset_env_var_in_a_path_says_which_variable(data, monkeypatch):
+    """The message of the error a kind raises (here the unset ${ENV_VAR}) is kept, not replaced by 'expected a path'."""
+    monkeypatch.delenv("HCWF_NO_SUCH_VAR", raising=False)
+    with pytest.raises(ConfigSchemaError, match=r"nc_mask.*environment variable HCWF_NO_SUCH_VAR is not set. "
+                                                r"Fix: export HCWF_NO_SUCH_VAR="):
+        build_config(_raw(data, nc_mask="${HCWF_NO_SUCH_VAR}/m.nc"))
+
+
+def test_explicit_years_use_the_blend_year_syntax_and_one_parser(data):
+    """evaluation.years / climatology_years: text or a list, may skip years, sorted; blend.years parses the same way."""
+    from hcwf.blend.recipe import years_of
+    from hcwf.lib.dataset_schema import parse_year_list
+
+    evaluation = {"start_date": [2018, 5, 1], "end_date": [2022, 7, 31], "start_year_clim": 2010,
+                  "end_year_clim": 2020, "years": "2018:2019,2022", "climatology_years": [2016, 2012, "2014:2015"]}
+    cfg = build_config(_raw(data, evaluation=evaluation))
+    assert cfg["years"] == (2018, 2019, 2022) and cfg["years_clim"] == (2012, 2014, 2015, 2016)
+    for text in ("2018:2019,2022", [2016, 2012, "2014:2015"], 2020, [2005, 2001]):
+        assert years_of(text, "blend.years", []) == parse_year_list(text)
+    nested = build_config(_raw(data, evaluation={**evaluation, "years": [2020]}))
+    assert nested["years"] == (2020,)
+    assert "years" not in build_config(_raw(data))
+
+
+@pytest.mark.parametrize("bad", ["soon", [], "2022:2018", [2019, True]])
+def test_bad_explicit_years_are_an_error(data, bad):
+    evaluation = {"start_date": [2018, 5, 1], "end_date": [2022, 7, 31], "years": bad}
+    with pytest.raises(ConfigSchemaError, match="evaluation.years"):
+        build_config(_raw(data, evaluation=evaluation))
+
+
+def test_explicit_years_outside_the_date_ranges_are_refused(data):
+    from hcwf.lib.assertion import HCWFConfigError, HCWFValidator
+
+    evaluation = {"start_date": [2018, 5, 1], "end_date": [2022, 7, 31], "start_year_clim": 2010,
+                  "end_year_clim": 2020, "years": [2017, 2019], "climatology_years": [2009, 2012]}
+    flat = build_config(_raw(data, evaluation=evaluation))
+    with pytest.raises(HCWFConfigError) as raised:
+        HCWFValidator(flat).validate()
+    assert "evaluation.years [2017] lie outside 2018-2022" in str(raised.value)
+    assert "evaluation.climatology_years [2009] lie outside 2010-2020" in str(raised.value)
+
+
+def test_the_years_a_case_evaluates_are_the_explicit_ones_or_the_ranges(data):
+    from hcwf.lib.control import climatology_years, evaluation_years
+
+    plain = {"start_date": (2018, 5, 1), "end_date": (2020, 7, 31), "start_year_clim": 2015, "end_year_clim": 2017}
+    assert evaluation_years(plain) == (2018, 2019, 2020) and climatology_years(plain) == (2015, 2016, 2017)
+    skipping = {**plain, "years": (2018, 2020), "years_clim": (2015, 2017)}
+    assert evaluation_years(skipping) == (2018, 2020) and climatology_years(skipping) == (2015, 2017)
+
+
+def test_removed_flat_keys_in_a_dict_are_refused_like_in_a_yaml(data):
+    """R-4: a flat dict given to run_hcwf or hcwf.run with an old onset key (or another removed key) is not ignored."""
+    from hcwf.lib.assertion import HCWFValidator, HCWFConfigError
+
+    flat = build_config(_raw(data))
+    HCWFValidator(flat).validate()
+    for key, text in (("wet_init", "hcwf-run convert"), ("earliest_onset_date", "hcwf-run convert"),
+                      ("layout", "This key was removed")):
+        with pytest.raises(HCWFConfigError, match=f"unknown key '{key}'. .*{text}"):
+            HCWFValidator({**flat, key: [6, 1] if key == "earliest_onset_date" else 1}).validate()
+    HCWFValidator({**flat, "wet_init": None}).validate()   # null is the same as not set

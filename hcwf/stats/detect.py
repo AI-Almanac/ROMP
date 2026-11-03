@@ -110,7 +110,7 @@ def detect_observed_result(rain_slice, thresh_slice, year, **kwargs):
     """
     setup = onset_setup(kwargs)
     rain = rain_slice if isinstance(rain_slice, DailyRain) else ingest(
-        rain_slice, day_boundary=setup.ingest_boundary, units="mm", source="observations", **ingest_options(kwargs))
+        rain_slice, day_boundary=setup.obs_day_boundary, units="mm", source="observations", **ingest_options(kwargs))
     coords = {d: rain.coords[d] for d in rain.dims[:-1]}
     reference = kwargs.get("reference_onset")
     search = None if reference is None else {"reference": reference.search_start([int(year)], coords["unit"])}
@@ -132,8 +132,8 @@ def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):
     rain_slice is daily rainfall in mm with dims (time, lat, lon), or (time, unit) for evaluation units (the reader's
     `present` coordinate says which units have a series), or that rainfall already ingested as a DailyRain (the
     climatology years the thresholds were computed from); for units it may also be a function that reads it, called only
-    when the onsets are not cached. thresh_slice is the threshold from hcwf.io.input.load_thresholds (a number of mm
-    or a 2-D DataArray for the old flat keys, else the definition's named thresholds).
+    when the onsets are not cached. thresh_slice is the threshold from hcwf.io.input.load_thresholds (the definition's
+    named thresholds).
     Returns a (lat, lon) or (unit) DataArray of datetime64 onset dates, NaT where there is no onset. For units it carries
     the coordinates `present` and `onset_index` (the 1-based day of the onset in the year's series, NaN without one).
     While a run has the observed-onset cache active (hcwf.stats.observed_cache) the dates of a year already detected
@@ -191,7 +191,7 @@ def _detect_forecast(p_model, thresh_slice, onset_da, kwargs, *, members=None, h
     stitched = None
     if history is not None and setup.forecast_history == "observed":
         on_grid = _like(history, coords).transpose(*spatial, ...)
-        stitched = ingest(on_grid, day_boundary=setup.ingest_boundary, units="mm", source="observed history")
+        stitched = ingest(on_grid, day_boundary=setup.obs_day_boundary, units="mm", source="observed history")
     count = bool(kwargs.get("onset_count"))
     result = engine.detect_forecast(
         setup.definition, forecast, thresholds=_thresholds(setup, thresh_slice, coords, convention=_convention(kwargs)),
@@ -257,7 +257,7 @@ def _print_back_dated(day, valid):
         log.debug(f"Back-dated forecast onsets (onset_day <= 0, scored as documented in docs/onset_in_hcwf.md): {count}")
 
 
-def _print_status_counts(setup, status, valid):
+def _print_status_counts(status, valid):
     """Log how many forecast searches ended in each status."""
     mask = np.broadcast_to(valid[:, None] if status.ndim == valid.ndim + 1 else valid, status.shape)
     counts = np.bincount(status[mask].astype(np.int64), minlength=len(Status))
@@ -308,7 +308,7 @@ def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, histo
     log.debug(f"Valid initializations processed: {len(i)}")
     log.debug(f"Onsets found: {int(has.sum())}")
     log.debug(f"Onset rate: {has.sum() / len(i):.3f}" if len(i) else "Onset rate: 0.000")
-    _print_status_counts(setup, out["status"], valid)
+    _print_status_counts(out["status"], valid)
     _print_back_dated(out["day"], valid)
     return onset_df
 
@@ -402,7 +402,7 @@ def compute_onset_for_all_members(p_model, thresh_slice, onset_da, history=None,
     log.debug(f"Onset rate: {np.mean(~np.isnan(member_values)):.3f}" if len(member_values) else "Onset rate: nan")
     log.debug(f"Ensemble onsets found (>= {threshold:.0%} of members): {int(has_onset.sum())}")
     log.debug(f"Ensemble onset rate: {has_onset.mean():.3f}" if len(has_onset) else "Ensemble onset rate: 0.000")
-    _print_status_counts(setup, out["status"], valid)
+    _print_status_counts(out["status"], valid)
     _print_back_dated(member_day, valid)
     return onset_df, ensemble_df
 
@@ -414,8 +414,6 @@ def alignment_report(rain_slice, p_model, **kwargs):
     Subsamples the inits and members (hcwf.onset.alignment is expensive on whole years).
     """
     setup = onset_setup(kwargs)
-    if setup.obs_day_boundary is None:
-        return None, "the observation day boundary is unknown (set obs_day_boundary to enable it)"
     try:
         cube = p_model.sel(step=slice(1, 3))
         stride = max(1, -(-cube.sizes["init_time"] // _ALIGNMENT_MAX_INITS))

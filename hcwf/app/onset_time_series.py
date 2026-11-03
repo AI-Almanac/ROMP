@@ -5,7 +5,7 @@ from hcwf.stats.detect import detect_observed_onset
 from hcwf.lib.loader import get_cfg, get_setting
 from hcwf.graphics.rainfall_time_series import plot_rainfall_timeseries_with_onset_and_wetspell
 from hcwf.stats.climatology import compute_climatological_onset
-from hcwf.lib.control import years_tuple_clim
+from hcwf.lib.control import climatology_years
 import pandas as pd
 from hcwf.lib.onset_config import onset_setup
 import logging
@@ -24,7 +24,7 @@ def _season_window(kwargs):
 
 def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwargs):
     """Detect observed onset for a year, plot the rainfall time series at the grid point nearest lat_select/lon_select, and return (rainfall within the season window, onset dates)."""
-    years_clim = years_tuple_clim(kwargs['start_year_clim'], kwargs['end_year_clim'])
+    years_clim = climatology_years(kwargs)
     kwargs["years_clim"] = years_clim
 
     # load onset precip threshold, 2-D or scalar

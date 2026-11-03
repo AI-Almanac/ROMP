@@ -42,7 +42,7 @@ def score_tables(score_results, model, verification_window):
     overall_df = pd.DataFrame([overall_scores_nested])
     share = back_dated_member_share(score_results.get('forecast_obs_df'))
     if share is not None:
-        # definition mode with forecast_history "observed" only; legacy CSVs keep their columns
+        # only with forecast_history "observed"; "none" runs keep their columns
         overall_df['back_dated_member_share'] = share
 
     # Get target bins, remove bins with "Day Before" and "Day After"
@@ -98,7 +98,7 @@ def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
     """Add the `n_back_dated` map (in place) from per-year metrics tables that carry an `n_back_dated` column.
 
     Each cell holds the number of scored init cases, over the years with an observed onset there,
-    whose forecast onset was back-dated; a no-op for tables without the column (legacy runs).
+    whose forecast onset was back-dated; a no-op for tables without the column (forecast_history "none" runs).
     Returns spatial_metrics.
     """
     tables = [df for df in metrics_df_dict.values() if 'n_back_dated' in df.columns]

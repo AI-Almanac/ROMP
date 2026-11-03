@@ -94,7 +94,7 @@ def test_reference_year_is_the_year_ingested_alone(tmp_path, monkeypatch):
     io_input.clear_obs_cache()
     io_input._loaded_thresholds.clear()
     io_input.load_thresholds(**config)
-    boundary = onset_setup(config).ingest_boundary
+    boundary = onset_setup(config).obs_day_boundary
     for year in (2000, 2003, 2005):
         shared = io_input.reference_year(year, config, boundary)
         alone = ingest(io_input.load_imd_rainfall(year, **config), day_boundary=boundary, units="mm")
@@ -124,7 +124,7 @@ def test_shared_reference_rain_keeps_exact_rain_in_millimetres(tmp_path, monkeyp
     io_input.clear_obs_cache()
     io_input._loaded_thresholds.clear()
     thresholds = io_input.load_thresholds(**config)
-    boundary = onset_setup(config).ingest_boundary
+    boundary = onset_setup(config).obs_day_boundary
     for year in (2000, 2005):
         shared = io_input.reference_year(year, config, boundary)
         alone = ingest(io_input.load_imd_rainfall(year, **config), day_boundary=boundary, units="mm",

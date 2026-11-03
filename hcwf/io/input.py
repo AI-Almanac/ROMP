@@ -25,7 +25,7 @@ from hcwf.utils.workers import ordered_prefetch, worker_count
 from hcwf.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year, onset_setup, setup_key
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
-from hcwf.lib.dataset_schema import DatasetError, file_year, resolve_paths
+from hcwf.lib.dataset_schema import DatasetError, file_year, is_zarr, resolve_paths
 from hcwf.onset.thresholds import ThresholdScale, read_threshold_grid, read_threshold_table, scale_values
 from hcwf.onset.ingest import IngestInfo, ingest, ingest_forecast_info, observation_shift_days, unit_scale
 from hcwf.spatial import axes, ids as unit_ids
@@ -47,15 +47,6 @@ def onset_steps_needed(*, max_forecast_day=None, **kwargs):
     if not isinstance(max_forecast_day, int):
         return None
     return max_forecast_day + forecast_reach(onset_setup(kwargs)) - 1
-
-
-def is_zarr(path):
-    """True if path is a zarr store: a name ending in .zarr, or a directory holding .zarray/.zgroup/zarr.json."""
-    text = str(path).rstrip("/")
-    if text.endswith(".zarr"):
-        return True
-    folder = Path(text)
-    return folder.is_dir() and any((folder / name).exists() for name in ("zarr.json", ".zgroup", ".zarray"))
 
 
 _stores = {}
@@ -217,7 +208,7 @@ def _obs_source_label(kwargs):
     if spec is not None:
         setup = onset_setup(kwargs)
         label += (f":units={spec!r}:options={sorted(ingest_options(kwargs).items())}:dims={kwargs.get('obs_dims')}"
-                  f":labels={setup.ingest_boundary}/{setup.lead_label}")
+                  f":labels={setup.obs_day_boundary}/{setup.lead_label}")
     return label
 
 
@@ -293,7 +284,7 @@ def _reference_rain(setup, years, kwargs):
         except _NotContiguous:
             pass
         else:
-            _reference.update(key=_reference_key(kwargs, setup.ingest_boundary), rain=rain, first=years[0],
+            _reference.update(key=_reference_key(kwargs, setup.obs_day_boundary), rain=rain, first=years[0],
                               last=years[1])
             return rain
     return ingest(
@@ -1276,7 +1267,7 @@ def _read_obs_units(da, spec: UnitsSpec, unit_cvt, kwargs):
     if policy == "drop":
         present &= ~np.isnan(values).any(axis=0)
     setup = onset_setup(kwargs)
-    shift = observation_shift_days(setup.ingest_boundary, setup.lead_label)
+    shift = observation_shift_days(setup.obs_day_boundary, setup.lead_label)
     dates = (stamps.normalize() + pd.Timedelta(days=shift)).to_numpy()
     return xr.DataArray(values, dims=("time", "unit"), coords={"time": dates, "unit": ids.astype(str),
                                                                "present": ("unit", present)}, attrs={"units": "mm"})

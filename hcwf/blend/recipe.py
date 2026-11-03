@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from hcwf.lib.assertion import HCWFConfigError
-from hcwf.lib.dataset_schema import DatasetError, parse_years, suggest
+from hcwf.lib.dataset_schema import DatasetError, parse_year_list, suggest
 
 from hcwf.blend.design import Formula, WindowVariant
 from hcwf.blend.random_forest import Params as ForestParams
@@ -694,12 +694,10 @@ def years_of(value, where: str, problems: list[str]) -> tuple[int, ...]:
     if value is None:
         return ()
     try:
-        items = value if isinstance(value, (list, tuple)) else [value]
-        years = [y for item in items for y in parse_years(item, where)]
+        return parse_year_list(value, where)
     except DatasetError as error:
         problems.append(str(error))
         return ()
-    return tuple(sorted(dict.fromkeys(years)))
 
 
 def year_window(value, where: str, problems: list[str]) -> tuple[int, int] | None:

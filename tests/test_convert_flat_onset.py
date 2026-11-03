@@ -1,6 +1,8 @@
 """`hcwf-run convert` turns a run YAML's old flat onset keys (wet_init, wet_spell, ...) into an onset definition that
 reproduces the old detection; a run config that still has them is refused with a pointer to the converter."""
 
+import datetime
+
 import pytest
 import yaml
 
@@ -130,7 +132,7 @@ def test_the_command_converts_and_a_run_config_with_the_keys_is_refused(tmp_path
         build_config(yaml.safe_load(source.read_text()))
 
 
-@pytest.mark.parametrize("key", ["layout", "work_dir", "pkg_dir", "debug", "years", "years_clim", "fallback_date"])
+@pytest.mark.parametrize("key", ["layout", "work_dir", "pkg_dir", "debug", "fallback_date"])
 def test_removed_keys_are_named_as_removed(key):
     """A key that had no effect and was removed gets a message saying so, not a spelling suggestion."""
     from hcwf.lib.config_yaml import build_config
@@ -142,11 +144,93 @@ def test_removed_keys_are_named_as_removed(key):
 def test_keys_that_were_removed_are_dropped_from_the_converted_config(tmp_path):
     source = tmp_path / "old.yaml"
     source.write_text(yaml.safe_dump({
-        "region": "india", "work_dir": "/x", "layout": ["model"], "debug": False, "years": None,
+        "region": "india", "work_dir": "/x", "layout": ["model"], "debug": False,
         "wet_init": 1, "wet_threshold": 20, "wet_spell": 5, "dry_threshold": 1, "dry_spell": 7, "dry_extent": 0,
-        "evaluation": {"start_date": [2019, 5, 1], "end_date": [2020, 10, 31]}}))
+        "evaluation": {"start_date": [2019, 5, 1], "end_date": [2020, 7, 31]}}))
     target = convert_flat_onset(source, tmp_path / "new.yaml")
     text = target.read_text()
     converted = yaml.safe_load(text)
-    assert not {"work_dir", "layout", "debug", "years"} & set(converted)
+    assert not {"work_dir", "layout", "debug"} & set(converted)
     assert "Dropped keys that have no effect any more: " in text and "onset" in converted
+
+
+def test_convert_writes_what_the_old_run_always_used(tmp_path):
+    """B-1: the old flat-key run took forecasts as given and labelled leads by end; the converted config says so."""
+    new = yaml.safe_load(convert_flat_onset(_old_run_yaml(tmp_path), tmp_path / "new.yaml").read_text())
+    assert new["onset"]["forecast_history"] == "none" and new["onset"]["lead_label"] == "end"
+
+
+def test_convert_keeps_the_history_and_label_the_config_sets(tmp_path):
+    """A config that already chose its history and label keeps them (nested, or under the flat key)."""
+    source = _old_run_yaml(tmp_path, onset={"forecast_history": "observed", "lead_label": "start"})
+    new = yaml.safe_load(convert_flat_onset(source, tmp_path / "a.yaml").read_text())
+    assert new["onset"]["forecast_history"] == "observed" and new["onset"]["lead_label"] == "start"
+    other = tmp_path / "other"
+    other.mkdir()
+    new = yaml.safe_load(convert_flat_onset(_old_run_yaml(other, model_lead_label="start"), other / "b.yaml").read_text())
+    assert "lead_label" not in new["onset"] and new["model_lead_label"] == "start"
+
+
+@pytest.mark.parametrize("end_date", ["2019-07-31", [2019, 7, 31], datetime.date(2019, 7, 31)])
+@pytest.mark.parametrize("earliest", ["06-02", [6, 2]])
+def test_every_date_form_the_old_schema_accepted_converts(end_date, earliest):
+    """B-2: 'YYYY-MM-DD', YAML dates and 'MM-DD' text go through the schema's kinds, as the old loader did."""
+    defn = _defn({**BASE, "end_date": end_date, "start_date": "2019-05-01", "earliest_onset_date": earliest})
+    assert defn.seasons == _main(start=(6, 2))
+
+
+def test_a_date_that_is_not_one_is_a_config_error():
+    with pytest.raises(ConfigSchemaError, match="end_date"):
+        flat_onset_to_rule({**BASE, "end_date": "next week"})
+
+
+def test_a_threshold_file_needs_its_variable():
+    """R-5c: without thresh_var the path would be read as a table of units, not a grid."""
+    with pytest.raises(ConfigSchemaError, match="thresh_var"):
+        flat_onset_to_rule({**BASE, "thresh_file": "t.nc", "thresh_var": None})
+
+
+@pytest.mark.parametrize("end_date", [(2019, 1, 15), (2019, 2, 1), (2019, 2, 28)])
+def test_an_end_that_passes_29_february_is_refused(end_date):
+    """R-5a: the old end was counted in days, a fixed month-day is one day off in leap years."""
+    with pytest.raises(ConfigSchemaError, match="29 February"):
+        flat_onset_to_rule({**BASE, "start_date": (2019, 1, 1), "end_date": end_date})
+
+
+def test_an_end_before_15_january_and_after_29_february_is_kept():
+    """No 29 February between the end date and the end of the search: the month-day is exact in every year."""
+    assert _defn({**BASE, "start_date": (2019, 1, 1), "end_date": (2019, 1, 14)}).seasons[0].end == DayRef(month=2, day=28)
+    assert _defn({**BASE, "start_date": (2019, 3, 1), "end_date": (2019, 3, 31)}).seasons[0].end == DayRef(month=5, day=15)
+
+
+def test_a_season_that_ends_in_the_next_year_wraps():
+    """R-5b: an end in the second half of November ends in January or February; that is a wrapping season."""
+    defn = _defn({**BASE, "start_date": (2019, 10, 1), "end_date": (2019, 11, 20)})
+    assert defn.seasons[0].start == DayRef(month=10, day=1) and defn.seasons[0].end == DayRef(month=1, day=4)
+
+
+def test_a_season_longer_than_a_year_is_refused_with_the_reason():
+    with pytest.raises(ConfigSchemaError, match="longer than a year"):
+        flat_onset_to_rule({**BASE, "start_date": (2019, 1, 1), "end_date": (2019, 12, 1)})
+
+
+def test_years_move_to_evaluation_and_all_is_dropped(tmp_path):
+    """B-4: old years / years_clim become evaluation.years / climatology_years; 'All' and null were the default."""
+    new = yaml.safe_load(convert_flat_onset(_old_run_yaml(tmp_path, years=[2019], years_clim=[2016, 2018]),
+                                            tmp_path / "new.yaml").read_text())
+    assert new["evaluation"]["years"] == [2019] and new["evaluation"]["climatology_years"] == [2016, 2018]
+    assert "years" not in new and "years_clim" not in new
+    other = tmp_path / "other"
+    other.mkdir()
+    new = yaml.safe_load(convert_flat_onset(_old_run_yaml(other, years="All", years_clim=None),
+                                            other / "new.yaml").read_text())
+    assert "years" not in new["evaluation"] and "climatology_years" not in new["evaluation"]
+
+
+def test_the_header_names_the_path_given_and_region_is_refused_for_run_yaml(tmp_path, capsys):
+    source = _old_run_yaml(tmp_path)
+    out = tmp_path / "new.yaml"
+    convert_flat_onset(source, out)
+    assert f"hcwf-run -p {out} --check" in out.read_text()
+    with pytest.raises(SystemExit):
+        cli_main(["convert", str(source), "-o", str(tmp_path / "x.yaml"), "--region", "kenya"])

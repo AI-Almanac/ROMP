@@ -188,3 +188,13 @@ def test_the_removed_flat_onset_variables_are_refused(tmp_path, name):
 
         assert result.returncode == 1
         assert name in result.stderr and "HCWF_ONSET_DEFINITION" in result.stderr
+
+
+def test_the_chosen_onset_definition_and_the_reason_are_printed(tmp_path):
+    """Without HCWF_ONSET_DEFINITION the region default is used, and the output says so and names the old default."""
+    result = _generate(tmp_path)
+    assert result.returncode == 0
+    assert "Onset definition: icpac, the default of region 'Ethiopia'" in result.stdout
+    assert "20 mm" in result.stdout
+    given = _generate(tmp_path, HCWF_ONSET_DEFINITION="imd")
+    assert "Onset definition: imd (HCWF_ONSET_DEFINITION)" in given.stdout

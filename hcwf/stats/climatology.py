@@ -39,7 +39,7 @@ def _read_years(years, kwargs, shared=True):
     if not shared or not reference_held():
         yield from obs_years(years, kwargs)
         return
-    boundary = onset_setup(kwargs).ingest_boundary
+    boundary = onset_setup(kwargs).obs_day_boundary
     held = {year: reference_year(year, kwargs, boundary) for year in years}
     rest = obs_years([year for year in years if held[year] is None], kwargs)
     for year in years:

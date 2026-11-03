@@ -38,7 +38,7 @@ class OnsetSetup:
     season: str
     threshold_years: tuple[int, int] | None
     threshold_files: tuple[tuple[str, str, str], ...]
-    obs_day_boundary: str | None
+    obs_day_boundary: str
     lead_label: str
     backend: str
     check_alignment: bool
@@ -61,11 +61,6 @@ class OnsetSetup:
         return isinstance(self.definition.seasons, DerivedSeasons)
 
     @property
-    def ingest_boundary(self) -> str:
-        """The day boundary handed to ingestion."""
-        return self.obs_day_boundary
-
-    @property
     def forecast_boundary(self) -> str:
         """The day boundary declared for forecasts."""
         return FORECAST_BOUNDARY.format(label=self.lead_label)
@@ -80,7 +75,7 @@ class OnsetSetup:
         out.append(f"Season           : {self.season}  [{src.get('season')}]")
         years = f"{self.threshold_years[0]}-{self.threshold_years[1]}" if self.threshold_years else "not used"
         out.append(f"Threshold years  : {years}  [{src.get('threshold_years')}]")
-        out.append(f"Day boundary     : {self.obs_day_boundary or 'unknown'}  [{src.get('obs_day_boundary')}]")
+        out.append(f"Day boundary     : {self.obs_day_boundary}  [{src.get('obs_day_boundary')}]")
         out.append(f"Lead label       : {self.lead_label}  [{src.get('lead_label')}]")
         out.append(f"Dry-spell check  : {self.dry_check}  [{src.get('dry_check')}]")
         out.append(f"Forecast history : {self.forecast_history}  [{src.get('forecast_history')}]")
@@ -379,7 +374,13 @@ def _definition_setup(cfg) -> OnsetSetup:
 
 
 def check_config(dic: dict) -> None:
-    """Validate the onset part of a raw config dict with a full resolution."""
+    """Validate a raw config dict: keys earlier versions read (the flat onset keys and the other removed ones) are
+    refused with the message a YAML config gets, then the onset part is fully resolved."""
+    from hcwf.lib import config_schema as schema
+
+    removed = [key for key in schema.REMOVED_KEYS if dic.get(key) is not None]
+    if removed:
+        raise OnsetConfigError("\n".join(schema.unknown_key_message(key) for key in removed))
     onset_setup({"onset_definition": None, **dic})
 
 

@@ -209,6 +209,24 @@ def parse_years(value, origin: str = "years") -> tuple[int, ...]:
         raise DatasetError(f"{origin}: expected a list of years or text such as '2010:2013' but found {value!r}") from None
 
 
+def is_zarr(path):
+    """True if path is a zarr store: a name ending in .zarr, or a directory holding .zarray/.zgroup/zarr.json."""
+    text = str(path).rstrip("/")
+    if text.endswith(".zarr"):
+        return True
+    folder = Path(text)
+    return folder.is_dir() and any((folder / name).exists() for name in ("zarr.json", ".zgroup", ".zarray"))
+
+
+def parse_year_list(value, origin: str = "years") -> tuple[int, ...]:
+    """A years setting as sorted distinct years: a year, a list of years or of texts such as "2000:2010,2015" (or
+    one such text); the one parser of `blend.years`, `evaluation.years` and `evaluation.climatology_years`."""
+    if isinstance(value, (list, tuple)) and not value:
+        return ()
+    items = value if isinstance(value, (list, tuple)) and any(isinstance(item, str) for item in value) else [value]
+    return tuple(sorted({year for item in items for year in parse_years(item, origin)}))
+
+
 def resolve_paths(paths, base=None, years=None, origin: str = "paths") -> list[Path]:
     """The files named by ``paths`` (names or globs, ``~`` and ${ENV_VAR} expanded, relative ones under `base`).
 

@@ -9,6 +9,7 @@ import os
 
 import xarray as xr
 
+from hcwf.lib.control import evaluation_years
 from hcwf.lib.onset_config import OnsetConfigError, forecast_reach, onset_setup
 from hcwf.utils.practical import set_dir
 from hcwf.utils.standard import dim_fmt_model
@@ -23,7 +24,7 @@ def count_leads(dic: dict, index: int) -> int:
     """Number of forecast leads (steps of at least 1) of model_list[index]: from the first year's file, or from the zarr store."""
     from hcwf.io.input import is_zarr, open_store
 
-    year = dic["start_date"][0]
+    year = evaluation_years(dic)[0]
     folder = set_dir(str(dic["model_dir_list"][index]))
     dims_list = dic.get("model_dims_list")
     dims = dims_list[index] if dims_list else None

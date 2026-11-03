@@ -19,8 +19,8 @@ A YAML config is a mapping whose keys are either the flat config keys (e.g.
                    baselines, forecasts, mme, external_predictions, random_forest, fixed_cutoff, reference_onset,
                    bins, probability_days, trim_after_true_onset, rain_transform, climatology, models, outputs
                    (train an onset blend: hcwf.blend; see `hcwf-run convert` for blending configs)
-    evaluation:    start_date, end_date, start_year_clim, end_year_clim, init_days, date_filter_year,
-                   verification_windows, tolerances, max_forecast_day, day_bins, probabilistic, members
+    evaluation:    start_date, end_date, years, start_year_clim, end_year_clim, climatology_years, init_days,
+                   date_filter_year, verification_windows, tolerances, max_forecast_day, day_bins, probabilistic, members
     metrics:       FAR, MAE, MR, BS, RPS, AUC, Reliability, skill_score
     output:        data_dir, figure_dir, save_* , plot_*, show_*
 
@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from hcwf.lib.assertion import HCWFConfigError
-from hcwf.lib.dataset_schema import expand_env, suggest
+from hcwf.lib.dataset_schema import DatasetError, expand_env, parse_year_list, suggest
 
 DIM_NAMES = ("init_time", "step", "member", "lat", "lon", "unit")
 """Canonical dimension names that ``dims`` may rename (``unit``: the dimension of evaluation units)."""
@@ -204,6 +204,17 @@ def _month_day(value):
         raise ValueError
     datetime.date(2001, *parts)
     return parts
+
+
+def _years(value):
+    """A non-empty list of years (a list, or text such as '2000:2020,2022'), sorted, each once."""
+    try:
+        years = parse_year_list(value)
+    except DatasetError:
+        raise ValueError from None
+    if not years:
+        raise ValueError
+    return years
 
 
 def _pair(value, sep="-"):
@@ -408,6 +419,7 @@ KINDS: dict[str, tuple[str, Callable]] = {
     "workers": ("a whole number of 1 or more", _workers),
     "date": ("a date, [year, month, day] or 'YYYY-MM-DD'", _date),
     "month_day": ("a month and day, [month, day] or 'MM-DD'", _month_day),
+    "years": ("a list of years or text such as '2000:2020,2022' (ends included)", _years),
     "year_pair": ("a pair of years, [first, last] or 'first-last'", _pair),
     "windows": ("a list of [first, last] day pairs, e.g. [[1, 15], [16, 30]]", _windows),
     "ints": ("a list of whole numbers, e.g. [3, 5]", _integers),
@@ -656,6 +668,11 @@ def _fields() -> tuple[Field, ...]:
               "evaluation"),
         Field("end_year_clim", "int", "last year of the climatology (default: the region's)", REQUIRED,
               "evaluation"),
+        Field("years", "years", "the years evaluated, when not every year from start_date to end_date (may skip "
+              "years; all must lie in that range)", None, "evaluation", nullable=True, fill=False),
+        Field("years_clim", "years", "the climatology years, when not every year from start_year_clim to "
+              "end_year_clim (may skip years; all must lie in that range)", None, "evaluation",
+              "climatology_years", nullable=True, fill=False),
         Field("init_days", "ints", "forecast init weekdays, 0 = Monday", (0, 3), "evaluation"),
         Field("date_filter_year", "int", "year for init-day calendar alignment (default: start year)", None,
               "evaluation", nullable=True),
@@ -723,7 +740,7 @@ _ONSET_KEYS_REMOVED = ("The old flat onset keys (wet_init, wet_threshold, wet_sp
 REMOVED_KEYS = {
     **dict.fromkeys(("wet_init", "wet_threshold", "wet_spell", "dry_threshold", "dry_spell", "dry_extent", "thresh_file",
                      "thresh_var", "earliest_onset_date", "mok"), _ONSET_KEYS_REMOVED),
-    **dict.fromkeys(("layout", "work_dir", "pkg_dir", "debug", "years", "years_clim", "fallback_date"),
+    **dict.fromkeys(("layout", "work_dir", "pkg_dir", "debug", "fallback_date"),
                     "This key was removed: it had no effect. Fix: delete it"),
 }
 """Top-level keys that earlier versions read; naming one gets a specific message instead of a spelling suggestion."""
@@ -808,6 +825,9 @@ def normalise_value(field: Field, value, written: str, errors: list[str]):
         return None
     try:
         out = KINDS[field.kind][1](value)
+    except HCWFConfigError as exc:   # carries its own message (e.g. an unset ${ENV_VAR}); say it as written
+        errors.append(f"'{written}': {exc}")
+        return None
     except (ValueError, TypeError) as exc:
         detail = f" ({exc})" if field.kind == "mask" and str(exc) else ""
         errors.append(f"'{written}': expected {field.expected}, got {value!r}{detail}")

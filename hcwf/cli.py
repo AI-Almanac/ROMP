@@ -191,6 +191,8 @@ def _convert(argv) -> int:
             if not is_blend_config(yaml.safe_load(Path(args.source).read_text())):
                 from hcwf.lib.convert import convert_flat_onset
 
+                if args.region:
+                    p.error("--region applies to converting a blending config; a run YAML keeps its own region")
                 return _converted(convert_flat_onset(args.source, args.output, force=args.force))
             conversion = convert_blend_file(args.source, region=args.region)
             validate_conversion(conversion)

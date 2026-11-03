@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 from hcwf.io.input import load_imd_rainfall, load_thresholds
+from hcwf.lib.control import evaluation_years
 from hcwf.lib.onset_config import onset_setup
 from hcwf.onset import explain
 from hcwf.onset.ingest import ingest
@@ -33,7 +34,7 @@ def _on_grid(thresholds, lat, lon):
 def write_explain_cells(cfg) -> list[Path]:
     """Write dir_fig/explain/<definition>_<cell>_<year>.png and .txt for every cell and year; returns the PNG paths.
 
-    Does nothing when explain_cells is unset; in legacy (flat key) mode it prints a note and skips.
+    Does nothing when explain_cells is unset.
     Each explanation uses the same observations, thresholds and settings as the run's observed onset.
     """
     from hcwf.onset.viz.anatomy import anatomy_plot
@@ -48,13 +49,13 @@ def write_explain_cells(cfg) -> list[Path]:
     thresholds = load_thresholds(**kwargs)
     clim = getattr(thresholds, "season_climatology", None)
     written = []
-    for year in range(kwargs["start_date"][0], kwargs["end_date"][0] + 1):
+    for year in evaluation_years(kwargs):
         try:
             da = load_imd_rainfall(year, **kwargs)
         except FileNotFoundError as exc:
             log.info(f"explain_cells: skipping {year} ({exc})")
             continue
-        rain = ingest(da, day_boundary=setup.ingest_boundary, units="mm", source="observations")
+        rain = ingest(da, day_boundary=setup.obs_day_boundary, units="mm", source="observations")
         lat, lon = rain.coords["lat"], rain.coords["lon"]
         thr = _on_grid(thresholds, lat, lon) or None
         season_clim = None if clim is None else clim.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE)

@@ -18,6 +18,7 @@ __pycache__/
 
 # user specific input, output and figure
 data/
+!tests/data/
 #!/demo/data/
 #!/demo/data/**
 figure/

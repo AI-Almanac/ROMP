@@ -64,6 +64,14 @@ class HCWFValidator:
             if sd > ed:
                 self._add_error(f"start_year_clim ({sy}) is after end_year_clim ({ey})")
 
+            for key, name, first, last, bounds in (
+                    ("years", "evaluation.years", sd.year, ed.year, "start_date and end_date"),
+                    ("years_clim", "evaluation.climatology_years", sy, ey, "start_year_clim and end_year_clim")):
+                outside = [y for y in getattr(self.cfg, key, None) or () if not first <= y <= last]
+                if outside:
+                    self._add_error(f"{name} {outside} lie outside {first}-{last}, the range of {bounds}. "
+                                    f"Fix: list only years in that range, or widen the range")
+
         except Exception as e:
             self._add_error(f"Date formatting error: {e}")
 

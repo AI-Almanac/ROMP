@@ -17,7 +17,7 @@ import numpy as np
 import xarray as xr
 
 from hcwf.lib.config_schema import has_blend
-from hcwf.lib.control import years_tuple_clim, years_tuple_model
+from hcwf.lib.control import climatology_years, evaluation_years
 from hcwf.lib.onset_config import onset_setup
 
 log = logging.getLogger(__name__)
@@ -164,8 +164,7 @@ def _datasets(dic: dict, report: CheckReport) -> None:
 
 def _years(dic: dict) -> tuple[tuple, tuple]:
     """The evaluated years and the climatology years."""
-    return (years_tuple_model(dic["start_date"], dic["end_date"]),
-            years_tuple_clim(dic["start_year_clim"], dic["end_year_clim"]))
+    return evaluation_years(dic), climatology_years(dic)
 
 
 def _files(dic: dict, report: CheckReport) -> dict:
@@ -477,9 +476,6 @@ def _alignment(dic: dict, report: CheckReport) -> None:
     if not setup.check_alignment:
         report.add("onset.check_alignment is false: skipped")
         return
-    if setup.obs_day_boundary is None:
-        report.add("skipped (the observation day boundary is unknown: set obs_day_boundary to enable it)")
-        return
     from hcwf.export import case_kwargs
     from hcwf.lib import align_sample
     from hcwf.lib.onset_config import FORECAST_BOUNDARY
@@ -509,7 +505,7 @@ def _alignment(dic: dict, report: CheckReport) -> None:
 
 def _short_climatology(dic: dict, report: CheckReport) -> None:
     """Hint when the climatology period is short."""
-    n = dic["end_year_clim"] - dic["start_year_clim"] + 1
+    n = len(climatology_years(dic))
     needs = 10 if dic.get("ref_model") == "conditional_climatology" else 15
     if n < needs:
         report.hint("evaluation.start_year_clim", f"the climatology has only {n} years "

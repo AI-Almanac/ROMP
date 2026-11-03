@@ -65,6 +65,17 @@ def years_tuple_model(start_date: tuple[int,int,int], end_date: tuple[int,int,in
     return tuple(range(start_year, end_year + 1))
 
 
+def evaluation_years(dic: dict) -> tuple[int, ...]:
+    """The years evaluated: `years` (evaluation.years) if given, else every year from start_date to end_date."""
+    return tuple(dic["years"]) if dic.get("years") else years_tuple_model(dic["start_date"], dic["end_date"])
+
+
+def climatology_years(dic: dict) -> tuple[int, ...]:
+    """The climatology years: `years_clim` (evaluation.climatology_years) if given, else start_year_clim to end_year_clim."""
+    return tuple(dic["years_clim"]) if dic.get("years_clim") else years_tuple_clim(dic["start_year_clim"],
+                                                                                   dic["end_year_clim"])
+
+
 def take_ensemble_members(
     members: Optional[Union[tuple[int, ...], list[int], str]]
 ) -> list[int]:
@@ -131,11 +142,8 @@ def make_case(dataclass, combi, dic):
     case_name = combi_to_str(combi)
     case.case_name = case_name.replace(" ", "_")
 
-    if dic.get('years') == 'All' or not dic.get('years'):
-        case.years = years_tuple_model(dic['start_date'], dic['end_date'])
-
-    if dic.get('years_clim') == 'All' or not dic.get('years_clim'):
-        case.years_clim = years_tuple_clim(dic['start_year_clim'], dic['end_year_clim'])
+    case.years = evaluation_years(dic)
+    case.years_clim = climatology_years(dic)
 
     case.members = take_ensemble_members(dic['members'])
 

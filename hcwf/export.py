@@ -84,7 +84,7 @@ def load_cfg(path) -> dict:
 
 
 def _complete(dic: dict) -> dict:
-    """Finish a flat config the way the loader does (paths, lead window); dicts that are done pass through."""
+    """Finish a flat config the way the loader does (paths, lead window); finishing a dict that is already done changes nothing."""
     from hcwf.lib import loader
     from hcwf.lib.lead_window import apply_lead_window
 
@@ -332,7 +332,7 @@ def _provenance(dic: dict, kw: dict, source: str, kind: str, thresholds, mask: d
         "mask_summary": _json(mask),
         "forecast_history": setup.forecast_history, "lead_label": setup.lead_label,
         "lead_window": f"{window[0]}-{window[1]}", "max_forecast_day": kw.get("max_forecast_day"),
-        "obs_day_boundary": setup.obs_day_boundary or "unknown", "forecast_day_boundary": setup.forecast_boundary,
+        "obs_day_boundary": setup.obs_day_boundary, "forecast_day_boundary": setup.forecast_boundary,
         "years": [int(y) for y in years], "years_clim": [int(y) for y in kw.get("years_clim") or ()],
         "init_days": list(kw.get("init_days") or ()), "region": kw.get("region"),
         "dataset_paths": _json(paths), "resolved_config_yaml": config_yaml,

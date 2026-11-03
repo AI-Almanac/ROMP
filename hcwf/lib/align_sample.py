@@ -36,8 +36,8 @@ import xarray as xr
 
 from hcwf.cache import Store, file_identity
 from hcwf.io.input import _forecast_sources as _year_sources
-from hcwf.io.input import _obs_source, is_zarr, open_store
-from hcwf.lib.dataset_schema import DatasetError, file_year, resolve_paths
+from hcwf.io.input import _obs_source, open_store
+from hcwf.lib.dataset_schema import DatasetError, file_year, is_zarr, resolve_paths
 from hcwf.onset import ingest as ing
 from hcwf.onset.alignment import (ForecastAlignmentReport, _match_axis, _sqrt_field,
                                   forecast_alignment_from_samples)

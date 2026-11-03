@@ -40,8 +40,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Store, file_identity
-from hcwf.io.input import is_zarr
-from hcwf.lib.dataset_schema import (DatasetError, expand_path, file_year, parse_dataset, resolve_paths,
+from hcwf.lib.dataset_schema import (DatasetError, expand_path, file_year, is_zarr, parse_dataset, resolve_paths,
                                      year_match)
 from hcwf.onset import ingest
 from hcwf.utils.standard import matches

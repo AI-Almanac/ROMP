@@ -37,6 +37,8 @@ onset:
 evaluation:
   start_date: [2015, 5, 1]       # the years evaluated; month/day bound the forecast init dates
   end_date: [2015, 6, 30]
+  # years: 2015                 # optional: only these years (a list or '2010:2013,2015'; may skip years)
+  # climatology_years: '2000:2014'   # optional: the same for the climatology; both must lie within the date ranges
   init_days: [2, 5]              # weekdays, 0 = Monday
   verification_windows: [[1, 15]]
   tolerances: [3]
