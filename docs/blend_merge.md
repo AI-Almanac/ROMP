@@ -115,7 +115,9 @@ including data operations and datatypes (smallest dtype that gives identical res
 arrays to integer positions, silent copies from astype, vectorised numpy/numba instead of Python loops
 and pandas groupby/apply on hot paths, in-place ops and views, memory layout for the kernels, xarray
 overhead in inner loops, chunk-aligned reads, sparse unit weights, no frame-to-array round trips;
-changes that would alter numbers are flagged as trade-offs for the user, not applied), backed by targeted profiles of the real-data workloads (phase7 slices on NetCDF and zarr,
+changes that would alter numbers are flagged as trade-offs for the user, not applied), and caching (size limits and eviction for the disk caches, e.g. via diskcache; zarr for large
+cached arrays; faster hashing (xxhash/blake3) only if profiles show hashing cost; one bounded mechanism
+for the scattered in-memory memo tables; keep momp.cache's fingerprints and miss diagnostics), backed by targeted profiles of the real-data workloads (phase7 slices on NetCDF and zarr,
 Ethiopia and India training and forecasts, an admin-unit benchmark). One combined proposal
 (restructuring + measured hot spots with expected gains) goes to the user for approval.
 
