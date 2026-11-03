@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.utils.standard import dim_fmt_model, dim_fmt_model_ensemble
+from hcwf.utils.standard import dim_fmt_model, dim_fmt_model_ensemble
 
 
 def _forecast(coord_order, member=None):

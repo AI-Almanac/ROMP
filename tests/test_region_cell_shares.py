@@ -1,8 +1,8 @@
-"""mask.cell_shares and cell_bounds: the one overlap computation rasterise and momp.spatial share."""
+"""mask.cell_shares and cell_bounds: the one overlap computation rasterise and hcwf.spatial share."""
 import numpy as np
 from shapely.geometry import Polygon, box
 
-from momp.utils.mask import cell_bounds, cell_shares, rasterise
+from hcwf.utils.mask import cell_bounds, cell_shares, rasterise
 
 LAT = np.array([0.5, 1.5, 2.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5])

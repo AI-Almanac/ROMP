@@ -6,9 +6,9 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
-from momp.onset import engine, model as m
-from momp.spatial import EvaluationUnits, GridIdConvention
-from momp.utils import mask as mask_mod
+from hcwf.onset import engine, model as m
+from hcwf.spatial import EvaluationUnits, GridIdConvention
+from hcwf.utils import mask as mask_mod
 
 LAT = np.array([0.5, 1.5, 2.5, 3.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5, 4.5])
@@ -45,7 +45,7 @@ def test_grid_units_are_the_kept_cells_in_latitude_major_order():
         EvaluationUnits.from_grid(LAT, LON, np.zeros((4, 5), dtype=bool))
 
 
-def test_grid_units_from_romp_mask(tmp_path):
+def test_grid_units_from_hcwf_mask(tmp_path):
     units = EvaluationUnits.from_mask({"file": write_shapes(tmp_path)}, LAT, LON, label="obs")
     assert len(units) == 16 and units.mask_record is not None
     path = tmp_path / "half.geojson"
@@ -68,7 +68,7 @@ def test_grid_selection_on_the_same_and_a_larger_grid():
     expected = [big[(1 + 1) * wider_lon.size + (2 + 2), 0], big[(3 + 1) * wider_lon.size + (4 + 2), 0]]
     assert wide.observed_mean(big).ravel().tolist() == expected
     assert wide.weighted_matrix.nnz == 2
-    near = units.transform(LAT + 1e-9, LON)  # inside ROMP's coordinate tolerance
+    near = units.transform(LAT + 1e-9, LON)  # inside HCWF's coordinate tolerance
     assert near.weighted_matrix.nnz == 2
 
 

@@ -5,8 +5,8 @@ import textwrap
 import pytest
 import yaml
 
-from momp.onset import definition as dfn
-from momp.onset.model import (
+from hcwf.onset import definition as dfn
+from hcwf.onset.model import (
     Amount, Comparison, Curve, DayRef, DerivedSeasons, DryRun, DryWindow, FirstPassage, Season, Span,
     ThresholdSpec, Total, Veto, WetDays,
 )

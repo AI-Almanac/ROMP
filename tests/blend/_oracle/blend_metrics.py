@@ -1,7 +1,7 @@
 """TEST-ONLY ORACLE: the legacy blending metrics, copied verbatim from onset_blending@1e6d696
 tests/_legacy/blend_evaluation_utils.py (compute_cell_metrics_fast, compute_yearly_metrics, fair Brier, RPS, AUC,
-Pietra). The parity tests compare momp.metrics.probabilistic with these; nothing in momp imports this file.
-The yearly AUC needs scikit-learn (imported inside compute_yearly_metrics), which is not a momp dependency.
+Pietra). The parity tests compare hcwf.metrics.probabilistic with these; nothing in hcwf imports this file.
+The yearly AUC needs scikit-learn (imported inside compute_yearly_metrics), which is not a hcwf dependency.
 """
 
 import re

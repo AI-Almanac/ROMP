@@ -1,13 +1,13 @@
-"""momp.onset.explain: the Anatomy of one cell equals the engine's result, and the log says why in words."""
+"""hcwf.onset.explain: the Anatomy of one cell equals the engine's result, and the log says why in words."""
 import time
 
 import numpy as np
 import pytest
 
-from momp.onset import definition as dfn
-from momp.onset import engine, explain
-from momp.onset import model as m
-from momp.onset.model import Status
+from hcwf.onset import definition as dfn
+from hcwf.onset import engine, explain
+from hcwf.onset import model as m
+from hcwf.onset.model import Status
 from test_onset_engine import ANY_WET, TWO_WET, day_index, definition, make_forecast, make_rain, season
 from test_onset_engine import derived_setup, history_and_forecast
 from test_onset_forecast_layer import JJAS, case, hist_with

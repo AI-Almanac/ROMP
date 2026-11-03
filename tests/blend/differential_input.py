@@ -1,6 +1,6 @@
-"""Differential check: the same synthetic NetCDF inputs through onset_blending's readers and momp's single input path.
+"""Differential check: the same synthetic NetCDF inputs through onset_blending's readers and hcwf's single input path.
 
-    python tests/blend/differential_input.py dump momp OUT.pkl                 # in ROMP's env
+    python tests/blend/differential_input.py dump hcwf OUT.pkl                 # in HCWF's env
     <onset_blending>/.venv/bin/python tests/blend/differential_input.py dump onset_blending OUT.pkl
     python tests/blend/differential_input.py compare A.pkl B.pkl
 
@@ -115,11 +115,11 @@ def _onto_units(forecast, transform, source, feeding, kept_units, domain, post_s
     return np.concatenate(runs)
 
 
-def dump_momp(root: Path) -> dict:
-    from momp.io import input as io_input
-    from momp.spatial import EvaluationUnits
-    from momp.spatial.ids import GridIdConvention
-    from momp.utils.standard import dim_fmt, dim_fmt_model_ensemble
+def dump_hcwf(root: Path) -> dict:
+    from hcwf.io import input as io_input
+    from hcwf.spatial import EvaluationUnits
+    from hcwf.spatial.ids import GridIdConvention
+    from hcwf.utils.standard import dim_fmt, dim_fmt_model_ensemble
 
     out = {}
     convention = GridIdConvention(2, "fixed", "explicit")
@@ -170,7 +170,7 @@ def dump_momp(root: Path) -> dict:
 def dump(package: str, target: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = make_inputs(Path(tmp))["root"]
-        out = dump_momp(root) if package == "momp" else dump_onset_blending(root)
+        out = dump_hcwf(root) if package == "hcwf" else dump_onset_blending(root)
     with open(target, "wb") as file:
         pickle.dump(out, file)
 

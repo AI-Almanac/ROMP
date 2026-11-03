@@ -4,9 +4,9 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
-from momp.onset import model as m
-from momp.onset import plan as plan_mod
-from momp.onset.backends import reference
+from hcwf.onset import model as m
+from hcwf.onset import plan as plan_mod
+from hcwf.onset.backends import reference
 
 ONSET, NOT_FOUND, CENSORED, INSUFFICIENT = (int(s) for s in (
     m.Status.ONSET, m.Status.NOT_FOUND, m.Status.CENSORED, m.Status.INSUFFICIENT_DATA))

@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 
 from _oracle import climatology_utils as legacy
-from momp.onset import climatology_kde as kde
-from momp.stats.conditional_climatology import season_day
+from hcwf.onset import climatology_kde as kde
+from hcwf.stats.conditional_climatology import season_day
 
 HORIZONS = [
     {"start_md": "05-01", "end_md": "05-31", "forecast_window": 30},
@@ -113,7 +113,7 @@ def test_training_and_test_year_defaults():
         kde.climatology_years([2001], [])
 
 
-def test_season_days_count_from_the_season_start_and_romps_axis_from_1_january():
+def test_season_days_count_from_the_season_start_and_hcwfs_axis_from_1_january():
     dates = np.array(["2019-05-03", "2020-05-03", "2020-02-29", "2020-03-01", "NaT"], dtype="datetime64[ns]")
     np.testing.assert_array_equal(kde.season_days(dates, (5, 1)), [2, 2, -62, -61, np.nan])
     plain = kde.season_days(dates)

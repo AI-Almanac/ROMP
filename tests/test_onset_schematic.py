@@ -6,9 +6,9 @@ import pytest
 
 matplotlib.use("Agg")
 
-from momp.onset import definition as defn_mod
-from momp.onset import model as m
-from momp.onset.viz.schematic import schematic
+from hcwf.onset import definition as defn_mod
+from hcwf.onset import model as m
+from hcwf.onset.viz.schematic import schematic
 
 WET = m.Comparison("ge", m.Amount(tenths=10))
 

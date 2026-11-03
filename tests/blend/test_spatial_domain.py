@@ -1,5 +1,5 @@
 """Area, dissemination and regrid filters are the legacy nc_utils / sparse transforms' (onset_blending
-tests/test_domain.py, rebuilt on momp.spatial)."""
+tests/test_domain.py, rebuilt on hcwf.spatial)."""
 import json
 
 import numpy as np
@@ -10,7 +10,7 @@ from shapely.geometry import box
 from _oracle import nc_utils_filters as nc_utils
 from _oracle.geometry_utils import normalize_regrid_weights
 from _oracle.sparse_transform_utils import compile_sparse_cell_transform, sparse_observed_weighted_mean
-from momp.spatial import AreaError, EvaluationUnits, GridIdConvention, regrid
+from hcwf.spatial import AreaError, EvaluationUnits, GridIdConvention, regrid
 
 CONVENTION = GridIdConvention(2, "fixed", "spec")
 GEOMETRY = {"geometry": {"grid_id_decimal_digits": 2, "grid_id_format": "fixed"}}
@@ -90,7 +90,7 @@ def test_outlines_locate_named_units_by_their_centroids(tmp_path):
 
 
 def test_outline_boundary_semantics():
-    """contains drops a centroid on the edge (onset_blending), intersects keeps it (ROMP's centre rule)."""
+    """contains drops a centroid on the edge (onset_blending), intersects keeps it (HCWF's centre rule)."""
     cells = EvaluationUnits(pd.DataFrame({"id": ["edge", "in"], "lat": [10.0, 10.5], "lon": [70.5, 70.5]}), "polygon")
     outline = box(70, 10, 72, 12)
     assert cells.in_outline(outline).tolist() == [False, True]

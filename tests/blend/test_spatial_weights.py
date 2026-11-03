@@ -5,8 +5,8 @@ import xarray as xr
 from shapely.geometry import Polygon, box
 
 from _oracle import geometry_utils as legacy
-from momp.spatial import SparseTransform, regrid
-from momp.utils.mask import cell_shares, rasterise
+from hcwf.spatial import SparseTransform, regrid
+from hcwf.utils.mask import cell_shares, rasterise
 
 LAT = np.array([0.5, 1.5, 2.5, 3.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5, 4.5])
@@ -152,7 +152,7 @@ def test_weights_are_read_exactly_as_written(tmp_path):
     """Weights round-trip through CSV to the last bit (pandas' default float parser does not always)."""
     import numpy as np
     import pandas as pd
-    from momp.spatial.regrid import read_weights
+    from hcwf.spatial.regrid import read_weights
 
     rng = np.random.default_rng(3)
     weights = rng.random(5000) / 7.0

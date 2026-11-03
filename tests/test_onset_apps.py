@@ -4,8 +4,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.app import onset_spatial, onset_time_series
-from momp.io import input as romp_input
+from hcwf.app import onset_spatial, onset_time_series
+from hcwf.io import input as hcwf_input
 
 BOUNDARY = "00 UTC, labelled by start"
 
@@ -20,7 +20,7 @@ def obs(tmp_path, monkeypatch):
     rain[time.dayofyear >= 153] = 20.0
     xr.Dataset({"pr": (("time", "lat", "lon"), rain)},
                coords={"time": time, "lat": [8.0, 9.0], "lon": [38.0, 39.0]}).to_netcdf(obs_dir / "2020.nc")
-    monkeypatch.setattr(romp_input, "region_select", lambda ds, **kwargs: ds)
+    monkeypatch.setattr(hcwf_input, "region_select", lambda ds, **kwargs: ds)
     return obs_dir
 
 

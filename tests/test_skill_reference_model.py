@@ -5,12 +5,12 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-import momp.io.input as model_input
-from momp.io.dict import extract_pd_bins
-from momp.metrics.skill import create_score_results, prepare_score_cache
-from momp.stats.bins import multi_year_climatological_forecast_obs_pairs
-from momp.stats.climatology import compute_climatological_onset_dataset
-from momp.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
+import hcwf.io.input as model_input
+from hcwf.io.dict import extract_pd_bins
+from hcwf.metrics.skill import create_score_results, prepare_score_cache
+from hcwf.stats.bins import multi_year_climatological_forecast_obs_pairs
+from hcwf.stats.climatology import compute_climatological_onset_dataset
+from hcwf.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
 
 YEARS = (2000, 2001, 2002)
 LAT, LON = [10.0, 10.5], [70.0, 70.5]

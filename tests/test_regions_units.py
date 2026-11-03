@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from momp.onset import calendar as cal
-from momp.onset import definition as dfn
-from momp.onset import regions as rg
-from momp.onset.model import DayRef, Season
-from momp.params.region_def import domain
+from hcwf.onset import calendar as cal
+from hcwf.onset import definition as dfn
+from hcwf.onset import regions as rg
+from hcwf.onset.model import DayRef, Season
+from hcwf.params.region_def import domain
 
 NE_COUNTRY = {"ethiopia": "Ethiopia", "india": "India", "kenya": "Kenya"}
 
@@ -33,7 +33,7 @@ def test_every_region_has_a_box():
 @pytest.mark.parametrize("ident,country", NE_COUNTRY.items())
 def test_country_box_holds_its_geometry(ident, country):
     """A country's box contains its Natural Earth shape's centroid and, within a margin, its whole outline."""
-    from momp.utils.mask import country_geometry
+    from hcwf.utils.mask import country_geometry
 
     geometry = country_geometry([country], "110m")[0]
     lats, latn, lonw, lone = rg.box(ident)
@@ -105,10 +105,10 @@ def test_polygon_units_from_a_region_entry(region_dir, monkeypatch):
     data.mkdir()
     _shapes(data)
     pd.DataFrame({"id": ["b2"]}).to_csv(data / "dissem.csv", index=False)
-    monkeypatch.setenv("ROMP_TEST_UNITS", str(data))
+    monkeypatch.setenv("HCWF_TEST_UNITS", str(data))
     (region_dir / "land.yaml").write_text(
         "id: land\ntitle: Land\nkind: region\ndomain: {lat: [0, 10], lon: [30, 40]}\nunits:\n"
-        "  shapefile: ${ROMP_TEST_UNITS}/units.geojson\n  unit_id_col: code\n  unit_name_col: label\n"
+        "  shapefile: ${HCWF_TEST_UNITS}/units.geojson\n  unit_id_col: code\n  unit_name_col: label\n"
         "  dissemination: data/dissem.csv\n")
     (region_dir / "town.yaml").write_text("id: town\ntitle: Town\nkind: region\npart_of: [land]\n")
     for name in ("land", "town"):  # town inherits the units of land
@@ -156,9 +156,9 @@ def test_bad_units_blocks(region_dir, block, message):
 
 def test_unset_environment_variable_in_a_units_path(region_dir, monkeypatch):
     """An unset ${VAR} is reported, not read as a folder name."""
-    monkeypatch.delenv("ROMP_TEST_MISSING", raising=False)
+    monkeypatch.delenv("HCWF_TEST_MISSING", raising=False)
     (region_dir / "bad.yaml").write_text(
-        "id: bad\ntitle: Bad\nkind: region\nunits: {shapefile: '${ROMP_TEST_MISSING}/u.shp', unit_id_col: id}\n")
+        "id: bad\ntitle: Bad\nkind: region\nunits: {shapefile: '${HCWF_TEST_MISSING}/u.shp', unit_id_col: id}\n")
     with pytest.raises(rg.RegionError, match="not set"):
         rg.units_for("bad")
 

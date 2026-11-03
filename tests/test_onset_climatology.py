@@ -1,13 +1,13 @@
-"""Tests for momp.onset.climatology: thresholds, harmonic seasons and the threshold cache."""
+"""Tests for hcwf.onset.climatology: thresholds, harmonic seasons and the threshold cache."""
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.onset import climatology
-from momp.onset.climatology import ThresholdCache, compute_threshold, compute_thresholds, harmonic_seasons
-from momp.onset.ingest import ingest
-from momp.onset.model import (Amount, Comparison, Curve, DayRef, Definition, Season, ThresholdSpec)
+from hcwf.onset import climatology
+from hcwf.onset.climatology import ThresholdCache, compute_threshold, compute_thresholds, harmonic_seasons
+from hcwf.onset.ingest import ingest
+from hcwf.onset.model import (Amount, Comparison, Curve, DayRef, Definition, Season, ThresholdSpec)
 
 START = "00 UTC, labelled by start"
 

@@ -23,12 +23,12 @@ WORKDIR /app
 
 # Copy package metadata first so dependency layer is cached separately from source
 COPY pyproject.toml .
-COPY momp/ momp/
+COPY hcwf/ hcwf/
 
 # Install the package and gcsfs into the system Python (no venv needed in container)
 RUN uv pip install --system --no-cache ".[dev]" gcsfs
 
-# Pre-download Natural Earth datasets used by ROMP so containers run offline
+# Pre-download Natural Earth datasets used by HCWF so containers run offline
 COPY scripts/prefetch_cartopy_data.py scripts/prefetch_cartopy_data.py
 RUN python scripts/prefetch_cartopy_data.py
 

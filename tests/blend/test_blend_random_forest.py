@@ -1,11 +1,11 @@
-"""momp.blend.random_forest: the CRPS random forest blend, on arrays, with onset-forest's numerics (a port of
+"""hcwf.blend.random_forest: the CRPS random forest blend, on arrays, with onset-forest's numerics (a port of
 onset_blending@1e6d696 tests/test_random_forest.py)."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from momp.blend import random_forest
-from momp.blend._crps_tree import CRPSForest
+from hcwf.blend import random_forest
+from hcwf.blend._crps_tree import CRPSForest
 
 PARAMS = random_forest.Params(trees=6, min_samples_leaf=5, max_day=28, n_jobs=1)
 
@@ -180,7 +180,7 @@ def test_the_feature_matrix_orders_lat_lon_rain_days_then_climatology():
 
 
 def test_the_lead_day_histogram_counts_days_then_later():
-    from momp.blend import _crps_tree
+    from hcwf.blend import _crps_tree
 
     counts = _crps_tree.lead_day_histogram(np.array([1.0, 1.0, 3.0, 5.0, 9.0]), 4)
 

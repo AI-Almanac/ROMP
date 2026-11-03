@@ -1,4 +1,4 @@
-"""momp.onset.viz.forecast: forecast_vs_truth builds in both modes and plots exactly the engine's onset dates."""
+"""hcwf.onset.viz.forecast: forecast_vs_truth builds in both modes and plots exactly the engine's onset dates."""
 import matplotlib
 import numpy as np
 import pytest
@@ -6,9 +6,9 @@ import xarray as xr
 
 matplotlib.use("Agg")
 
-from momp.onset import engine
-from momp.onset import model as m
-from momp.onset.viz.forecast import forecast_vs_truth
+from hcwf.onset import engine
+from hcwf.onset import model as m
+from hcwf.onset.viz.forecast import forecast_vs_truth
 from test_onset_engine import JJAS, TWO_WET, definition
 from test_onset_forecast_layer import case
 

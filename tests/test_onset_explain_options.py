@@ -1,15 +1,15 @@
-"""momp.onset.explain reports the backend's own evaluation under every option: dry_day, beginning within, missing
+"""hcwf.onset.explain reports the backend's own evaluation under every option: dry_day, beginning within, missing
 policies, exact rain and horizon policies. Its verdicts equal the engine's and the backend's per candidate."""
 import dataclasses
 
 import numpy as np
 import pytest
 
-from momp.onset import engine, explain
-from momp.onset import model as m
-from momp.onset import plan as P
-from momp.onset.backends import reference
-from momp.onset.model import Jobs, Status
+from hcwf.onset import engine, explain
+from hcwf.onset import model as m
+from hcwf.onset import plan as P
+from hcwf.onset.backends import reference
+from hcwf.onset.model import Jobs, Status
 from test_onset_engine import make_rain
 from test_onset_oracle_agreement import random_data, random_definition
 

@@ -1,18 +1,18 @@
-"""momp.metrics.probabilistic and LeadBins: the blending package's numbers, and ROMP's own, to the last bit.
+"""hcwf.metrics.probabilistic and LeadBins: the blending package's numbers, and HCWF's own, to the last bit.
 
 Blending side: the legacy functions of onset_blending@1e6d696 (tests/blend/_oracle/blend_metrics.py) on synthetic
-cv_preds frames. ROMP side: the pandas calculations momp/stats/score.py had before (romp_score_pandas.py).
+cv_preds frames. HCWF side: the pandas calculations hcwf/stats/score.py had before (hcwf_score_pandas.py).
 """
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from momp.metrics import probabilistic as prob
-from momp.stats import score
-from momp.stats.bins import LeadBins
+from hcwf.metrics import probabilistic as prob
+from hcwf.stats import score
+from hcwf.stats.bins import LeadBins
 from tests.blend._oracle import blend_metrics as legacy
-from tests.blend._oracle import romp_score_pandas as romp_old
+from tests.blend._oracle import hcwf_score_pandas as hcwf_old
 
 
 # --- synthetic data -----------------------------------------------------------------------------------------
@@ -170,7 +170,7 @@ def test_pooled_skill_is_one_minus_the_ratio_against_the_baseline():
 # --- the other conventions ----------------------------------------------------------------------------------
 
 def test_brier_scales_are_related_by_the_bin_count():
-    """ROMP's element-wise Brier is blending's sum over bins divided by the number of bins."""
+    """HCWF's element-wise Brier is blending's sum over bins divided by the number of bins."""
     frame = cv_frame(seed=6).dropna(subset=["outcome", "cv_week1"])
     P, codes, _, bins = arrays(frame)
     Y = prob.one_hot(codes, len(bins))
@@ -227,7 +227,7 @@ def test_auc_equals_the_mann_whitney_statistic_and_counts_ties_as_half(ties):
     assert np.isnan(prob.auc(np.ones(3), np.arange(3.0)))
 
 
-# --- ROMP parity: the pandas calculations before and the adapters now ---------------------------------------
+# --- HCWF parity: the pandas calculations before and the adapters now ---------------------------------------
 
 def pair_frame(n_cases, n_bins, members, seed, clim=False):
     """A pair table in the layout the builders write: one row per case and bin, labels like 'Days 1-5'."""
@@ -260,19 +260,19 @@ def same(a, b, path=""):
 @pytest.mark.parametrize("n_bins", [1, 2, 3, 6, 9, 15, 30])
 @pytest.mark.parametrize("function", ["calculate_brier_score", "calculate_auc", "calculate_brier_score_climatology",
                                       "calculate_auc_climatology"])
-def test_romp_brier_and_auc_are_byte_identical_to_the_pandas_ones(n_bins, function):
+def test_hcwf_brier_and_auc_are_byte_identical_to_the_pandas_ones(n_bins, function):
     df = pair_frame(300, n_bins, 51, n_bins, clim=function.endswith("climatology"))
-    same(getattr(score, function)(df.copy()), getattr(romp_old, function)(df.copy()), function)
+    same(getattr(score, function)(df.copy()), getattr(hcwf_old, function)(df.copy()), function)
 
 
-def test_romp_scores_do_not_add_columns_to_the_pair_table():
+def test_hcwf_scores_do_not_add_columns_to_the_pair_table():
     df = pair_frame(20, 3, 11, 0)
     before = list(df.columns)
     score.calculate_brier_score(df)
     assert list(df.columns) == before
 
 
-def test_romp_scores_of_a_shuffled_table_equal_those_of_the_sorted_one():
+def test_hcwf_scores_of_a_shuffled_table_equal_those_of_the_sorted_one():
     df = pair_frame(120, 4, 31, 3)
     shuffled = df.sample(frac=1, random_state=0).reset_index(drop=True)
     a, b = score.calculate_brier_score(df.copy()), score.calculate_brier_score(shuffled)
@@ -283,7 +283,7 @@ def test_romp_scores_of_a_shuffled_table_equal_those_of_the_sorted_one():
     assert score.calculate_auc(df.copy())["auc"] == score.calculate_auc(shuffled)["auc"]
 
 
-def test_romp_auc_without_both_outcomes_is_nan_with_the_counts():
+def test_hcwf_auc_without_both_outcomes_is_nan_with_the_counts():
     df = pair_frame(10, 3, 11, 0)
     df["observed_onset"] = 0
     result = score.calculate_auc(df)
@@ -291,14 +291,14 @@ def test_romp_auc_without_both_outcomes_is_nan_with_the_counts():
     assert result["bin_auc_scores"] == {}
 
 
-def test_romp_scores_refuse_a_single_member():
+def test_hcwf_scores_refuse_a_single_member():
     df = pair_frame(5, 3, 1, 0)
     for function in (score.calculate_brier_score, score.calculate_rps):
         with pytest.raises(ValueError):
             function(df)
 
 
-def test_romp_skill_scores_are_one_minus_the_ratio():
+def test_hcwf_skill_scores_are_one_minus_the_ratio():
     brier = {"fair_brier_score": 0.2, "bin_fair_brier_scores": {"Days 6-10": 0.3, "Days 1-5": 0.1}}
     clim = {"fair_brier_score": 0.4, "bin_fair_brier_scores": {"Days 6-10": 0.6, "Days 1-5": 0.2}}
     skill = score.calculate_skill_scores(brier, {"fair_rps": 0.5}, clim, {"fair_rps": 1.0})
@@ -337,7 +337,7 @@ def test_lead_bins_with_the_earlier_bin():
     assert list(bins.codes(np.array([-3.0, 0.0, 1.0, 7.0, 8.0, 15.0, np.nan]), earlier=True)) == [0, 0, 1, 1, 2, 3, -1]
 
 
-def test_lead_bins_of_romp_day_bins_keep_romps_labels_and_edges():
+def test_lead_bins_of_hcwf_day_bins_keep_hcwfs_labels_and_edges():
     bins = LeadBins.from_day_bins(((1, 5), (6, 10), (11, 15)))
     assert bins.labels() == ["Before day 1", "Days 1-5", "Days 6-10", "Days 11-15", "After day 15"]
     assert bins.extended == ((-float("inf"), 0), (1, 5), (6, 10), (11, 15), (16, float("inf")))
@@ -346,7 +346,7 @@ def test_lead_bins_of_romp_day_bins_keep_romps_labels_and_edges():
     assert LeadBins.uniform(3, 5) == bins
 
 
-def test_lead_bin_membership_matches_romps_member_and_observed_rules():
+def test_lead_bin_membership_matches_hcwfs_member_and_observed_rules():
     bins = LeadBins.from_day_bins(((1, 5), (6, 10)))
     day = np.array([-1.0, 0.0, 1.0, 5.0, 6.0, 10.0, 11.0, np.nan])
     assert list(bins.in_bin(day, 0)) == [True, True, False, False, False, False, False, False]
@@ -374,10 +374,10 @@ def test_lead_bins_day_slices_and_sort_key():
 
 
 @pytest.mark.parametrize("n_bins", [3, 9])
-def test_romp_climatology_brier_skips_the_nan_of_one_member_cases(n_bins):
+def test_hcwf_climatology_brier_skips_the_nan_of_one_member_cases(n_bins):
     """A case whose climatology has one member with onset has 0/0 in the fair term; pandas leaves it out."""
     df = pair_frame(200, n_bins, 51, 5, clim=True)
     df.loc[df["lon"] % 3 == 0, "total_members_with_onset"] = 1
     df.loc[df["lon"] % 3 == 0, "predicted_prob"] = (df["bin_index"] == 2).astype(float)
     assert np.isnan(((df["predicted_prob"] * (1 - df["predicted_prob"])) / (df["total_members_with_onset"] - 1))).any()
-    same(score.calculate_brier_score_climatology(df.copy()), romp_old.calculate_brier_score_climatology(df.copy()))
+    same(score.calculate_brier_score_climatology(df.copy()), hcwf_old.calculate_brier_score_climatology(df.copy()))

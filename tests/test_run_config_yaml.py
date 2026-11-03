@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from momp.lib import convert
-from momp.lib.config_yaml import build_config
-from momp.lib.resolved import write_resolved
+from hcwf.lib import convert
+from hcwf.lib.config_yaml import build_config
+from hcwf.lib.resolved import write_resolved
 from tests.synthetic_data import write_forecast, write_obs
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,14 +89,14 @@ show_panel = False
 parallel = False
 debug = False
 '''
-OLD_RUN = ("import sys\nimport momp.lib.loader as L\nfrom momp.lib.convert import read_legacy\n"
-           "L._read_config = read_legacy\nsys.argv = ['momp-run', '-p', 'c.in']\n"
-           "from momp.driver import run_momp\nrun_momp()\n")
+OLD_RUN = ("import sys\nimport hcwf.lib.loader as L\nfrom hcwf.lib.convert import read_legacy\n"
+           "L._read_config = read_legacy\nsys.argv = ['hcwf-run', '-p', 'c.in']\n"
+           "from hcwf.driver import run_hcwf\nrun_hcwf()\n")
 
 
 def _run(cwd, *args, code=None):
-    """Run momp in a subprocess in cwd, returning the completed process."""
-    cmd = [sys.executable, "-c", code] if code else [sys.executable, "-m", "momp.cli", *args]
+    """Run hcwf in a subprocess in cwd, returning the completed process."""
+    cmd = [sys.executable, "-c", code] if code else [sys.executable, "-m", "hcwf.cli", *args]
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env={**__import__("os").environ, "PYTHONPATH": str(ROOT)})
 
 
@@ -133,7 +133,7 @@ def runs(tmp_path_factory):
 
 
 def test_converted_yaml_reproduces_the_old_config_byte_for_byte(runs):
-    """momp-run on the converted YAML writes the same NetCDF files as the old config.in with the old loader."""
+    """hcwf-run on the converted YAML writes the same NetCDF files as the old config.in with the old loader."""
     old, new, _ = runs
     _same_outputs(old, new)
 
@@ -188,7 +188,7 @@ def test_convert_refuses_to_overwrite(tmp_path):
 
 
 def test_top_level_help_works_without_a_config(tmp_path):
-    """momp-run -h lists init, datasets, convert and run without needing a config."""
+    """hcwf-run -h lists init, datasets, convert and run without needing a config."""
     done = _run(tmp_path, "-h")
     assert done.returncode == 0
     for word in ("init", "datasets", "convert", "run"):
@@ -196,10 +196,10 @@ def test_top_level_help_works_without_a_config(tmp_path):
 
 
 def test_old_config_in_is_rejected_by_run(tmp_path):
-    """momp-run -p old.in stops and points at convert."""
+    """hcwf-run -p old.in stops and points at convert."""
     (tmp_path / "c.in").write_text(OLD_CONFIG)
     done = _run(tmp_path, "-p", "c.in")
-    assert done.returncode == 1 and "momp-run convert" in done.stdout
+    assert done.returncode == 1 and "hcwf-run convert" in done.stdout
 
 
 @pytest.fixture
@@ -236,7 +236,7 @@ def test_init_without_paths_writes_placeholders_and_refuses_to_overwrite(tmp_pat
 
 
 def test_datasets_command_reports_detections_and_problems(synthetic):
-    """momp-run datasets -p lists what the config's datasets resolve to; a problem gives exit code 1."""
+    """hcwf-run datasets -p lists what the config's datasets resolve to; a problem gives exit code 1."""
     run = {"region": "ethiopia", "observations": {"path": str(synthetic / "obs"), "day_boundary": "00 UTC, labelled by start"},
            "models": [{"name": "M", "path": str(synthetic / "fc")}],
            "evaluation": {"start_date": [2020, 5, 1], "end_date": [2020, 7, 31]},
@@ -253,14 +253,14 @@ def test_datasets_command_reports_detections_and_problems(synthetic):
 
 def test_write_resolved_records_overrides(tmp_path):
     """An onset override and dry_spell_check = false show up in the printed and recorded override list."""
-    from momp.lib.resolved import definition_lines
+    from hcwf.lib.resolved import definition_lines
 
     cfg = {"region": "ethiopia", "onset_legacy": False, "onset_definition": "icpac", "obs_day_boundary": None,
            "onset_override": {"wet_day": "at least 2 mm"}, "dry_spell_check": False, "dir_out": str(tmp_path),
            "config_sources": {}}
     lines = "\n".join(definition_lines(cfg))
     assert "overridden: wet_day, reject if (dry_spell_check = false)" in lines and "hash" in lines
-    from momp.lib.onset_config import onset_setup
+    from hcwf.lib.onset_config import onset_setup
 
     setup = onset_setup(cfg)
     assert setup.definition.wet_day.__repr__().count("20") >= 1

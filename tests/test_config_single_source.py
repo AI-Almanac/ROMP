@@ -2,10 +2,10 @@
 import dataclasses
 from pathlib import Path
 
-from momp.lib import config_schema as schema
-from momp.lib import loader
-from momp.lib.control import init_dataclass
-from momp.lib.convention import Case, Setting
+from hcwf.lib import config_schema as schema
+from hcwf.lib import loader
+from hcwf.lib.control import init_dataclass
+from hcwf.lib.convention import Case, Setting
 
 
 def _dic(**values):

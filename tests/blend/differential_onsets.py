@@ -1,6 +1,6 @@
-"""Differential check: blending's onsets and weekly features against momp's, on the same synthetic data and configs.
+"""Differential check: blending's onsets and weekly features against hcwf's, on the same synthetic data and configs.
 
-    python tests/blend/differential_onsets.py dump momp OUT.pkl                # in ROMP's env
+    python tests/blend/differential_onsets.py dump hcwf OUT.pkl                # in HCWF's env
     <onset_blending>/.venv/bin/python tests/blend/differential_onsets.py dump onset_blending OUT.pkl
     python tests/blend/differential_onsets.py compare A.pkl B.pkl
 
@@ -8,8 +8,8 @@
 reference onset and rain predictors; a cell transform with the "drop" policy and a regrid; thresholds computed from the
 observations with the "zero" policy and climatology windows), and pickles every array of the observed onsets, each
 model's forecast onsets, the climatology and the weekly features (with the legacy tables `frame()` rebuilds), as
-onset_blending's own code makes them (`onset_blending.core.onsets`, `features`) or as momp's (`momp.stats.detect`,
-`momp.blend.features`); `compare` demands them bit-identical. tests/blend/test_blend_onsets_differential.py runs all
+onset_blending's own code makes them (`onset_blending.core.onsets`, `features`) or as hcwf's (`hcwf.stats.detect`,
+`hcwf.blend.features`); `compare` demands them bit-identical. tests/blend/test_blend_onsets_differential.py runs all
 three steps when the onset_blending environment exists.
 """
 import datetime as dt
@@ -142,11 +142,11 @@ def run_onset_blending(config_dict) -> dict:
     return finish(observed, forecasts, clim, weekly, daily)
 
 
-def run_momp(config_dict) -> dict:
+def run_hcwf(config_dict) -> dict:
     from _recipes import converted
 
-    from momp.blend import features
-    from momp.io.input import load_thresholds
+    from hcwf.blend import features
+    from hcwf.io.input import load_thresholds
 
     t = converted(config_dict)
     cfg, recipe, setup = t.cfg, t.recipe, t.setup
@@ -177,7 +177,7 @@ def dump(package: str, target: str) -> None:
         write_data(root)
         started = time.time()
         for name, config in configs(root).items():
-            out[name] = run_momp(config) if package == "momp" else run_onset_blending(config)
+            out[name] = run_hcwf(config) if package == "hcwf" else run_onset_blending(config)
         out["_seconds"] = time.time() - started
         out["_rss_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
     with open(target, "wb") as file:

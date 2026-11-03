@@ -1,5 +1,5 @@
 # TEST-ONLY ORACLE: copied unchanged from onset_blending@1e6d696 tests/_legacy/sparse_transform_utils.py.
-# Never import this from momp; it is the reference the momp.spatial tests compare against.
+# Never import this from hcwf; it is the reference the hcwf.spatial tests compare against.
 """Shared sparse execution for source-to-target rainfall transformations."""
 
 from dataclasses import dataclass

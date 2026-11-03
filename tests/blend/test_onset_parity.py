@@ -1,4 +1,4 @@
-"""momp's onset backends reproduce onset_blending's onset search exactly under the parity options.
+"""hcwf's onset backends reproduce onset_blending's onset search exactly under the parity options.
 
 The oracles (tests/blend/_oracle) are copies of onset_blending@1e6d696: its `find_onsets` and the legacy
 `find_onsets_batch` it was checked against. Random float rain (NaN, exact ties, short series, truncated
@@ -14,11 +14,11 @@ import pytest
 
 from _oracle import legacy_onset_utils as legacy
 from _oracle.onset_rule import OnsetRule, find_onsets
-from momp.lib.convert_specs import rule_body
-from momp.onset import definition as D
-from momp.onset import plan as P
-from momp.onset.backends import numba_cpu, reference
-from momp.onset.model import Jobs, Status
+from hcwf.lib.convert_specs import rule_body
+from hcwf.onset import definition as D
+from hcwf.onset import plan as P
+from hcwf.onset.backends import numba_cpu, reference
+from hcwf.onset.model import Jobs, Status
 
 HEAD = """id: parity
 version: 1
@@ -32,7 +32,7 @@ season: {from: 01-01, to: 12-31}
 
 
 def definition_yaml(r, fixed_total: float | None = None, threshold: tuple | None = None) -> str:
-    """The momp definition text of a blending rule (what `momp-run convert` writes, with this header)."""
+    """The hcwf definition text of a blending rule (what `hcwf-run convert` writes, with this header)."""
     return HEAD + rule_body(r, fixed_total, threshold)
 
 
@@ -41,7 +41,7 @@ def _backends():
     out.append(pytest.param(numba_cpu, id="numba", marks=pytest.mark.skipif(
         not numba_cpu.available(), reason="needs numba")))
     try:
-        from momp.onset.backends import gpu
+        from hcwf.onset.backends import gpu
         out.append(pytest.param(gpu, id="gpu", marks=pytest.mark.skipif(not gpu.available(), reason="needs a GPU")))
     except ImportError:  # pragma: no cover
         pass
@@ -60,8 +60,8 @@ def rule(**kw) -> OnsetRule:
     return OnsetRule(**base)
 
 
-def run_momp(r: OnsetRule, series, thresholds, starts, backend, *, horizon, missing="keep", fixed_total=None):
-    """Onset days (1-based, NaN for none) of every row for each start vector, from momp with exact rain."""
+def run_hcwf(r: OnsetRule, series, thresholds, starts, backend, *, horizon, missing="keep", fixed_total=None):
+    """Onset days (1-based, NaN for none) of every row for each start vector, from hcwf with exact rain."""
     series = np.asarray(series, dtype=float)
     n, n_days = series.shape
     defn = D.loads(definition_yaml(r, fixed_total), fine_amounts=True)
@@ -130,7 +130,7 @@ def test_every_option_combination_matches_find_onsets(backend, horizon, short):
         thr = thresholds_for(rng, 120)
         starts = np.vstack([np.ones(120), rng.integers(1, 30, 120), np.full(120, 9999.0)])
         expected = find_onsets(series, thr, starts, r, reject_if_short_followup=short)
-        got = run_momp(r, series, thr, starts, backend, horizon=horizon)
+        got = run_hcwf(r, series, thr, starts, backend, horizon=horizon)
         try:
             assert_same(got, expected)
         except AssertionError:
@@ -147,7 +147,7 @@ def test_short_series_match_find_onsets(backend, horizon, short, n_days):
         thr = thresholds_for(rng, 40, nan_rows=1)
         starts = np.vstack([np.ones(40), rng.integers(1, 6, 40)])
         expected = find_onsets(series, thr, starts, r, reject_if_short_followup=short)
-        assert_same(run_momp(r, series, thr, starts, backend, horizon=horizon), expected)
+        assert_same(run_hcwf(r, series, thr, starts, backend, horizon=horizon), expected)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -160,7 +160,7 @@ def test_the_production_rule_with_45_forecast_leads(backend, short):
     thr = np.round(rng.uniform(3, 20, 400), 1)
     starts = np.vstack([np.ones(400), rng.integers(1, 40, 400)])
     expected = find_onsets(series, thr, starts, r, reject_if_short_followup=short)
-    got = run_momp(r, series, thr, starts, backend, horizon="reject" if short else "truncate")
+    got = run_hcwf(r, series, thr, starts, backend, horizon="reject" if short else "truncate")
     assert_same(got, expected)
     assert 0.2 < np.isfinite(expected[0]).mean() < 0.95, "the test data must have onsets and non-onsets"
 
@@ -173,7 +173,7 @@ def test_float_ties_follow_blendings_prefix_sum_differences(backend):
     series = np.round(rng.uniform(0.1, 9.9, (4000, 40)), 1)
     thr = np.round(rng.uniform(5, 25, 4000), 1)
     expected = find_onsets(series, thr, np.ones(4000), r, reject_if_short_followup=True)
-    assert_same(run_momp(r, series, thr, np.ones(4000), backend, horizon="reject"), expected)
+    assert_same(run_hcwf(r, series, thr, np.ones(4000), backend, horizon="reject"), expected)
     tenths = np.rint(series * 10).astype(np.int64)
     decimal = np.full(4000, np.nan)
     for i in range(4000):
@@ -190,7 +190,7 @@ def test_a_fixed_amount_finer_than_a_tenth(backend):
     series = np.round(rng.gamma(0.8, 4.0, (500, 40)), 2)
     thr = np.full(500, 20.05)
     expected = find_onsets(series, thr, np.ones(500), r, reject_if_short_followup=True)
-    got = run_momp(r, series, thr, np.ones(500), backend, horizon="reject", fixed_total=20.05)
+    got = run_hcwf(r, series, thr, np.ones(500), backend, horizon="reject", fixed_total=20.05)
     assert_same(got, expected)
     assert 0.1 < np.isfinite(expected[0]).mean() < 0.9
 
@@ -216,12 +216,12 @@ def test_legacy_find_onsets_batch_oracle(backend, mode, short):
     for kw in LEGACY_PARAMS:
         r = rule(mode=mode, min_dry_days=4, sum_window=5, sum_min_mm=4.0, **kw)
         if r.follow_days == 0:
-            continue  # legacy checks the follow-up even when it is empty; blending (and momp) skip it
+            continue  # legacy checks the follow-up even when it is empty; blending (and hcwf) skip it
         series = random_rain(rng, 80, 50)
         thr = thresholds_for(rng, 80)
         starts = np.vstack([np.ones(80), rng.integers(1, 30, 80)])
         old = legacy.find_onsets_batch(series, thr, starts, _legacy(r), reject_if_short_followup=short)
-        got = run_momp(r, series, thr, starts, backend, horizon="reject" if short else "truncate")
+        got = run_hcwf(r, series, thr, starts, backend, horizon="reject" if short else "truncate")
         assert_same(got, old)
 
 
@@ -233,7 +233,7 @@ def test_legacy_scalar_find_onset_oracle(backend, short):
     series = random_rain(rng, 150, 45)
     thr = thresholds_for(rng, 150, nan_rows=0)
     starts = rng.integers(1, 20, 150)
-    got = run_momp(r, series, thr, starts, backend, horizon="reject" if short else "truncate")[0]
+    got = run_hcwf(r, series, thr, starts, backend, horizon="reject" if short else "truncate")[0]
     for i in range(150):
         old = legacy.find_onset(series[i], thresh=thr[i], reject_if_short_followup=short, start_day=starts[i],
                                 params=_legacy(r))

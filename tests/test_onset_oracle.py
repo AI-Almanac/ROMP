@@ -1,7 +1,7 @@
 """Hand-worked cases for the brute-force oracle, so the oracle itself is known to follow the spec."""
 import numpy as np
 
-from momp.onset import model as m
+from hcwf.onset import model as m
 from onset_oracle import oracle_detect
 
 

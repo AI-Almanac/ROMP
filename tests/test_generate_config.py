@@ -1,4 +1,4 @@
-"""generate_config.py turns ROMP_* env vars into a YAML run config."""
+"""generate_config.py turns HCWF_* env vars into a YAML run config."""
 
 import os
 import subprocess
@@ -12,16 +12,16 @@ PAYLOAD = "__import__('pathlib').Path({marker!r}).touch()"
 
 
 def _generate(tmp_path: Path, **env: str) -> subprocess.CompletedProcess:
-    """Run generate_config.py in a subprocess with the required ROMP_* env vars plus overrides."""
+    """Run generate_config.py in a subprocess with the required HCWF_* env vars plus overrides."""
     required = {
-        "ROMP_OBS_DIR": str(tmp_path / "obs"),
-        "ROMP_MODEL_DIR": str(tmp_path / "model"),
-        "ROMP_MODEL_NAME": "fuxi",
-        "ROMP_DIR_OUT": str(tmp_path / "out"),
-        "ROMP_DIR_FIG": str(tmp_path / "fig"),
-        "ROMP_CONFIG_PATH": str(tmp_path / "config.yaml"),
+        "HCWF_OBS_DIR": str(tmp_path / "obs"),
+        "HCWF_MODEL_DIR": str(tmp_path / "model"),
+        "HCWF_MODEL_NAME": "fuxi",
+        "HCWF_DIR_OUT": str(tmp_path / "out"),
+        "HCWF_DIR_FIG": str(tmp_path / "fig"),
+        "HCWF_CONFIG_PATH": str(tmp_path / "config.yaml"),
     }
-    clean = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_")}
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("HCWF_")}
     return subprocess.run(
         [sys.executable, str(SCRIPT)],
         env={**clean, **required, **env},
@@ -40,7 +40,7 @@ def _exec_config(tmp_path: Path) -> dict:
     """Load the generated YAML and return the flat config dict the pipeline would use."""
     import yaml
 
-    from momp.lib.config_yaml import build_config
+    from hcwf.lib.config_yaml import build_config
 
     return build_config(yaml.safe_load((tmp_path / "config.yaml").read_text()))
 
@@ -64,12 +64,12 @@ def test_job_settings_are_parsed_into_typed_values(tmp_path):
     """Environment settings are parsed into typed Python values in the generated config."""
     result = _generate(
         tmp_path,
-        ROMP_INIT_DAYS="2, 5",
-        ROMP_MEMBERS="0,1,2",
-        ROMP_WET_THRESHOLD="25.0",
-        ROMP_PROBABILISTIC="True",
-        ROMP_NC_MASK="/data/masks/ethiopia mask.nc",
-        ROMP_DATE_FILTER_YEAR="2020",
+        HCWF_INIT_DAYS="2, 5",
+        HCWF_MEMBERS="0,1,2",
+        HCWF_WET_THRESHOLD="25.0",
+        HCWF_PROBABILISTIC="True",
+        HCWF_NC_MASK="/data/masks/ethiopia mask.nc",
+        HCWF_DATE_FILTER_YEAR="2020",
     )
     assert result.returncode == 0
 
@@ -85,7 +85,7 @@ def test_job_settings_are_parsed_into_typed_values(tmp_path):
 
 @pytest.mark.parametrize(
     "name",
-    ["ROMP_OBS_VAR", "ROMP_MODEL_NAME", "ROMP_FILE_PATTERN", "ROMP_NC_MASK", "ROMP_REGION"],
+    ["HCWF_OBS_VAR", "HCWF_MODEL_NAME", "HCWF_FILE_PATTERN", "HCWF_NC_MASK", "HCWF_REGION"],
 )
 def test_text_settings_stay_inert_strings(tmp_path, name):
     """Text settings containing code-like payloads are written as plain strings and never executed."""
@@ -102,15 +102,15 @@ def test_text_settings_stay_inert_strings(tmp_path, name):
 @pytest.mark.parametrize(
     "name",
     [
-        "ROMP_INIT_DAYS",
-        "ROMP_MEMBERS",
-        "ROMP_START_DATE",
-        "ROMP_WET_THRESHOLD",
-        "ROMP_DRY_SPELL",
-        "ROMP_PROBABILISTIC",
-        "ROMP_PARALLEL",
-        "ROMP_UNIT_CVT",
-        "ROMP_MODEL_DIMS",
+        "HCWF_INIT_DAYS",
+        "HCWF_MEMBERS",
+        "HCWF_START_DATE",
+        "HCWF_WET_THRESHOLD",
+        "HCWF_DRY_SPELL",
+        "HCWF_PROBABILISTIC",
+        "HCWF_PARALLEL",
+        "HCWF_UNIT_CVT",
+        "HCWF_MODEL_DIMS",
     ],
 )
 def test_non_text_settings_that_are_not_values_are_rejected(tmp_path, name):
@@ -127,11 +127,11 @@ def test_non_text_settings_that_are_not_values_are_rejected(tmp_path, name):
 
 
 def test_model_unit_conversion_and_dims_reach_the_per_model_lists(tmp_path):
-    """ROMP_UNIT_CVT and ROMP_MODEL_DIMS end up in unit_cvt_list and model_dims_list."""
+    """HCWF_UNIT_CVT and HCWF_MODEL_DIMS end up in unit_cvt_list and model_dims_list."""
     result = _generate(
         tmp_path,
-        ROMP_UNIT_CVT="1000",
-        ROMP_MODEL_DIMS='{"init_time": "time", "step": "prediction_timedelta_daily"}',
+        HCWF_UNIT_CVT="1000",
+        HCWF_MODEL_DIMS='{"init_time": "time", "step": "prediction_timedelta_daily"}',
     )
     assert result.returncode == 0
 
@@ -144,7 +144,7 @@ def test_model_unit_conversion_and_dims_reach_the_per_model_lists(tmp_path):
 
 
 def test_model_dims_default_to_name_inference(tmp_path):
-    """Without ROMP_UNIT_CVT and ROMP_MODEL_DIMS, the per-model lists hold None."""
+    """Without HCWF_UNIT_CVT and HCWF_MODEL_DIMS, the per-model lists hold None."""
     assert _generate(tmp_path).returncode == 0
 
     config = _exec_config(tmp_path)
@@ -157,17 +157,17 @@ def test_model_dims_default_to_name_inference(tmp_path):
     "value", ['["time"]', '{"valid_time": "time"}', '{"init_time": ""}']
 )
 def test_malformed_model_dims_are_rejected(tmp_path, value):
-    """Malformed ROMP_MODEL_DIMS values make the script fail with an error naming the variable."""
-    result = _generate(tmp_path, ROMP_MODEL_DIMS=value)
+    """Malformed HCWF_MODEL_DIMS values make the script fail with an error naming the variable."""
+    result = _generate(tmp_path, HCWF_MODEL_DIMS=value)
 
     assert result.returncode == 1
-    assert "ROMP_MODEL_DIMS" in result.stderr
+    assert "HCWF_MODEL_DIMS" in result.stderr
 
 
 def test_onset_definition_variables_replace_the_flat_keys(tmp_path):
-    """Setting ROMP_ONSET_DEFINITION writes the definition keys and no flat onset keys."""
-    result = _generate(tmp_path, ROMP_ONSET_DEFINITION="icpac", ROMP_THRESHOLD_YEARS="1998-2024",
-                       ROMP_CHECK_ALIGNMENT="False")
+    """Setting HCWF_ONSET_DEFINITION writes the definition keys and no flat onset keys."""
+    result = _generate(tmp_path, HCWF_ONSET_DEFINITION="icpac", HCWF_THRESHOLD_YEARS="1998-2024",
+                       HCWF_CHECK_ALIGNMENT="False")
     assert result.returncode == 0
 
     config = _exec_config(tmp_path)
@@ -180,11 +180,11 @@ def test_onset_definition_variables_replace_the_flat_keys(tmp_path):
 
 
 def test_flat_onset_variables_cannot_be_mixed_with_a_definition(tmp_path):
-    """A flat onset variable beside ROMP_ONSET_DEFINITION fails with a message naming it."""
-    result = _generate(tmp_path, ROMP_ONSET_DEFINITION="icpac", ROMP_WET_SPELL="4")
+    """A flat onset variable beside HCWF_ONSET_DEFINITION fails with a message naming it."""
+    result = _generate(tmp_path, HCWF_ONSET_DEFINITION="icpac", HCWF_WET_SPELL="4")
 
     assert result.returncode == 1
-    assert "ROMP_WET_SPELL" in result.stderr
+    assert "HCWF_WET_SPELL" in result.stderr
 
 
 def test_defaults_keep_the_flat_onset_keys(tmp_path):

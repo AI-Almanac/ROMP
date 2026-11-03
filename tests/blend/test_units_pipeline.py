@@ -5,11 +5,11 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.io import input as io_input
-from momp.lib import config_schema as schema
-from momp.onset import regions as rg
-from momp.spatial import EvaluationUnits, UnitsSpec, UnitsSpecError
-from momp.stats import observed_cache
+from hcwf.io import input as io_input
+from hcwf.lib import config_schema as schema
+from hcwf.onset import regions as rg
+from hcwf.spatial import EvaluationUnits, UnitsSpec, UnitsSpecError
+from hcwf.stats import observed_cache
 
 LAT, LON = np.array([0.0, 1.0, 2.0]), np.array([10.0, 11.0])
 
@@ -79,7 +79,7 @@ def test_strict_lead_selection_orders_renumbers_and_checks_the_horizon():
         io_input.select_leads(gap, 1, 4, strict=True)
 
 
-def test_romps_lead_selection_drops_step_zero_and_cuts_at_the_last_step():
+def test_hcwfs_lead_selection_drops_step_zero_and_cuts_at_the_last_step():
     da = xr.DataArray(np.arange(6.0), dims="step", coords={"step": [0, 1, 2, 3, 4, 5]})
     assert io_input.select_leads(da, None, 3)["step"].values.tolist() == [1, 2, 3]
     assert io_input.select_leads(da)["step"].values.tolist() == [1, 2, 3, 4, 5]
@@ -101,7 +101,7 @@ def test_declared_units_win_over_the_configured_factor():
 
 
 def test_the_fingerprint_of_a_grid_run_has_its_six_parts_and_units_and_options_add_their_own(monkeypatch):
-    from momp.lib.onset_config import onset_setup
+    from hcwf.lib.onset_config import onset_setup
 
     base = {"obs_dir": "/nowhere", "obs_file_pattern": ("{}.nc",), "obs_var": "p", "obs_unit_cvt": None,
             "region": "kenya", "years": [2001], "onset_rule": {

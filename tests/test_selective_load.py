@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.io import input as romp_input
-from momp.utils.region import mask_region_loaded, region_select
+from hcwf.io import input as hcwf_input
+from hcwf.utils.region import mask_region_loaded, region_select
 
 LAT = np.arange(2.0, 17.0, 1.0)
 LON = np.arange(32.0, 50.0, 1.0)
@@ -43,9 +43,9 @@ def forecast_year(year, seed, ensemble):
 @pytest.fixture(autouse=True)
 def fresh_cache():
     """Each test starts with no observation years held."""
-    romp_input.clear_obs_cache()
+    hcwf_input.clear_obs_cache()
     yield
-    romp_input.clear_obs_cache()
+    hcwf_input.clear_obs_cache()
 
 
 def test_in_place_land_mask_keeps_the_cells_region_select_keeps():
@@ -69,15 +69,15 @@ def test_obs_year_read_once_and_zarr_equals_netcdf(tmp_path):
     store = tmp_path / "obs.zarr"
     xr.concat(list(years.values()), dim="time").to_zarr(store)
     kw = dict(obs_file_pattern=["{}.nc"], obs_var="rain", obs_unit_cvt=2.0, region="Ethiopia", shp_only=False, years=[2020])
-    from_nc = romp_input.load_imd_rainfall(2020, obs_dir=str(nc), **kw)
-    from_zarr = romp_input.load_imd_rainfall(2020, obs_dir=str(store), **kw)
+    from_nc = hcwf_input.load_imd_rainfall(2020, obs_dir=str(nc), **kw)
+    from_zarr = hcwf_input.load_imd_rainfall(2020, obs_dir=str(store), **kw)
     xr.testing.assert_identical(from_nc, from_zarr)
-    assert romp_input.load_imd_rainfall(2020, obs_dir=str(store), **kw) is from_zarr
+    assert hcwf_input.load_imd_rainfall(2020, obs_dir=str(store), **kw) is from_zarr
     box = years[2020]["rain"].sel(latitude=slice(3, 15), longitude=slice(33, 48))
     np.testing.assert_array_equal(from_nc.values[~np.isnan(from_nc.values)],
                                   (box.values * 2.0)[~np.isnan(from_nc.values)])
     with pytest.raises(FileNotFoundError):
-        romp_input.load_imd_rainfall(2018, obs_dir=str(store), **kw)
+        hcwf_input.load_imd_rainfall(2018, obs_dir=str(store), **kw)
 
 
 @pytest.mark.parametrize("ensemble", [False, True])
@@ -90,17 +90,17 @@ def test_forecast_selects_before_reading_and_zarr_equals_netcdf(tmp_path, ensemb
         ds.to_netcdf(nc / f"{year}.nc")
     store = tmp_path / "m.zarr"
     xr.concat(list(full.values()), dim="time").to_zarr(store)
-    loader = (romp_input.get_forecast_probabilistic_twice_weekly if ensemble
-              else romp_input.get_forecast_deterministic_twice_weekly)
+    loader = (hcwf_input.get_forecast_probabilistic_twice_weekly if ensemble
+              else hcwf_input.get_forecast_deterministic_twice_weekly)
     kw = {**CFG, "members": [1, 3] if ensemble else None, "model_dims": {"member": "number"} if ensemble else None}
     kw = {k: v for k, v in kw.items() if k != "model_dims" or v}
     from_nc = loader(2020, model_dir=str(nc), **kw)
     from_zarr = loader(2020, model_dir=str(store), **kw)
     xr.testing.assert_identical(from_nc, from_zarr)
-    steps = romp_input.onset_steps_needed(**kw)
+    steps = hcwf_input.onset_steps_needed(**kw)
     assert from_nc.sizes["step"] == steps and int(from_nc["step"][0]) == 1
     assert from_nc.sizes["init_time"] == len(pd.to_datetime(from_nc.init_time.values))
-    assert list(pd.to_datetime(from_nc.init_time.values)) == list(romp_input.get_initialization_dates(2020, **kw))
+    assert list(pd.to_datetime(from_nc.init_time.values)) == list(hcwf_input.get_initialization_dates(2020, **kw))
     if ensemble:
         assert list(from_nc["member"].values) == [1, 3]
     reference = full[2020]["tp"].sortby("lat").sel(lat=slice(3, 15), lon=slice(33, 48), prediction_timedelta_daily=pd.to_timedelta(

@@ -2,7 +2,7 @@
 
 * Thread pools (numba, BLAS, OpenMP) are sized per worker, so N workers do not each start one thread per core
   (that oversubscription made the parallel run slower than the serial one). Set before numpy/numba are imported.
-* Every test gets its own MOMP_CACHE_DIR, so no test reads or writes ~/.cache/momp or another worker's entries.
+* Every test gets its own HCWF_CACHE_DIR, so no test reads or writes ~/.cache/hcwf or another worker's entries.
 * Tests that touch the GPU (anything with "gpu" in its id) share one xdist group, so they run on one worker
   with ``--dist loadgroup`` and do not contend for the single device.
 """
@@ -20,8 +20,8 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolated_momp_cache(tmp_path_factory, monkeypatch):
-    monkeypatch.setenv("MOMP_CACHE_DIR", str(tmp_path_factory.mktemp("momp_cache")))
+def _isolated_hcwf_cache(tmp_path_factory, monkeypatch):
+    monkeypatch.setenv("HCWF_CACHE_DIR", str(tmp_path_factory.mktemp("hcwf_cache")))
 
 
 def pytest_collection_modifyitems(items):

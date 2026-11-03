@@ -1,4 +1,4 @@
-"""momp.blend.evaluation: evaluate() and Evaluation.save() against the legacy 1_blend_evaluation.py.
+"""hcwf.blend.evaluation: evaluate() and Evaluation.save() against the legacy 1_blend_evaluation.py.
 
 The script, run on the spec the oracle's `cv_spec` builds from the same config, is the oracle: every artifact it
 wrote has its counterpart, with the same content (CV predictions and coefficients as NetCDF, weights as CSV).
@@ -17,9 +17,9 @@ import pytest
 import xarray as xr
 from _blend_configs import blend_config, dissemination_ids, legacy_spec, recipe_of
 
-from momp.blend import design, logit, mme
-from momp.blend.evaluation import evaluate as momp_evaluate
-from momp.blend.predictions import Predictions
+from hcwf.blend import design, logit, mme
+from hcwf.blend.evaluation import evaluate as hcwf_evaluate
+from hcwf.blend.predictions import Predictions
 from tests.blend._oracle.blend_evaluation_utils import (
     _present_weeks,
     apply_formula_sample_support,
@@ -56,10 +56,10 @@ BINS = interval_bins(2)
 
 
 def evaluate(weekly, cfg, dissemination, **options):
-    """momp's evaluate() for a BlendConfig and a dissemination table (read as momp reads a dissemination list)."""
+    """hcwf's evaluate() for a BlendConfig and a dissemination table (read as hcwf reads a dissemination list)."""
     unit_list = cfg.domain.dissemination
     ids = dissemination_ids(dissemination, unit_list.id_col if unit_list is not None else None)
-    return momp_evaluate(weekly, recipe_of(cfg), ids, **options)
+    return hcwf_evaluate(weekly, recipe_of(cfg), ids, **options)
 
 
 def _script(spec, wide_df, dissemination_input, path_box, cores=1):
@@ -630,7 +630,7 @@ def test_given_mme_weights_replace_optimising_and_come_from_a_mapping_or_a_file(
         def given(weights):
             recipe = recipe_of(auto)
             mme_settings = dataclasses.replace(recipe.evaluation.mme, weights=weights)
-            return momp_evaluate(weekly, dataclasses.replace(recipe, evaluation=dataclasses.replace(
+            return hcwf_evaluate(weekly, dataclasses.replace(recipe, evaluation=dataclasses.replace(
                 recipe.evaluation, mme=mme_settings)), ids)
 
         by_mapping = given(mapping)

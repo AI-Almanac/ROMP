@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from momp import cache
-from momp.cache import NETCDF, NETCDF_GROUPS, PICKLE, Store, file_identity, part_hash
+from hcwf import cache
+from hcwf.cache import NETCDF, NETCDF_GROUPS, PICKLE, Store, file_identity, part_hash
 
 
 def test_part_hash_is_by_value_not_pointer():
@@ -101,7 +101,7 @@ def test_codecs_round_trip(tmp_path):
 def test_miss_diagnostics_name_the_differing_parts(tmp_path, caplog):
     parts = {"files": "f1", "definition": "d1", "years": [2000, 2001]}
     Store("obs", tmp_path, label="Obs", prefix="obs").put(parts, 1)
-    with caplog.at_level(logging.INFO, logger="momp.cache"):
+    with caplog.at_level(logging.INFO, logger="hcwf.cache"):
         store = Store("obs", tmp_path, label="Obs", prefix="obs")
         assert store.get(parts) == 1
         assert store.get({**parts, "definition": "d2"}) is None
@@ -117,7 +117,7 @@ def test_miss_diagnostics_name_the_differing_parts(tmp_path, caplog):
 
 def test_hit_line_describes_the_value(tmp_path, caplog):
     Store("d", tmp_path, label="L").put({"a": 1}, [1, 2, 3])
-    with caplog.at_level(logging.INFO, logger="momp.cache"):
+    with caplog.at_level(logging.INFO, logger="hcwf.cache"):
         Store("d", tmp_path, label="L", describe=lambda v: f"{len(v)} items").get({"a": 1})
     assert "L: cache hit" in caplog.text and "(3 items, " in caplog.text
 
@@ -180,9 +180,9 @@ def test_blendings_threshold_key_parts_fit_the_store(tmp_path):
 
 def test_threshold_cache_reuses_and_follows_inputs_and_files(tmp_path, monkeypatch):
     """Port of blending's reuse test: kept thresholds are reused; another spec, years or a touched file recompute."""
-    from momp.onset import climatology
-    from momp.onset.climatology import ThresholdCache
-    from momp.onset.model import ThresholdSpec
+    from hcwf.onset import climatology
+    from hcwf.onset.climatology import ThresholdCache
+    from hcwf.onset.model import ThresholdSpec
     from tests.test_onset_climatology import make_rain
 
     rain = make_rain(lambda i, t, c: 2.0)
@@ -209,9 +209,9 @@ def test_threshold_cache_reuses_and_follows_inputs_and_files(tmp_path, monkeypat
 
 def test_a_threshold_cache_key_does_not_load_the_lazy_reference_rain():
     import numpy as np
-    from momp.io.input import _LazyRain
-    from momp.onset.climatology import ThresholdCache
-    from momp.onset.model import DailyRain
+    from hcwf.io.input import _LazyRain
+    from hcwf.onset.climatology import ThresholdCache
+    from hcwf.onset.model import DailyRain
 
     n = 3
     probe = DailyRain(tenths=np.zeros((2, n), np.int32), missing=np.zeros((2, n), bool), dims=("x", "time"),

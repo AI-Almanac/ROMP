@@ -15,12 +15,12 @@ import xarray as xr
 
 from _oracle.onset_rule import find_onsets
 from test_onset_parity import BACKENDS, HEAD, assert_same, random_rain, rule
-from momp.onset import definition as D
-from momp.onset import engine
-from momp.onset import plan as P
-from momp.onset.backends import reference
-from momp.onset.ingest import ingest, ingest_forecast
-from momp.onset.model import Jobs, Status, StitchedJobs
+from hcwf.onset import definition as D
+from hcwf.onset import engine
+from hcwf.onset import plan as P
+from hcwf.onset.backends import reference
+from hcwf.onset.ingest import ingest, ingest_forecast
+from hcwf.onset.model import Jobs, Status, StitchedJobs
 
 BOUNDARY = "00 UTC, labelled by start"
 DEFINITIONS = {
@@ -220,7 +220,7 @@ def onset_days(ds, year0=2001):
 def test_missing_policies_match_blending(backend, missing):
     if backend == "gpu":
         pytest.importorskip("cupy")
-        from momp.onset.backends import gpu
+        from hcwf.onset.backends import gpu
         if not gpu.available():
             pytest.skip("needs a GPU")
     rng = np.random.default_rng(31)
@@ -370,7 +370,7 @@ def test_exact_curve_rules_are_refused():
 
 def test_forecast_reach_counts_a_dry_run_beginning_inside_like_one_starting_inside():
     from types import SimpleNamespace
-    from momp.lib.onset_config import forecast_reach
+    from hcwf.lib.onset_config import forecast_reach
 
     text = DEFINITIONS["begins"]
     def reach(t):

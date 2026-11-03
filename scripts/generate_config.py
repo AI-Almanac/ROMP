@@ -1,65 +1,65 @@
 """
-Generate a ROMP YAML run config from environment variables.
+Generate an HCWF YAML run config from environment variables.
 
 Every value is parsed into a typed Python value first and written with a YAML
 dumper; no environment text is ever spliced into the file as code.
 
 Required env vars:
-  ROMP_OBS_DIR          - path to observation NetCDF files
-  ROMP_MODEL_DIR        - path to forecast model NetCDF files
-  ROMP_MODEL_NAME       - model identifier (e.g. AIFS)
-  ROMP_DIR_OUT          - output directory for CSVs / NetCDFs
-  ROMP_DIR_FIG          - output directory for figures
+  HCWF_OBS_DIR          - path to observation NetCDF files
+  HCWF_MODEL_DIR        - path to forecast model NetCDF files
+  HCWF_MODEL_NAME       - model identifier (e.g. AIFS)
+  HCWF_DIR_OUT          - output directory for CSVs / NetCDFs
+  HCWF_DIR_FIG          - output directory for figures
 
 Optional env vars (with defaults matching the demo config):
-  ROMP_OBS              - observation dataset name (default: CHIRPS_IMERG)
-  ROMP_OBS_FILE_PATTERN - file naming pattern (default: {}.nc)
-  ROMP_OBS_VAR          - rainfall variable name in obs file (default: RAINFALL)
-  ROMP_MODEL_VAR        - rainfall variable name in forecast file (default: tp)
-  ROMP_FILE_PATTERN     - forecast file naming pattern (default: {}.nc)
-  ROMP_UNIT_CVT         - multiplier converting forecast rainfall to mm (default: None)
-  ROMP_MODEL_DIMS       - JSON object naming the forecast file's dims, e.g.
+  HCWF_OBS              - observation dataset name (default: CHIRPS_IMERG)
+  HCWF_OBS_FILE_PATTERN - file naming pattern (default: {}.nc)
+  HCWF_OBS_VAR          - rainfall variable name in obs file (default: RAINFALL)
+  HCWF_MODEL_VAR        - rainfall variable name in forecast file (default: tp)
+  HCWF_FILE_PATTERN     - forecast file naming pattern (default: {}.nc)
+  HCWF_UNIT_CVT         - multiplier converting forecast rainfall to mm (default: None)
+  HCWF_MODEL_DIMS       - JSON object naming the forecast file's dims, e.g.
                           {"init_time": "time", "step": "prediction_timedelta_daily"}
                           (default: None, infer from names)
-  ROMP_REGION           - target region (default: Ethiopia)
-  ROMP_NC_MASK          - path to land/region mask NetCDF (default: None)
+  HCWF_REGION           - target region (default: Ethiopia)
+  HCWF_NC_MASK          - path to land/region mask NetCDF (default: None)
   (variables marked [legacy] apply only when no definition-mode variable is set)
-  ROMP_THRESH_FILE      - path to spatial threshold NetCDF (default: None) [legacy]
-  ROMP_WET_THRESHOLD    - scalar rainfall threshold mm (default: 20) [legacy]
-  ROMP_WET_INIT         - minimum wet day threshold mm (default: 1) [legacy]
-  ROMP_WET_SPELL        - wet spell length days (default: 3) [legacy]
-  ROMP_DRY_SPELL        - dry spell length days (default: 7) [legacy]
-  ROMP_DRY_EXTENT       - dry spell search window days (default: 0) [legacy]
-  ROMP_ONSET_DEFINITION - onset definition id or YAML path (default: unset, flat keys below).
-                          Setting this, or any other variable of the onset group (ROMP_ONSET_SEASON,
-                          ROMP_THRESHOLD_YEARS, ROMP_THRESHOLDS, ROMP_OBS_DAY_BOUNDARY, ROMP_MODEL_LEAD_LABEL,
-                          ROMP_CHECK_ALIGNMENT, ROMP_ONSET_BACKEND, ROMP_FORECAST_HISTORY, ROMP_THRESHOLD_SOURCE),
-                          selects definition mode; the flat ROMP_WET_* / ROMP_DRY_* (except ROMP_DRY_SPELL_CHECK) /
-                          ROMP_THRESH_FILE variables must then be unset. With none of the group set, a legacy
+  HCWF_THRESH_FILE      - path to spatial threshold NetCDF (default: None) [legacy]
+  HCWF_WET_THRESHOLD    - scalar rainfall threshold mm (default: 20) [legacy]
+  HCWF_WET_INIT         - minimum wet day threshold mm (default: 1) [legacy]
+  HCWF_WET_SPELL        - wet spell length days (default: 3) [legacy]
+  HCWF_DRY_SPELL        - dry spell length days (default: 7) [legacy]
+  HCWF_DRY_EXTENT       - dry spell search window days (default: 0) [legacy]
+  HCWF_ONSET_DEFINITION - onset definition id or YAML path (default: unset, flat keys below).
+                          Setting this, or any other variable of the onset group (HCWF_ONSET_SEASON,
+                          HCWF_THRESHOLD_YEARS, HCWF_THRESHOLDS, HCWF_OBS_DAY_BOUNDARY, HCWF_MODEL_LEAD_LABEL,
+                          HCWF_CHECK_ALIGNMENT, HCWF_ONSET_BACKEND, HCWF_FORECAST_HISTORY, HCWF_THRESHOLD_SOURCE),
+                          selects definition mode; the flat HCWF_WET_* / HCWF_DRY_* (except HCWF_DRY_SPELL_CHECK) /
+                          HCWF_THRESH_FILE variables must then be unset. With none of the group set, a legacy
                           flat-key config is written
-  ROMP_ONSET_SEASON     - season name for definitions with several seasons (default: None)
-  ROMP_THRESHOLD_YEARS  - first-last years for climatological thresholds, e.g. 1998-2024 (default: region)
-  ROMP_THRESHOLDS       - JSON object {"name": "path.nc:variable"} of precomputed thresholds (default: None)
-  ROMP_OBS_DAY_BOUNDARY - e.g. "00 UTC, labelled by start" (default: region)
-  ROMP_MODEL_LEAD_LABEL - start or end (default: from the day boundary)
-  ROMP_CHECK_ALIGNMENT  - True/False (default: True)
-  ROMP_DRY_SPELL_CHECK  - False drops the definition's dry-spell condition (default: True; both modes)
-  ROMP_FORECAST_HISTORY - observed or none (default: observed; definition mode only)
-  ROMP_THRESHOLD_SOURCE - observations or model (default: observations; definition mode only)
-  ROMP_ONSET_BACKEND    - numba, reference or gpu (default: numba)
-  ROMP_START_DATE       - evaluation start as YYYY-MM-DD (default: 2019-05-01)
-  ROMP_END_DATE         - evaluation end as YYYY-MM-DD (default: 2024-07-31)
-  ROMP_START_YEAR_CLIM  - climatology start year (default: 1998)
-  ROMP_END_YEAR_CLIM    - climatology end year (default: 2024)
-  ROMP_MAX_FORECAST_DAY - max forecast lead day (default: 30)
-  ROMP_PROBABILISTIC    - True/False (default: False)
-  ROMP_MEMBERS          - ensemble members, All or comma-separated ints (default: All)
-  ROMP_PARALLEL         - True/False (default: True)
-  ROMP_REF_MODEL        - reference model name (default: climatology)
-  ROMP_REF_MODEL_DIR    - reference model data dir (default: same as obs dir)
-  ROMP_INIT_DAYS        - forecast init weekdays as comma-sep ints (0=Mon, default: 0,3)
-  ROMP_DATE_FILTER_YEAR - reference year for init-day calendar alignment (default: start_date year)
-  ROMP_CONFIG_PATH      - where to write the config (default: /tmp/romp_job.yaml); run it with momp-run -p
+  HCWF_ONSET_SEASON     - season name for definitions with several seasons (default: None)
+  HCWF_THRESHOLD_YEARS  - first-last years for climatological thresholds, e.g. 1998-2024 (default: region)
+  HCWF_THRESHOLDS       - JSON object {"name": "path.nc:variable"} of precomputed thresholds (default: None)
+  HCWF_OBS_DAY_BOUNDARY - e.g. "00 UTC, labelled by start" (default: region)
+  HCWF_MODEL_LEAD_LABEL - start or end (default: from the day boundary)
+  HCWF_CHECK_ALIGNMENT  - True/False (default: True)
+  HCWF_DRY_SPELL_CHECK  - False drops the definition's dry-spell condition (default: True; both modes)
+  HCWF_FORECAST_HISTORY - observed or none (default: observed; definition mode only)
+  HCWF_THRESHOLD_SOURCE - observations or model (default: observations; definition mode only)
+  HCWF_ONSET_BACKEND    - numba, reference or gpu (default: numba)
+  HCWF_START_DATE       - evaluation start as YYYY-MM-DD (default: 2019-05-01)
+  HCWF_END_DATE         - evaluation end as YYYY-MM-DD (default: 2024-07-31)
+  HCWF_START_YEAR_CLIM  - climatology start year (default: 1998)
+  HCWF_END_YEAR_CLIM    - climatology end year (default: 2024)
+  HCWF_MAX_FORECAST_DAY - max forecast lead day (default: 30)
+  HCWF_PROBABILISTIC    - True/False (default: False)
+  HCWF_MEMBERS          - ensemble members, All or comma-separated ints (default: All)
+  HCWF_PARALLEL         - True/False (default: True)
+  HCWF_REF_MODEL        - reference model name (default: climatology)
+  HCWF_REF_MODEL_DIR    - reference model data dir (default: same as obs dir)
+  HCWF_INIT_DAYS        - forecast init weekdays as comma-sep ints (0=Mon, default: 0,3)
+  HCWF_DATE_FILTER_YEAR - reference year for init-day calendar alignment (default: start_date year)
+  HCWF_CONFIG_PATH      - where to write the config (default: /tmp/hcwf_job.yaml); run it with hcwf-run -p
 """
 
 import json
@@ -165,11 +165,11 @@ def parse_model_dims(val: str) -> dict | None:
     return dims
 
 
-ONSET_ENV = ("ROMP_ONSET_DEFINITION", "ROMP_ONSET_SEASON", "ROMP_THRESHOLD_YEARS", "ROMP_THRESHOLDS",
-             "ROMP_OBS_DAY_BOUNDARY", "ROMP_MODEL_LEAD_LABEL", "ROMP_CHECK_ALIGNMENT", "ROMP_ONSET_BACKEND",
-             "ROMP_FORECAST_HISTORY", "ROMP_THRESHOLD_SOURCE")
-FLAT_ONSET_ENV = ("ROMP_WET_INIT", "ROMP_WET_THRESHOLD", "ROMP_WET_SPELL", "ROMP_DRY_SPELL", "ROMP_DRY_EXTENT",
-                  "ROMP_THRESH_FILE")
+ONSET_ENV = ("HCWF_ONSET_DEFINITION", "HCWF_ONSET_SEASON", "HCWF_THRESHOLD_YEARS", "HCWF_THRESHOLDS",
+             "HCWF_OBS_DAY_BOUNDARY", "HCWF_MODEL_LEAD_LABEL", "HCWF_CHECK_ALIGNMENT", "HCWF_ONSET_BACKEND",
+             "HCWF_FORECAST_HISTORY", "HCWF_THRESHOLD_SOURCE")
+FLAT_ONSET_ENV = ("HCWF_WET_INIT", "HCWF_WET_THRESHOLD", "HCWF_WET_SPELL", "HCWF_DRY_SPELL", "HCWF_DRY_EXTENT",
+                  "HCWF_THRESH_FILE")
 
 
 def parse_years(val: str) -> tuple | None:
@@ -202,16 +202,16 @@ def parse_choice(*allowed):
 
 def onset_values() -> dict:
     """The onset part of the config: flat legacy keys, or the onset_definition keys when any of those is set."""
-    dry_spell_check = {"dry_spell_check": _parsed("ROMP_DRY_SPELL_CHECK", "True", parse_bool)}
+    dry_spell_check = {"dry_spell_check": _parsed("HCWF_DRY_SPELL_CHECK", "True", parse_bool)}
     if not any(name in os.environ for name in ONSET_ENV):
         return {**dry_spell_check,
-            "wet_init": _parsed("ROMP_WET_INIT", "1", parse_number),
-            "wet_threshold": _parsed("ROMP_WET_THRESHOLD", "20", parse_number),
-            "wet_spell": _parsed("ROMP_WET_SPELL", "3", int),
+            "wet_init": _parsed("HCWF_WET_INIT", "1", parse_number),
+            "wet_threshold": _parsed("HCWF_WET_THRESHOLD", "20", parse_number),
+            "wet_spell": _parsed("HCWF_WET_SPELL", "3", int),
             "dry_threshold": 1,
-            "dry_spell": _parsed("ROMP_DRY_SPELL", "7", int),
-            "dry_extent": _parsed("ROMP_DRY_EXTENT", "0", int),
-            "thresh_file": _parsed("ROMP_THRESH_FILE", "", optional_path),
+            "dry_spell": _parsed("HCWF_DRY_SPELL", "7", int),
+            "dry_extent": _parsed("HCWF_DRY_EXTENT", "0", int),
+            "thresh_file": _parsed("HCWF_THRESH_FILE", "", optional_path),
             "thresh_var": None,
         }
     clash = [name for name in FLAT_ONSET_ENV if name in os.environ]
@@ -219,78 +219,78 @@ def onset_values() -> dict:
         raise ConfigError(f"{', '.join(clash)} cannot be combined with the onset definition variables; "
                           "put the rule in a definition file (extends: <id>) instead")
     return {
-        "onset_definition": _parsed("ROMP_ONSET_DEFINITION", "", optional_path),
-        "onset_season": _parsed("ROMP_ONSET_SEASON", "", optional_path),
-        "threshold_years": _parsed("ROMP_THRESHOLD_YEARS", "", parse_years),
-        "thresholds": _parsed("ROMP_THRESHOLDS", "", parse_thresholds),
-        "obs_day_boundary": _parsed("ROMP_OBS_DAY_BOUNDARY", "", optional_path),
-        "model_lead_label": _parsed("ROMP_MODEL_LEAD_LABEL", "", optional_path),
-        "check_alignment": _parsed("ROMP_CHECK_ALIGNMENT", "True", parse_bool),
-        "onset_backend": opt("ROMP_ONSET_BACKEND", "numba"),
-        "forecast_history": _parsed("ROMP_FORECAST_HISTORY", "observed", parse_choice("observed", "none")),
-        "threshold_source": _parsed("ROMP_THRESHOLD_SOURCE", "observations", parse_choice("observations", "model")),
+        "onset_definition": _parsed("HCWF_ONSET_DEFINITION", "", optional_path),
+        "onset_season": _parsed("HCWF_ONSET_SEASON", "", optional_path),
+        "threshold_years": _parsed("HCWF_THRESHOLD_YEARS", "", parse_years),
+        "thresholds": _parsed("HCWF_THRESHOLDS", "", parse_thresholds),
+        "obs_day_boundary": _parsed("HCWF_OBS_DAY_BOUNDARY", "", optional_path),
+        "model_lead_label": _parsed("HCWF_MODEL_LEAD_LABEL", "", optional_path),
+        "check_alignment": _parsed("HCWF_CHECK_ALIGNMENT", "True", parse_bool),
+        "onset_backend": opt("HCWF_ONSET_BACKEND", "numba"),
+        "forecast_history": _parsed("HCWF_FORECAST_HISTORY", "observed", parse_choice("observed", "none")),
+        "threshold_source": _parsed("HCWF_THRESHOLD_SOURCE", "observations", parse_choice("observations", "model")),
         **dry_spell_check,
     }
 
 
 def config_values() -> dict:
     """Build the config dictionary from environment variables, applying the documented defaults."""
-    obs_dir = require("ROMP_OBS_DIR")
-    model_dir = require("ROMP_MODEL_DIR")
-    model_name = require("ROMP_MODEL_NAME")
-    dir_out = require("ROMP_DIR_OUT")
-    dir_fig = require("ROMP_DIR_FIG")
+    obs_dir = require("HCWF_OBS_DIR")
+    model_dir = require("HCWF_MODEL_DIR")
+    model_name = require("HCWF_MODEL_NAME")
+    dir_out = require("HCWF_DIR_OUT")
+    dir_fig = require("HCWF_DIR_FIG")
 
-    obs_file_pat = opt("ROMP_OBS_FILE_PATTERN", "{}.nc")
-    obs_var = opt("ROMP_OBS_VAR", "RAINFALL")
-    start_date = _parsed("ROMP_START_DATE", "2019-05-01", parse_date)
-    end_date = _parsed("ROMP_END_DATE", "2024-07-31", parse_date)
-    date_filter_year = _parsed("ROMP_DATE_FILTER_YEAR", "", lambda v: int(v) if v else start_date[0])
+    obs_file_pat = opt("HCWF_OBS_FILE_PATTERN", "{}.nc")
+    obs_var = opt("HCWF_OBS_VAR", "RAINFALL")
+    start_date = _parsed("HCWF_START_DATE", "2019-05-01", parse_date)
+    end_date = _parsed("HCWF_END_DATE", "2024-07-31", parse_date)
+    date_filter_year = _parsed("HCWF_DATE_FILTER_YEAR", "", lambda v: int(v) if v else start_date[0])
 
     return {
-        "project_name": "ROMP container run",
+        "project_name": "HCWF container run",
         "work_dir": dir_out,
         "pkg_dir": "/app",
         "layout": ("model", "verification_window"),
         "model_list": (model_name,),
-        "obs": opt("ROMP_OBS", "CHIRPS_IMERG"),
+        "obs": opt("HCWF_OBS", "CHIRPS_IMERG"),
         "obs_dir": obs_dir,
         "obs_file_pattern": (obs_file_pat,),
         "obs_var": obs_var,
         "obs_unit_cvt": None,
-        "ref_model": opt("ROMP_REF_MODEL", "climatology"),
-        "ref_model_dir": opt("ROMP_REF_MODEL_DIR", obs_dir),
+        "ref_model": opt("HCWF_REF_MODEL", "climatology"),
+        "ref_model_dir": opt("HCWF_REF_MODEL_DIR", obs_dir),
         "ref_model_file_pattern": obs_file_pat,
         "ref_model_var": obs_var,
         "ref_model_unit_cvt": None,
         "model_dir_list": (model_dir,),
-        "model_var_list": (opt("ROMP_MODEL_VAR", "tp"),),
-        "unit_cvt_list": (_parsed("ROMP_UNIT_CVT", "", optional_number),),
-        "file_pattern_list": (opt("ROMP_FILE_PATTERN", "{}.nc"),),
-        "model_dims_list": (_parsed("ROMP_MODEL_DIMS", "", parse_model_dims),),
+        "model_var_list": (opt("HCWF_MODEL_VAR", "tp"),),
+        "unit_cvt_list": (_parsed("HCWF_UNIT_CVT", "", optional_number),),
+        "file_pattern_list": (opt("HCWF_FILE_PATTERN", "{}.nc"),),
+        "model_dims_list": (_parsed("HCWF_MODEL_DIMS", "", parse_model_dims),),
         "obs_day_boundary": None,
         "model_lead_label": None,
-        "region": opt("ROMP_REGION", "Ethiopia"),
-        "nc_mask": _parsed("ROMP_NC_MASK", "", optional_path),
+        "region": opt("HCWF_REGION", "Ethiopia"),
+        "nc_mask": _parsed("HCWF_NC_MASK", "", optional_path),
         "shpfile_dir": None,
         "polygon": False,
         **onset_values(),
         "onset_percentage_threshold": 0.5,
         "start_date": start_date,
         "end_date": end_date,
-        "start_year_clim": _parsed("ROMP_START_YEAR_CLIM", "1998", int),
-        "end_year_clim": _parsed("ROMP_END_YEAR_CLIM", "2024", int),
-        "init_days": _parsed("ROMP_INIT_DAYS", "0,3", parse_int_tuple),
+        "start_year_clim": _parsed("HCWF_START_YEAR_CLIM", "1998", int),
+        "end_year_clim": _parsed("HCWF_END_YEAR_CLIM", "2024", int),
+        "init_days": _parsed("HCWF_INIT_DAYS", "0,3", parse_int_tuple),
         "date_filter_year": date_filter_year,
         "verification_window_list": ((1, 15), (16, 30)),
         "tolerance_days_list": (3, 5),
-        "max_forecast_day": _parsed("ROMP_MAX_FORECAST_DAY", "30", int),
+        "max_forecast_day": _parsed("HCWF_MAX_FORECAST_DAY", "30", int),
         "day_bins": ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30)),
         "FAR": True,
         "MAE": True,
         "MR": True,
-        "probabilistic": _parsed("ROMP_PROBABILISTIC", "False", parse_bool),
-        "members": _parsed("ROMP_MEMBERS", "All", parse_members),
+        "probabilistic": _parsed("HCWF_PROBABILISTIC", "False", parse_bool),
+        "members": _parsed("HCWF_MEMBERS", "All", parse_members),
         "BS": True,
         "RPS": True,
         "AUC": True,
@@ -311,17 +311,17 @@ def config_values() -> dict:
         "plot_bar_bss_rpss_auc": True,
         "show_plot": False,
         "show_panel": False,
-        "parallel": _parsed("ROMP_PARALLEL", "True", parse_bool),
+        "parallel": _parsed("HCWF_PARALLEL", "True", parse_bool),
         "debug": False,
     }
 
 
 def render_config(values: dict) -> str:
     """Render the flat config dictionary as a nested YAML run config."""
-    from momp.lib.convert import flat_to_mapping, render_yaml
+    from hcwf.lib.convert import flat_to_mapping, render_yaml
 
     mapping, _ = flat_to_mapping(values)
-    return render_yaml(mapping, header="# Generated by scripts/generate_config.py from ROMP_* environment variables.\n")
+    return render_yaml(mapping, header="# Generated by scripts/generate_config.py from HCWF_* environment variables.\n")
 
 
 def main():
@@ -332,7 +332,7 @@ def main():
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    output_path = os.environ.get("ROMP_CONFIG_PATH", "/tmp/romp_job.yaml")
+    output_path = os.environ.get("HCWF_CONFIG_PATH", "/tmp/hcwf_job.yaml")
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(config)
     print(f"Config written to {output_path}")

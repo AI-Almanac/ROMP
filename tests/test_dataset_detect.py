@@ -2,8 +2,8 @@
 
 import pytest
 
-from momp.lib import dataset_detect as detect
-from momp.lib.dataset_schema import DatasetError, TEMPLATES, expand_path, get_dataset, load_datasets, parse_dataset
+from hcwf.lib import dataset_detect as detect
+from hcwf.lib.dataset_schema import DatasetError, TEMPLATES, expand_path, get_dataset, load_datasets, parse_dataset
 from tests.synthetic_data import write_forecast, write_obs
 
 
@@ -128,11 +128,11 @@ def test_region_is_detected_from_the_extent():
 
 def test_env_var_expansion_and_dataset_files(tmp_path, monkeypatch):
     """${VAR} and ${VAR:-default} expand; entries of a dataset file are found by id, with a helpful unknown-id error."""
-    monkeypatch.setenv("ROMP_TEST_ROOT", str(tmp_path))
-    assert expand_path("${ROMP_TEST_ROOT}/x") == f"{tmp_path}/x"
-    assert expand_path("${ROMP_NOPE_X:-/fallback}/y") == "/fallback/y"
-    with pytest.raises(DatasetError, match="ROMP_NOPE_X"):
-        expand_path("${ROMP_NOPE_X}/y")
+    monkeypatch.setenv("HCWF_TEST_ROOT", str(tmp_path))
+    assert expand_path("${HCWF_TEST_ROOT}/x") == f"{tmp_path}/x"
+    assert expand_path("${HCWF_NOPE_X:-/fallback}/y") == "/fallback/y"
+    with pytest.raises(DatasetError, match="HCWF_NOPE_X"):
+        expand_path("${HCWF_NOPE_X}/y")
     (tmp_path / "ds.yaml").write_text(TEMPLATES["obs"].replace("my_obs", "mine"))
     datasets = load_datasets([str(tmp_path / "ds.yaml")])
     assert get_dataset("mine", datasets).variable == "rainfall"

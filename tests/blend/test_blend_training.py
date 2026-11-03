@@ -1,4 +1,4 @@
-"""momp.blend.training: the whole in-memory pipeline on a small synthetic region, from files to the fitted model.
+"""hcwf.blend.training: the whole in-memory pipeline on a small synthetic region, from files to the fitted model.
 
 The training parts of onset_blending's tests/test_pipeline.py (the trained-blend file and forecasting are
 tests/blend/test_blend_forecast.py); the end-to-end comparison with onset_blending's `train` is tests/blend/test_blend_training_differential.py.
@@ -11,10 +11,10 @@ import pytest
 import xarray as xr
 from _recipes import converted
 
-from momp.blend import logit
-from momp.blend.predictions import Predictions
-from momp.blend.samples import Weekly
-from momp.blend.training import STAGE_TABLES, TrainingResult, prepare, resources, train
+from hcwf.blend import logit
+from hcwf.blend.predictions import Predictions
+from hcwf.blend.samples import Weekly
+from hcwf.blend.training import STAGE_TABLES, TrainingResult, prepare, resources, train
 
 LATS, LONS = [10.0, 10.25], [70.0, 70.25]
 OBS_YEARS = range(2000, 2014)

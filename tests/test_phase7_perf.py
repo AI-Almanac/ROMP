@@ -3,7 +3,7 @@ import shutil
 
 import numpy as np
 
-from momp.stats import bins
+from hcwf.stats import bins
 
 
 def _joined(sorted_years, code):
@@ -53,8 +53,8 @@ def _reference_config(tmp_path):
 
 def test_climatology_uses_the_reference_rain_the_thresholds_read(tmp_path, monkeypatch):
     """Climatological onsets from the thresholds' ingested reference years equal those from reading every year again."""
-    from momp.io import input as io_input
-    from momp.stats import climatology, observed_cache
+    from hcwf.io import input as io_input
+    from hcwf.stats import climatology, observed_cache
 
     _obs_files(tmp_path / "obs", range(2000, 2007))
     monkeypatch.setattr(io_input, "region_select", lambda ds, **kwargs: ds)
@@ -85,9 +85,9 @@ def test_climatology_uses_the_reference_rain_the_thresholds_read(tmp_path, monke
 
 def test_reference_year_is_the_year_ingested_alone(tmp_path, monkeypatch):
     """A year of the shared reference rain equals ingest of that year read on its own, array for array."""
-    from momp.io import input as io_input
-    from momp.lib.onset_config import onset_setup
-    from momp.onset.ingest import ingest
+    from hcwf.io import input as io_input
+    from hcwf.lib.onset_config import onset_setup
+    from hcwf.onset.ingest import ingest
 
     _obs_files(tmp_path / "obs", range(2000, 2007))
     monkeypatch.setattr(io_input, "region_select", lambda ds, **kwargs: ds)
@@ -115,9 +115,9 @@ def test_shared_reference_rain_keeps_exact_rain_in_millimetres(tmp_path, monkeyp
     """With rain_resolution exact, the multi-year reference rain is float mm, equal to each year ingested alone.
 
     It was preallocated as int32, which truncated exact rain to whole mm and made computed thresholds ~10x too low."""
-    from momp.io import input as io_input
-    from momp.lib.onset_config import onset_setup
-    from momp.onset.ingest import ingest
+    from hcwf.io import input as io_input
+    from hcwf.lib.onset_config import onset_setup
+    from hcwf.onset.ingest import ingest
 
     _obs_files(tmp_path / "obs", range(2000, 2007))
     monkeypatch.setattr(io_input, "region_select", lambda ds, **kwargs: ds)

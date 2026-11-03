@@ -1,5 +1,5 @@
-"""Test helpers: an onset_blending config (the mapping its YAML holds) goes through `momp-run convert` and is loaded
-by ROMP's normal config path, giving (flat config, Recipe, OnsetSetup) as a blend run uses them.
+"""Test helpers: an onset_blending config (the mapping its YAML holds) goes through `hcwf-run convert` and is loaded
+by HCWF's normal config path, giving (flat config, Recipe, OnsetSetup) as a blend run uses them.
 
     loaded = converted(data)              # a run's flat config, Recipe and OnsetSetup, from a BlendConfig mapping
     loaded = partial(conversion)          # the same without reading data files (the shipped configs' data is not here)
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from momp.lib.convert_specs import Conversion, convert_blend, validate_conversion
+from hcwf.lib.convert_specs import Conversion, convert_blend, validate_conversion
 
 ORACLE_SRC = Path(os.environ.get("ONSET_BLENDING_SRC", "/home/hcwf/code/onset_blending"))
 
@@ -64,12 +64,12 @@ def blending_dict(path) -> dict:
 
 
 def converted(data: dict, cache_dir=None, region=None) -> Loaded:
-    """Convert a BlendConfig mapping, load the run YAML through the normal path (`momp.api._prepare`: the same steps as
-    `momp-run`) and build its Recipe and OnsetSetup. Computed thresholds are kept in cache_dir (a new temporary folder
+    """Convert a BlendConfig mapping, load the run YAML through the normal path (`hcwf.api._prepare`: the same steps as
+    `hcwf-run`) and build its Recipe and OnsetSetup. Computed thresholds are kept in cache_dir (a new temporary folder
     without one)."""
-    from momp import api
-    from momp.blend.recipe import recipe_from_config
-    from momp.lib.onset_config import onset_setup
+    from hcwf import api
+    from hcwf.blend.recipe import recipe_from_config
+    from hcwf.lib.onset_config import onset_setup
 
     conversion = convert_blend(data, region=region)
     tmp = Path(tempfile.mkdtemp(prefix="blend-run-"))
@@ -81,7 +81,7 @@ def converted(data: dict, cache_dir=None, region=None) -> Loaded:
 
 def partial(conversion: Conversion) -> Loaded:
     """The Recipe and OnsetSetup of a conversion without reading any data file (so the shipped configs, whose data is
-    not on this machine, can be loaded): `momp.lib.convert_specs.validate_conversion`."""
+    not on this machine, can be loaded): `hcwf.lib.convert_specs.validate_conversion`."""
     cfg, recipe, setup = validate_conversion(conversion)
     return Loaded(cfg, recipe, setup, conversion)
 

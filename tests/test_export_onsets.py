@@ -14,18 +14,18 @@ import pytest
 import xarray as xr
 import yaml
 
-from momp import export
-from momp.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
+from hcwf import export
+from hcwf.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
                            get_initialization_dates, load_history, load_imd_rainfall, load_thresholds)
-from momp.lib.config_yaml import build_config
-from momp.lib.onset_config import onset_setup
-from momp.onset import definition as definition_mod
-from momp.onset.model import Status
-from momp.stats.climatology import compute_climatological_onset, compute_climatological_onset_dataset
-from momp.stats.climatology import compute_climatology_as_forecast
-from momp.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
+from hcwf.lib.config_yaml import build_config
+from hcwf.lib.onset_config import onset_setup
+from hcwf.onset import definition as definition_mod
+from hcwf.onset.model import Status
+from hcwf.stats.climatology import compute_climatological_onset, compute_climatological_onset_dataset
+from hcwf.stats.climatology import compute_climatology_as_forecast
+from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
                                                 create_conditional_climatological_forecast_obs_pairs)
-from momp.stats.detect import (compute_onset_for_all_members, compute_onset_for_deterministic_model,
+from hcwf.stats.detect import (compute_onset_for_all_members, compute_onset_for_deterministic_model,
                                detect_observed_onset)
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -157,7 +157,7 @@ def test_global_attributes_hold_the_provenance(world):
         assert attrs["lead_window"] == f"1-{MAX_LEAD}" and attrs["obs_day_boundary"] == BOUNDARY
         assert attrs["forecast_day_boundary"] == "00 UTC, labelled by start"
         assert json.loads(attrs["dataset_paths"])["observations"]["dir"] == str(world.base / "obs")
-        assert attrs["romp_version"] and attrs["created"].endswith("Z") and attrs["years"] == "2019,2020"
+        assert attrs["hcwf_version"] and attrs["created"].endswith("Z") and attrs["years"] == "2019,2020"
         assert "region: ethiopia" in attrs["resolved_config_yaml"] or "ethiopia" in attrs["resolved_config_yaml"]
         assert attrs["source_name"] == source
 
@@ -191,7 +191,7 @@ def test_deterministic_model_layout(world):
 
 
 def test_ensemble_layout(world):
-    """An ensemble has a member dim, the engine's summary variables and the ensemble onset ROMP scores."""
+    """An ensemble has a member dim, the engine's summary variables and the ensemble onset HCWF scores."""
     ds = _open(world.paths["ENS"]["ENS"])
     dims = ("init_time", "member", "season", "lat", "lon")
     for name in ("onset_date", "onset_doy", "onset_lead", "onset_day", "status"):
@@ -452,13 +452,13 @@ def test_save_onsets_is_a_config_switch(world):
 # --- command line and run switch ---------------------------------------------------------------------------
 
 def _cli(cwd, *args):
-    """Run `python -m momp.cli` in cwd."""
-    return subprocess.run([sys.executable, "-m", "momp.cli", *args], cwd=cwd, capture_output=True, text=True,
+    """Run `python -m hcwf.cli` in cwd."""
+    return subprocess.run([sys.executable, "-m", "hcwf.cli", *args], cwd=cwd, capture_output=True, text=True,
                           env={**os.environ, "PYTHONPATH": str(ROOT)})
 
 
 def test_cli_export_writes_the_requested_files(world, tmp_path):
-    """`momp-run export -p run.yaml --sources ... --out DIR` writes those files and nothing else."""
+    """`hcwf-run export -p run.yaml --sources ... --out DIR` writes those files and nothing else."""
     raw = _raw(world.base, "DET", False)
     raw["output"]["data_dir"] = str(tmp_path / "out")
     raw["output"]["figure_dir"] = str(tmp_path / "fig")

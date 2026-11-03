@@ -1,4 +1,4 @@
-"""momp.blend.evaluation: the final fit (`fit_final`, and `evaluate(final=True)` alongside the CV folds) is
+"""hcwf.blend.evaluation: the final fit (`fit_final`, and `evaluate(final=True)` alongside the CV folds) is
 3_fit_final_model.py's bundle. The deferred part of onset_blending's tests/test_model.py (the model's own tests are
 tests/blend/test_blend_logit.py); oracle onset_blending@1e6d696, tests/blend/_oracle."""
 
@@ -12,7 +12,7 @@ import pytest
 from _blend_configs import blend_config, dissemination_ids, legacy_spec, recipe_of
 from sklearn.preprocessing import StandardScaler
 
-from momp.blend.evaluation import evaluate, fit_final
+from hcwf.blend.evaluation import evaluate, fit_final
 from tests.blend._oracle.blend_evaluation_utils import (
     _make_multinom_clf,
     apply_formula_sample_support,

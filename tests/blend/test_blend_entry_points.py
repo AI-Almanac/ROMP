@@ -1,6 +1,6 @@
-"""A run YAML with a `blend:` section: `momp-run -p run.yaml` trains it (and checks it with --check), `momp.run` returns the
-result, run files can be batched, and `momp-run convert` writes such a file. Training is a stub here
-(momp.blend.training.train is tested with the training itself): the run's own part is checked, which is the config it
+"""A run YAML with a `blend:` section: `hcwf-run -p run.yaml` trains it (and checks it with --check), `hcwf.run` returns the
+result, run files can be batched, and `hcwf-run convert` writes such a file. Training is a stub here
+(hcwf.blend.training.train is tested with the training itself): the run's own part is checked, which is the config it
 loads, what it hands to train and where it puts the result."""
 import sys
 import types
@@ -10,8 +10,8 @@ import pytest
 import yaml
 
 import differential_onsets as synthetic
-from momp.cli import main as cli_main
-from momp.lib.convert_specs import convert_blend
+from hcwf.cli import main as cli_main
+from hcwf.lib.convert_specs import convert_blend
 
 
 @pytest.fixture
@@ -35,16 +35,16 @@ class Result:
 
 @pytest.fixture
 def trained(monkeypatch):
-    """momp.blend.training with a stub `train` that records what a run hands it."""
+    """hcwf.blend.training with a stub `train` that records what a run hands it."""
     calls = []
 
     def train(cfg, recipe, setup):
         calls.append((cfg, recipe, setup))
         return Result(calls)
 
-    module = types.ModuleType("momp.blend.training")
+    module = types.ModuleType("hcwf.blend.training")
     module.train = train
-    monkeypatch.setitem(sys.modules, "momp.blend.training", module)
+    monkeypatch.setitem(sys.modules, "hcwf.blend.training", module)
     return calls
 
 
@@ -57,18 +57,18 @@ def write_run(tmp_path, data, name="plain", file="run.yaml", **changes):
 
 
 def run_cli(args, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["momp-run", *args])
-    from momp.driver import run_momp
+    monkeypatch.setattr(sys, "argv", ["hcwf-run", *args])
+    from hcwf.driver import run_hcwf
 
     code = 0
     try:
-        run_momp()
+        run_hcwf()
     except SystemExit as exit_:
         code = exit_.code or 0
     return code, capsys.readouterr()
 
 
-def test_momp_run_trains_the_blend_and_writes_into_the_run_folder(tmp_path, data, trained, monkeypatch, capsys):
+def test_hcwf_run_trains_the_blend_and_writes_into_the_run_folder(tmp_path, data, trained, monkeypatch, capsys):
     run = write_run(tmp_path, data)
     code, out = run_cli(["-p", str(run), "--quiet"], monkeypatch, capsys)
     assert code == 0, out
@@ -78,7 +78,7 @@ def test_momp_run_trains_the_blend_and_writes_into_the_run_folder(tmp_path, data
     assert sorted(p.name for p in folder.iterdir()) == ["blend", "definition.yaml", "run.log", "run.yaml"]
     assert sorted(p.name for p in (folder / "blend").iterdir()) == ["summary_models_pooled.csv", "trained.blend"]
     # the written run.yaml reproduces the run: it loads again, with the same blend section and sources
-    from momp.lib.config_yaml import build_config
+    from hcwf.lib.config_yaml import build_config
 
     again = build_config(yaml.safe_load((folder / "run.yaml").read_text()), source="run.yaml")
     assert again["blend_years"] == cfg["blend_years"] and tuple(again["obs_paths"]) == tuple(cfg["obs_paths"])
@@ -90,19 +90,19 @@ def test_momp_run_trains_the_blend_and_writes_into_the_run_folder(tmp_path, data
 
 
 def test_a_missing_training_module_is_a_clear_error(tmp_path, data, monkeypatch, capsys):
-    monkeypatch.setitem(sys.modules, "momp.blend.training", None)   # an import of it fails
+    monkeypatch.setitem(sys.modules, "hcwf.blend.training", None)   # an import of it fails
     run = write_run(tmp_path, data)
     code, out = run_cli(["-p", str(run), "--quiet"], monkeypatch, capsys)
     assert code == 1 and "blend training is not available" in out.out
 
 
-def test_momp_run_returns_the_blend_result(tmp_path, data, trained):
-    import momp
+def test_hcwf_run_returns_the_blend_result(tmp_path, data, trained):
+    import hcwf
 
     run = write_run(tmp_path, data)
-    result = momp.run(run)
+    result = hcwf.run(run)
     assert isinstance(result.blend, Result) and result.folder is None and result.scores == {}
-    written = momp.run(run, write=True)
+    written = hcwf.run(run, write=True)
     assert (written.folder / "blend" / "trained.blend").exists()
 
 
@@ -180,7 +180,7 @@ def test_a_glob_that_matches_nothing_is_an_error(tmp_path, monkeypatch, capsys):
 
 
 def test_forecast_needs_the_live_files(capsys):
-    # `momp-run forecast` applies a trained blend (tests/blend/test_blend_forecast.py); it asks for the live files.
+    # `hcwf-run forecast` applies a trained blend (tests/blend/test_blend_forecast.py); it asks for the live files.
     with pytest.raises(SystemExit) as caught:
         cli_main(["forecast", "trained.blend"])
     assert caught.value.code == 2 and "--forecast" in capsys.readouterr().err
@@ -215,7 +215,7 @@ def test_convert_refuses_a_run_config_and_bad_blending_configs(tmp_path, capsys)
 
 
 def test_init_can_write_a_blend_section(tmp_path):
-    from momp.lib.init_config import render
+    from hcwf.lib.init_config import render
 
     text = render(blend=True, models=[], years=(2000, 2010))
     raw = yaml.safe_load(text)

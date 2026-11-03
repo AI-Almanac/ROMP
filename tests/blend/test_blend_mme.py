@@ -1,11 +1,11 @@
-"""momp.blend.mme: the multi-model ensemble's weights are optimize_mme_weights' (oracle: onset_blending@1e6d696)."""
+"""hcwf.blend.mme: the multi-model ensemble's weights are optimize_mme_weights' (oracle: onset_blending@1e6d696)."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from momp.blend import mme
-from momp.blend.predictions import Predictions
+from hcwf.blend import mme
+from hcwf.blend.predictions import Predictions
 from tests.blend._oracle import blend_evaluation_utils as legacy
 
 LABELS = ["week1", "week2", "later"]

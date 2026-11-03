@@ -1,4 +1,4 @@
-"""Per-verification-window thresholds (spec section 13): backends, climatology, engine and the ROMP model path."""
+"""Per-verification-window thresholds (spec section 13): backends, climatology, engine and the HCWF model path."""
 from __future__ import annotations
 
 import importlib
@@ -8,15 +8,15 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.io import input as romp_input
-from momp.onset import climatology, engine
-from momp.onset import model as m
-from momp.onset import plan as plan_mod
+from hcwf.io import input as hcwf_input
+from hcwf.onset import climatology, engine
+from hcwf.onset import model as m
+from hcwf.onset import plan as plan_mod
 from onset_oracle import HORIZON, FALSE, TRUE, UNKNOWN, Series, oracle_detect, used_thresholds
 from test_onset_engine import ANY_WET, JJAS, definition, make_forecast, make_rain
 from test_onset_forecast_layer import _brute_force_means, _climatology_forecasts, _thresholds_definition
 from test_onset_oracle_agreement import _available, random_data, random_definition, random_jobs
-from test_onset_romp_history import _cfg
+from test_onset_hcwf_history import _cfg
 from test_onset_stitched_agreement import concatenated, random_stitched_case
 
 BACKENDS = ["reference", "numba_cpu", "gpu"]
@@ -66,7 +66,7 @@ def _module(backend):
     """Import a backend, skipping when it cannot run here."""
     if not _available(backend):
         pytest.skip(f"backend {backend} not available")
-    return importlib.import_module(f"momp.onset.backends.{backend}")
+    return importlib.import_module(f"hcwf.onset.backends.{backend}")
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -153,7 +153,7 @@ def test_identical_window_columns_reproduce_the_unwindowed_result(backend, seed)
 
 def test_windowed_amounts_need_matching_window_starts():
     """(S, W) amounts without W strictly increasing start leads are an error, and a trace is refused."""
-    reference = importlib.import_module("momp.onset.backends.reference")
+    reference = importlib.import_module("hcwf.onset.backends.reference")
     plan = plan_mod.compile(definition(m.FirstPassage((m.Total(m.Span(1, 2), m.Comparison("ge", m.Amount(threshold="T"))),)),
                                        JJAS))
     amounts, _ = plan_mod.resolve_amounts(plan, {"T": np.ones((1, 2))}, n_series=1)
@@ -222,9 +222,9 @@ def test_engine_applies_each_candidate_the_threshold_of_its_lead_window(backend,
                                lead_window=(1, 10), backend=backend, history=hist)
 
 
-# ---------------------------------------------------------------- ROMP model path
+# ---------------------------------------------------------------- HCWF model path
 
-def test_romp_model_thresholds_are_per_verification_window_and_cached_by_windows(tmp_path, monkeypatch):
+def test_hcwf_model_thresholds_are_per_verification_window_and_cached_by_windows(tmp_path, monkeypatch):
     """A model giving 2 mm/day on leads 1-5 and 6 mm/day on 6-10 yields 10 and 30 mm for the windows (1,5), (6,10)."""
     archive = tmp_path / "model"
     archive.mkdir()
@@ -234,26 +234,26 @@ def test_romp_model_thresholds_are_per_verification_window_and_cached_by_windows
         ds = xr.Dataset({"tp": (("time", "day", "lat", "lon"), rain)},
                         coords={"time": times, "day": np.arange(1, 11), "lat": [0.0, 1.0], "lon": [0.0, 1.0]})
         ds.to_netcdf(archive / f"{year}.nc")
-    monkeypatch.setattr(romp_input, "region_select", lambda ds, **kwargs: ds)
+    monkeypatch.setattr(hcwf_input, "region_select", lambda ds, **kwargs: ds)
     kwargs = _cfg(onset_definition="moron_robertson", threshold_source="model", threshold_years=(2015, 2016),
                   model="TOY", model_dir=str(archive), model_var="tp", file_pattern="{}.nc", unit_cvt=None,
                   date_filter_year=2024, init_days=tuple(range(7)), start_date=(2015, 5, 1), end_date=(2015, 6, 30),
                   members=None, probabilistic=False, max_forecast_day=10, dir_out=str(tmp_path / "out"), region="x",
                   verification_window_list=((1, 5), (6, 10)))
-    romp_input._loaded_thresholds.clear()
-    amount = romp_input.load_thresholds(**kwargs)["wet_spell_amount"]
+    hcwf_input._loaded_thresholds.clear()
+    amount = hcwf_input.load_thresholds(**kwargs)["wet_spell_amount"]
     assert amount.dims == ("window", "lat", "lon")
     assert amount.values[0].tolist() == [[10.0, 10.0]] * 2 and amount.values[1].tolist() == [[30.0, 30.0]] * 2
     assert amount["window_first"].values.tolist() == [1, 6]
     cache = tmp_path / "out" / ".onset_cache"
     assert len(list((cache / "model_thresholds").glob("*/value.nc"))) == 1
 
-    romp_input._loaded_thresholds.clear()
-    monkeypatch.setattr(romp_input, "get_forecast_deterministic_twice_weekly",
+    hcwf_input._loaded_thresholds.clear()
+    monkeypatch.setattr(hcwf_input, "get_forecast_deterministic_twice_weekly",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("cache not used")))
-    again = romp_input.load_thresholds(**kwargs)["wet_spell_amount"]
+    again = hcwf_input.load_thresholds(**kwargs)["wet_spell_amount"]
     assert again.values[1].tolist() == [[30.0, 30.0]] * 2
 
-    romp_input._loaded_thresholds.clear()
+    hcwf_input._loaded_thresholds.clear()
     with pytest.raises(AssertionError, match="cache not used"):
-        romp_input.load_thresholds(**{**kwargs, "verification_window_list": ((1, 10),)})
+        hcwf_input.load_thresholds(**{**kwargs, "verification_window_list": ((1, 10),)})

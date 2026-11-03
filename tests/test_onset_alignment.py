@@ -1,4 +1,4 @@
-"""Tests for momp.onset.alignment on synthetic rainfall with known shifts."""
+"""Tests for hcwf.onset.alignment on synthetic rainfall with known shifts."""
 import os
 from pathlib import Path
 
@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.onset.alignment import check_alignment, check_forecast_alignment
-from momp.onset.ingest import ingest, ingest_forecast
+from hcwf.onset.alignment import check_alignment, check_forecast_alignment
+from hcwf.onset.ingest import ingest, ingest_forecast
 
 START = "00 UTC, labelled by start"
 N_DAYS = 200
@@ -142,11 +142,11 @@ def test_forecast_unknown_lead_and_no_cells():
     assert report.verdict == "inconclusive"
 
 
-# Optional real-data checks: point ROMP_TEST_DATA at a folder with ethiopia/ and india/ obs and models.
-DATA = Path(os.environ.get("ROMP_TEST_DATA", "/nonexistent"))
+# Optional real-data checks: point HCWF_TEST_DATA at a folder with ethiopia/ and india/ obs and models.
+DATA = Path(os.environ.get("HCWF_TEST_DATA", "/nonexistent"))
 
 
-@pytest.mark.skipif(not DATA.exists(), reason="set ROMP_TEST_DATA to run real-data checks")
+@pytest.mark.skipif(not DATA.exists(), reason="set HCWF_TEST_DATA to run real-data checks")
 @pytest.mark.parametrize("obs_path,var,boundary,model_path,good_label", [
     ("ethiopia/obs/2020.nc", "total_precipitation_24hr", "00 UTC, labelled by start",
      "ethiopia/models/AIFS_v2/2020.nc", "start"),

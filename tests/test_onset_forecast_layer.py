@@ -8,10 +8,10 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.onset import climatology, engine
-from momp.onset import model as m
-from momp.onset import plan as plan_mod
-from momp.onset.backends import reference
+from hcwf.onset import climatology, engine
+from hcwf.onset import model as m
+from hcwf.onset import plan as plan_mod
+from hcwf.onset.backends import reference
 from test_onset_engine import (ANY_WET, JJAS, TWO_WET, day_index, definition, make_forecast, make_rain, season)
 from test_onset_oracle_agreement import _available, random_data, random_definition
 
@@ -24,7 +24,7 @@ def backend(request):
     """Each backend that can run stitched detection here."""
     name = request.param
     module_name = {"reference": "reference", "numba": "numba_cpu", "gpu": "gpu"}[name]
-    if not _available(module_name) or not hasattr(importlib.import_module(f"momp.onset.backends.{module_name}"),
+    if not _available(module_name) or not hasattr(importlib.import_module(f"hcwf.onset.backends.{module_name}"),
                                                   "detect_stitched"):
         pytest.skip(f"backend {name} cannot run detect_stitched here")
     return name

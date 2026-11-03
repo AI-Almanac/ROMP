@@ -4,8 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from momp.onset import engine, explain
-from momp.onset.model import Status
+from hcwf.onset import engine, explain
+from hcwf.onset.model import Status
 from test_onset_engine import JJAS, TWO_WET, day_index, definition
 from test_onset_forecast_layer import case, hist_with
 

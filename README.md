@@ -1,16 +1,16 @@
-# ROMP: Rainy season Onset Metrics Package
+# HCWF: Human-Centered Weather Forecasts
 
-ROMP detects **rainy season onset** in observations and forecasts and benchmarks the forecasts: deterministic and probabilistic metrics, skill scores, spatial maps and reliability diagrams. Runs are driven by one config file.
+HCWF detects **rainy season onset** in observations and forecasts, benchmarks the forecasts and blends them: deterministic and probabilistic metrics, skill scores, spatial maps and reliability diagrams. Runs are driven by one config file.
 
-Onset detection is done by the `momp.onset` component. An onset definition is a short YAML file (for example ICPAC's), run identically on observations and on every forecast.
+Onset detection is done by the `hcwf.onset` component. An onset definition is a short YAML file (for example ICPAC's), run identically on observations and on every forecast.
 
 ## Install
 
 Python 3.10 to 3.13. From a clone of the repository, in a fresh virtual or conda environment:
 
 ```bash
-git clone https://github.com/AI-Almanac/ROMP.git
-cd ROMP
+git clone https://github.com/AI-Almanac/HCWF.git
+cd HCWF
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install .                                       # or: pip install -e ".[dev]"
 ```
@@ -20,70 +20,70 @@ Optional extras:
 * `pip install ".[gpu]"` adds CuPy for `onset_backend = "gpu"` (CUDA 13 build).
 * `.[dev]` adds pytest, jupyterlab, black, ruff and others.
 
-Check it: `python -c "import momp; print(momp.__file__)"` should print a path in your checkout.
+Check it: `python -c "import hcwf; print(hcwf.__file__)"` should print a path in your checkout.
 
 ## Quick start
 
-One YAML file describes a run and is the single source of truth. Start one from your own data; ROMP detects the dataset details (variable, units, dims, members, file pattern, lead label) from the files and writes them with the evidence:
+One YAML file describes a run and is the single source of truth. Start one from your own data; HCWF detects the dataset details (variable, units, dims, members, file pattern, lead label) from the files and writes them with the evidence:
 
 ```bash
-momp-run init --obs /path/to/obs --model /path/to/aifs --years 2019 2024 -o run.yaml
+hcwf-run init --obs /path/to/obs --model /path/to/aifs --years 2019 2024 -o run.yaml
 ```
 
 Review `run.yaml` (look for `TODO`), then run it:
 
 ```bash
-momp-run -p run.yaml --check  # validate, resolve and print the plan; runs nothing (exit 1 on errors)
-momp-run -p run.yaml          # or set MOMP_CONFIG=run.yaml, e.g. in a notebook
-momp-run datasets -p run.yaml # what each dataset resolves to, with detections, warnings, problems
-momp-run -p run.yaml -h       # lists the command-line overrides of config values
+hcwf-run -p run.yaml --check  # validate, resolve and print the plan; runs nothing (exit 1 on errors)
+hcwf-run -p run.yaml          # or set HCWF_CONFIG=run.yaml, e.g. in a notebook
+hcwf-run datasets -p run.yaml # what each dataset resolves to, with detections, warnings, problems
+hcwf-run -p run.yaml -h       # lists the command-line overrides of config values
 ```
 
 `--check` prints the settings with their sources, each dataset with what was detected and the evidence, the mask, lead windows, which files exist, the model-versus-observation alignment, hints (each names the key to set: units, latitude order, grid mismatch, leads that are not whole days, accumulation, a short climatology), the run folder and the cache. `--quiet` shows only warnings, `--verbose` adds debug lines (`run.log` always has them); progress shows as a tqdm bar if tqdm is installed, else as log lines.
 
-`momp-run -h` lists all commands. `examples/config.yaml` is a short commented example. `momp-run init` writes only what you must decide; the region supplies the onset definition, day boundary and climatology years, and schema defaults fill the rest. Defaults are resolved at run time and never copied into your file. The sections `observations`, `models`, `onset`, `evaluation`, `metrics` and `output` flatten to the flat keys the code uses; every key, type, default and help line is in `momp/lib/config_schema.py`. Unknown keys are errors with "did you mean" suggestions.
+`hcwf-run -h` lists all commands. `examples/config.yaml` is a short commented example. `hcwf-run init` writes only what you must decide; the region supplies the onset definition, day boundary and climatology years, and schema defaults fill the rest. Defaults are resolved at run time and never copied into your file. The sections `observations`, `models`, `onset`, `evaluation`, `metrics` and `output` flatten to the flat keys the code uses; every key, type, default and help line is in `hcwf/lib/config_schema.py`. Unknown keys are errors with "did you mean" suggestions.
 
-Datasets are described inline (`path`, `variable`, `units: mm|m`, `dims`, `day_boundary` for observations, `lead_label`, `accumulation` and `daily_boundary` for forecasts). Left-out keys are detected from the first file and reported; a key that cannot be detected reliably, or that the files contradict, is an error naming it. Paths may use `~` and `${ENV_VAR}`. `momp-run init --dataset-template obs|forecast` prints a blank entry; entries can also live in your own files listed under `dataset_files:` and be referenced with `dataset: <id>` (inline keys win).
+Datasets are described inline (`path`, `variable`, `units: mm|m`, `dims`, `day_boundary` for observations, `lead_label`, `accumulation` and `daily_boundary` for forecasts). Left-out keys are detected from the first file and reported; a key that cannot be detected reliably, or that the files contradict, is an error naming it. Paths may use `~` and `${ENV_VAR}`. `hcwf-run init --dataset-template obs|forecast` prints a blank entry; entries can also live in your own files listed under `dataset_files:` and be referenced with `dataset: <id>` (inline keys win).
 
 In a notebook:
 
 ```python
-import momp
-result = momp.run("run.yaml", max_forecast_day=15)   # a path, a momp.config.Config or a mapping; flat-key overrides
+import hcwf
+result = hcwf.run("run.yaml", max_forecast_day=15)   # a path, a hcwf.config.Config or a mapping; flat-key overrides
 result.observed    # xarray.Dataset: observed onset dates (year, lat, lon)
 result.scores      # deterministic: {"spatial": {(model, window): Dataset}, "summary": DataFrame}; ensemble: {"overall", "binned"} DataFrames
 result.forecasts   # {source: Dataset} gridded onset dates of each model (computed on first use)
-plan = momp.check("run.yaml")                          # what --check prints
+plan = hcwf.check("run.yaml")                          # what --check prints
 ```
 
-`momp.run` writes no files unless `write=True` (then it behaves like `momp-run`; `overwrite=True` re-runs an existing run folder). `momp.config.Config(...).to_flat()` gives the validated flat dict and `.to_yaml(path)` writes the file.
+`hcwf.run` writes no files unless `write=True` (then it behaves like `hcwf-run`; `overwrite=True` re-runs an existing run folder). `hcwf.config.Config(...).to_flat()` gives the validated flat dict and `.to_yaml(path)` writes the file.
 
-**Blends and batches.** A run file with a `blend:` section trains an onset blend instead of benchmarking (keys: `years`, `cutoff_mode`, `cv_methods`, `formulas`, `final_formula`, `window_variants`, `baselines`, `forecasts`, `mme`, `external_predictions`, `random_forest`, `fixed_cutoff`, `reference_onset`, `bins`, `probability_days`, `trim_after_true_onset`, `rain_transform`, `climatology`, `outputs`, and `models:` for per-model `lead_days`, `max_member`, `rain_horizon`, `rain_predictors`, `rain_transform`; `momp-run init --blend` writes a skeleton, `--check` describes it and the evaluation `units:`). Datasets may list their files (`paths`: names or globs, any number per year; `years` keeps those of some years; `unit_cvt` is the multiplier to mm of files that declare no units), `region: null` means no region, and `units.mode` / `units.weights` may be mappings by source. The artifacts go into the run folder's `blend/` subfolder under their own names. `momp-run -p a.yaml -p b.yaml` (or `-p 'regions/*.yaml'`) runs several files one after another, one region per file. `momp-run convert blend.yml -o run.yaml` (an onset_blending config) and `momp-run convert --specs --name N --ground-truth GT --forecast MODEL=SPEC --combine C --connect K --cv-models M -o run.yaml` (a legacy spec set) write the equivalent run YAML with the parity options (`rain_resolution: exact`, `horizon: truncate`, ...), an inline `onset.rule`, `units:` and `blend:`, and list what is not carried over in comments.
+**Blends and batches.** A run file with a `blend:` section trains an onset blend instead of benchmarking (keys: `years`, `cutoff_mode`, `cv_methods`, `formulas`, `final_formula`, `window_variants`, `baselines`, `forecasts`, `mme`, `external_predictions`, `random_forest`, `fixed_cutoff`, `reference_onset`, `bins`, `probability_days`, `trim_after_true_onset`, `rain_transform`, `climatology`, `outputs`, and `models:` for per-model `lead_days`, `max_member`, `rain_horizon`, `rain_predictors`, `rain_transform`; `hcwf-run init --blend` writes a skeleton, `--check` describes it and the evaluation `units:`). Datasets may list their files (`paths`: names or globs, any number per year; `years` keeps those of some years; `unit_cvt` is the multiplier to mm of files that declare no units), `region: null` means no region, and `units.mode` / `units.weights` may be mappings by source. The artifacts go into the run folder's `blend/` subfolder under their own names. `hcwf-run -p a.yaml -p b.yaml` (or `-p 'regions/*.yaml'`) runs several files one after another, one region per file. `hcwf-run convert blend.yml -o run.yaml` (an onset_blending config) and `hcwf-run convert --specs --name N --ground-truth GT --forecast MODEL=SPEC --combine C --connect K --cv-models M -o run.yaml` (a legacy spec set) write the equivalent run YAML with the parity options (`rain_resolution: exact`, `horizon: truncate`, ...), an inline `onset.rule`, `units:` and `blend:`, and list what is not carried over in comments.
 
-**Run folders.** Without `output.data_dir`, a run writes to `runs/<region>_<definition>[+mod]_<years>_<fingerprint>/` next to the config file (at most 40 characters; `+mod` marks an overridden definition; the 4-character fingerprint hashes everything that sets the results, not output switches). The same config is refused unless `--overwrite`, which clears that folder first; a changed config gets its own folder. Inside: `run.yaml` (every value after defaults, region, detection and overrides, each with its source) and `definition.yaml` (with the hash), `run.log`, and `onsets/`, `scores/`, `figures/` (a subfolder only when it would hold more than one file; short file names such as `scores/spatial_AIFS_1-15.nc`). `runs/.cache/` is shared by all runs. With an explicit `data_dir` (and `figure_dir`) the files and their names are the historical ones: `resolved_config.yaml`, `resolved_definition.yaml`, `spatial_metrics_<model>_<window>.nc`, ... in that folder, overwritten on a re-run. Old `config.in` files are no longer read: `momp-run convert old.in -o run.yaml` writes the equivalent YAML (same outputs).
+**Run folders.** Without `output.data_dir`, a run writes to `runs/<region>_<definition>[+mod]_<years>_<fingerprint>/` next to the config file (at most 40 characters; `+mod` marks an overridden definition; the 4-character fingerprint hashes everything that sets the results, not output switches). The same config is refused unless `--overwrite`, which clears that folder first; a changed config gets its own folder. Inside: `run.yaml` (every value after defaults, region, detection and overrides, each with its source) and `definition.yaml` (with the hash), `run.log`, and `onsets/`, `scores/`, `figures/` (a subfolder only when it would hold more than one file; short file names such as `scores/spatial_AIFS_1-15.nc`). `runs/.cache/` is shared by all runs. With an explicit `data_dir` (and `figure_dir`) the files and their names are the historical ones: `resolved_config.yaml`, `resolved_definition.yaml`, `spatial_metrics_<model>_<window>.nc`, ... in that folder, overwritten on a re-run. Old `config.in` files are no longer read: `hcwf-run convert old.in -o run.yaml` writes the equivalent YAML (same outputs).
 
 **Observed-onset cache.** Observed onsets are detected once per run and shared by all models, windows and references, and kept across runs in `runs/.cache/observed_onsets/` (`<data_dir>/.onset_cache/` with an explicit `data_dir`), keyed by a fingerprint of the observation files, ingest settings, evaluated cells and mask, definition, thresholds and season climatology, and years (not the backend, models, windows or reference). The run prints a hit or miss and, on a miss, which parts differ from the nearest cached entry.
 
 Each run loads the config, reads observations and forecasts, detects onset, scores the forecasts against the observed onset and a reference (climatology by default), then writes NetCDF/CSV results and figures.
 
-Export the gridded onset dates (observed, each model, the climatology references) as NetCDF with `momp-run export -p run.yaml` or `output.save_onsets: true`; see "Exporting onset dates" in `docs/onset_in_romp.md`.
+Export the gridded onset dates (observed, each model, the climatology references) as NetCDF with `hcwf-run export -p run.yaml` or `output.save_onsets: true`; see "Exporting onset dates" in `docs/onset_in_hcwf.md`.
 
 ## Onset definitions
 
 List, read and draw definitions from the command line:
 
 ```bash
-python -m momp.onset list                     # ids, titles, regions
-python -m momp.onset describe icpac           # the rule in words, hash, status, notes
-python -m momp.onset regions                  # regions and countries with their defaults
-python -m momp.onset schematic icpac --png icpac.png
-python -m momp.onset explain --obs obs.nc --obs-var RAINFALL \
+python -m hcwf.onset list                     # ids, titles, regions
+python -m hcwf.onset describe icpac           # the rule in words, hash, status, notes
+python -m hcwf.onset regions                  # regions and countries with their defaults
+python -m hcwf.onset schematic icpac --png icpac.png
+python -m hcwf.onset explain --obs obs.nc --obs-var RAINFALL \
     --day-boundary "00 UTC, labelled by start" --definition icpac \
     --lat 9.0 --lon 38.75 --year 2020 --png anatomy.png
-python -m momp.onset check-alignment --help   # are obs and forecast dates shifted?
+python -m hcwf.onset check-alignment --help   # are obs and forecast dates shifted?
 ```
 
-`explain` prints why one cell got its onset date (each candidate day, which condition failed). The `momp.onset.viz` package also has Python functions for comparing definitions, forecast-versus-truth plots and map drill-downs.
+`explain` prints why one cell got its onset date (each candidate day, which condition failed). The `hcwf.onset.viz` package also has Python functions for comparing definitions, forecast-versus-truth plots and map drill-downs.
 
 Choose the definition in the `onset:` section of the run file, inline:
 
@@ -95,13 +95,13 @@ onset:
   # rule: {...}                # or a complete definition written inline
 ```
 
-`override` is merged like `extends` and validated with the same strict errors; the run prints the definition's description, "icpac v1, overridden: wet_day" and its hash, and records them in `resolved_definition.yaml`. `dry_spell_check: false` is an override too. A path to a shared definition file still works. Regions are YAML files in `momp/onset/regions/`. A custom region in `momp/params/region_def.py` has no default definition, so set `onset.definition` and `observations.day_boundary` yourself.
+`override` is merged like `extends` and validated with the same strict errors; the run prints the definition's description, "icpac v1, overridden: wet_day" and its hash, and records them in `resolved_definition.yaml`. `dry_spell_check: false` is an override too. A path to a shared definition file still works. Regions are YAML files in `hcwf/onset/regions/`. A custom region in `hcwf/params/region_def.py` has no default definition, so set `onset.definition` and `observations.day_boundary` yourself.
 
 Old flat onset keys (`wet_init`, `wet_spell`, `dry_extent`, ...) still run in a legacy mode with a warning (written at the top level of the YAML); they cannot be combined with `onset.definition`.
 
 More:
 
-* `docs/onset_in_romp.md`: how ROMP uses the component (config keys, lead windows, forecast history, thresholds, legacy mode).
+* `docs/onset_in_hcwf.md`: how HCWF uses the component (config keys, lead windows, forecast history, thresholds, legacy mode).
 * `docs/onset_spec.md`: the specification (YAML grammar, detection semantics, backends).
 
 ## Region masks
@@ -118,21 +118,21 @@ mask:
   resolution: 50m            # Natural Earth resolution: 10m, 50m or 110m
 ```
 
-The mask is built on each dataset's own grid (the observations and every model separately); rainfall is never regridded. A shape is rasterised by the cell rule. A mask file is aligned first (latitude order, 0-360 or -180-180 longitudes, axis names); on the same grid it is used as it is, otherwise the mask (not the rainfall) is regridded: a finer mask keeps a cell when kept mask cells cover at least `overlap_fraction` of it, a coarser one gives the nearest mask cell, and a mask that does not cover the data is an error naming both extents. The run prints the sources, rule, alignment actions and kept cell count per dataset, saves `mask_<dataset>.png` in the figure folder, and records the sources with content hashes in `resolved_config.yaml` and the NetCDF outputs. The old flat `nc_mask` key still works as before (it cannot be combined with `mask`). Natural Earth data downloads on first use; `scripts/prefetch_cartopy_data.py` fetches it for offline machines. See `docs/onset_in_romp.md`.
+The mask is built on each dataset's own grid (the observations and every model separately); rainfall is never regridded. A shape is rasterised by the cell rule. A mask file is aligned first (latitude order, 0-360 or -180-180 longitudes, axis names); on the same grid it is used as it is, otherwise the mask (not the rainfall) is regridded: a finer mask keeps a cell when kept mask cells cover at least `overlap_fraction` of it, a coarser one gives the nearest mask cell, and a mask that does not cover the data is an error naming both extents. The run prints the sources, rule, alignment actions and kept cell count per dataset, saves `mask_<dataset>.png` in the figure folder, and records the sources with content hashes in `resolved_config.yaml` and the NetCDF outputs. The old flat `nc_mask` key still works as before (it cannot be combined with `mask`). Natural Earth data downloads on first use; `scripts/prefetch_cartopy_data.py` fetches it for offline machines. See `docs/onset_in_hcwf.md`.
 
 ## Package layout
 
 ```
-momp/
-  driver.py     momp-run entry point; api.py is momp.run / momp.check
+hcwf/
+  driver.py     hcwf-run entry point; api.py is hcwf.run / hcwf.check
   onset/        onset component: definitions, registry, regions, ingestion, backends, explain, viz
   app/          benchmarking workflow and diagnostics
-  stats/        ROMP's onset adapter, ensembles, climatology
+  stats/        HCWF's onset adapter, ensembles, climatology
   metrics/      error and skill scores
   io/           input and output
   lib/          config schema, YAML loading, dataset detection, validation, lead windows
   config.py     Config objects for notebooks
-  cli.py        the momp-run command
+  cli.py        the hcwf-run command
   graphics/     plots and maps
   params/       region_def.py (custom regions)
   utils/        helpers
@@ -150,7 +150,7 @@ tests/
 ## Docs and demos
 
 * `docs/package_configuration.ipynb`: the config, section by section.
-* `docs/package_run_guidance_et.ipynb`: running ROMP and reading the results.
+* `docs/package_run_guidance_et.ipynb`: running HCWF and reading the results.
 * `demo/et/`: Ethiopia demo notebooks and [companion guidance](https://docs.google.com/document/d/15_evi1VI4GcCeSoiI6DcrfidwjEE4g-UPiiOY5kF2Zo/edit?usp=sharing).
 
 ## Development
@@ -169,5 +169,5 @@ Current version 0.0.1; APIs may change. MIT License.
 
 ## Citation and contact
 
-ROMP: Rainy season Onset Metrics Package, UChicago HCWF Authors, 2026.
+HCWF: Human-Centered Weather Forecasts, UChicago HCWF Authors, 2026.
 Contact: Bo Dong, bodong@uchicago.edu

@@ -1,5 +1,5 @@
 """TEST-ONLY ORACLE: onset_blending@1e6d696 core/onsets.py `_threshold_sums` and `_compute_thresholds` (lines 378-410), the
-computed climatological threshold, with the file read replaced by the series themselves. Never import this from momp."""
+computed climatological threshold, with the file read replaced by the series themselves. Never import this from hcwf."""
 import numpy as np
 import pandas as pd
 

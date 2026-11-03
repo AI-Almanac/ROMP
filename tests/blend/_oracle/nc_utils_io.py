@@ -1,7 +1,7 @@
 """TEST-ONLY ORACLE: functions copied unchanged from onset_blending@1e6d696 tests/_legacy/nc_utils.py (the legacy
 table readers of observations and forecasts and the cell transforms of their tables), with only the imports
 changed to the oracle copies of rain_horizon_utils, spatial_id_utils and sparse_transform_utils.
-Never import this from momp."""
+Never import this from hcwf."""
 import os
 import re
 import warnings

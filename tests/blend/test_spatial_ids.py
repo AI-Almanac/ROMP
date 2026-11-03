@@ -1,10 +1,10 @@
-"""momp.spatial.ids is the legacy spatial id code (oracle: tests/blend/_oracle/spatial_id_utils.py)."""
+"""hcwf.spatial.ids is the legacy spatial id code (oracle: tests/blend/_oracle/spatial_id_utils.py)."""
 import numpy as np
 import pandas as pd
 import pytest
 
 from _oracle import spatial_id_utils as old
-from momp.spatial import ids as new
+from hcwf.spatial import ids as new
 
 LAT = np.array([10.0, 10.25, 10.5, -0.25, 0.0])
 LON = np.array([70.0, 70.25, 70.5, 0.5, -0.0])

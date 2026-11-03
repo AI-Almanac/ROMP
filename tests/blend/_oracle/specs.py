@@ -1,5 +1,5 @@
 # TEST-ONLY ORACLE: copied unchanged from onset_blending@1e6d696 tests/_specs.py (needs the onset_blending checkout on sys.path).
-# Never import this from momp.
+# Never import this from hcwf.
 """The legacy stage specs a BlendConfig stands for: what the legacy
 functions (tests/_legacy) read, so the tests can run them as the oracle on
 the same config. The package itself reads the config."""

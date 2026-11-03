@@ -1,5 +1,5 @@
 # TEST-ONLY ORACLE: copied unchanged from onset_blending@1e6d696 tests/_legacy/geometry_utils.py.
-# Never import this from momp; it is the reference the momp.spatial tests compare against.
+# Never import this from hcwf; it is the reference the hcwf.spatial tests compare against.
 # ==============================================================================
 # File: geometry_utils.py
 # ==============================================================================

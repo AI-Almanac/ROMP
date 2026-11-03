@@ -1,8 +1,8 @@
-"""Tests for the onset text grammar in momp.onset.units."""
+"""Tests for the onset text grammar in hcwf.onset.units."""
 import pytest
 
-from momp.onset import units
-from momp.onset.model import Amount, Comparison, DayRef, DryRun, DryWindow, Span
+from hcwf.onset import units
+from hcwf.onset.model import Amount, Comparison, DayRef, DryRun, DryWindow, Span
 
 
 @pytest.mark.parametrize("text, op", [

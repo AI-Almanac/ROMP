@@ -1,5 +1,5 @@
-"""Run experience: logging and progress, run folders, --check and its hints, momp.run, the observed-onset cache,
-accumulation and daily_boundary in the ROMP ingest, climatology_cv reaching the scoring, and region names."""
+"""Run experience: logging and progress, run folders, --check and its hints, hcwf.run, the observed-onset cache,
+accumulation and daily_boundary in the HCWF ingest, climatology_cv reaching the scoring, and region names."""
 
 import logging
 import os
@@ -16,19 +16,19 @@ import pytest
 import xarray as xr
 import yaml
 
-import momp
-from momp import export
-from momp.lib import check as check_mod
-from momp.lib import dataset_detect as detect
-from momp.lib import run_folder
-from momp.lib.config_yaml import build_config
-from momp.lib.convention import Setting
-from momp.lib.dataset_schema import DatasetError, parse_dataset
-from momp.lib.loader import load_run_config
-from momp.params.region_def import domain
-from momp.stats import detect as stats_detect
-from momp.stats import observed_cache
-from momp.utils import log as logs
+import hcwf
+from hcwf import export
+from hcwf.lib import check as check_mod
+from hcwf.lib import dataset_detect as detect
+from hcwf.lib import run_folder
+from hcwf.lib.config_yaml import build_config
+from hcwf.lib.convention import Setting
+from hcwf.lib.dataset_schema import DatasetError, parse_dataset
+from hcwf.lib.loader import load_run_config
+from hcwf.params.region_def import domain
+from hcwf.stats import detect as stats_detect
+from hcwf.stats import observed_cache
+from hcwf.utils import log as logs
 
 ROOT = Path(__file__).resolve().parents[1]
 LAT, LON = [6.0, 8.0, 10.0], [38.0, 40.0, 42.0]
@@ -121,7 +121,7 @@ def _fresh(world, tmp_path, models=("DET",), **extra):
 
 def test_session_levels_and_run_log(tmp_path, capsys):
     """Normal shows info and warnings, quiet only warnings, verbose everything; the log file always has debug."""
-    log = logging.getLogger("momp.test_levels")
+    log = logging.getLogger("hcwf.test_levels")
     for verbosity, expected in ((logs.NORMAL, ["i", "warning: w"]), (logs.QUIET, ["warning: w"]),
                                 (logs.VERBOSE, ["d", "i", "warning: w"])):
         logfile = tmp_path / f"run{verbosity}.log"
@@ -131,13 +131,13 @@ def test_session_levels_and_run_log(tmp_path, capsys):
             log.warning("w")
         assert capsys.readouterr().out.splitlines() == expected
         text = logfile.read_text()
-        assert "[DEBUG] momp.test_levels: d" in text and "[WARNING] momp.test_levels: w" in text
-    assert logging.getLogger("momp").handlers == []
+        assert "[DEBUG] hcwf.test_levels: d" in text and "[WARNING] hcwf.test_levels: w" in text
+    assert logging.getLogger("hcwf").handlers == []
 
 
 def test_python_warnings_become_log_records(capsys):
     """UserWarnings print as warnings; ingest notes as plain info."""
-    from momp.onset.ingest import IngestInfo
+    from hcwf.onset.ingest import IngestInfo
 
     with logs.session(logs.NORMAL):
         warnings.warn("careful", UserWarning)
@@ -174,13 +174,13 @@ def test_progress_uses_tqdm_when_installed_and_on_a_terminal(monkeypatch, capsys
 
 def test_no_print_is_left_on_the_run_path():
     """The run path logs instead of printing (the CLI front end, onset explain and init print on purpose)."""
-    allowed = {"momp/cli.py", "momp/onset/__main__.py", "momp/lib/init_config.py", "momp/utils/printing.py",
-               "momp/lib/assertion.py", "momp/driver.py"}
+    allowed = {"hcwf/cli.py", "hcwf/onset/__main__.py", "hcwf/lib/init_config.py", "hcwf/utils/printing.py",
+               "hcwf/lib/assertion.py", "hcwf/driver.py"}
     pattern = re.compile(r"(?<![\w.])print\(")
     offenders = []
-    for path in (ROOT / "momp").rglob("*.py"):
+    for path in (ROOT / "hcwf").rglob("*.py"):
         rel = path.relative_to(ROOT).as_posix()
-        if rel in allowed or "/viz/" in rel or rel in ("momp/onset/explain.py", "momp/onset/describe.py"):
+        if rel in allowed or "/viz/" in rel or rel in ("hcwf/onset/explain.py", "hcwf/onset/describe.py"):
             continue
         if pattern.search(path.read_text()):
             offenders.append(rel)
@@ -194,7 +194,7 @@ def test_region_box_comes_from_the_registry_for_any_case():
     assert domain("ethiopia") == domain("Ethiopia") == (3, 15, 33, 48)
     assert domain("India") == (6.46, 35.51, 68.11, 91.4)
     assert domain("india") == (6.5, 38.5, 66.5, 100)
-    from momp.onset import regions
+    from hcwf.onset import regions
 
     with pytest.raises(regions.RegionError):
         domain("atlantis")
@@ -202,7 +202,7 @@ def test_region_box_comes_from_the_registry_for_any_case():
 
 def test_day_convention_sources_are_in_the_region_notes():
     """The IMD and CHIRPS day-convention findings are recorded with their sources."""
-    from momp.onset import regions
+    from hcwf.onset import regions
 
     india, ethiopia = regions.load_region("india").notes, regions.load_region("ethiopia").notes
     assert "0830 hrs" in india and "mausam.imd.gov.in" in india and "WEAVR" in india
@@ -279,8 +279,8 @@ def test_daily_boundary_is_a_forecast_dataset_key():
                                      "daily_boundary": "03 UTC"}],
                          "evaluation": {"start_date": [2019, 5, 1], "end_date": [2019, 6, 1]}})
     assert flat["daily_boundary_list"] == ("03 UTC",) and flat["accumulation_list"] == ("since_init",)
-    from momp.lib import loader
-    from momp.lib.resolved import resolved_config_text
+    from hcwf.lib import loader
+    from hcwf.lib.resolved import resolved_config_text
 
     loader._set_onset_mode(flat)
 
@@ -292,7 +292,7 @@ def test_daily_boundary_is_a_forecast_dataset_key():
 
 def test_ingest_model_forecast_uses_the_models_accumulation_and_boundary():
     """Accumulated totals are differenced to the same days as per-day data; absent kwargs mean daily as before."""
-    from momp.io.input import ingest_model_forecast
+    from hcwf.io.input import ingest_model_forecast
 
     rng = np.random.default_rng(1)
     daily = xr.DataArray(rng.gamma(2.0, 3.0, size=(4, 3, 3, 5)), dims=("init_time", "lat", "lon", "step"),
@@ -315,7 +315,7 @@ def test_ingest_model_forecast_uses_the_models_accumulation_and_boundary():
 
 def test_accumulated_forecasts_score_like_per_day_forecasts(world, tmp_path):
     """The since_init copy of the same rain, detected automatically, gives the same scores as the per-day files."""
-    result = momp.run(_fresh(world, tmp_path, ("DET", "DETC")), quiet=True)
+    result = hcwf.run(_fresh(world, tmp_path, ("DET", "DETC")), quiet=True)
     summary = result.scores["summary"].set_index("model")
     assert list(summary.loc["DET"]) == list(summary.loc["DETC"]) and len(summary) == 3
     assert any("accumulation: since_init  [detected" in line for line in result.config["dataset_report"])
@@ -328,7 +328,7 @@ def test_accumulated_forecasts_score_like_per_day_forecasts(world, tmp_path):
 def test_climatology_cv_reaches_the_conditional_scoring(world, tmp_path, monkeypatch, configured, expected):
     """Setting and the scoring kwargs carry climatology_cv, in both modes, to the conditional climatology."""
     seen = []
-    from momp.stats import benchmark
+    from hcwf.stats import benchmark
 
     real = benchmark.compute_conditional_climatology_as_forecast
 
@@ -343,7 +343,7 @@ def test_climatology_cv_reaches_the_conditional_scoring(world, tmp_path, monkeyp
         reference["climatology_cv"] = configured
     raw = raw_config(world, reference=reference)
     raw["parallel"] = False   # the spy sees only what runs in this process
-    result = momp.run(raw, quiet=True)
+    result = hcwf.run(raw, quiet=True)
     assert set(seen) == {expected} and seen
     assert "conditional_climatology" in set(result.scores["summary"]["model"])
     assert "climatology_cv" in Setting.__annotations__
@@ -356,7 +356,7 @@ def test_conditional_climatology_differs_between_the_two_modes(world):
     outs = {}
     for mode in ("none", "leave_one_year_out"):
         raw = raw_config(world, reference={"model": "conditional_climatology", "climatology_cv": mode})
-        scores = momp.run(raw, quiet=True).scores["spatial"][("conditional_climatology", "1-10")]
+        scores = hcwf.run(raw, quiet=True).scores["spatial"][("conditional_climatology", "1-10")]
         outs[mode] = scores["mean_mae"].values
     assert not np.array_equal(outs["none"], outs["leave_one_year_out"], equal_nan=True)
 
@@ -374,7 +374,7 @@ def test_observed_onsets_are_detected_once_per_run_for_all_models_and_references
         return real(rain, thresh, year, **kwargs)
 
     monkeypatch.setattr(stats_detect, "detect_observed_result", counting)
-    result = momp.run(_fresh(world, tmp_path, ("DET", "DETC")), quiet=True, parallel=False)   # the spy counts this process
+    result = hcwf.run(_fresh(world, tmp_path, ("DET", "DETC")), quiet=True, parallel=False)   # the spy counts this process
     assert sorted(calls) == list(CLIM_YEARS)
     assert isinstance(result.observed, xr.Dataset) and list(result.observed["year"].values) == list(CLIM_YEARS)
     assert result.observed["onset_date"].dtype == np.dtype("datetime64[ns]")
@@ -385,15 +385,15 @@ def test_observed_onsets_are_detected_once_per_run_for_all_models_and_references
 def test_cache_hit_miss_and_nearest_entry_are_reported(world, tmp_path, capsys):
     """A first run misses, the same observations hit across runs, and a changed definition names what differs."""
     path = _fresh(world, tmp_path)
-    momp.run(path, write=True)
+    hcwf.run(path, write=True)
     first = capsys.readouterr().out
     assert re.search(r"Observed onsets: cache miss obs-[0-9a-f]{12} \(no earlier entry", first)
     raw = raw_config(world, evaluation={"verification_windows": [[1, 8]], "tolerances": [3]})
-    momp.run(write_config(tmp_path, raw), write=True)
+    hcwf.run(write_config(tmp_path, raw), write=True)
     second = capsys.readouterr().out
     assert re.search(r"Observed onsets: cache hit obs-[0-9a-f]{12} \(15 years cached", second)
     raw = raw_config(world, onset={"override": {"wet_day": "at least 2 mm"}})
-    momp.run(write_config(tmp_path, raw), write=True)
+    hcwf.run(write_config(tmp_path, raw), write=True)
     third = capsys.readouterr().out
     assert re.search(r"cache miss obs-[0-9a-f]{12}; nearest cached entry obs-[0-9a-f]{12} differs in: definition", third)
     assert len(list((tmp_path / "runs" / ".cache" / "observed_onsets").glob("obs-*"))) == 2
@@ -402,9 +402,9 @@ def test_cache_hit_miss_and_nearest_entry_are_reported(world, tmp_path, capsys):
 def test_cached_onsets_equal_detected_onsets(world, tmp_path):
     """What the cache returns is the detected array, bit for bit, including no-onset cells."""
     path = _fresh(world, tmp_path)
-    fresh = momp.run(path, quiet=True).observed
-    again = momp.run(path, write=True, quiet=True).observed
-    third = momp.run(path, write=True, overwrite=True, quiet=True).observed   # now read from disk
+    fresh = hcwf.run(path, quiet=True).observed
+    again = hcwf.run(path, write=True, quiet=True).observed
+    third = hcwf.run(path, write=True, overwrite=True, quiet=True).observed   # now read from disk
     for other in (again, third):
         assert np.array_equal(fresh["onset_date"].values, other["onset_date"].values)
         assert np.array_equal(fresh["lat"].values, other["lat"].values)
@@ -469,7 +469,7 @@ def test_subfolders_only_when_they_would_hold_more_than_one_file(world, tmp_path
 def test_run_writes_the_folder_refuses_a_rerun_and_overwrite_clears_it(world, tmp_path):
     """The folder holds run.yaml, definition.yaml, run.log and short-named scores; re-running needs overwrite."""
     path = _fresh(world, tmp_path)
-    result = momp.run(path, write=True, quiet=True)
+    result = hcwf.run(path, write=True, quiet=True)
     folder = result.folder
     assert folder.parent == tmp_path / "runs"
     assert {p.name for p in folder.iterdir()} == {"run.yaml", "definition.yaml", "run.log", "scores"}
@@ -479,9 +479,9 @@ def test_run_writes_the_folder_refuses_a_rerun_and_overwrite_clears_it(world, tm
     assert "[INFO]" in text and "[DEBUG]" in text and "Observed onsets: cache" in text
     assert "dir_out" not in (folder / "run.yaml").read_text() and "data_dir" not in (folder / "run.yaml").read_text()
     with pytest.raises(run_folder.RunExistsError, match="--overwrite"):
-        momp.run(path, write=True, quiet=True)
+        hcwf.run(path, write=True, quiet=True)
     (folder / "stale.txt").write_text("old")
-    momp.run(path, write=True, overwrite=True, quiet=True)
+    hcwf.run(path, write=True, overwrite=True, quiet=True)
     assert not (folder / "stale.txt").exists() and (tmp_path / "runs" / ".cache").is_dir()
 
 
@@ -491,7 +491,7 @@ def test_explicit_data_dir_wins_and_keeps_the_old_file_names(world, tmp_path):
     path = _fresh(world, tmp_path, output={"data_dir": str(out), "figure_dir": str(tmp_path / "fig"),
                                            "save_onsets": True})
     for _ in range(2):
-        result = momp.run(path, write=True, quiet=True)
+        result = hcwf.run(path, write=True, quiet=True)
     assert result.folder == out and not (tmp_path / "runs").exists()
     assert sorted(p.name for p in out.glob("*.nc")) == [
         "climatology_onset_doy_2006-2020.nc", "spatial_metrics_DET_1-10.nc", "spatial_metrics_climatology_1-10.nc"]
@@ -502,7 +502,7 @@ def test_explicit_data_dir_wins_and_keeps_the_old_file_names(world, tmp_path):
 
 
 def test_export_goes_to_the_runs_onsets_folder_with_short_names(world, tmp_path):
-    """momp-run export in a run folder writes onsets/<source>.nc."""
+    """hcwf-run export in a run folder writes onsets/<source>.nc."""
     path = _fresh(world, tmp_path)
     paths = export.export_onsets(export.load_cfg(path), sources=["observed", "DET"])
     folder = tmp_path / "runs" / load_run_config(["-p", str(path)])["run_paths"].name / "onsets"
@@ -510,13 +510,13 @@ def test_export_goes_to_the_runs_onsets_folder_with_short_names(world, tmp_path)
     assert all(p.exists() for p in paths.values())
 
 
-# --- momp.run ------------------------------------------------------------------------------------------------------
+# --- hcwf.run ------------------------------------------------------------------------------------------------------
 
 def test_run_returns_xarray_and_pandas_and_writes_nothing_by_default(world, tmp_path, monkeypatch):
     """write=False: results in memory, no run folder or output folder is created in the working directory."""
     monkeypatch.chdir(tmp_path)
     before = set(os.listdir(tmp_path))
-    result = momp.run(raw_config(world), quiet=True)
+    result = hcwf.run(raw_config(world), quiet=True)
     assert set(os.listdir(tmp_path)) == before and result.folder is None
     assert isinstance(result.observed, xr.Dataset) and isinstance(result.scores["summary"], pd.DataFrame)
     assert set(result.scores["summary"]["model"]) == {"DET", "climatology"}
@@ -527,7 +527,7 @@ def test_run_returns_xarray_and_pandas_and_writes_nothing_by_default(world, tmp_
 
 def test_run_forecasts_are_the_scored_onsets_and_computed_on_use(world):
     """result.forecasts holds a Dataset per model and climatology reference."""
-    result = momp.run(raw_config(world), quiet=True)
+    result = hcwf.run(raw_config(world), quiet=True)
     forecasts = result.forecasts
     assert set(forecasts) == {"DET", "climatology"}
     assert "onset_date" in forecasts["DET"] and forecasts["DET"]["onset_date"].dims[0] == "init_time"
@@ -536,26 +536,26 @@ def test_run_forecasts_are_the_scored_onsets_and_computed_on_use(world):
 
 def test_run_overrides_config_values_by_flat_name_and_rejects_unknown_ones(world):
     """Keyword arguments override flat keys (checked); a misspelt key is an error with a suggestion."""
-    result = momp.run(raw_config(world), max_forecast_day=8, verification_window_list=[[1, 8]],
+    result = hcwf.run(raw_config(world), max_forecast_day=8, verification_window_list=[[1, 8]],
                       tolerance_days_list=[3], day_bins=[[1, 4], [5, 8]], quiet=True)
     assert result.config["max_forecast_day"] == 8 and ("DET", "1-8") in result.scores["spatial"]
     with pytest.raises(TypeError, match="max_forecast_day"):
-        momp.run(raw_config(world), max_forcast_day=8)
+        hcwf.run(raw_config(world), max_forcast_day=8)
 
 
 def test_run_accepts_a_config_object(world):
-    """A momp.config.Config runs like its YAML."""
-    from momp.config import Config
+    """A hcwf.config.Config runs like its YAML."""
+    from hcwf.config import Config
 
-    result = momp.run(Config.from_mapping(raw_config(world)), quiet=True)
+    result = hcwf.run(Config.from_mapping(raw_config(world)), quiet=True)
     assert "DET" in set(result.scores["summary"]["model"])
 
 
 # --- --check and its hints --------------------------------------------------------------------------------------------
 
 def _cli(cwd, *args):
-    """Run momp-run in a subprocess."""
-    return subprocess.run([sys.executable, "-m", "momp.cli", *args], cwd=cwd, capture_output=True, text=True,
+    """Run hcwf-run in a subprocess."""
+    return subprocess.run([sys.executable, "-m", "hcwf.cli", *args], cwd=cwd, capture_output=True, text=True,
                           env={**os.environ, "PYTHONPATH": str(ROOT)})
 
 
@@ -580,7 +580,7 @@ def test_check_fails_on_missing_files_a_refused_rerun_and_unresolvable_configs(w
     assert done.returncode == 1 and "ERROR: DET forecast files missing for 2021" in done.stdout
     assert "ERROR: observation files missing for 2021" in done.stdout
     ok = _fresh(world, tmp_path)
-    momp.run(ok, write=True, quiet=True)
+    hcwf.run(ok, write=True, quiet=True)
     refused = _cli(tmp_path, "-p", str(ok), "--check")
     assert refused.returncode == 1 and "already ran" in refused.stdout
     assert _cli(tmp_path, "-p", str(ok), "--check", "--overwrite").returncode == 0
@@ -590,8 +590,8 @@ def test_check_fails_on_missing_files_a_refused_rerun_and_unresolvable_configs(w
 
 
 def test_check_through_python(world, tmp_path):
-    """momp.check returns the report object."""
-    report = momp.check(_fresh(world, tmp_path))
+    """hcwf.check returns the report object."""
+    report = hcwf.check(_fresh(world, tmp_path))
     assert report.ok and "== Summary ==" in report.text() and report.errors == []
 
 
@@ -599,14 +599,14 @@ def test_cli_run_quiet_verbose_and_overwrite(world, tmp_path):
     """--quiet hides progress, --verbose adds debug lines, a second run is refused until --overwrite."""
     path = _fresh(world, tmp_path)
     quiet = _cli(tmp_path, "-p", str(path), "--quiet")
-    assert quiet.returncode == 0 and "Starting ROMP Workflow" not in quiet.stdout
+    assert quiet.returncode == 0 and "Starting HCWF Workflow" not in quiet.stdout
     runs = list((tmp_path / "runs").glob("ethiopia_*"))
-    assert len(runs) == 1 and "Starting ROMP Workflow" in (runs[0] / "run.log").read_text()
+    assert len(runs) == 1 and "Starting HCWF Workflow" in (runs[0] / "run.log").read_text()
     again = _cli(tmp_path, "-p", str(path))
     assert again.returncode == 1 and "--overwrite" in again.stdout
     loud = _cli(tmp_path, "-p", str(path), "--overwrite", "--verbose")
-    assert loud.returncode == 0 and "Starting ROMP Workflow" in loud.stdout and "Processing" in loud.stdout
-    assert "ROMP Workflow completed successfully!" in loud.stdout
+    assert loud.returncode == 0 and "Starting HCWF Workflow" in loud.stdout and "Processing" in loud.stdout
+    assert "HCWF Workflow completed successfully!" in loud.stdout
 
 
 def test_help_lists_the_run_control_flags(world, tmp_path):
@@ -687,11 +687,11 @@ def test_ensemble_run_returns_score_tables_and_writes_short_csv_names(world, tmp
         "plot_heatmap_bss_auc": False, "plot_reliability": False, "plot_panel_heatmap_skill": False,
         "plot_bar_bss_rpss_auc": False})
     raw["observations"]["path"] = str(world / "obs")
-    result = momp.run(raw, quiet=True)
+    result = hcwf.run(raw, quiet=True)
     assert set(result.scores) == {"overall", "binned"}
     assert list(result.scores["overall"][["model", "window"]].iloc[0]) == ["ENS", "1-10"]
     assert "Fair_Brier_Skill_Score" in result.scores["overall"].columns
-    written = momp.run(write_config(tmp_path, raw), write=True, quiet=True)
+    written = hcwf.run(write_config(tmp_path, raw), write=True, quiet=True)
     names = sorted(p.name for p in (written.folder / "scores").iterdir())
     assert names == ["binned_ENS_1-10.csv", "climatology_onset.nc", "overall_ENS_1-10.csv", "spatial_ENS_1-10.nc",
                      "spatial_climatology_1-10.nc"]
@@ -700,7 +700,7 @@ def test_ensemble_run_returns_score_tables_and_writes_short_csv_names(world, tmp
 
 
 def test_export_command_writes_into_the_run_folder(world, tmp_path):
-    """`momp-run export` in run-folder mode writes onsets/<source>.nc."""
+    """`hcwf-run export` in run-folder mode writes onsets/<source>.nc."""
     path = _fresh(world, tmp_path)
     done = _cli(tmp_path, "export", "-p", str(path), "--sources", "observed,DET")
     assert done.returncode == 0, done.stdout[-800:] + done.stderr[-800:]

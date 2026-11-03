@@ -1,11 +1,11 @@
-"""momp.blend.calibration: Platt calibration as platt_cv_multibin and fit_platt_weights_export (oracle:
+"""hcwf.blend.calibration: Platt calibration as platt_cv_multibin and fit_platt_weights_export (oracle:
 onset_blending@1e6d696) computed it, serially and in worker processes."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from momp.blend import calibration
+from hcwf.blend import calibration
 from tests.blend._oracle import blend_evaluation_utils as legacy
 
 BINS = ["week1", "week2", "later"]

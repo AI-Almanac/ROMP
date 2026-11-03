@@ -1,4 +1,4 @@
-"""Differential check: onset_blending's forecast against momp's, on the same trained blends and live files.
+"""Differential check: onset_blending's forecast against hcwf's, on the same trained blends and live files.
 
     python tests/blend/differential_forecast.py run WORKDIR [ORACLE_PYTHON]          # all steps, then compare
 
@@ -10,9 +10,9 @@ Steps (each its own process; the oracle's in onset_blending's environment when O
               and files holding less or other (fewer members, shorter leads, another grid, no declared units,
               another issue hour)
     oracle    onset_blending trains every config, saves its trained.blend, and forecasts every live scenario
-    old       momp loads that trained.blend (onset_blending's format) and forecasts the same scenarios
-    new       momp trains the same configs, saves its own trained.blend, loads it and forecasts them
-    compare   every forecast file byte for byte (CSV; the NetCDF of momp's must agree with its CSV), every refusal
+    old       hcwf loads that trained.blend (onset_blending's format) and forecasts the same scenarios
+    new       hcwf trains the same configs, saves its own trained.blend, loads it and forecasts them
+    compare   every forecast file byte for byte (CSV; the NetCDF of hcwf's must agree with its CSV), every refusal
               with the same reasons, in the three results
 
 Each scenario is a forecast directory, or `refused.json` with the reasons the forecast was refused for.
@@ -134,9 +134,9 @@ def run_oracle(root: Path, out: Path) -> None:
     finish(out, meta)
 
 
-def run_momp_old(root: Path, oracle: Path, out: Path) -> None:
-    from momp.blend import TrainedBlend
-    from momp.blend.forecast import IncompatibleForecast
+def run_hcwf_old(root: Path, oracle: Path, out: Path) -> None:
+    from hcwf.blend import TrainedBlend
+    from hcwf.blend.forecast import IncompatibleForecast
 
     meta: dict = {}
     for name in training.configs(root):
@@ -147,12 +147,12 @@ def run_momp_old(root: Path, oracle: Path, out: Path) -> None:
     finish(out, meta)
 
 
-def run_momp_new(root: Path, out: Path) -> None:
+def run_hcwf_new(root: Path, out: Path) -> None:
     from _recipes import converted
 
-    from momp.blend import TrainedBlend
-    from momp.blend.forecast import IncompatibleForecast
-    from momp.blend.training import train
+    from hcwf.blend import TrainedBlend
+    from hcwf.blend.forecast import IncompatibleForecast
+    from hcwf.blend.training import train
 
     meta: dict = {}
     for name, config in training.configs(root).items():
@@ -187,7 +187,7 @@ def scenario_differences(first: Path, second: Path) -> list[str]:
 
 
 def netcdf_matches_csv(folder: Path) -> list[str]:
-    """momp's NetCDF holds the CSV's probabilities."""
+    """hcwf's NetCDF holds the CSV's probabilities."""
     problems = []
     for csv, nc in (("blended_forecast_probabilities.csv", "blended_forecast_probabilities.nc"),
                     ("daily_onset_probabilities.csv", "daily_onset_probabilities.nc")):
@@ -209,7 +209,7 @@ def compare(oracle: Path, old: Path, new: Path) -> list[str]:
     for config in sorted(p.name for p in oracle.iterdir() if p.is_dir()):
         for scenario in SCENARIOS:
             reference = oracle / config / "forecasts" / scenario
-            for label, other in (("momp from onset_blending's file", old), ("momp's own", new)):
+            for label, other in (("hcwf from onset_blending's file", old), ("hcwf's own", new)):
                 folder = other / config / "forecasts" / scenario
                 found += [f"{config}/{scenario} ({label}): {p}" for p in scenario_differences(reference, folder)]
             if scenario in REFUSED_ONLY and not (reference / "refused.json").exists():
@@ -249,9 +249,9 @@ if __name__ == "__main__":
         if command == "oracle":
             run_oracle(Path(sys.argv[2]), Path(sys.argv[3]))
         elif command == "old":
-            run_momp_old(Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
+            run_hcwf_old(Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
         elif command == "new":
-            run_momp_new(Path(sys.argv[2]), Path(sys.argv[3]))
+            run_hcwf_new(Path(sys.argv[2]), Path(sys.argv[3]))
         else:
             problems = run_all(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else None)
             print("\n".join(problems) or "identical")

@@ -1,0 +1,148 @@
+"""Compute, save and plot spatial MAE, FAR and MR maps for deterministic and ensemble (probabilistic) forecast models."""
+from dataclasses import asdict
+from itertools import product
+import copy
+
+from hcwf.metrics.error import create_spatial_far_mr_mae
+from hcwf.stats.benchmark import compute_metrics_multiple_years
+from hcwf.lib.control import iter_list, make_case
+from hcwf.lib.convention import Case
+from hcwf.lib.loader import get_cfg, get_setting
+from hcwf.graphics.maps import plot_spatial_metrics
+from hcwf.graphics.onset_map import plot_spatial_climatology_onset
+from hcwf.graphics.panel_portrait_error import panel_portrait_mae_far_mr
+from hcwf.io.output import add_back_dated_map, save_climatology_onset, save_metrics_to_netcdf
+from hcwf.io.output import set_nested
+import logging
+from hcwf.utils.log import progress
+
+log = logging.getLogger(__name__)
+
+
+def spatial_far_mr_mae_map(cfg=None, setting=None):
+    """Compute, save and plot spatial MAE, FAR and MR maps for each deterministic forecast case.
+
+    Also evaluates the reference model (climatology or a user-specified model)
+    when cfg.ref_model is set. Returns a nested dict of spatial metrics keyed by
+    case combination. For an ensemble run the forecast onset is the ensemble onset (compute_metrics_multiple_years
+    picks it from cfg.probabilistic); the climatology reference never reads a forecast.
+    """
+
+    if cfg is None:
+        cfg = get_cfg()
+    if setting is None:
+        setting = get_setting()
+
+    results = {}
+
+    layout_pool = iter_list(vars(cfg))
+
+    for combi in progress(list(product(*layout_pool)), desc="cases"):
+        case = make_case(Case, combi, vars(cfg))
+
+        log.debug(f"{'='*50}")
+        log.info(f"processing {case.model} onset evaluation for verification window "
+                f"{case.verification_window}, case: {case.case_name}")
+
+        case_cfg = {**asdict(case), **asdict(setting)}
+
+        # model-obs onset benchmarking
+        metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg)
+
+        # Create spatial metrics
+        spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)
+        add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict)
+
+        # log case result into combined multi-case results dictionary
+        results = set_nested(results, combi, spatial_metrics)
+
+
+        # Save spatial metrics to NetCDF
+        if case_cfg["save_nc_spatial_far_mr_mae"]:
+
+            desc_dict = {
+                    'title': 'Monsoon Onset MAE, FAR, MR Analysis',
+                    'description': """Spatial maps of Mean Absolute Error, False Alarm Rate, and Miss Rate 
+                    for monsoon onset predictions""",
+            }
+
+            save_metrics_to_netcdf(spatial_metrics, case_cfg, desc_dict=desc_dict)
+
+
+        # make spatial metrics plot
+        if case_cfg['plot_spatial_far_mr_mae']:
+            plot_spatial_metrics(spatial_metrics, **case_cfg)
+
+
+    # ------------------------------------------------------------------------
+    # baseline metrics (climatology or user specified model)
+
+    if not cfg.ref_model:
+        return results
+
+    cfg_ref = copy.copy(cfg)
+    cfg_ref.model_list = (cfg.ref_model,)
+    layout_pool = iter_list(vars(cfg_ref))
+
+    for combi in progress(list(product(*layout_pool)), desc="cases"):
+        case = make_case(Case, combi, vars(cfg_ref))
+        log.debug(f"{'='*50}")
+        log.info(f"processing {case.model} onset evaluation for verification window"
+                f"{case.verification_window}, case: {case.case_name}")
+
+        # the reference model's own data location, variable, pattern, unit and dims
+        # (read from setting/case, which exist even if the forecast loop never ran)
+        case_ref = {'model_dir': setting.ref_model_dir,
+                    'model_var': case.ref_model_var,
+                    'file_pattern': setting.ref_model_file_pattern,
+                    'unit_cvt': setting.ref_model_unit_cvt,
+                    'model_dims': None
+                    }
+
+        case.update(case_ref)
+
+        case_cfg_ref = {**asdict(case), **asdict(setting)}
+
+        # model-obs onset benchmarking
+        metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
+
+        # Create spatial metrics
+        spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)
+        add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict)
+
+        # log case result into combined multi-case results dictionary
+        results = set_nested(results, combi, spatial_metrics)
+
+        # Save spatial metrics to NetCDF
+        if case_cfg_ref["save_nc_spatial_far_mr_mae"]:
+            desc_dict = {
+                    'title': 'Monsoon Onset MAE, FAR, MR Analysis',
+                    'description': """Spatial maps of Mean Absolute Error, False Alarm Rate, and Miss Rate 
+                    for monsoon onset predictions""",
+            }
+            save_metrics_to_netcdf(spatial_metrics, case_cfg_ref, desc_dict=desc_dict)
+
+
+        # make spatial metrics plot
+        if case_cfg_ref['plot_spatial_far_mr_mae']:
+            plot_spatial_metrics(spatial_metrics, **case_cfg_ref)
+
+
+    # save climatological onset to netcdf
+    if case.model == 'climatology' and case_cfg_ref['save_nc_climatology']:
+        save_climatology_onset(onset_da_dict, case_cfg_ref, case.years_clim)
+
+    # spatial map of climatology onset day
+    if case_cfg_ref['plot_climatology_onset']:
+        plot_spatial_climatology_onset(onset_da_dict, **case_cfg_ref)
+
+    # panel portrait plot of mae, far, mr
+    if case_cfg_ref['plot_panel_heatmap_error']:
+       panel_portrait_mae_far_mr(results, **case_cfg_ref)
+
+    return results
+
+# ------------------------------------------------------------------------------
+if __name__ == "__main__":
+
+    results = spatial_far_mr_mae_map()

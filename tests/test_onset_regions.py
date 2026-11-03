@@ -1,8 +1,8 @@
-"""Tests for the region and country registry in momp.onset.regions."""
+"""Tests for the region and country registry in hcwf.onset.regions."""
 import pytest
 
-from momp.onset import definition as dfn
-from momp.onset import regions as rg
+from hcwf.onset import definition as dfn
+from hcwf.onset import regions as rg
 
 VALID = """\
 id: testland

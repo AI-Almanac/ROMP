@@ -6,8 +6,8 @@ import importlib
 import numpy as np
 import pytest
 
-from momp.onset import model as m
-from momp.onset import plan as plan_mod
+from hcwf.onset import model as m
+from hcwf.onset import plan as plan_mod
 from onset_oracle import oracle_detect
 
 OPS = ("ge", "gt", "le", "lt")
@@ -88,7 +88,7 @@ def random_jobs(rng, n_series: int, n_time: int, n_jobs: int) -> m.Jobs:
 
 def run_backend(name: str, defn, tenths, missing, thresholds, jobs) -> m.Detection:
     """Compile the definition and run one backend through the public plan/backend API."""
-    module = importlib.import_module(f"momp.onset.backends.{name}")
+    module = importlib.import_module(f"hcwf.onset.backends.{name}")
     plan = plan_mod.compile(defn)
     amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=tenths.shape[0])
     det = module.detect(plan, tenths, missing, amounts, jobs)
@@ -103,7 +103,7 @@ def run_backend(name: str, defn, tenths, missing, thresholds, jobs) -> m.Detecti
 def _available(name: str) -> bool:
     """Whether a backend module exists and can run here."""
     try:
-        module = importlib.import_module(f"momp.onset.backends.{name}")
+        module = importlib.import_module(f"hcwf.onset.backends.{name}")
     except ImportError:
         return False
     return getattr(module, "available", lambda: True)()

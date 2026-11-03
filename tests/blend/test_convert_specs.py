@@ -1,4 +1,4 @@
-"""`momp-run convert`: onset_blending configs and legacy spec sets become ROMP run YAML (momp.lib.convert_specs).
+"""`hcwf-run convert`: onset_blending configs and legacy spec sets become HCWF run YAML (hcwf.lib.convert_specs).
 
 The conversions are checked against what blending itself does with the same settings (the file lists, rain-window
 numbers) and against onset_blending's shipped configs and archived spec sets."""
@@ -11,8 +11,8 @@ import pytest
 import yaml
 
 from _recipes import ORACLE_SRC, blending_dict, converted, partial, with_stub_data
-from momp.lib import convert_specs as C
-from momp.lib.dataset_schema import file_year, resolve_paths
+from hcwf.lib import convert_specs as C
+from hcwf.lib.dataset_schema import file_year, resolve_paths
 
 CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
 SPECS = ORACLE_SRC / "archive" / "specs"
@@ -151,8 +151,8 @@ def test_a_converted_run_has_no_benchmark_settings_and_still_loads(tmp_path):
 
 def test_benchmark_keys_a_blend_run_does_state_are_kept(tmp_path):
     """Given dates are not replaced by the ones derived from blend.years; a run without a blend still needs them."""
-    from momp import api
-    from momp.lib.config_schema import ConfigSchemaError
+    from hcwf import api
+    from hcwf.lib.config_schema import ConfigSchemaError
 
     mapping = with_stub_data(C.convert_blend(minimal(tmp_path)).mapping, tmp_path / "stub")
     stated = api._prepare({**mapping, "evaluation": {"start_date": [2002, 5, 1], "end_date": [2003, 6, 1],
@@ -211,7 +211,7 @@ def test_what_is_not_carried_over_is_listed(tmp_path):
 def test_the_two_registry_ids_are_blendings_readings():
     """moron_robertson_blend and icpac_blend are the rules `convert` writes for those definitions (icpac_blend with its
     20 mm as a fixed total)."""
-    from momp.onset import definition as D
+    from hcwf.onset import definition as D
 
     template = {"trigger_rule": "first_day_wet", "wet_day_comparison": "gt", "follow_days": 30,
                 "followup_anchor": "onset_day", "dry_spell": {"mode": "window_sum"}}
@@ -238,13 +238,13 @@ def test_every_shipped_config_converts_loads_and_checks(path, tmp_path):
     """The converted YAML is read back unchanged, its blend section builds the Recipe, and with small stand-in files for the
     NetCDF sources the whole run config loads and `--check` finds no problem (a units file the config names that is not on
     this machine is the one error left)."""
-    import momp
+    import hcwf
 
     conversion = C.convert_blend_file(path)
     assert yaml.safe_load(conversion.to_yaml()) == conversion.mapping
     loaded = partial(conversion)
     assert loaded.recipe.name == blending_dict(path)["name"]
-    report = momp.check(with_stub_data(conversion.mapping, tmp_path))
+    report = hcwf.check(with_stub_data(conversion.mapping, tmp_path))
     unexpected = [e for e in report.errors if "the units'" not in e or "file is missing" not in e]
     assert not unexpected, report.text()
 
@@ -292,7 +292,7 @@ SPEC_SETS = ["country_template", "fixed_cutoff_2026", "fixed_cutoff_2026_gencast
 def test_every_spec_set_converts_to_what_its_config_converts_to(name, tmp_path):
     """A spec set and the config onset_blending checked it against give the same run (the same Recipe, the same
     sections), and the run loads and checks."""
-    import momp
+    import hcwf
 
     from_specs = C.convert_spec_files(name=name, data_root=str((ORACLE_SRC / "archive").resolve()), **spec_paths(name))
     from_config = C.convert_blend_file(ORACLE_SRC / "configs" / f"{name}.yml")
@@ -300,7 +300,7 @@ def test_every_spec_set_converts_to_what_its_config_converts_to(name, tmp_path):
     assert {k: v for k, v in from_specs.mapping.items() if k != "blend"} == {
         k: v for k, v in from_config.mapping.items() if k != "blend"}
     assert any("run.MR" in n for n in from_specs.notes) or from_specs.notes
-    report = momp.check(with_stub_data(from_specs.mapping, tmp_path))
+    report = hcwf.check(with_stub_data(from_specs.mapping, tmp_path))
     assert not [e for e in report.errors if "the units'" not in e or "file is missing" not in e], report.text()
 
 
@@ -322,8 +322,8 @@ def test_the_spec_converter_reports_disagreements_together(tmp_path):
 
 @needs_oracle
 @pytest.mark.skipif(not SPECS.exists(), reason="onset_blending's archived specs are not available")
-def test_momp_run_convert_specs_writes_the_run_of_a_spec_set(tmp_path, capsys):
-    from momp.cli import main
+def test_hcwf_run_convert_specs_writes_the_run_of_a_spec_set(tmp_path, capsys):
+    from hcwf.cli import main
 
     paths = spec_paths("fixed_cutoff_2026")
     target = tmp_path / "run.yaml"

@@ -1,5 +1,5 @@
 """A trained blend on a small synthetic region: train, save, load, forecast (onset_blending's tests/test_pipeline.py
-forecast tests, run on momp), what the file holds, and a damaged or stale file."""
+forecast tests, run on hcwf), what the file holds, and a damaged or stale file."""
 import datetime as dt
 import hashlib
 import json
@@ -14,17 +14,17 @@ import yaml
 
 from _recipes import converted
 
-from momp.blend import TrainedBlend
-from momp.blend import forecast as forecast_module
-from momp.blend.forecast import IncompatibleForecast
-from momp.blend.trained import FEATURES_VERSION, FORMAT, BlendFileError
-from momp.blend.training import train
+from hcwf.blend import TrainedBlend
+from hcwf.blend import forecast as forecast_module
+from hcwf.blend.forecast import IncompatibleForecast
+from hcwf.blend.trained import FEATURES_VERSION, FORMAT, BlendFileError
+from hcwf.blend.training import train
 
 @pytest.fixture(scope="module", autouse=True)
 def _detection_cache(tmp_path_factory):
-    """The dataset-detection cache of these tests is theirs (not the user's ~/.cache/momp)."""
+    """The dataset-detection cache of these tests is theirs (not the user's ~/.cache/hcwf)."""
     patch = pytest.MonkeyPatch()
-    patch.setenv("MOMP_CACHE_DIR", str(tmp_path_factory.mktemp("cache")))
+    patch.setenv("HCWF_CACHE_DIR", str(tmp_path_factory.mktemp("cache")))
     yield
     patch.undo()
 
@@ -147,7 +147,7 @@ def test_a_saved_blend_forecasts_like_its_model(region):
 
 def test_a_single_issue_reads_only_that_issue(region, monkeypatch):
     """With issue_date the live file is read for that issue alone; the forecast is the one of the full read."""
-    from momp.io import input as io_input
+    from hcwf.io import input as io_input
 
     root, _, blend, _ = region
     files = {"ens": root / "ens" / "2013.nc"}
@@ -357,7 +357,7 @@ def test_the_file_holds_json_yaml_and_arrays_and_no_pickles(region):
             "reference.json", "reference.npz", "observed.npz", "signatures.json"} <= set(held)
     assert set(manifest["members"]) == set(held) - {"manifest.json"}
     assert all(manifest["members"][n] == hashlib.sha256(held[n]).hexdigest() for n in manifest["members"])
-    assert manifest["definition_hash"] and "momp_version" in manifest and "git_commit" in manifest
+    assert manifest["definition_hash"] and "hcwf_version" in manifest and "git_commit" in manifest
     assert manifest["provenance"]["training_files"]["models"]["ens"]
     for name in held:
         if name.endswith(".npz"):
@@ -376,6 +376,22 @@ def test_a_loaded_blend_is_the_trained_one(region):
     assert blend.signatures["ens"]["members"] == [0, 1, 2] and blend.signatures["ens"]["lead_days"][-1] == LEAD_DAYS
     assert blend.recipe.climatology.train_years == tuple(result.inputs.climatology.train_years)
     assert blend.format == FORMAT
+
+
+def test_a_file_saved_under_the_pre_rename_format_id_still_loads(region, tmp_path):
+    _, result, _, path = region
+    manifest = json.loads(members(path)["manifest.json"])
+    manifest["format"] = "momp/trained-blend"
+    held = members(path)
+    held.pop("manifest.json")
+    with zipfile.ZipFile(tmp_path / "old.blend", "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        for name, data in held.items():
+            archive.writestr(name, data)
+
+    blend = TrainedBlend.load(tmp_path / "old.blend")
+
+    assert blend.format == FORMAT and np.array_equal(blend.model.coef, result.model.coef)
 
 
 def test_a_damaged_blend_is_refused(region, tmp_path):
@@ -548,8 +564,8 @@ def test_a_registry_definition_is_frozen_as_text(region):
     # The file holds the definition's text: it is read from there, never looked up in the registry again.
     import copy
 
-    from momp.blend.trained import frozen_config
-    from momp.onset import definition as definition_mod
+    from hcwf.blend.trained import frozen_config
+    from hcwf.onset import definition as definition_mod
 
     _, result, blend, _ = region
     mapping = copy.deepcopy(blend.mapping)
@@ -566,12 +582,12 @@ def test_a_registry_definition_is_frozen_as_text(region):
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# momp-run forecast, momp.api.forecast
+# hcwf-run forecast, hcwf.api.forecast
 # ---------------------------------------------------------------------------------------------------------------
 
 
 def run_cli(argv):
-    from momp.cli import main
+    from hcwf.cli import main
 
     try:
         main(["forecast", *map(str, argv)])
@@ -654,7 +670,7 @@ def test_a_forecast_argument_without_a_model_is_an_error(region, capsys):
 
 
 def test_the_api_returns_the_forecast_and_can_write_it(region, tmp_path):
-    from momp import api
+    from hcwf import api
 
     root, _, blend, path = region
     live = {"ens": root / "ens" / "2013.nc"}
@@ -683,7 +699,7 @@ def test_a_models_files_are_read_in_parallel_with_the_same_result(region, tmp_pa
 
 
 def test_frozen_weights_may_name_their_units_adm3_name_as_onset_blendings_files_do():
-    from momp.blend.trained import FrozenUnits
+    from hcwf.blend.trained import FrozenUnits
 
     grid = [(a, b) for a in LATS for b in LONS]
     table = pd.DataFrame({"lat": [a for a, _ in grid], "lon": [b for _, b in grid],

@@ -1,4 +1,4 @@
-"""momp's single input path reads what onset_blending's legacy table readers read (tests/_legacy/nc_utils.py, copied
+"""hcwf's single input path reads what onset_blending's legacy table readers read (tests/_legacy/nc_utils.py, copied
 into _oracle/nc_utils_io.py): observations, adm3 files, forecast files, sparse tile reads, and the aggregation of source
 cells onto units in either order of scaling."""
 import datetime as dt
@@ -13,11 +13,11 @@ from _inputs import DAYS, LATS, LONS, grid_weights, id_weights, write_adm3, writ
 from _oracle import nc_utils_filters as filters
 from _oracle import nc_utils_io as legacy
 from _oracle.spatial_id_utils import GridIdConvention
-from momp.io import input as io_input
-from momp.onset.ingest import ingest
-from momp.spatial import EvaluationUnits
-from momp.utils.region import load_blocks
-from momp.utils.standard import dim_fmt, dim_fmt_model_ensemble
+from hcwf.io import input as io_input
+from hcwf.onset.ingest import ingest
+from hcwf.spatial import EvaluationUnits
+from hcwf.utils.region import load_blocks
+from hcwf.utils.standard import dim_fmt, dim_fmt_model_ensemble
 
 BOUNDARY = "00 UTC, labelled by start"
 CONVENTION = GridIdConvention(2, "fixed", "explicit")
@@ -37,7 +37,7 @@ def legacy_spec(tmp_path, weights):
             "geometry": {"grid_id_decimal_digits": 2, "grid_id_format": "fixed"}}
 
 
-def momp_obs(path, year, **kwargs):
+def hcwf_obs(path, year, **kwargs):
     return io_input.load_imd_rainfall(year, obs_var="precip", obs_unit_cvt=None, region=None, obs_paths=[str(path)],
                                       **kwargs)
 
@@ -51,7 +51,7 @@ def units_of(weights, id_keyed=False):
 def test_observations_read_as_the_legacy_table_reads_them(tmp_path):
     write_observations(tmp_path, years=(2003,))
     old = legacy.nc_read_groundtruth_long(str(tmp_path / "2003.nc"), "precip", {})
-    new = momp_obs(tmp_path / "2003.nc", 2003)
+    new = hcwf_obs(tmp_path / "2003.nc", 2003)
     assert new.dims == ("time", "lat", "lon") and new.dtype == np.float32
     np.testing.assert_array_equal(new.values.reshape(-1), old["precip"].to_numpy())
     assert (new.values < 0).any()  # negative values are in the data, and stay
@@ -64,16 +64,16 @@ def test_no_region_box_means_the_files_own_order(tmp_path):
                                 {"units": "mm"})},
                     coords={"time": pd.date_range("2003-01-01", periods=4), "lat": lats, "lon": [70.0, 70.25]})
     ds.to_netcdf(tmp_path / "2003.nc")
-    new = momp_obs(tmp_path / "2003.nc", 2003)
+    new = hcwf_obs(tmp_path / "2003.nc", 2003)
     assert new["lat"].values.tolist() == lats and new.values.tolist() == ds["precip"].values.tolist()
     boxed = io_input.load_imd_rainfall(2003, obs_var="precip", obs_unit_cvt=None, region="india", land_only=False,
                                        shp_only=False, obs_paths=[str(tmp_path / "2003.nc")])
-    assert boxed["lat"].values.tolist() == sorted(lats)  # ROMP's region read puts latitude ascending
+    assert boxed["lat"].values.tolist() == sorted(lats)  # HCWF's region read puts latitude ascending
 
 
 def test_negative_values_are_kept_or_flagged_as_asked(tmp_path):
     write_observations(tmp_path, years=(2003,))
-    da = momp_obs(tmp_path / "2003.nc", 2003)
+    da = hcwf_obs(tmp_path / "2003.nc", 2003)
     default = ingest(da, day_boundary=BOUNDARY, units="mm")
     kept = ingest(da, day_boundary=BOUNDARY, units="mm", rain_resolution="exact", negatives="keep", missing="keep")
     values = da.transpose("lat", "lon", "time").values.astype(np.float64)
@@ -81,7 +81,7 @@ def test_negative_values_are_kept_or_flagged_as_asked(tmp_path):
     np.testing.assert_array_equal(kept.missing, ~finite)
     np.testing.assert_array_equal(kept.tenths[finite], values[finite])
     assert (values[finite] < -0.05).any()
-    assert default.missing[finite & (values < -0.05)].all()  # ROMP's default: bad data
+    assert default.missing[finite & (values < -0.05)].all()  # HCWF's default: bad data
     forecast = da.rename(time="init_time").expand_dims(lead=[1]).transpose("init_time", "lat", "lon", "lead")
     f_default = ing_forecast(forecast, "default")
     f_keep = ing_forecast(forecast, "keep")
@@ -91,7 +91,7 @@ def test_negative_values_are_kept_or_flagged_as_asked(tmp_path):
 
 
 def ing_forecast(da, negatives):
-    from momp.onset.ingest import ingest_forecast
+    from hcwf.onset.ingest import ingest_forecast
 
     return ingest_forecast(da, day_boundary=BOUNDARY, lead_label="start", units="mm", accumulation="daily",
                            check_units=False, rain_resolution="exact", negatives=negatives)
@@ -102,7 +102,7 @@ def test_a_gap_inside_a_year_is_filled_or_refused_as_the_legacy_reader_refuses_i
     path = tmp_path / "2004.nc"
     with pytest.raises(ValueError, match="first gap is 2004-01-04 to 2004-01-06") as old:
         legacy.nc_read_groundtruth_long(str(path), "precip", {})
-    da = momp_obs(path, 2004)
+    da = hcwf_obs(path, 2004)
     with pytest.raises(ValueError, match="first gap is 2004-01-04 to 2004-01-06"):
         ingest(da, day_boundary=BOUNDARY, units="mm", gaps="refuse")
     with pytest.warns(UserWarning, match="Filled 1 missing days"):
@@ -120,7 +120,7 @@ def test_a_gap_inside_a_year_is_filled_or_refused_as_the_legacy_reader_refuses_i
         assert ingest(two, day_boundary=BOUNDARY, units="mm", gaps="refuse").tenths.shape[-1] == 5
 
 
-def test_ingest_options_follow_the_config_and_default_to_romps(tmp_path):
+def test_ingest_options_follow_the_config_and_default_to_hcwfs(tmp_path):
     assert io_input.ingest_options({}) == {} and io_input.ingest_options({}, forecast=True) == {}
     config = {"rain_resolution": "exact", "missing": "keep", "negatives": "keep", "gaps": "refuse", "check_units": False}
     assert io_input.ingest_options(config) == {"rain_resolution": "exact", "missing": "keep", "negatives": "keep",
@@ -134,7 +134,7 @@ def test_ingest_options_follow_the_config_and_default_to_romps(tmp_path):
 def test_an_adm3_file_reads_as_the_legacy_table_reads_it(tmp_path):
     write_adm3(tmp_path / "adm3_2003.nc", names=("north", "south", "East ward"))
     old = legacy.nc_read_groundtruth_long(str(tmp_path / "adm3_2003.nc"), "precip", {})
-    new = momp_obs(tmp_path / "adm3_2003.nc", 2003)
+    new = hcwf_obs(tmp_path / "adm3_2003.nc", 2003)
     assert new.dims == ("time", "unit") and new["unit"].values.tolist() == ["north", "south", "East ward"]
     np.testing.assert_array_equal(new.values.reshape(-1), old["precip"].to_numpy())
     assert old["id"].tolist()[:3] == ["north", "south", "East ward"]
@@ -233,7 +233,7 @@ def _write_inits(tmp_path, **kwargs):
     return path
 
 
-def _momp_forecast(tmp_path, unit_cvt=None, **kwargs):
+def _hcwf_forecast(tmp_path, unit_cvt=None, **kwargs):
     return io_input.get_forecast_probabilistic_twice_weekly(
         2014, unit_cvt=unit_cvt, model_dir=str(tmp_path), file_pattern="f{}.nc", **{**FORECAST_KWARGS, **kwargs})
 
@@ -241,7 +241,7 @@ def _momp_forecast(tmp_path, unit_cvt=None, **kwargs):
 def test_a_forecast_reads_as_the_legacy_table_reads_it(tmp_path):
     path = _write_inits(tmp_path)
     old = legacy.nc_read_forecast_wide(str(path), "tp", {}, {"options": {}}, day_dim="day", prefix="rain")
-    new = _momp_forecast(tmp_path).transpose("init_time", "member", "lat", "lon", "step")
+    new = _hcwf_forecast(tmp_path).transpose("init_time", "member", "lat", "lon", "step")
     cols = [f"rain_day_{d}" for d in range(1, DAYS + 1)]
     np.testing.assert_array_equal(new.values.reshape(-1, DAYS), old[cols].to_numpy())
     assert new.dtype == np.float32 and new["step"].values.tolist() == list(range(1, DAYS + 1))
@@ -251,7 +251,7 @@ def test_a_declared_units_file_is_converted_by_the_caller_and_blends_scale_match
     path = _write_inits(tmp_path, units=None)
     old = legacy.nc_read_forecast_wide(str(path), "tp", {}, {"options": {}}, day_dim="day", prefix="rain")
     cols = [f"rain_day_{d}" for d in range(1, DAYS + 1)]
-    scaled = _momp_forecast(tmp_path, unit_cvt=1000.0).transpose("init_time", "member", "lat", "lon", "step")
+    scaled = _hcwf_forecast(tmp_path, unit_cvt=1000.0).transpose("init_time", "member", "lat", "lon", "step")
     np.testing.assert_array_equal(scaled.values.reshape(-1, DAYS), old[cols].to_numpy() * 1000.0)
 
 

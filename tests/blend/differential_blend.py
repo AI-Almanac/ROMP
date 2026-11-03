@@ -1,6 +1,6 @@
-"""Differential check: the same synthetic inputs through onset_blending's blending methods and momp.blend's.
+"""Differential check: the same synthetic inputs through onset_blending's blending methods and hcwf.blend's.
 
-    python tests/blend/differential_blend.py dump momp OUT.pkl                 # in ROMP's env
+    python tests/blend/differential_blend.py dump hcwf OUT.pkl                 # in HCWF's env
     <onset_blending>/.venv/bin/python tests/blend/differential_blend.py dump onset_blending OUT.pkl
     python tests/blend/differential_blend.py compare A.pkl B.pkl
 
@@ -19,13 +19,13 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tests.blend._samples import BINS, FrameSamples  # noqa: E402  (imports nothing of momp)
+from tests.blend._samples import BINS, FrameSamples  # noqa: E402  (imports nothing of hcwf)
 
 MODULES = {
     "onset_blending": {"design": "onset_blending.core.design", "logit": "onset_blending.blend.logit",
                        "calibration": "onset_blending.core.calibration", "mme": "onset_blending.blend.mme",
                        "random_forest": "onset_blending.blend.random_forest"},
-    "momp": {name: f"momp.blend.{name}" for name in ("design", "logit", "calibration", "mme", "random_forest")},
+    "hcwf": {name: f"hcwf.blend.{name}" for name in ("design", "logit", "calibration", "mme", "random_forest")},
 }
 FORMULA = "outcome ~ x1 + x2 + x1:x2"
 
@@ -106,7 +106,7 @@ def run(package: str) -> dict:
     sources = [np.random.default_rng(5 + i).dirichlet(np.ones(3), size=300) for i in range(3)]
     sources[1][:5] = np.nan
     Y = np.eye(3)[np.random.default_rng(9).integers(0, 3, size=300)]
-    from_package = importlib.import_module("momp.metrics.probabilistic" if package == "momp" else "onset_blending.core.metrics")
+    from_package = importlib.import_module("hcwf.metrics.probabilistic" if package == "hcwf" else "onset_blending.core.metrics")
     cleaned = [from_package.clean(P) for P in sources]
     out["mme"] = m["mme"].optimise_weights(cleaned, Y)
     return out

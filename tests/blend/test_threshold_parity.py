@@ -10,12 +10,12 @@ import xarray as xr
 
 from _oracle import nc_utils_references as legacy
 from _oracle import thresholds as oracle
-from momp.onset import climatology
-from momp.onset.climatology import ThresholdCache, compute_threshold
-from momp.onset.model import DailyRain, DayRef, ThresholdSpec
-from momp.onset.thresholds import (ThresholdScale, read_threshold_grid, read_threshold_table, scale_values,
+from hcwf.onset import climatology
+from hcwf.onset.climatology import ThresholdCache, compute_threshold
+from hcwf.onset.model import DailyRain, DayRef, ThresholdSpec
+from hcwf.onset.thresholds import (ThresholdScale, read_threshold_grid, read_threshold_table, scale_values,
                                    unit_thresholds)
-from momp.spatial import ids as spatial_ids
+from hcwf.spatial import ids as spatial_ids
 
 BOUNDARY = "00 UTC, labelled by start"
 N_UNITS = 30
@@ -81,7 +81,7 @@ def test_each_cells_threshold_is_its_mean_rain_over_the_window():
     np.testing.assert_allclose(got, expected, rtol=1e-12, equal_nan=True)
 
 
-def test_romp_defaults_cap_missing_days_and_skip_partial_years():
+def test_hcwf_defaults_cap_missing_days_and_skip_partial_years():
     files = series(5, 0.2)
     rain = unit_rain(files)
     default = compute_threshold(SPEC, rain, (YEARS[0], YEARS[-1]))
@@ -162,7 +162,7 @@ def test_netcdf_and_mat_tables(tmp_path):
     pd.testing.assert_frame_equal(nc, mat)
 
 
-def test_grid_reader_is_romps_netcdf_field(tmp_path):
+def test_grid_reader_is_hcwfs_netcdf_field(tmp_path):
     field = xr.DataArray(np.arange(6.0).reshape(2, 3), dims=("lat", "lon"),
                          coords={"lat": [1.0, 2.0], "lon": [5.0, 6.0, 7.0]}, name="thr")
     field.to_dataset().to_netcdf(tmp_path / "g.nc")

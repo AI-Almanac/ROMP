@@ -1,12 +1,12 @@
-"""momp.onset.viz.maps: the drill-down figure builds in both modes and marks the explained cell."""
+"""hcwf.onset.viz.maps: the drill-down figure builds in both modes and marks the explained cell."""
 import matplotlib
 import pytest
 
 matplotlib.use("Agg")
 
-from momp.onset import definition as dfn
-from momp.onset import engine, explain
-from momp.onset.viz.maps import drill_down
+from hcwf.onset import definition as dfn
+from hcwf.onset import engine, explain
+from hcwf.onset.viz.maps import drill_down
 from test_onset_anatomy import forecast_anatomy, seasonal_rain
 
 

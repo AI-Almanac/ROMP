@@ -1,9 +1,9 @@
-"""python -m momp.onset explain and schematic."""
+"""python -m hcwf.onset explain and schematic."""
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from momp.onset.__main__ import main
+from hcwf.onset.__main__ import main
 
 
 def write_obs(path):

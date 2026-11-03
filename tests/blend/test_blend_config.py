@@ -5,11 +5,11 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.blend import recipe as R
-from momp.config import Blend, Config, Dataset, Units
-from momp.lib import config_schema as schema
-from momp.lib.config_schema import ConfigSchemaError
-from momp.lib.config_yaml import build_config
+from hcwf.blend import recipe as R
+from hcwf.config import Blend, Config, Dataset, Units
+from hcwf.lib import config_schema as schema
+from hcwf.lib.config_schema import ConfigSchemaError
+from hcwf.lib.config_yaml import build_config
 
 BASE = {"model_list": ("m",), "blend_years": {"training": [2000, 2001], "cv_holdout": [2001]},
         "blend_formulas": {"f": "outcome ~ prob_clim_qx"}}
@@ -158,7 +158,7 @@ def test_config_objects_carry_units_and_blend_sections_and_listed_files():
 
 
 def test_check_says_which_box_a_region_name_selects():
-    from momp.lib.check import _box_text
+    from hcwf.lib.check import _box_text
 
     assert "legacy domain 'India'" in _box_text({"region": "India"}) and "lat 6.46 to 35.51" in _box_text({"region": "India"})
     plain = _box_text({"region": "india"})
@@ -191,7 +191,7 @@ def test_mme_weights_are_a_mapping_or_a_file_and_must_fit_the_sources(tmp_path):
     with pytest.raises(R.RecipeError, match="blend.mme.weights.m"):
         R.recipe_from_config({**cfg, "blend_mme": {"weights": {"m": "heavy"}}})
     # the loader anchors a relative weights file at the config file
-    from momp.lib.loader import _anchor_mme_weights
+    from hcwf.lib.loader import _anchor_mme_weights
 
     dic = {"blend_mme": {"weights": "w/weights.csv"}, "config_file": str(tmp_path / "run.yaml")}
     _anchor_mme_weights(dic)

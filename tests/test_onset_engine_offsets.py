@@ -2,8 +2,8 @@
 import numpy as np
 import pytest
 
-from momp.onset import model as m
-from momp.onset.engine import build_forecast_jobs
+from hcwf.onset import model as m
+from hcwf.onset.engine import build_forecast_jobs
 
 
 def _definition(end_offset: int) -> m.Definition:

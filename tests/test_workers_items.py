@@ -6,9 +6,9 @@ import time
 import numpy as np
 import pytest
 
-from momp.stats import parallel
-from momp.utils import workers
-from momp.utils.workers import SharedArrays, attach, cores, default_resources, detach, worker_count, workers_within
+from hcwf.stats import parallel
+from hcwf.utils import workers
+from hcwf.utils.workers import SharedArrays, attach, cores, default_resources, detach, worker_count, workers_within
 
 
 def test_workers_within_the_budget():

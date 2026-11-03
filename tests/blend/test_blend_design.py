@@ -1,4 +1,4 @@
-"""momp.blend.design: design matrices from arrays are Patsy's to the bit, and formulas expand and resolve as the
+"""hcwf.blend.design: design matrices from arrays are Patsy's to the bit, and formulas expand and resolve as the
 legacy build_formulas_from_spec and resolve_formula_str did (oracle: onset_blending@1e6d696)."""
 
 import numpy as np
@@ -6,7 +6,7 @@ import pandas as pd
 import patsy
 import pytest
 
-from momp.blend import design
+from hcwf.blend import design
 from tests.blend._oracle import blend_evaluation_utils as legacy
 from tests.blend._samples import FrameSamples, weekly_table
 

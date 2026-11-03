@@ -2,9 +2,9 @@
 
 import pytest
 
-from momp.config import Config, Dataset, Evaluation, Onset
-from momp.lib.config_schema import ConfigSchemaError, FIELDS, describe_schema
-from momp.lib.config_yaml import build_config
+from hcwf.config import Config, Dataset, Evaluation, Onset
+from hcwf.lib.config_schema import ConfigSchemaError, FIELDS, describe_schema
+from hcwf.lib.config_yaml import build_config
 from tests.synthetic_data import write_forecast, write_obs
 
 

@@ -1,5 +1,5 @@
 """Cell transforms are the legacy sparse transforms (onset_blending tests/test_cell_transforms.py and the
-transform parts of test_reference.py, rebuilt on momp.spatial)."""
+transform parts of test_reference.py, rebuilt on hcwf.spatial)."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -8,7 +8,7 @@ from _oracle import nc_utils_filters as nc_utils
 from _oracle.spatial_id_utils import validate_expected_source_ids
 from _oracle.sparse_transform_utils import (compile_sparse_cell_transform, sparse_observed_weighted_mean,
                                             sparse_target_support)
-from momp.spatial import GridIdConvention, SparseTransform, regrid
+from hcwf.spatial import GridIdConvention, SparseTransform, regrid
 
 WEIGHTS = pd.DataFrame({
     "source_id": ["10.00_70.00", "10.00_70.25", "10.25_70.00", "10.25_70.25", "10.25_70.25"],

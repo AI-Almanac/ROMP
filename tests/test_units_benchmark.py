@@ -1,4 +1,4 @@
-"""ROMP's benchmark on political boundaries: every product of a run over polygon units (a shapefile in a temp folder),
+"""HCWF's benchmark on political boundaries: every product of a run over polygon units (a shapefile in a temp folder),
 for deterministic and ensemble models, the climatology references, the onset export and the maps."""
 from pathlib import Path
 
@@ -13,9 +13,9 @@ matplotlib.use("Agg")
 geopandas = pytest.importorskip("geopandas")
 from shapely.geometry import MultiPolygon, box  # noqa: E402
 
-import momp  # noqa: E402
-from momp import export  # noqa: E402
-from momp.lib.config_yaml import build_config  # noqa: E402
+import hcwf  # noqa: E402
+from hcwf import export  # noqa: E402
+from hcwf.lib.config_yaml import build_config  # noqa: E402
 
 LAT, LON = [6.0, 7.0, 8.0, 9.0], [38.0, 39.0, 40.0, 41.0]
 STEPS, MAX_LEAD, MEMBERS = 14, 10, 3
@@ -83,7 +83,7 @@ def world(tmp_path_factory):
     """The data and one written run of each kind over the polygons."""
     base = tmp_path_factory.mktemp("units_benchmark")
     _write_data(base)
-    runs = {name: momp.run(_raw(base, name, name == "ENS"), write=True, quiet=True) for name in ("DET", "ENS")}
+    runs = {name: hcwf.run(_raw(base, name, name == "ENS"), write=True, quiet=True) for name in ("DET", "ENS")}
     return base, runs
 
 
@@ -147,8 +147,8 @@ def test_ensemble_run_writes_the_spatial_products_on_units(world):
 
 def test_pair_tables_are_per_unit_cases():
     """Member onsets of units become (init, unit) cases with bins, and score like grid cases."""
-    from momp.stats.bins import create_forecast_observation_pairs_with_bins
-    from momp.stats.score import calculate_brier_score, calculate_rps
+    from hcwf.stats.bins import create_forecast_observation_pairs_with_bins
+    from hcwf.stats.score import calculate_brier_score, calculate_rps
 
     inits = pd.to_datetime(["2020-05-01", "2020-05-08"])
     rows = [(i, u, m, d) for i in inits for u, d in (("a", 3.0), ("b", np.nan)) for m in range(3)]
@@ -184,8 +184,8 @@ def test_onset_export_per_unit(world):
 def test_a_single_field_draws_cells_or_polygons():
     import matplotlib.pyplot as plt
 
-    from momp.graphics.field import draw_field, extent
-    from momp.spatial import EvaluationUnits
+    from hcwf.graphics.field import draw_field, extent
+    from hcwf.spatial import EvaluationUnits
 
     table = pd.DataFrame({"id": ["a", "b"], "lat": [0.5, 0.5], "lon": [0.5, 1.5]})
     units = EvaluationUnits(table, "polygon", geometry=[box(0, 0, 1, 1), box(1, 0, 2, 1)])
@@ -209,7 +209,7 @@ def test_figures_need_no_data_files_a_run_with_every_save_switch_off_writes_none
         raw = _raw(base, model, ensemble, **off, **plots)
         raw["output"]["data_dir"] = str(base / f"quiet_out_{model}")
         raw["output"]["figure_dir"] = str(base / f"quiet_fig_{model}")
-        run = momp.run(raw, write=True, quiet=True)
+        run = hcwf.run(raw, write=True, quiet=True)
         folder = Path(run.folder)
         data = [p.name for p in folder.rglob("*") if p.is_file() and not any(part.startswith(".") for part in
                 p.relative_to(folder).parts) and p.suffix in {".csv", ".nc", ".geojson", ".pkl", ".zarr", ".parquet"}]

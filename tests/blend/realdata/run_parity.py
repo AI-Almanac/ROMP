@@ -1,14 +1,14 @@
-"""Real-data end-to-end training parity: onset_blending vs momp on ai-almanac jobs.
+"""Real-data end-to-end training parity: onset_blending vs hcwf on ai-almanac jobs.
 
     python tests/blend/realdata/run_parity.py [eth|ind ...] [--work DIR] [--skip-train]
 
 For each job (a trained blend from ~/.local/share/ai-almanac-spark/jobs): rewrite the job's
-config.yml to the local datasets, train with onset_blending (its own venv) and with momp
-(`momp-run convert`, `momp-run -p`), time both (/usr/bin/time: wall s, peak RSS KB), compare every
+config.yml to the local datasets, train with onset_blending (its own venv) and with hcwf
+(`hcwf-run convert`, `hcwf-run -p`), time both (/usr/bin/time: wall s, peak RSS KB), compare every
 artifact (CSV, NetCDF, JSON, trained.blend members), forecast both trained blends on the 2024 live
-file of every model, compare the forecasts, and compare momp's artifacts with the job's stored
+file of every model, compare the forecasts, and compare hcwf's artifacts with the job's stored
 output. Skips (exit 0) when the data or either environment is missing. Run under pytest it skips
-unless MOMP_REALDATA=1 (it takes minutes and gigabytes).
+unless HCWF_REALDATA=1 (it takes minutes and gigabytes).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ JOBS = Path.home() / ".local/share/ai-almanac-spark/jobs"
 BLENDING_ENV = Path.home() / ".local/share/ai-almanac-spark/blending-env"
 OB_REPO = Path(os.environ.get("ONSET_BLENDING", "/home/hcwf/code/onset_blending"))
 OB_PY = OB_REPO / ".venv/bin/python"
-MOMP_RUN = Path(sys.executable).parent / "momp-run"
+HCWF_RUN = Path(sys.executable).parent / "hcwf-run"
 REGIONS = {"eth": ("273f5a57", "ethiopia"), "ind": ("8e9bfb80", "india")}
 TIME = ["/usr/bin/time", "-f", "%e s %M KB"]
 
@@ -179,11 +179,11 @@ def model_names(blend_cfg: Path):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("regions", nargs="*", default=list(REGIONS))
-    ap.add_argument("--work", default=os.environ.get("PARITY_WORK", "/tmp/momp_realdata_parity"))
+    ap.add_argument("--work", default=os.environ.get("PARITY_WORK", "/tmp/hcwf_realdata_parity"))
     ap.add_argument("--skip-train", action="store_true", help="reuse the outputs already in --work")
     args = ap.parse_args(argv)
-    if not OB_PY.exists() or not DATA.is_dir() or not MOMP_RUN.exists():
-        print("SKIP: onset_blending env, ai-almanac datasets or momp-run missing")
+    if not OB_PY.exists() or not DATA.is_dir() or not HCWF_RUN.exists():
+        print("SKIP: onset_blending env, ai-almanac datasets or hcwf-run missing")
         return 0
     report = []
     for key in args.regions:
@@ -206,46 +206,46 @@ def main(argv=None):
                 shutil.rmtree(d, ignore_errors=True)
             times["onset_blending train"] = run_timed(
                 [OB_PY, "-m", "onset_blending", "train", cfgp, "-o", ob_out], W / "ob.log", cwd="/tmp")
-            subprocess.run([MOMP_RUN, "convert", cfgp, "-o", run_yaml, "--force"], check=True, capture_output=True)
-            times["momp-run train"] = run_timed([MOMP_RUN, "-p", run_yaml, "--quiet"], W / "momp.log", cwd=W)
+            subprocess.run([HCWF_RUN, "convert", cfgp, "-o", run_yaml, "--force"], check=True, capture_output=True)
+            times["hcwf-run train"] = run_timed([HCWF_RUN, "-p", run_yaml, "--quiet"], W / "hcwf.log", cwd=W)
         blend_dirs = sorted((W / "runs").glob("*/blend"))
         if not blend_dirs:
-            raise SystemExit(f"{key}: no momp blend folder under {W / 'runs'}")
+            raise SystemExit(f"{key}: no hcwf blend folder under {W / 'runs'}")
         mo_out = blend_dirs[0]
-        # 1. onset_blending vs momp
-        compare_dirs(ob_out, mo_out, "ob-vs-momp", rows)
+        # 1. onset_blending vs hcwf
+        compare_dirs(ob_out, mo_out, "ob-vs-hcwf", rows)
         for sub in ("blend",):
             unpack(ob_out / "trained.blend", W / "ob_blend")
-            unpack(mo_out / "trained.blend", W / "momp_blend")
-        compare_dirs(W / "ob_blend", W / "momp_blend", "blend-members ob-vs-momp", rows)
-        # 2. momp vs the job's stored outputs
+            unpack(mo_out / "trained.blend", W / "hcwf_blend")
+        compare_dirs(W / "ob_blend", W / "hcwf_blend", "blend-members ob-vs-hcwf", rows)
+        # 2. hcwf vs the job's stored outputs
         jo = job / "output"
         for f in sorted(jo.iterdir()):
             if f.name == "trained.blend":
                 unpack(f, W / "job_blend")
                 continue
             g = mo_out / f.name
-            rows.append(("job-vs-momp", f.name, (cmp_file(f, g) or "identical") if g.exists() else "only in job"))
-        compare_dirs(W / "job_blend", W / "momp_blend", "blend-members job-vs-momp", rows)
+            rows.append(("job-vs-hcwf", f.name, (cmp_file(f, g) or "identical") if g.exists() else "only in job"))
+        compare_dirs(W / "job_blend", W / "hcwf_blend", "blend-members job-vs-hcwf", rows)
         # 3. forecasts on the 2024 live files
         names = model_names(cfgp)
         fargs = []
         for model, folder in names.items():
             fargs += ["--forecast", f"{model}={DATA / region / 'models' / folder / '2024.nc'}"]
-        for sub in ("forecast_ob", "forecast_momp"):
+        for sub in ("forecast_ob", "forecast_hcwf"):
             import shutil
             shutil.rmtree(W / sub, ignore_errors=True)
         times["onset_blending forecast"] = run_timed(
             [OB_PY, "-m", "onset_blending", "forecast", ob_out / "trained.blend", *fargs, "-o", W / "forecast_ob"],
             W / "ob_fc.log", cwd="/tmp")
-        times["momp-run forecast"] = run_timed(
-            [MOMP_RUN, "forecast", mo_out / "trained.blend", *fargs, "-o", W / "forecast_momp"], W / "momp_fc.log", cwd=W)
-        compare_dirs(W / "forecast_ob", W / "forecast_momp", "forecast ob-vs-momp", rows)
-        # forecasts of the job's own trained blend with momp (old blend files still load)
-        shutil.rmtree(W / "forecast_momp_job", ignore_errors=True)
-        subprocess.run([MOMP_RUN, "forecast", job / "output/trained.blend", *fargs, "-o", W / "forecast_momp_job"],
+        times["hcwf-run forecast"] = run_timed(
+            [HCWF_RUN, "forecast", mo_out / "trained.blend", *fargs, "-o", W / "forecast_hcwf"], W / "hcwf_fc.log", cwd=W)
+        compare_dirs(W / "forecast_ob", W / "forecast_hcwf", "forecast ob-vs-hcwf", rows)
+        # forecasts of the job's own trained blend with hcwf (old blend files still load)
+        shutil.rmtree(W / "forecast_hcwf_job", ignore_errors=True)
+        subprocess.run([HCWF_RUN, "forecast", job / "output/trained.blend", *fargs, "-o", W / "forecast_hcwf_job"],
                        check=True, capture_output=True, cwd=W)
-        compare_dirs(W / "forecast_ob", W / "forecast_momp_job", "forecast ob(new)-vs-momp(job blend)", rows)
+        compare_dirs(W / "forecast_ob", W / "forecast_hcwf_job", "forecast ob(new)-vs-hcwf(job blend)", rows)
         report.append((key, times, rows))
     for key, times, rows in report:
         print(f"\n=== {key}")
@@ -258,8 +258,8 @@ def main(argv=None):
 
 def test_realdata_parity():  # pragma: no cover - heavy
     import pytest
-    if os.environ.get("MOMP_REALDATA") != "1":
-        pytest.skip("set MOMP_REALDATA=1 to run the real-data parity driver")
+    if os.environ.get("HCWF_REALDATA") != "1":
+        pytest.skip("set HCWF_REALDATA=1 to run the real-data parity driver")
     main(["eth"])
 
 

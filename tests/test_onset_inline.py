@@ -3,8 +3,8 @@
 import pytest
 import yaml
 
-from momp.lib.onset_config import OnsetConfigError, onset_setup
-from momp.onset import definition as definition_mod
+from hcwf.lib.onset_config import OnsetConfigError, onset_setup
+from hcwf.onset import definition as definition_mod
 
 
 def _cfg(**values):

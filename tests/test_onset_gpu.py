@@ -6,9 +6,9 @@ import time
 import numpy as np
 import pytest
 
-from momp.onset import model as m
-from momp.onset import plan as plan_mod
-from momp.onset.backends import gpu, reference
+from hcwf.onset import model as m
+from hcwf.onset import plan as plan_mod
+from hcwf.onset.backends import gpu, reference
 from test_onset_oracle_agreement import random_data, random_definition, random_jobs
 
 if not gpu.available():

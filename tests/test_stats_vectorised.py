@@ -9,10 +9,10 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.metrics.error import create_spatial_far_mr_mae
-from momp.stats.benchmark import compute_onset_metrics_with_windows
-from momp.stats.bins import create_climatological_forecast_obs_pairs, create_forecast_observation_pairs_with_bins
-from momp.stats.climatology import compute_climatology_as_forecast
+from hcwf.metrics.error import create_spatial_far_mr_mae
+from hcwf.stats.benchmark import compute_onset_metrics_with_windows
+from hcwf.stats.bins import create_climatological_forecast_obs_pairs, create_forecast_observation_pairs_with_bins
+from hcwf.stats.climatology import compute_climatology_as_forecast
 from itertools import product
 from datetime import datetime, timedelta
 

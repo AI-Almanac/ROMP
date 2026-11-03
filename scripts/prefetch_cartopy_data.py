@@ -1,5 +1,5 @@
 """
-Pre-download all Natural Earth datasets used by ROMP at image build time.
+Pre-download all Natural Earth datasets used by HCWF at image build time.
 Run once during `docker build`; data lands in CARTOPY_DATA_DIR.
 """
 import cartopy.io.shapereader as shpreader
@@ -9,7 +9,7 @@ matplotlib.use("Agg")  # headless — no display needed
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 
-print("Prefetching Natural Earth data for ROMP...")
+print("Prefetching Natural Earth data for HCWF...")
 
 # 1. 10m admin_0_countries — used by get_shp() / shp_mask() / shp_outline()
 print("  -> 10m cultural/admin_0_countries")
@@ -30,7 +30,7 @@ shpreader.natural_earth(resolution='50m', category='physical', name='coastline')
 print("  -> 50m cultural/admin_0_boundary_lines_land")
 shpreader.natural_earth(resolution='50m', category='cultural', name='admin_0_boundary_lines_land')
 
-# 4b. Region masks (momp.utils.mask: `mask.land`, `mask.country`) read land and admin_0_countries at the
+# 4b. Region masks (hcwf.utils.mask: `mask.land`, `mask.country`) read land and admin_0_countries at the
 #     resolution `mask.resolution` (default 50m), so fetch all three resolutions of both layers.
 for _res in ("10m", "50m", "110m"):
     for _category, _name in (("cultural", "admin_0_countries"), ("physical", "land")):
@@ -45,7 +45,7 @@ ax.add_feature(cfeature.COASTLINE)
 ax.add_feature(cfeature.BORDERS)
 plt.close(fig)
 
-# 5. regionmask natural_earth_v5_0_0 land masks — used by momp land/sea masking.
+# 5. regionmask natural_earth_v5_0_0 land masks — used by hcwf land/sea masking.
 #    Must be pre-cached at build time to avoid race conditions when parallel
 #    workers all try to download/extract the shapefile simultaneously at runtime.
 print("  -> regionmask natural_earth_v5_0_0 land_110")

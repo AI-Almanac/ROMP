@@ -3,8 +3,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from momp.lib import dataset_detect as detect
-from momp.utils import land_mask
+from hcwf.lib import dataset_detect as detect
+from hcwf.utils import land_mask
 
 
 
@@ -87,7 +87,7 @@ def test_land_mask_cached_and_identical():
 
 def test_disk_cache_hit_reads_no_data(tmp_path, monkeypatch):
     """A second resolution of unchanged files comes from the cache: same values, 'detected (cached)', no reads."""
-    monkeypatch.setenv("MOMP_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("HCWF_CACHE_DIR", str(tmp_path / "cache"))
     detect.clear_samples()
     folder = tmp_path / "fc"
     folder.mkdir()
@@ -106,6 +106,6 @@ def test_disk_cache_hit_reads_no_data(tmp_path, monkeypatch):
     # a changed file or key misses
     (folder / "2020.nc").touch()
     monkeypatch.undo()
-    monkeypatch.setenv("MOMP_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("HCWF_CACHE_DIR", str(tmp_path / "cache"))
     third = detect.resolve_entry({"path": str(folder)}, "forecast", detect_lead_label=False, lead_label_default=True)
     assert all(ln.how != "detected (cached)" for ln in third.lines)

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from momp.onset import ingest
+from hcwf.onset import ingest
 
 pytestmark = pytest.mark.skipif(ingest.numba is None, reason="needs numba")
 

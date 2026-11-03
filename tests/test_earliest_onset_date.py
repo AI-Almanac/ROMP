@@ -5,9 +5,9 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.lib.assertion import ROMPConfigError
-from momp.lib.loader import _rename_deprecated_keys
-from momp.stats.detect import (
+from hcwf.lib.assertion import HCWFConfigError
+from hcwf.lib.loader import _rename_deprecated_keys
+from hcwf.stats.detect import (
     compute_onset_for_all_members,
     compute_onset_for_deterministic_model,
     detect_observed_onset,
@@ -85,7 +85,7 @@ def test_old_mok_key_still_sets_the_filter():
 
 def test_setting_both_keys_is_an_error():
     """A config may not set both mok and earliest_onset_date."""
-    with pytest.raises(ROMPConfigError):
+    with pytest.raises(HCWFConfigError):
         _rename_deprecated_keys({"mok": (6, 2), "earliest_onset_date": (6, 2)})
 
 

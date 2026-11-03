@@ -6,9 +6,9 @@ import time
 import numpy as np
 import pytest
 
-from momp.onset import model as m
-from momp.onset import plan as plan_mod
-from momp.onset.backends import numba_cpu, reference
+from hcwf.onset import model as m
+from hcwf.onset import plan as plan_mod
+from hcwf.onset.backends import numba_cpu, reference
 from test_onset_oracle_agreement import random_definition
 from test_onset_stitched_agreement import poison_after_split, random_stitched_case
 
@@ -198,7 +198,7 @@ def _variants_by_rows(cell, amount):
 
 def test_variants_int64_key_equals_unique_rows():
     """_variants gives the same cells, amounts and inverse (and dtypes) as np.unique over rows, key or fallback route."""
-    from momp.onset.backends import numba_cpu
+    from hcwf.onset.backends import numba_cpu
 
     rng = np.random.default_rng(5)
     cases = [(rng.integers(0, 50, 5000), rng.integers(-30, 400, 5000)),         # many repeats

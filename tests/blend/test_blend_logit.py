@@ -1,4 +1,4 @@
-"""momp.blend.logit: FittedModel fits, converts and predicts as 3_fit_final_model.py and apply_blend_model.py did, and
+"""hcwf.blend.logit: FittedModel fits, converts and predicts as 3_fit_final_model.py and apply_blend_model.py did, and
 the cross-validations give the legacy ones' numbers to the last bit (oracle: onset_blending@1e6d696, tests/blend/_oracle)."""
 
 import dataclasses
@@ -13,8 +13,8 @@ import patsy
 import pytest
 from sklearn.preprocessing import StandardScaler
 
-from momp.blend import design, logit
-from momp.blend.logit import FittedModel
+from hcwf.blend import design, logit
+from hcwf.blend.logit import FittedModel
 from tests.blend._oracle import blend_evaluation_utils as legacy
 from tests.blend._samples import BINS, FrameSamples, weekly_table
 

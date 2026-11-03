@@ -1,10 +1,10 @@
-"""momp.blend.predictions: probabilities with their samples' keys, to and from the legacy cv table and NetCDF."""
+"""hcwf.blend.predictions: probabilities with their samples' keys, to and from the legacy cv table and NetCDF."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from momp.blend.predictions import Predictions, outcome_codes, outcome_series
+from hcwf.blend.predictions import Predictions, outcome_codes, outcome_series
 from tests.blend._samples import FrameSamples
 
 LABELS = ["week1", "week2", "later"]

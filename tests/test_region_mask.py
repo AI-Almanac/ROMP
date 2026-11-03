@@ -8,10 +8,10 @@ import pytest
 import xarray as xr
 from shapely.geometry import box, mapping
 
-from momp.lib.config_schema import ConfigSchemaError
-from momp.lib.config_yaml import build_config
-from momp.utils import mask as mask_mod
-from momp.utils.mask import MaskError, MaskSpec, align_raster_mask, build_mask, rasterise
+from hcwf.lib.config_schema import ConfigSchemaError
+from hcwf.lib.config_yaml import build_config
+from hcwf.utils import mask as mask_mod
+from hcwf.utils.mask import MaskError, MaskSpec, align_raster_mask, build_mask, rasterise
 
 LAT = np.array([0.5, 1.5, 2.5, 3.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5])
@@ -386,7 +386,7 @@ def mask_errors(root, mask):
 
 def test_mask_section_is_validated_with_help(data_dirs):
     """The mask section accepts the documented keys; mistakes name the key and suggest."""
-    from momp.lib.config_schema import describe_mask_schema, describe_schema
+    from hcwf.lib.config_schema import describe_mask_schema, describe_schema
 
     flat = build_config(minimal(data_dirs, mask={"land": True, "country": "Ethiopia",
                                       "condition": {"file": "/d.nc", "variable": "elevation", "above": 1500}}))
@@ -411,7 +411,7 @@ def test_mask_and_nc_mask_cannot_be_combined(data_dirs):
 
 def test_config_object_and_yaml_roundtrip(tmp_path):
     """Config(mask=Mask(...)) writes the mask section to YAML and reads it back."""
-    from momp.config import Config, Mask
+    from hcwf.config import Config, Mask
 
     cfg = Config(region="Ethiopia", mask=Mask(country="Ethiopia", condition={"file": "/d.nc", "variable": "e",
                                                                               "above": 1500}))
@@ -423,7 +423,7 @@ def test_config_object_and_yaml_roundtrip(tmp_path):
 
 def test_relative_mask_paths_are_made_absolute(tmp_path, monkeypatch):
     """The loader resolves mask.file and mask.condition.file like nc_mask."""
-    from momp.lib import loader
+    from hcwf.lib import loader
 
     monkeypatch.setattr(loader, "set_dir", lambda p: tmp_path / p)
     dic = {"work_dir": ".", "pkg_dir": ".", "mask": {"file": "m.nc", "condition": {"file": "d.nc", "above": 1}}}
@@ -435,8 +435,8 @@ def test_relative_mask_paths_are_made_absolute(tmp_path, monkeypatch):
 
 def test_legacy_nc_mask_path_is_unchanged(tmp_path):
     """Without `mask`, region_select does what it did: box, nc_mask, land and country masks, byte for byte."""
-    from momp.utils.land_mask import apply_nc_mask, mask_land, shp_mask
-    from momp.utils.region import coords_fmt, region_select
+    from hcwf.utils.land_mask import apply_nc_mask, mask_land, shp_mask
+    from hcwf.utils.region import coords_fmt, region_select
 
     lat, lon = np.arange(6.5, 35.6, 2.0), np.arange(68.0, 91.5, 2.0)
     rng = np.random.default_rng(0)
@@ -459,7 +459,7 @@ def test_legacy_nc_mask_path_is_unchanged(tmp_path):
 
 def test_region_select_with_mask_replaces_the_implicit_masks_and_rejects_nc_mask(tmp_path):
     """With `mask` only the mask limits the cells; with both mask and nc_mask the run stops."""
-    from momp.utils.region import region_select
+    from hcwf.utils.region import region_select
 
     lat, lon = np.arange(6.5, 35.6, 2.0), np.arange(68.0, 91.5, 2.0)
     ds = xr.Dataset({"rain": (("time", "lat", "lon"), np.ones((2, lat.size, lon.size)))},

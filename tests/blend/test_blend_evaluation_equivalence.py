@@ -12,8 +12,8 @@ from _blend_configs import blend_config, recipe_of
 from scipy.special import expit
 from sklearn.linear_model import LogisticRegression
 
-from momp.blend import calibration
-from momp.blend.evaluation import evaluate
+from hcwf.blend import calibration
+from hcwf.blend.evaluation import evaluate
 
 BINS = ["week1", "week2", "later"]
 

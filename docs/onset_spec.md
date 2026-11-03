@@ -1,14 +1,14 @@
-# Onset component specification (`momp.onset`)
+# Onset component specification (`hcwf.onset`)
 
 A precipitation-only onset component. It turns a published onset definition
 into a short readable YAML file, and runs that file identically on
 observations and on model forecasts. This document is the contract: the
 YAML grammar, the meaning of every term, the exact detection semantics, and
-what each module and backend must do. `momp/onset/model.py` holds the
+what each module and backend must do. `hcwf/onset/model.py` holds the
 normalized types these sections refer to.
 
 Out of scope here: non-precipitation variables, predicting onset, and skill
-scoring (ROMP's metrics consume this component's results).
+scoring (HCWF's metrics consume this component's results).
 
 ## 1. Glossary
 
@@ -38,7 +38,7 @@ Every search returns an onset day (or none) and one status (`model.Status`, int8
 |---|---|---|
 | 0 | `ONSET` | Onset was found, and every earlier candidate in the window was ruled out. |
 | 1 | `NOT_FOUND` | Every candidate in the window was ruled out (an empty window gives this too). |
-| 2 | `CENSORED` | An earlier candidate could not be decided because it needs days past the data end, e.g. the forecast horizon. No onset day is reported. ROMP never produces it: it only searches leads whose whole rule fits in the forecast (docs/onset_in_romp.md). |
+| 2 | `CENSORED` | An earlier candidate could not be decided because it needs days past the data end, e.g. the forecast horizon. No onset day is reported. HCWF never produces it: it only searches leads whose whole rule fits in the forecast (docs/onset_in_hcwf.md). |
 | 3 | `PRIOR` | Onset had already happened before the search window opened. Only the forecast layer sets this, for example for inits after the observed onset. |
 | 4 | `INSUFFICIENT_DATA` | An earlier candidate could not be decided because it needs days with missing rainfall, or the cell has no threshold. No onset day is reported. |
 
@@ -268,7 +268,7 @@ same as comparing against T. Cells whose threshold is NaN get
 * an earlier search start never gives a later onset;
 * the reference, numba and GPU backends agree exactly.
 
-## 5. Ingestion contract (`momp.onset.ingest`)
+## 5. Ingestion contract (`hcwf.onset.ingest`)
 
 `ingest(da, *, day_boundary, units=None, source="") -> DailyRain`
 
@@ -299,7 +299,7 @@ init_dim=None, lead_dim=None, member_dim=None) -> ForecastRain`
 * The dims become `init_time`, optional `member`, then spatial dims, then
   `lead` last. Lead k (1-based) is the k-th 24 h after the init.
 * `lead_label` is required: `"start"` labels lead k with the date
-  init + k - 1, and `"end"` labels it init + k (ROMP's historical choice).
+  init + k - 1, and `"end"` labels it init + k (HCWF's historical choice).
 * Accumulation (`accumulation="auto"|"daily"|"since_init"`, default auto):
   * `daily`: each step is a per-interval amount. 24 h steps are the daily
     totals; shorter steps (1, 3, 6, 12 h, any step dividing 24 h, all on a
@@ -393,7 +393,7 @@ detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
 * `regional(rain, mask, weights="cos_lat"|"equal")` area-averages the cells
   in `mask` into one series before detection.
 
-## 7. Climatology (`momp.onset.climatology`)
+## 7. Climatology (`hcwf.onset.climatology`)
 
 * `compute_thresholds(definition, rain: DailyRain, years=(y0, y1)) ->
   dict[str, xr.DataArray]` computes per-cell thresholds in mm.
@@ -413,7 +413,7 @@ detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
   gives the median onset day of year per cell and season, from the observed
   detection.
 
-### 7.1 Conditional climatology (`momp.onset.climatology_kde`)
+### 7.1 Conditional climatology (`hcwf.onset.climatology_kde`)
 
 The reference forecast `ref_model = "conditional_climatology"` is the
 probability that onset falls on lead k given no onset by the issue date,
@@ -425,15 +425,15 @@ keeping its sum; a cell with fewer than 10 onsets has no forecast.
 `conditional_probabilities(onset_days_by_cell, issue_days, horizon, *,
 cv_years=None)` returns (cell, [year,] issue, lead) for leads 1..horizon;
 `unconditional_probabilities` adds lead 0 (onset already happened). With
-`cv_years` (ROMP: `climatology_cv = "leave_one_year_out"`) each test year's KDE
-is refitted without its own onset. ROMP trains on the observed onsets of
+`cv_years` (HCWF: `climatology_cv = "leave_one_year_out"`) each test year's KDE
+is refitted without its own onset. HCWF trains on the observed onsets of
 `start_year_clim..end_year_clim` (the evaluation's own detection), with days
 counted from 1 January and no leap-day shift. Probabilistic pairs hold the
 bin probabilities (Before is zero when the bins start at lead 1) with infinite
 member counts, so the fair corrections vanish; the deterministic forecast is
 the first lead whose conditional CDF reaches 0.5 within `max_forecast_day`.
 
-## 8. Temporal alignment (`momp.onset.alignment`)
+## 8. Temporal alignment (`hcwf.onset.alignment`)
 
 Datasets that use different day boundaries or lead labels are shifted
 against each other, often by exactly one day.
@@ -456,7 +456,7 @@ against each other, often by exactly one day.
   verdicts from prepared sample arrays: the forecast is aligned once against a
   stacked (lag, ...) view of the observed days and every lag and lead is
   correlated in one vectorised step.
-* `momp.lib.align_sample` is the fast check behind `momp-run --check
+* `hcwf.lib.align_sample` is the fast check behind `hcwf-run --check
   --alignment` and the lead-label detection of zarr datasets. It reads a
   deterministic sample once (up to 40 inits spread over the evaluated period,
   up to about 3000 cells on a regular subgrid of the shared land cells, leads
@@ -486,7 +486,7 @@ against each other, often by exactly one day.
 
 ## 10. Registry
 
-`momp/onset/registry/*.yaml`. All entries are `status: draft`: wording and
+`hcwf/onset/registry/*.yaml`. All entries are `status: draft`: wording and
 golden station series are placeholders until checked against the sources.
 
 | id | Family | Summary |
@@ -505,7 +505,7 @@ golden station series are placeholders until checked against the sources.
 ## 11. Module layout
 
 ```
-momp/onset/
+hcwf/onset/
   model.py        shared types (written first; everything imports it)
   units.py        amount / duration / span / day-ref grammar
   definition.py   YAML -> model.Definition: validation, extends, hash, registry
@@ -519,15 +519,15 @@ momp/onset/
   engine.py       jobs from seasons and leads, detect_observed / detect_forecast, output, save
   calendar.py     date keys and season bounds
   regions.py      region registry (section 12); regions/*.yaml
-  legacy.py       old flat ROMP keys -> a Definition
+  legacy.py       old flat HCWF keys -> a Definition
   explain.py      trace_observed / trace_forecast and explain(): why a cell got its onset
   viz/            anatomy_plot, schematic, compare_definitions, forecast_vs_truth, drill_down
-  __main__.py     python -m momp.onset: list, describe, regions, check-alignment, explain, schematic
+  __main__.py     python -m hcwf.onset: list, describe, regions, check-alignment, explain, schematic
 ```
 
 ## 12. Regions and countries
 
-`momp/onset/regions/*.yaml`, loaded by `momp.onset.regions`. An entry says
+`hcwf/onset/regions/*.yaml`, loaded by `hcwf.onset.regions`. An entry says
 where definitions apply and which reference data an area uses. Unknown keys
 are errors.
 
@@ -602,7 +602,7 @@ support it. With the default observed climatology one amount applies per job,
 whether a window lies in the history, in the forecast, or across both.
 
 **Per-window thresholds.** With a model climatology, each verification window
-(ROMP's `verification_window_list`, after any lead-window shortening) gets its
+(HCWF's `verification_window_list`, after any lead-window shortening) gets its
 own threshold per cell, pooled from the model's forecast days at leads inside
 that window (same pooling over inits, members and `during` as above).
 `compute_thresholds_from_forecasts(..., windows=[(1, 15), (16, 30)])` returns

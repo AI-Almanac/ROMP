@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.onset import engine
-from momp.onset import model as m
+from hcwf.onset import engine
+from hcwf.onset import model as m
 
 ONSET, NOT_FOUND, CENSORED, PRIOR, INSUFFICIENT = (int(s) for s in m.Status)
 WET_1MM = m.Comparison("ge", m.Amount(tenths=10))

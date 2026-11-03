@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from momp.onset import model as m
+from hcwf.onset import model as m
 
 MISSING, HORIZON = 1, 2
 TRUE, FALSE, UNKNOWN = 1, 0, -1

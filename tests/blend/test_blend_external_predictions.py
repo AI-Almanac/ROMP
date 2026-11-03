@@ -1,4 +1,4 @@
-"""momp.blend.evaluation: external CV predictions load and score like an internal model's.
+"""hcwf.blend.evaluation: external CV predictions load and score like an internal model's.
 
 Ported from onset_blending's tests/test_external_predictions.py: the legacy scoring (oracle onset_blending@1e6d696,
 tests/blend/_oracle) of the same tables is the reference for the arrays path. An entry without a file is a recipe
@@ -12,9 +12,9 @@ import pandas as pd
 import pytest
 from _blend_configs import blend_config, dissemination_ids, recipe_of
 
-from momp.blend import evaluation
-from momp.blend.predictions import Predictions
-from momp.metrics import probabilistic as metrics
+from hcwf.blend import evaluation
+from hcwf.blend.predictions import Predictions
+from hcwf.metrics import probabilistic as metrics
 from tests.blend._oracle.blend_evaluation_utils import score_model_predictions
 from tests.blend._oracle.misc import interval_bins
 

@@ -1,7 +1,7 @@
 """TEST-ONLY ORACLE, copied verbatim from onset_blending@1e6d696 (onset_blending/core/onset_rule.py, OnsetRule.of removed).
 
-It is the reference the momp onset backends must reproduce exactly under the parity options.
-Do not import it from momp, and do not edit it: change the source and re-copy.
+It is the reference the hcwf onset backends must reproduce exactly under the parity options.
+Do not import it from hcwf, and do not edit it: change the source and re-copy.
 """
 
 

@@ -1,20 +1,20 @@
 """A live forecast must cover what the blend was trained on: the same units, accumulation, daily aggregation, grid
 spacing and issue hour, and at least the trained lead days, members and domain (more is trimmed).
 
-onset_blending's tests/test_forecast_signature.py, on `momp.lib.dataset_detect`'s one signature (built on the resolved
+onset_blending's tests/test_forecast_signature.py, on `hcwf.lib.dataset_detect`'s one signature (built on the resolved
 dataset entry); the reasons are the ones blending gave."""
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.lib.dataset_detect import forecast_signature, signature_differences
+from hcwf.lib.dataset_detect import forecast_signature, signature_differences
 
 @pytest.fixture(scope="module", autouse=True)
 def _detection_cache(tmp_path_factory):
-    """The dataset-detection cache of these tests is theirs (not the user's ~/.cache/momp)."""
+    """The dataset-detection cache of these tests is theirs (not the user's ~/.cache/hcwf)."""
     patch = pytest.MonkeyPatch()
-    patch.setenv("MOMP_CACHE_DIR", str(tmp_path_factory.mktemp("cache")))
+    patch.setenv("HCWF_CACHE_DIR", str(tmp_path_factory.mktemp("cache")))
     yield
     patch.undo()
 

@@ -8,10 +8,10 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from momp.lib.config_schema import ConfigSchemaError
-from momp.lib.config_yaml import build_config
-from momp.stats import parallel
-from momp.utils.workers import cores, ordered_prefetch, worker_count
+from hcwf.lib.config_schema import ConfigSchemaError
+from hcwf.lib.config_yaml import build_config
+from hcwf.stats import parallel
+from hcwf.utils.workers import cores, ordered_prefetch, worker_count
 from tests.test_config_schema import _raw, data  # noqa: F401 - the synthetic-data fixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,7 +77,7 @@ def test_map_years_parallel_equals_serial():
 
 def test_threaded_obs_reads_of_netcdf_are_serialised(tmp_path):
     """obs_years over many NetCDF files (parallel on) neither crashes nor reorders; a missing year is an error value."""
-    from momp.io.input import obs_years
+    from hcwf.io.input import obs_years
 
     folder = tmp_path / "obs"
     folder.mkdir()
@@ -109,7 +109,7 @@ def test_run_parallel_equals_serial(tmp_path):
                          for l in text.splitlines())
         cfg = tmp_path / f"{flag}.yaml"
         cfg.write_text(text)
-        subprocess.run([str(ROOT / ".venv/bin/momp-run"), "-p", str(cfg), "--quiet", "--overwrite"], check=True,
+        subprocess.run([str(ROOT / ".venv/bin/hcwf-run"), "-p", str(cfg), "--quiet", "--overwrite"], check=True,
                        cwd=BASELINE / "cwd", env={"MPLBACKEND": "Agg", "PATH": "/usr/bin:/bin"})
         outs[flag] = out
     files = sorted(p.name for p in outs["false"].glob("*.nc")) + sorted(p.name for p in outs["false"].glob("*.csv"))
@@ -125,14 +125,14 @@ def noisy_years(*, years, **kwargs):
 
     for year in years:
         warnings.warn(f"odd data {year}")
-        logging.getLogger("momp.test_worker").info("hello from %s", year)
+        logging.getLogger("hcwf.test_worker").info("hello from %s", year)
     return pd.DataFrame({"year": list(years)})
 
 
 @pytest.mark.parametrize("quiet", [False, True])
 def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, quiet):
     """A worker's warning and info record each appear once in run.log (with the year) and on the console as asked."""
-    from momp.utils import log as logs
+    from hcwf.utils import log as logs
 
     logfile = tmp_path / "run.log"
     with logs.session(logs.QUIET if quiet else logs.NORMAL, logfile):
@@ -141,15 +141,15 @@ def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, qu
     text = logfile.read_text()
     out = capsys.readouterr().out
     for year in (2001, 2002, 2003):   # every year runs in a worker and warns through the forwarded handlers
-        assert text.count(f"[year {year}] odd data {year}") == 1 and "[WARNING] momp.warnings" in text
-        assert text.count(f"[year {year}] hello from {year}") == 1 and "momp.test_worker" in text
+        assert text.count(f"[year {year}] odd data {year}") == 1 and "[WARNING] hcwf.warnings" in text
+        assert text.count(f"[year {year}] hello from {year}") == 1 and "hcwf.test_worker" in text
         assert out.count(f"warning: [year {year}] odd data {year}") == 1
         assert (f"[year {year}] hello from {year}" in out) == (not quiet)
 
 
 def test_legacy_threshold_reloaded_each_window_detects_once(monkeypatch):
     """Equal thresholds loaded afresh per window share onset tables; a different threshold does not."""
-    from momp.stats import benchmark
+    from hcwf.stats import benchmark
 
     calls = []
     monkeypatch.setattr(benchmark, "map_years", lambda *a, **k: calls.append(1) or [{}])

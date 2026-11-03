@@ -1,5 +1,5 @@
 """Datasets as a list of files, the one table of dimension names, units, and unit dimensions (the input parts of
-onset_blending's test_io.py, test_pipeline.py and test_cell_transforms.py, against ROMP's single reader)."""
+onset_blending's test_io.py, test_pipeline.py and test_cell_transforms.py, against HCWF's single reader)."""
 import datetime as dt
 import warnings
 
@@ -9,12 +9,12 @@ import pytest
 import xarray as xr
 
 from _inputs import LATS, LONS, write_adm3, write_forecast, write_observations
-from momp.io import input as io_input
-from momp.lib import dataset_detect as detect
-from momp.lib.dataset_schema import DatasetError, file_year, parse_dataset, parse_years, resolve_paths
-from momp.onset import ingest as ing
-from momp.utils import standard
-from momp.utils.standard import ROLE_ALIASES, dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim
+from hcwf.io import input as io_input
+from hcwf.lib import dataset_detect as detect
+from hcwf.lib.dataset_schema import DatasetError, file_year, parse_dataset, parse_years, resolve_paths
+from hcwf.onset import ingest as ing
+from hcwf.utils import standard
+from hcwf.utils.standard import ROLE_ALIASES, dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim
 
 BOUNDARY = "00 UTC, labelled by start"
 
@@ -24,7 +24,7 @@ BOUNDARY = "00 UTC, labelled by start"
 def test_the_year_of_a_file_is_the_first_19xx_or_20xx_in_its_name():
     assert file_year("/x/20200101.nc") == 2020 and file_year("/2012/ens_1999_v2013.nc") == 1999
     assert file_year("latest.nc") is None and file_year("era5_025deg.nc") is None
-    # ROMP's own pattern detection needs a non-digit on both sides, so it never saw a year in 20200101.nc
+    # HCWF's own pattern detection needs a non-digit on both sides, so it never saw a year in 20200101.nc
     assert detect.find_pattern(["20200101.nc"])[0] is None
 
 
@@ -120,7 +120,7 @@ def test_detection_reads_the_first_listed_file(tmp_path):
 # ---------------------------------------------------------------------------------- one table of dimension names
 
 def test_the_three_alias_tables_are_one():
-    from momp.lib import dataset_detect as dd
+    from hcwf.lib import dataset_detect as dd
 
     assert not any(hasattr(mod, name) for mod, name in [(ing, "_TIME_DIMS"), (ing, "_LAT_DIMS"), (ing, "_LON_DIMS"),
                                                         (ing, "_INIT_DIMS"), (ing, "_LEAD_DIMS"),

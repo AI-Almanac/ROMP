@@ -1,14 +1,14 @@
-"""momp.onset.viz.anatomy: the anatomy plot builds for every registry definition and follows the figure rules."""
+"""hcwf.onset.viz.anatomy: the anatomy plot builds for every registry definition and follows the figure rules."""
 import numpy as np
 import pytest
 from matplotlib.colors import to_hex
 
-from momp.onset import climatology, explain
-from momp.onset import definition as dfn
-from momp.onset import model as m
-from momp.onset.model import Status
-from momp.onset.viz import style
-from momp.onset.viz.anatomy import anatomy_plot
+from hcwf.onset import climatology, explain
+from hcwf.onset import definition as dfn
+from hcwf.onset import model as m
+from hcwf.onset.model import Status
+from hcwf.onset.viz import style
+from hcwf.onset.viz.anatomy import anatomy_plot
 from test_onset_engine import ANY_WET, definition, make_forecast, make_rain, season
 from test_onset_forecast_layer import JJAS, case, hist_with
 

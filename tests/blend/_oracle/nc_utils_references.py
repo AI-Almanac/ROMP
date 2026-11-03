@@ -1,6 +1,6 @@
 """TEST-ONLY ORACLE: functions copied unchanged from onset_blending@1e6d696 tests/_legacy/nc_utils.py
 (add_id_from_latlon, prep_thresholds_id, attach_thresholds_id, _by_distinct, attach_ref_onset), with only the imports
-changed to the oracle copies of spatial_id_utils and nc_utils_filters. Never import this from momp."""
+changed to the oracle copies of spatial_id_utils and nc_utils_filters. Never import this from hcwf."""
 import numpy as np
 import pandas as pd
 

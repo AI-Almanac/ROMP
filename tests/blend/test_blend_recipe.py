@@ -1,4 +1,4 @@
-"""The blend Recipe: the shipped blending configs translate, their ROMP-config half resolves to an OnsetSetup, and
+"""The blend Recipe: the shipped blending configs translate, their HCWF-config half resolves to an OnsetSetup, and
 the recipe's rules refuse what blending's BlendConfig.validate refused."""
 import dataclasses
 import glob
@@ -6,9 +6,9 @@ import glob
 import pytest
 
 from _recipes import ORACLE_SRC, blending_dict, partial
-from momp.blend import recipe as R
-from momp.lib.convert_specs import convert_blend
-from momp.stats.bins import LeadBins
+from hcwf.blend import recipe as R
+from hcwf.lib.convert_specs import convert_blend
+from hcwf.stats.bins import LeadBins
 
 CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
 

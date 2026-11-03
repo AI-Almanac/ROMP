@@ -1,8 +1,8 @@
-"""Small blending configs for the evaluation and training tests, as momp's recipe and the legacy oracle's spec.
+"""Small blending configs for the evaluation and training tests, as hcwf's recipe and the legacy oracle's spec.
 
 `blend_config` is onset_blending's tests/_configs.py (a BlendConfig whose models have a diff rain predictor and whose
-files are never read); `recipe_of` is the momp Recipe it converts to (tests/blend/_recipes.py); `legacy_spec` the legacy
-stage spec the oracle script reads. `dissemination_ids` reads a unit table as momp reads a dissemination list.
+files are never read); `recipe_of` is the hcwf Recipe it converts to (tests/blend/_recipes.py); `legacy_spec` the legacy
+stage spec the oracle script reads. `dissemination_ids` reads a unit table as hcwf reads a dissemination list.
 """
 import tempfile
 from pathlib import Path
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from _recipes import blending_config, oracle, recipe_of  # noqa: F401
 
-from momp.spatial.units import read_id_list
+from hcwf.spatial.units import read_id_list
 
 oracle()
 from tests.blend._oracle import specs  # noqa: E402  (needs the checkout on sys.path)
@@ -42,7 +42,7 @@ def legacy_spec(config) -> dict:
 
 
 def dissemination_ids(table: pd.DataFrame, id_col: str | None = None) -> np.ndarray:
-    """The ids of a unit table (as read from a CSV), the way momp reads a dissemination list."""
+    """The ids of a unit table (as read from a CSV), the way hcwf reads a dissemination list."""
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "cells.csv"
         table.to_csv(path, index=False)

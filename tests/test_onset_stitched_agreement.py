@@ -6,8 +6,8 @@ import importlib
 import numpy as np
 import pytest
 
-from momp.onset import model as m
-from momp.onset import plan as plan_mod
+from hcwf.onset import model as m
+from hcwf.onset import plan as plan_mod
 from onset_oracle import oracle_detect
 from test_onset_oracle_agreement import _available, random_definition
 
@@ -76,7 +76,7 @@ def test_stitched_detection_matches_the_oracle_on_the_concatenation(backend, uni
     """detect_stitched gives the oracle's day and status for the concatenated series, and never peeks past the split."""
     if not _available(backend):
         pytest.skip(f"backend {backend} not available")
-    module = importlib.import_module(f"momp.onset.backends.{backend}")
+    module = importlib.import_module(f"hcwf.onset.backends.{backend}")
     if not hasattr(module, "detect_stitched"):
         pytest.skip(f"backend {backend} has no detect_stitched yet")
     rng = np.random.default_rng(seed)

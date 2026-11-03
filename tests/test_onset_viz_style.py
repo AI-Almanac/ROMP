@@ -1,8 +1,8 @@
-"""momp.onset.viz.style: every status colour is legible (3:1) against the surface of its mode."""
+"""hcwf.onset.viz.style: every status colour is legible (3:1) against the surface of its mode."""
 import pytest
 
-from momp.onset.model import Status
-from momp.onset.viz import style
+from hcwf.onset.model import Status
+from hcwf.onset.viz import style
 
 
 def luminance(hex_colour: str) -> float:

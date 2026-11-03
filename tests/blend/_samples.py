@@ -1,5 +1,5 @@
 """TEST-ONLY: a weekly table as the `WeeklySamples` the blending methods read (the real one comes with the features
-step). Imports nothing of momp, so the differential script can use it with either package."""
+step). Imports nothing of hcwf, so the differential script can use it with either package."""
 
 import numpy as np
 import pandas as pd

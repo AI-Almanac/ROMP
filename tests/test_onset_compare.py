@@ -9,10 +9,10 @@ import xarray as xr
 
 matplotlib.use("Agg")
 
-from momp.onset import climatology, engine
-from momp.onset import definition as defn_mod
-from momp.onset import model as m
-from momp.onset.viz.compare import compare_definitions
+from hcwf.onset import climatology, engine
+from hcwf.onset import definition as defn_mod
+from hcwf.onset import model as m
+from hcwf.onset.viz.compare import compare_definitions
 
 WET = m.Comparison("ge", m.Amount(tenths=10))
 
