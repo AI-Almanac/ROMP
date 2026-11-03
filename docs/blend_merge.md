@@ -21,6 +21,15 @@ Overlap analyses (verdict per concept, file:line): scratchpad `overlap_io_domain
    YAML; existing `trained.blend` files still load and forecast. ai-almanac's output contract
    (docs/pipeline-redesign.md in onset_blending) is preserved.
 
+## Tolerance (user, 2026-11-03)
+
+Results only need to agree within a tolerance, with no procedural errors: floats (scores,
+probabilities, thresholds, coefficients) to a relative tolerance of about 1e-9; discrete
+results (onset days, statuses, counts, unit ids, scored cells) exactly; procedures (onset
+rule, horizon, missing handling, thresholds, CV folds, formulas) unchanged. Code that only
+reproduces onset_blending's last-bit rounding may be removed; regression and parity checks
+compare with this tolerance. This supersedes "byte-identical" and "bit-identical" below.
+
 ## Rules for every change
 
 - **One implementation per concept.** When a blending function has a ROMP counterpart, extend
