@@ -173,3 +173,29 @@ def test_an_external_prediction_needs_a_name_and_a_file():
         R.recipe_from_config({**BASE, "blend_external_predictions": [{"name": "x", "fle": "p.nc"}]})
     recipe = R.recipe_from_config({**BASE, "blend_external_predictions": [{"name": "x", "file": "p.nc", "method": "local"}]})
     assert recipe.evaluation.external_predictions == (R.ExternalPrediction("x", "p.nc", "local"),)
+
+
+def test_mme_weights_are_a_mapping_or_a_file_and_must_fit_the_sources(tmp_path):
+    sources = [{"name": "clim_raw"}, {"name": "m", "source": "forecast", "cal_variant": "fixed_cutoff"}]
+    cfg = {**BASE, "blend_mme": {"enabled": True, "sources": sources, "weights": {"clim_raw": 0.25, "m": 0.75}}}
+    assert R.recipe_from_config(cfg).evaluation.mme.weights == {"clim_raw": 0.25, "m": 0.75}
+    cfg["blend_mme"]["weights"] = "weights.csv"
+    assert R.recipe_from_config(cfg).evaluation.mme.weights == "weights.csv"
+    for bad, message in (({"clim_raw": 1.0}, "one weight for each source"), ({"clim_raw": 0.5, "m": 0.9}, "sum to 1")):
+        with pytest.raises(R.RecipeError, match=message):
+            R.recipe_from_config({**cfg, "blend_mme": {**cfg["blend_mme"], "weights": bad}})
+    with pytest.raises(R.RecipeError, match="cannot be 'always'"):
+        R.recipe_from_config({**cfg, "blend_mme": {**cfg["blend_mme"], "optimize": "always"}})
+    with pytest.raises(R.RecipeError, match="blend.mme.weights"):
+        R.recipe_from_config({**cfg, "blend_mme": {"weights": [0.5, 0.5]}})
+    with pytest.raises(R.RecipeError, match="blend.mme.weights.m"):
+        R.recipe_from_config({**cfg, "blend_mme": {"weights": {"m": "heavy"}}})
+    # the loader anchors a relative weights file at the config file
+    from momp.lib.loader import _anchor_mme_weights
+
+    dic = {"blend_mme": {"weights": "w/weights.csv"}, "config_file": str(tmp_path / "run.yaml")}
+    _anchor_mme_weights(dic)
+    assert dic["blend_mme"]["weights"] == str(tmp_path / "w" / "weights.csv")
+    inline = {"blend_mme": {"weights": {"a": 1.0}}, "config_file": str(tmp_path / "run.yaml")}
+    _anchor_mme_weights(inline)
+    assert inline["blend_mme"]["weights"] == {"a": 1.0}

@@ -95,6 +95,7 @@ def _resolve_paths(dic):
                 dic[key] = set_dir(dic[key])
 
     _anchor_units_paths(dic)
+    _anchor_mme_weights(dic)
 
     if isinstance(dic.get("mask"), dict):
         mask = dict(dic["mask"])
@@ -135,6 +136,17 @@ def _anchor_units_paths(dic):
             dic[key] = {source: anchor(path) for source, path in value.items()}
         elif value is not None:
             dic[key] = anchor(value)
+
+
+def _anchor_mme_weights(dic):
+    """Make the relative path of `blend.mme.weights` (a weights file; a mapping is inline weights) start at the folder
+    of the config file, the working directory when the config is not from a file."""
+    mme = dic.get("blend_mme")
+    if not isinstance(mme, dict) or not isinstance(mme.get("weights"), (str, Path)):
+        return
+    base = Path(str(dic["config_file"])).expanduser().resolve().parent if dic.get("config_file") else Path.cwd()
+    path = Path(str(mme["weights"])).expanduser()
+    dic["blend_mme"] = {**mme, "weights": str(path if path.is_absolute() else (base / path).resolve())}
 
 
 def _resolve_threshold_ref(ref):

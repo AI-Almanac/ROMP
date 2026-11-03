@@ -160,6 +160,10 @@ _BLEND_KEYS = {
     "outputs": {"dir": None, "intermediates": None, "pickles": None},
 }
 
+_WEIGHTS_NOTE = ("evaluation.mme.weights_year_tag {tag!r}: saved MME weights are no longer found by guessing a results folder; "
+                 "give them with blend.mme.weights (a mapping of source name to weight, or the path of the "
+                 "mme_optimized_weights_*.csv a run wrote)")
+
 _RULE_DEFAULTS = {"window": 5, "trigger_rule": "all_days_wet", "min_wet_days": None, "wet_day_min_mm": 1.0,
                   "wet_day_comparison": "gte", "threshold_comparison": "gt", "follow_days": 21,
                   "followup_anchor": "after_trigger"}
@@ -592,6 +596,9 @@ class _Convert:
                     "external_predictions", "random_forest"):
             if evaluation.get(key) is not None:
                 out[key] = evaluation[key]
+        if isinstance(out.get("mme"), dict) and "weights_year_tag" in out["mme"]:
+            out["mme"] = {k: v for k, v in out["mme"].items() if k != "weights_year_tag"}
+            self.note(_WEIGHTS_NOTE.format(tag=evaluation["mme"]["weights_year_tag"]))
         for item in out.get("forecasts") or []:
             if isinstance(item, dict) and "model" not in item:
                 self.problems.append("evaluation.forecasts[].model: required")
@@ -1683,12 +1690,13 @@ class _Converter:
                 continue
             sources.append({"name": model.get("name"), "source": model.get("source"),
                             "cal_variant": model.get("cal_variant", "base")})
+        if cv.get("mme.weights_year_tag"):
+            self.notes.append(_WEIGHTS_NOTE.format(tag=cv.get("mme.weights_year_tag")))
         return _without_none({
             "enabled": bool(cv.get("mme.enabled", False)),
             "variants": list(cv.get("mme.variants", ["fixed_cutoff"])),
             "sources": sources,
             "optimize": "auto" if cv.get("mme.optimize_if_holdout_is_full_2000_2024", True) else "never",
-            "weights_year_tag": cv.get("mme.weights_year_tag"),
         })
 
     # -- assembly ------------------------------------------------------------

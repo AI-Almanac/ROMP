@@ -5,6 +5,7 @@ wrote has its counterpart, with the same content (CV predictions and coefficient
 Ported from onset_blending's tests/test_evaluation.py (oracle onset_blending@1e6d696, tests/blend/_oracle)."""
 
 import json
+import dataclasses
 import os
 import pickle
 import re
@@ -607,12 +608,11 @@ def test_an_mme_of_two_sources_is_the_scripts_with_its_merge_fixed():
     )
 
 
-def test_mme_weights_are_read_unless_the_holdouts_are_2000_2024(tmp_path):
+def test_given_mme_weights_replace_optimising_and_come_from_a_mapping_or_a_file(tmp_path):
     weekly = weekly_table(range(2016, 2024))
+    sources = [{"name": "clim_raw"}, {"name": "fc", "source": "forecast", "cal_variant": "fixed_cutoff"}]
     always = config(range(2016, 2024), [2021, 2022], [2023], [], mme_sources=MME_SOURCES,
-                    mme={"enabled": True, "optimize": "always",
-                         "sources": [{"name": "clim_raw"},
-                                     {"name": "fc", "source": "forecast", "cal_variant": "fixed_cutoff"}]})
+                    mme={"enabled": True, "optimize": "always", "sources": sources})
     auto = config(range(2016, 2024), [2021, 2022], [2023], [], mme_sources=MME_SOURCES)
     mme_rows = lambda e: e.cell_metrics[e.cell_metrics["cv_method"] == "mme"].reset_index(drop=True)
 
@@ -622,12 +622,24 @@ def test_mme_weights_are_read_unless_the_holdouts_are_2000_2024(tmp_path):
         optimised.save(tmp_path)
         (stem,) = optimised.mme_weights
         assert stem == "mme_optimized_weights_fixed_cutoff_clim_raw_fixed_cutoff_2021_2023"
-        read = evaluate(weekly, auto, dissemination_table(weekly), results_dir=tmp_path)
-        skipped = evaluate(weekly, auto, dissemination_table(weekly), results_dir=tmp_path / "elsewhere")
+        saved = optimised.mme_weights[stem]
+        mapping = {"clim_raw": float(saved["w_clim_raw"].iloc[0]), "fc": float(saved["w_fc"].iloc[0])}
+        skipped = evaluate(weekly, auto, dissemination_table(weekly))   # no weights, holdouts not 2000-2024
+        ids = dissemination_ids(dissemination_table(weekly))
 
-    assert read.mme_weights == {}
-    pd.testing.assert_frame_equal(mme_rows(read), mme_rows(optimised), check_exact=True)
+        def given(weights):
+            recipe = recipe_of(auto)
+            mme_settings = dataclasses.replace(recipe.evaluation.mme, weights=weights)
+            return momp_evaluate(weekly, dataclasses.replace(recipe, evaluation=dataclasses.replace(
+                recipe.evaluation, mme=mme_settings)), ids)
+
+        by_mapping = given(mapping)
+        by_file = given(str(tmp_path / f"{stem}.csv"))
+
     assert mme_rows(skipped).empty
+    for got in (by_mapping, by_file):
+        assert got.mme_weights == {}
+        pd.testing.assert_frame_equal(mme_rows(got), mme_rows(optimised), check_exact=False, rtol=1e-9)
 
 
 def test_global_cv_in_worker_processes_saves_the_same_files(tmp_path):

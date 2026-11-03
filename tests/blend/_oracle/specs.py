@@ -275,7 +275,6 @@ def cv_spec(config: BlendConfig) -> dict:
                 {"name": s.name, "source": s.source, "cal_variant": s.cal_variant} for s in mme.sources
             ],
             "optimize_if_holdout_is_full_2000_2024": mme.optimize != "never",
-            **({"weights_year_tag": mme.weights_year_tag} if mme.weights_year_tag else {}),
         },
         "extras": {
             "clim_logits": clim_logits,

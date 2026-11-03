@@ -338,3 +338,11 @@ def test_momp_run_convert_specs_writes_the_run_of_a_spec_set(tmp_path, capsys):
     with pytest.raises(SystemExit):
         main(["convert", "--specs", "--name", "x", "-o", str(tmp_path / "x.yaml")])
     assert "--specs needs" in capsys.readouterr().err
+
+
+def test_saved_mme_weights_are_an_explicit_input_after_conversion(tmp_path):
+    data = minimal(tmp_path)
+    data["evaluation"] = {**data["evaluation"], "mme": {"enabled": True, "optimize": "never", "weights_year_tag": "_2000_2024"}}
+    conversion = C.convert_blend(data)
+    assert "weights_year_tag" not in conversion.mapping["blend"]["mme"]
+    assert any("blend.mme.weights" in note and "_2000_2024" in note for note in conversion.notes)

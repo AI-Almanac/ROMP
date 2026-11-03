@@ -14,6 +14,7 @@ probability variants, labels, artifact tags) are computed here once.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Literal
@@ -251,7 +252,9 @@ class Mme:
     variants: tuple[str, ...] = ("fixed_cutoff",)
     sources: tuple[MmeSource, ...] = ()
     optimize: Literal["auto", "always", "never"] = "auto"
-    weights_year_tag: str | None = None
+    weights: dict[str, float] | str | None = None
+    """Fixed weights instead of optimised ones: a mapping of source name to weight (non-negative, summing to 1), or
+    the path of a weights CSV an earlier run wrote (columns objective, w_<source>..., rps; the "rps" row is used)."""
 
 
 @dataclass(frozen=True)
@@ -584,6 +587,17 @@ class Recipe:
             if len(mme.sources) < 2:
                 problems.append("evaluation.mme: an ensemble needs at least two sources")
             baselines = set(self.climatology_baseline_names())
+            if mme.weights is not None:
+                names = [source.name for source in mme.sources]
+                if mme.optimize == "always":
+                    problems.append("evaluation.mme.weights: given weights are used as they are, so optimize cannot "
+                                    "be 'always'")
+                if isinstance(mme.weights, dict):
+                    if sorted(mme.weights) != sorted(names):
+                        problems.append(f"evaluation.mme.weights: expected one weight for each source "
+                                        f"({', '.join(names)}), got {', '.join(map(str, mme.weights)) or 'none'}")
+                    elif any(w is None or w < 0 for w in mme.weights.values()) or abs(sum(mme.weights.values()) - 1) > 1e-6:
+                        problems.append("evaluation.mme.weights: weights must be non-negative and sum to 1")
             for index, source in enumerate(mme.sources):
                 if source.source == "clim" and source.name not in baselines:
                     problems.append(f"evaluation.mme.sources[{index}]: {source.name!r} is not a scored climatology "
@@ -880,7 +894,7 @@ def _evaluation(cfg: dict, bins_days: int, problems: list[str]) -> Evaluation:
                 _choice(item["variant"], VARIANTS, f"{at}.variant", problems)
             scoring.append(ForecastScoring(**item))
         out["forecasts"] = tuple(scoring)
-    mme = _strict(cfg.get("blend_mme"), ("enabled", "variants", "sources", "optimize", "weights_year_tag"), "blend.mme",
+    mme = _strict(cfg.get("blend_mme"), ("enabled", "variants", "sources", "optimize", "weights"), "blend.mme",
                   problems)
     sources = []
     for index, item in enumerate(_list(mme.get("sources"), "blend.mme.sources", problems)):
@@ -896,6 +910,16 @@ def _evaluation(cfg: dict, bins_days: int, problems: list[str]) -> Evaluation:
         sources.append(MmeSource(**item))
     if "optimize" in mme:
         _choice(mme["optimize"], ("auto", "always", "never"), "blend.mme.optimize", problems)
+    weights = mme.get("weights")
+    if isinstance(weights, dict):
+        weights = {str(k): _check_type(v, "number", f"blend.mme.weights.{k}", problems) for k, v in weights.items()}
+    elif weights is not None and not isinstance(weights, (str, os.PathLike)):
+        problems.append(f"blend.mme.weights: expected a mapping of source name to weight or the path of a weights "
+                        f"file, got {weights!r}")
+        weights = None
+    elif weights is not None:
+        weights = str(weights)
+    mme = {**mme, "weights": weights} if weights is not None else {k: v for k, v in mme.items() if k != "weights"}
     out["mme"] = Mme(**{**{k: v for k, v in mme.items() if k not in ("sources", "variants")},
                         "sources": tuple(sources),
                         **({"variants": tuple(mme["variants"])} if "variants" in mme else {})})

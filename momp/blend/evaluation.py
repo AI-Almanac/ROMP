@@ -225,8 +225,7 @@ def evaluate(
 
     `dissemination` is the dissemination unit ids (default: every unit; see `dissemination_ids`). Up to `workers`
     processes fit the global CV folds, as many as `budget_bytes` holds, and the Platt calibration; results do not
-    depend on either. `results_dir` is where relative `external_predictions` files and saved MME weights are read
-    from. `final` also fits the final formula (and the forest) on every training year, into `final_model`
+    depend on either. `results_dir` is where relative `external_predictions` files are read from. `final` also fits the final formula (and the forest) on every training year, into `final_model`
     (`final_forest`): the formula alongside the global CV folds, on their design matrix. The random forest needs
     `forest_inputs` (features.daily_inputs, for these weekly samples).
 
@@ -267,7 +266,7 @@ def evaluate(
         scores.add(preds, external.name, external.method, yearly=True)
     clim_preds = _climatology_baselines(ctx, scores)
     calibrated_preds = _forecast_baselines(ctx, result, scores)
-    _mme(ctx, clim_preds, calibrated_preds, results_dir, result, scores)
+    _mme(ctx, clim_preds, calibrated_preds, result, scores)
 
     if scores.cells:
         result.cell_metrics = pd.concat(scores.cells, ignore_index=True)
@@ -707,18 +706,18 @@ def _calibrated(ctx: _Context, base: str, name: str, variant: str, *, export: bo
 # ---------------------------------------------------------------------------
 
 
-def _mme(ctx: _Context, clim_preds, calibrated_preds, results_dir, result: Evaluation, scores: _Scores) -> None:
-    """The MME of climatology and calibrated forecasts, with RPS-optimised weights, or saved ones (see
-    recipe.Mme.optimize)."""
+def _mme(ctx: _Context, clim_preds, calibrated_preds, result: Evaluation, scores: _Scores) -> None:
+    """The MME of climatology and calibrated forecasts, with RPS-optimised weights, or the given ones (see
+    recipe.Mme.optimize and Mme.weights)."""
     settings = ctx.recipe.evaluation.mme
     if not (settings.enabled and clim_preds):
         return
     run = ctx.run
     names = [source.name for source in settings.sources]
     weight_cols = [f"w_{name}" for name in names]
-    optimise = settings.optimize == "always" or (
+    optimise = settings.weights is None and (settings.optimize == "always" or (
         settings.optimize == "auto" and sorted(run.holdout_years) == list(range(2000, 2025))
-    )
+    ))
     clim_model = next((s.name for s in settings.sources if s.source == "clim"), names[0])
     for variant in settings.variants:
         log.info("\n=== MME optimization (RPS-only) variant: %s ===", variant)
@@ -743,12 +742,12 @@ def _mme(ctx: _Context, clim_preds, calibrated_preds, results_dir, result: Evalu
                 [{"objective": "rps", **dict(zip(weight_cols, weights)), "rps": rps}]
             )
         else:
-            log.info("  Reading saved MME weights...")
-            saved = _read_mme_weights(results_dir, f"{stem}{settings.weights_year_tag or run.year_tag}.csv")
-            if saved is None:
+            weights = _given_mme_weights(settings.weights, names)
+            if weights is None:
+                warnings.warn("MME weights were not given (blend.mme.weights) and the holdout years are not "
+                              "2000-2024, so they are not optimised. Skipping.")
                 continue
-            row = saved[saved["objective"] == "rps"].iloc[0]
-            weights = np.array([row[w] for w in weight_cols])
+            log.info("  Using the given MME weights...")
             rps = mme.mixed_rps(weights, P_allowed, Y_allowed)
 
         log.info("  MME weights: %s", dict(zip(names, np.round(weights, 4))))
@@ -778,13 +777,16 @@ def _mme_sources(sources, clim_preds, calibrated_preds) -> list[Predictions] | N
     return out
 
 
-def _read_mme_weights(results_dir, name) -> pd.DataFrame | None:
-    """Saved MME weights (CSV) from results_dir; None, with a warning, if absent."""
-    if results_dir is None:
-        warnings.warn(f"MME weights file not found: {name} (no results_dir given). Skipping.")
+def _given_mme_weights(given, names) -> np.ndarray | None:
+    """The weights in `blend.mme.weights` as an array in source order: a mapping of source name to weight, or the
+    "rps" row of a weights CSV (as a run writes them); None when none were given."""
+    if given is None:
         return None
-    path = os.path.join(results_dir, name)
-    if not os.path.exists(path):
-        warnings.warn(f"MME weights file not found: {path}. Skipping.")
-        return None
-    return pd.read_csv(path, float_precision="round_trip")  # the weights as they were written
+    if isinstance(given, dict):
+        return np.array([given[name] for name in names], dtype=float)
+    table = pd.read_csv(given, float_precision="round_trip")  # the weights as they were written
+    missing = [f"w_{name}" for name in names if f"w_{name}" not in table.columns]
+    if missing:
+        raise ValueError(f"blend.mme.weights: {given} has no column {', '.join(missing)}")
+    row = table[table["objective"] == "rps"].iloc[0] if "objective" in table.columns else table.iloc[0]
+    return np.array([row[f"w_{name}"] for name in names], dtype=float)

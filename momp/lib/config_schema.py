@@ -648,7 +648,8 @@ def _fields() -> tuple[Field, ...]:
               "{model, variant: base|fixed_cutoff|ref_onset, raw: true, calibrated: true, platt_weights: false} "
               "(default: every model, raw and calibrated)", None, "blend", "forecasts", nullable=True, fill=False),
         Field("blend_mme", "any", "multi-model ensemble with RPS-optimised weights: {enabled, variants, sources: "
-              "[{name, source: clim|forecast, cal_variant}], optimize: auto|always|never, weights_year_tag}", None,
+              "[{name, source: clim|forecast, cal_variant}], optimize: auto|always|never, weights: {source name: "
+              "weight} or the path of a weights CSV (relative to the config file), used instead of optimising}", None,
               "blend", "mme", nullable=True, fill=False),
         Field("blend_external_predictions", "any", "cross-validated predictions made elsewhere, scored with the "
               "rest: a list of {name, file, method}", None, "blend", "external_predictions", nullable=True,
