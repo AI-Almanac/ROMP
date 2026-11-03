@@ -27,7 +27,7 @@ def panel_portrait_mae_far_mr(results, *, dir_fig, show_panel=True, **kwargs):
     vrange = (-v, v)
 
     fig, ax1, im = portrait_plot(data, col_labels, row_labels[:-1], fig=fig, ax=ax1, vrange=vrange,
-                                 annotate=True, annotate_data=data, title='$\Delta MAE$ (days)', colorbar_off=True)
+                                 annotate=True, annotate_data=data, title=r'$\Delta MAE$ (days)', colorbar_off=True)
 
     # anomaly false alarm rate relative to climatology 
     arr, row_labels, col_labels = nested_dict_to_array(results, "false_alarm_rate")
@@ -36,7 +36,7 @@ def panel_portrait_mae_far_mr(results, *, dir_fig, show_panel=True, **kwargs):
     vrange = (-v, v)
 
     fig, ax2, im = portrait_plot(data, col_labels, row_labels[:-1], fig=fig, ax=ax2, vrange=vrange,
-                                 annotate=True, annotate_data=data, title='$\Delta FAR (\%)$', colorbar_off=True)
+                                 annotate=True, annotate_data=data, title=r'$\Delta FAR (\%)$', colorbar_off=True)
 
     ax2.set_xlabel('Forecast window (days)')
 
@@ -47,7 +47,7 @@ def panel_portrait_mae_far_mr(results, *, dir_fig, show_panel=True, **kwargs):
     vrange = (-v, v)
 
     fig, ax3, im = portrait_plot(data, col_labels, row_labels[:-1], fig=fig, ax=ax3, vrange=vrange,
-                                 annotate=True, annotate_data=data, title='$\Delta MR (\%)$', colorbar_off=True)
+                                 annotate=True, annotate_data=data, title=r'$\Delta MR (\%)$', colorbar_off=True)
 
     fig.tight_layout()
     if show_panel:

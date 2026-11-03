@@ -454,7 +454,7 @@ def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
                 lead = (lead or {}).get("step") or (names[0] if names else None)
                 if lead is None:
                     continue
-                hours = _step_hours(ds[lead])
+                hours = ingest.lead_hours(ds, lead)
         except Exception as exc:  # noqa: BLE001
             report.add(f"{model}: leads could not be read ({exc})")
             continue
@@ -469,18 +469,6 @@ def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
                                f"{_short(np.round(positive[:6], 3).tolist(), 6)} h). HCWF reads lead steps as whole "
                                "days, so aggregate the forecasts to daily totals first (or set "
                                "models[].daily_boundary for days cut at a UTC hour)")
-
-
-def _step_hours(step: xr.DataArray) -> np.ndarray:
-    """The lead steps in hours as HCWF's loaders read them: timedeltas as they are, plain numbers as whole days.
-
-    A units attribute of hours on a numeric step is honoured.
-    """
-    values = np.asarray(step.values)
-    if np.issubdtype(values.dtype, np.timedelta64):
-        return values / np.timedelta64(1, "h")
-    unit = str(step.attrs.get("units", "")).lower()
-    return values.astype(float) * (1.0 if unit.startswith("hour") or unit in ("h", "hr", "hrs") else 24.0)
 
 
 def _alignment(dic: dict, report: CheckReport) -> None:

@@ -448,7 +448,7 @@ def _parse_clock(text: str) -> float:
     return (hour + minute / 60.0 - _ZONES[zone]) % 24.0
 
 
-def _lead_hours(da: xr.DataArray, lead_dim: str) -> np.ndarray:
+def lead_hours(da: xr.DataArray, lead_dim: str) -> np.ndarray:
     """Step lengths since the init in hours (float), from timedeltas or numbers.
 
     Numbers use the coordinate's units attribute ("hours"/"days") when present; without it,
@@ -506,7 +506,7 @@ def detect_accumulation(da: xr.DataArray, lead_dim: str | None = None) -> tuple[
     accumulation. A single lead, no finite series or all-constant series cannot show accumulation: daily.
     """
     lead_dim = _find_dim(da, "step", lead_dim, "lead")
-    hours = _lead_hours(da, lead_dim)
+    hours = lead_hours(da, lead_dim)
     keep = np.flatnonzero(hours > 0)
     keep = keep[np.argsort(hours[keep])]
     if len(keep) < 2:
@@ -541,7 +541,7 @@ def _to_daily(da: xr.DataArray, lead_dim: str, kind: str,
     acc(day end) - acc(previous day end) with acc(0) = 0; daily sums the per-interval steps of each
     day. Plain daily data with 24 h steps and offset 0 is returned unchanged for the day checks later.
     """
-    h_all = _lead_hours(da, lead_dim)
+    h_all = lead_hours(da, lead_dim)
     pos = np.flatnonzero(h_all > 0)
     if len(pos) == 0:
         raise ValueError("The lead axis has no step after the init")
@@ -698,7 +698,7 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
         kind, evidence = detect_accumulation(da, lead)
     else:
         kind, evidence = accumulation, "given"
-    hours = _lead_hours(da, lead)
+    hours = lead_hours(da, lead)
     dt, resolution = _resolution(hours[hours > 0]) if (hours > 0).any() else (24.0, "daily")
 
     n_init = da.sizes[init]
@@ -783,7 +783,7 @@ def ingest_forecast(da: xr.DataArray, *, day_boundary: str, lead_label: str, uni
     steps are summed per day), "since_init" (running total since the init; daily total =
     difference of the totals at 24 h boundaries) or "auto" (see `detect_accumulation`; emits an
     `IngestInfo` warning with the choice and evidence). Steps are timedeltas or numbers (see
-    `_lead_hours`). daily_boundary (e.g. "03 UTC") cuts days at that UTC hour instead of 24 h from
+    `lead_hours`). daily_boundary (e.g. "03 UTC") cuts days at that UTC hour instead of 24 h from
     the init; the first partial day is dropped and the init labels move to the date the first
     complete day starts, so lead_label keeps its meaning. A boundary off the step grid is an error
     unless within boundary_tolerance_hours (then snapped, with a warning). check_units=False turns
