@@ -26,10 +26,10 @@ import pandas as pd
 import xarray as xr
 
 DATA = Path(os.environ.get("ALMANAC_DATASETS", "/home/hcwf/code/ai-almanac/datasets"))
-JOBS = Path.home() / ".local/share/ai-almanac-spark/jobs"
+JOBS = Path(os.environ.get("HCWF_JOBS_DIR", Path.home() / ".local/share/ai-almanac-spark/jobs"))
 BLENDING_ENV = Path.home() / ".local/share/ai-almanac-spark/blending-env"
 OB_REPO = Path(os.environ.get("ONSET_BLENDING", "/home/hcwf/code/onset_blending"))
-OB_PY = OB_REPO / ".venv/bin/python"
+OB_PY = Path(os.environ.get("ONSET_BLENDING_PYTHON", OB_REPO / ".venv/bin/python"))
 HCWF_RUN = Path(sys.executable).parent / "hcwf-run"
 REGIONS = {"eth": ("273f5a57", "ethiopia"), "ind": ("8e9bfb80", "india")}
 TIME = ["/usr/bin/time", "-f", "%e s %M KB"]
