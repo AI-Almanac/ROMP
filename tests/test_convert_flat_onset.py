@@ -137,3 +137,16 @@ def test_removed_keys_are_named_as_removed(key):
 
     with pytest.raises(ConfigSchemaError, match=f"unknown key '{key}'. This key was removed"):
         build_config({key: None})
+
+
+def test_keys_that_were_removed_are_dropped_from_the_converted_config(tmp_path):
+    source = tmp_path / "old.yaml"
+    source.write_text(yaml.safe_dump({
+        "region": "india", "work_dir": "/x", "layout": ["model"], "debug": False, "years": None,
+        "wet_init": 1, "wet_threshold": 20, "wet_spell": 5, "dry_threshold": 1, "dry_spell": 7, "dry_extent": 0,
+        "evaluation": {"start_date": [2019, 5, 1], "end_date": [2020, 10, 31]}}))
+    target = convert_flat_onset(source, tmp_path / "new.yaml")
+    text = target.read_text()
+    converted = yaml.safe_load(text)
+    assert not {"work_dir", "layout", "debug", "years"} & set(converted)
+    assert "Dropped keys that have no effect any more: " in text and "onset" in converted

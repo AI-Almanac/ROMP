@@ -271,12 +271,18 @@ def convert_flat_onset(source, target, force: bool = False) -> Path:
     clash = [key for key in ("definition", "rule") if onset.get(key) is not None]
     if clash:
         raise ConfigSchemaError(f"the config has flat onset keys and onset.{clash[0]}. Fix: keep one of them")
+    from hcwf.lib.config_schema import REMOVED_KEYS
+
+    dropped = [key for key in REMOVED_KEYS if key in raw and key not in FLAT_ONSET_KEYS]
+    for key in dropped:
+        raw.pop(key)
     rule, thresholds = flat_onset_to_rule(flat)
     definition_mod.loads(yaml.safe_dump(rule, sort_keys=False))
     onset["rule"] = rule
     if thresholds:
         onset["thresholds"] = thresholds
     header = (f"# Converted from {Path(source).name} by `hcwf-run convert`: the flat onset keys became onset.rule.\n"
-              f"# Check it, then run: hcwf-run -p {target.name} --check\n")
+              + (f"# Dropped keys that have no effect any more: {', '.join(dropped)}\n" if dropped else "")
+              + f"# Check it, then run: hcwf-run -p {target.name} --check\n")
     target.write_text(header + yaml.safe_dump(raw, sort_keys=False, width=120))
     return target
