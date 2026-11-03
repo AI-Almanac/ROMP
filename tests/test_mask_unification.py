@@ -15,9 +15,15 @@ import xarray as xr
 import _oracle_land_mask as old
 from hcwf.onset import regions
 from hcwf.utils import mask as new_mask
+from hcwf.config.model import AreaSpec, Selection
 from hcwf.utils import region as new_region
 
 DATA = Path(__file__).resolve().parents[1] / "data"
+def _area(region, **values):
+    """The AreaSpec of a region (no mask section) and, if given, an nc_mask."""
+    return AreaSpec(region=region, mask=None, nc_mask=values.get("nc_mask"), shpfile_dir=None, polygon=False)
+
+
 REGION_IDS = sorted(p.stem for p in (Path(new_region.__file__).resolve().parents[1] / "onset" / "regions").glob("*.yaml"))
 # registry ids (any case) are the region names; countries match by id or title
 REGION_NAMES = REGION_IDS + ["Ethiopia", "India", "Kenya"]
@@ -123,13 +129,13 @@ def test_kept_cells_are_the_old_cells(gname, region):
             expect = old.mask_land(expect)
         if shp_only:
             expect = old.shp_mask(expect, region=region)
-        got = new_region.region_select_masks(da.to_dataset(name="v"), region=region, land_only=land_only,
-                                             shp_only=shp_only)["v"]
+        got = new_region.region_select_masks(da.to_dataset(name="v"), area=_area(region),
+                                             select=Selection(land_only=land_only, shp_only=shp_only))["v"]
         _same(got.values, expect.values)
 
     # the loaded path (in place)
     loaded = da.to_dataset(name="v").load().copy(deep=True)
-    got = new_region.mask_region_loaded(loaded, region=region)
+    got = new_region.mask_region_loaded(loaded, area=_area(region))
     expect = old.shp_mask(old.mask_land(da), region=region)
     _same(got["v"].values, expect.values)
 
@@ -145,7 +151,8 @@ def test_netcdf_mask_and_polygon_mask_are_the_old_ones(gname, tmp_path):
     file = tmp_path / "m.nc"
     xr.Dataset({"m": (("lat", "lon"), keep)}, coords={"lat": lat, "lon": lon}).to_netcdf(file)
     _same(new_mask.apply_nc_mask(ds.copy(deep=True), file)["v"].values, old.apply_nc_mask(ds.copy(deep=True), file)["v"].values)
-    got = new_region.region_select_masks(ds, region="Ethiopia", nc_mask=str(file), land_only=False, shp_only=False)
+    got = new_region.region_select_masks(ds, area=_area("Ethiopia", nc_mask=str(file)),
+                                         select=Selection(land_only=False, shp_only=False))
     _same(got["v"].values, old.apply_nc_mask(ds.copy(deep=True), file)["v"].values)
     # polygon mask: only defined on 1, 2 and 4 degree grids
     step = abs(lat[1] - lat[0])

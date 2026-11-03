@@ -363,14 +363,14 @@ def test_conditional_climatology_differs_between_the_two_modes(world):
 def test_observed_onsets_are_detected_once_per_run_for_all_models_and_references(world, tmp_path, monkeypatch):
     """Two models, a window, the climatology reference: each year is detected once, and the result is returned."""
     calls = []
-    real = stats_detect.detect_observed_result
+    real = stats_detect.detect_observed_dataset
 
-    def counting(rain, thresh, year, **kwargs):
+    def counting(rain, thresh, year, *args):
         """Count detections per year."""
         calls.append(year)
-        return real(rain, thresh, year, **kwargs)
+        return real(rain, thresh, year, *args)
 
-    monkeypatch.setattr(stats_detect, "detect_observed_result", counting)
+    monkeypatch.setattr(stats_detect, "detect_observed_dataset", counting)
     result = hcwf.run(_fresh(world, tmp_path, ("DET", "DETC")), quiet=True, parallel=False)   # the spy counts this process
     assert sorted(calls) == list(CLIM_YEARS)
     assert isinstance(result.observed, xr.Dataset) and list(result.observed["year"].values) == list(CLIM_YEARS)
@@ -408,10 +408,10 @@ def test_cached_onsets_equal_detected_onsets(world, tmp_path):
 
 
 def test_the_cache_is_inactive_outside_a_run():
-    """Without a run, detect_observed_onset behaves as before: nothing is looked up or stored."""
+    """Without a run, detect_observed behaves as before: nothing is looked up or stored."""
     observed_cache.reset()
-    assert observed_cache.lookup(None, None, 2020, {}) is None
-    observed_cache.store(None, None, 2020, {}, None)
+    assert observed_cache.lookup(None, None, 2020, None) is None
+    observed_cache.store(None, None, 2020, None, None, None)
     assert observed_cache.current() == {}
 
 

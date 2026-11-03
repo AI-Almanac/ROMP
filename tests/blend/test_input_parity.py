@@ -7,6 +7,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+import typed_io
 import xarray as xr
 
 from _inputs import DAYS, LATS, LONS, grid_weights, id_weights, write_adm3, write_forecast, write_observations
@@ -38,8 +39,8 @@ def legacy_spec(tmp_path, weights):
 
 
 def hcwf_obs(path, year, **kwargs):
-    return io_input.load_imd_rainfall(year, obs_var="precip", obs_unit_cvt=None, region=None, obs_paths=[str(path)],
-                                      **kwargs)
+    return typed_io.observations(year, dict(obs_var="precip", obs_unit_cvt=None, region=None, obs_paths=[str(path)],
+                                            **kwargs))
 
 
 def units_of(weights, id_keyed=False):
@@ -66,8 +67,8 @@ def test_no_region_box_means_the_files_own_order(tmp_path):
     ds.to_netcdf(tmp_path / "2003.nc")
     new = hcwf_obs(tmp_path / "2003.nc", 2003)
     assert new["lat"].values.tolist() == lats and new.values.tolist() == ds["precip"].values.tolist()
-    boxed = io_input.load_imd_rainfall(2003, obs_var="precip", obs_unit_cvt=None, region="india", land_only=False,
-                                       shp_only=False, obs_paths=[str(tmp_path / "2003.nc")])
+    boxed = typed_io.observations(2003, dict(obs_var="precip", obs_unit_cvt=None, region="india", land_only=False,
+                                             shp_only=False, obs_paths=[str(tmp_path / "2003.nc")]))
     assert boxed["lat"].values.tolist() == sorted(lats)  # HCWF's region read puts latitude ascending
 
 
@@ -121,12 +122,16 @@ def test_a_gap_inside_a_year_is_filled_or_refused_as_the_legacy_reader_refuses_i
 
 
 def test_ingest_options_follow_the_config_and_default_to_hcwfs(tmp_path):
-    assert io_input.ingest_options({}) == {} and io_input.ingest_options({}, forecast=True) == {}
+    def options(config, forecast=False):
+        """OnsetOptions.ingest of a flat config."""
+        got = typed_io.inputs(config)
+        return got.options.ingest(forecast, got.obs.units, check_units=got.select.check_units)
+
+    assert options({}) == {} and options({}, forecast=True) == {}
     config = {"rain_resolution": "exact", "missing": "keep", "negatives": "keep", "gaps": "refuse", "check_units": False}
-    assert io_input.ingest_options(config) == {"rain_resolution": "exact", "missing": "keep", "negatives": "keep",
-                                               "gaps": "refuse"}
-    assert io_input.ingest_options(config, forecast=True) == {"rain_resolution": "exact", "missing": "keep",
-                                                              "negatives": "keep", "check_units": False}
+    assert options(config) == {"rain_resolution": "exact", "missing": "keep", "negatives": "keep", "gaps": "refuse"}
+    assert options(config, forecast=True) == {"rain_resolution": "exact", "missing": "keep", "negatives": "keep",
+                                              "check_units": False}
 
 
 # ----------------------------------------------------------------------------------------------- admin units
@@ -234,8 +239,8 @@ def _write_inits(tmp_path, **kwargs):
 
 
 def _hcwf_forecast(tmp_path, unit_cvt=None, **kwargs):
-    return io_input.get_forecast_probabilistic_twice_weekly(
-        2014, unit_cvt=unit_cvt, model_dir=str(tmp_path), file_pattern="f{}.nc", **{**FORECAST_KWARGS, **kwargs})
+    return typed_io.forecast(2014, dict(unit_cvt=unit_cvt, model_dir=str(tmp_path), file_pattern="f{}.nc",
+                                        **{**FORECAST_KWARGS, **kwargs}), True)
 
 
 def test_a_forecast_reads_as_the_legacy_table_reads_it(tmp_path):

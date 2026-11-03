@@ -8,10 +8,15 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+from hcwf.config import flat_bridge
 from hcwf.stats.detect import (
+    check_alignment,
     check_alignment_once,
     compute_onset_for_all_members,
     compute_onset_for_deterministic_model,
+    detect_deterministic,
+    detect_ensemble,
+    detect_observed,
     detect_observed_onset,
 )
 from hcwf.stats import detect
@@ -27,6 +32,17 @@ def old_rule(**changes):
 
 
 FLAT = old_rule()
+
+
+def typed(kwargs):
+    """(rc, case, select): the typed inputs of the flat kwargs of a test."""
+    return flat_bridge.from_case_kwargs(kwargs)
+
+
+def obs_args(kwargs):
+    """(rc, select), the typed inputs of an observed detection."""
+    rc, _, select = typed(kwargs)
+    return rc, select
 OBS_ONSET = xr.DataArray([[np.datetime64("2020-06-20", "ns")]], coords=[("lat", [0.0]), ("lon", [0.0])])
 
 
@@ -55,24 +71,24 @@ def _forecast(rain_by_member, init="2020-05-25", steps=45):
 
 def test_observed_onset_schema_and_value():
     """Observed onset is a (lat, lon) datetime64[ns] DataArray named onset_date, NaT where there is none."""
-    onset = detect_observed_onset(_obs([("2020-05-10", 3)]), {}, 2020, **FLAT)
+    onset = detect_observed(_obs([("2020-05-10", 3)]), {}, 2020, *obs_args(FLAT))
     assert onset.name == "onset_date" and onset.dims == ("lat", "lon") and onset.dtype == np.dtype("datetime64[ns]")
     assert pd.Timestamp(onset.values[0, 0]) == pd.Timestamp("2020-05-10")
-    none = detect_observed_onset(_obs([("2020-05-10", 2)]), {}, 2020, **FLAT)
+    none = detect_observed(_obs([("2020-05-10", 2)]), {}, 2020, *obs_args(FLAT))
     assert pd.isna(none.values[0, 0])
 
 
 def test_observed_search_runs_47_days_past_end_date():
     """A spell on 10 September, 41 days after the end date, is found; one on 20 September is not."""
-    assert pd.Timestamp(detect_observed_onset(_obs([("2020-09-10", 3)]), {}, 2020, **FLAT).values[0, 0]) \
+    assert pd.Timestamp(detect_observed(_obs([("2020-09-10", 3)]), {}, 2020, *obs_args(FLAT)).values[0, 0]) \
         == pd.Timestamp("2020-09-10")
-    assert pd.isna(detect_observed_onset(_obs([("2020-09-20", 3)]), {}, 2020, **FLAT).values[0, 0])
+    assert pd.isna(detect_observed(_obs([("2020-09-20", 3)]), {}, 2020, *obs_args(FLAT)).values[0, 0])
 
 
 def test_dry_extent_vetoes_an_onset_followed_by_a_dry_run():
     """With dry_extent 10, a spell followed by 7 dry days is skipped for the next one."""
     obs = _obs([("2020-05-10", 3), ("2020-06-20", 3)] + [(f"2020-06-{d}", 1) for d in (24, 27, 30)])
-    onset = detect_observed_onset(obs, {}, 2020, **old_rule(dry_extent=10))
+    onset = detect_observed(obs, {}, 2020, *obs_args(old_rule(dry_extent=10)))
     assert pd.Timestamp(onset.values[0, 0]) == pd.Timestamp("2020-06-20")
 
 
@@ -81,14 +97,14 @@ def test_the_threshold_may_be_a_per_cell_array():
     low = {"legacy_threshold": xr.DataArray([[25.0]], coords=[("lat", [0.0]), ("lon", [0.0])])}
     high = {"legacy_threshold": low["legacy_threshold"] + 10}
     cfg = old_rule(thresh_file="t.nc", thresh_var="mwset")
-    assert not pd.isna(detect_observed_onset(_obs([("2020-05-10", 3)]), low, 2020, **cfg).values[0, 0])
-    assert pd.isna(detect_observed_onset(_obs([("2020-05-10", 3)]), high, 2020, **cfg).values[0, 0])
+    assert not pd.isna(detect_observed(_obs([("2020-05-10", 3)]), low, 2020, *obs_args(cfg)).values[0, 0])
+    assert pd.isna(detect_observed(_obs([("2020-05-10", 3)]), high, 2020, *obs_args(cfg)).values[0, 0])
 
 
 def test_deterministic_frame_schema():
     """Deterministic rows: one per (init, cell) before the observed onset, with the old columns and dtypes."""
     forecast = _forecast([{3: 10, 4: 10, 5: 10}]).isel(member=0, drop=True)
-    df = compute_onset_for_deterministic_model(forecast, {}, OBS_ONSET, **FLAT)
+    df = detect_deterministic(forecast, {}, OBS_ONSET, *typed(FLAT))
     assert list(df.columns) == ["init_time", "lat", "lon", "onset_day", "onset_date", "obs_onset_date", "onset_status"]
     assert df["onset_day"].dtype == np.int64 and df["init_time"].dtype == forecast["init_time"].dtype
     assert df.iloc[0].to_dict() == {"init_time": pd.Timestamp("2020-05-25"), "lat": 0.0, "lon": 0.0, "onset_day": 3,
@@ -99,7 +115,7 @@ def test_deterministic_frame_schema():
 def test_no_forecast_onset_is_none():
     """A forecast without onset keeps its row with onset_day and onset_date None."""
     forecast = _forecast([{}]).isel(member=0, drop=True)
-    df = compute_onset_for_deterministic_model(forecast, {}, OBS_ONSET, **FLAT)
+    df = detect_deterministic(forecast, {}, OBS_ONSET, *typed(FLAT))
     assert len(df) == 1 and df["onset_day"].iloc[0] is None and df["onset_date"].iloc[0] is None
 
 
@@ -108,14 +124,14 @@ def test_inits_on_or_after_the_observed_onset_and_cells_without_one_have_no_rows
     forecast = _forecast([{3: 10, 4: 10, 5: 10}]).isel(member=0, drop=True)
     late = xr.DataArray([[np.datetime64("2020-05-25", "ns")]], coords=OBS_ONSET.coords)
     never = xr.DataArray([[np.datetime64("NaT", "ns")]], coords=OBS_ONSET.coords)
-    assert compute_onset_for_deterministic_model(forecast, {}, late, **FLAT).empty
-    assert compute_onset_for_deterministic_model(forecast, {}, never, **FLAT).empty
+    assert detect_deterministic(forecast, {}, late, *typed(FLAT)).empty
+    assert detect_deterministic(forecast, {}, never, *typed(FLAT)).empty
 
 
 def test_ensemble_frames_round_half_to_even_and_keep_the_columns():
     """Members with onsets on lead 3 and 4 give an ensemble onset on lead round(3.5) = 4."""
     forecast = _forecast([{3: 10, 4: 10, 5: 10}, {4: 10, 5: 10, 6: 10}])
-    members, ensemble = compute_onset_for_all_members(forecast, {}, OBS_ONSET, **FLAT)
+    members, ensemble = detect_ensemble(forecast, {}, OBS_ONSET, *typed(FLAT))
     assert list(members.columns) == ["init_time", "lat", "lon", "member", "onset_day", "obs_onset_date", "onset_status"]
     assert members["onset_day"].tolist() == [3.0, 4.0] and members["member"].tolist() == [0, 1]
     assert list(ensemble.columns) == ["init_time", "lat", "lon", "onset_day", "onset_date", "member_onset_count",
@@ -129,7 +145,7 @@ def test_ensemble_frames_round_half_to_even_and_keep_the_columns():
 def test_ensemble_needs_the_onset_percentage(threshold, expected):
     """One of two members is enough at 0.5 but not at 0.75."""
     forecast = _forecast([{3: 10, 4: 10, 5: 10}, {}])
-    _, ensemble = compute_onset_for_all_members(forecast, {}, OBS_ONSET, **{**FLAT, "onset_percentage_threshold": threshold})
+    _, ensemble = detect_ensemble(forecast, {}, OBS_ONSET, *typed({**FLAT, "onset_percentage_threshold": threshold}))
     assert np.allclose(ensemble["onset_day"].tolist(), [expected], equal_nan=True)
     assert ensemble["onset_percentage"].iloc[0] == 0.5
 
@@ -137,7 +153,7 @@ def test_ensemble_needs_the_onset_percentage(threshold, expected):
 def test_ensemble_with_a_long_dry_extent_vetoes_in_the_same_rows():
     """With dry_extent above wet_spell the rule has a dry-window veto; the rows are the same."""
     forecast = _forecast([{3: 10, 4: 10, 5: 10, 6: 3, 10: 3}] * 2)
-    members, ensemble = compute_onset_for_all_members(forecast, {}, OBS_ONSET, **old_rule(dry_extent=10))
+    members, ensemble = detect_ensemble(forecast, {}, OBS_ONSET, *typed(old_rule(dry_extent=10)))
     assert members["onset_day"].tolist() == [3, 3] and ensemble["onset_day"].tolist() == [3]
 
 
@@ -150,17 +166,17 @@ def test_definition_mode_adds_status_and_dates_leads_by_their_start():
     """With lead_label start, lead 3 is init + 2 days, onset_day counts days after init, and onset_status is added."""
     rain = {3: 10, 4: 10, 5: 10, **{k: 5 for k in range(7, 46, 4)}}
     forecast = _forecast([rain]).isel(member=0, drop=True)
-    df = compute_onset_for_deterministic_model(forecast, {}, OBS_ONSET, **DEFINITION)
+    df = detect_deterministic(forecast, {}, OBS_ONSET, *typed(DEFINITION))
     row = df.iloc[0]
     assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (2, "2020-05-27", "ONSET")
-    members, ensemble = compute_onset_for_all_members(_forecast([rain]), {}, OBS_ONSET, **DEFINITION)
+    members, ensemble = detect_ensemble(_forecast([rain]), {}, OBS_ONSET, *typed(DEFINITION))
     assert members["onset_status"].tolist() == ["ONSET"] and ensemble["onset_status"].tolist() == ["ONSET"]
 
 
 def test_definition_mode_reports_censored_as_no_onset():
     """A candidate whose veto window runs past the forecast is CENSORED and reported without an onset day."""
     forecast = _forecast([{3: 10, 4: 10, 5: 10, **{k: 5 for k in range(7, 23, 4)}}], steps=22).isel(member=0, drop=True)
-    row = compute_onset_for_deterministic_model(forecast, {}, OBS_ONSET, **DEFINITION).iloc[0]
+    row = detect_deterministic(forecast, {}, OBS_ONSET, *typed(DEFINITION)).iloc[0]
     assert row["onset_status"] == "CENSORED" and row["onset_day"] is None
 
 
@@ -185,10 +201,10 @@ def test_alignment_check_warns_when_forecasts_look_shifted(caplog, monkeypatch):
     kwargs = {**DEFINITION, "model": "toy", "obs_dir": "x", "model_lead_label": "end", "check_alignment": True}
     caplog.set_level(logging.INFO)
     with pytest.warns(UserWarning, match="look shifted"):
-        check_alignment_once(obs, forecast, **kwargs)
+        check_alignment(obs, forecast, *typed(kwargs)[:2])
     assert "likely shifted" in caplog.text
     caplog.clear()
-    check_alignment_once(obs, forecast, **kwargs)
+    check_alignment(obs, forecast, *typed(kwargs)[:2])
     assert caplog.text == ""
 
 
@@ -197,6 +213,34 @@ def test_alignment_check_is_quiet_when_aligned(caplog, monkeypatch):
     monkeypatch.setattr(detect, "_alignment_done", set())
     obs, forecast = _alignment_data(0)
     caplog.set_level(logging.INFO)
-    check_alignment_once(obs, forecast, **{**DEFINITION, "model": "toy", "obs_dir": "x", "check_alignment": True})
+    check_alignment(obs, forecast, *typed({**DEFINITION, "model": "toy", "obs_dir": "x", "check_alignment": True})[:2])
     assert "aligned" in caplog.text
     caplog.clear()
+
+
+# --- the kwargs wrappers give what the typed functions give ------------------------------------------------------------
+
+def test_the_kwargs_wrappers_equal_the_typed_functions():
+    """detect_observed_onset, compute_onset_for_* and check_alignment_once (R2-bridge) rebuild the typed inputs."""
+    rain = [("2020-05-10", 3)]
+    xr.testing.assert_identical(detect_observed_onset(_obs(rain), {}, 2020, **FLAT),
+                                detect_observed(_obs(rain), {}, 2020, *obs_args(FLAT)))
+    forecast = _forecast([{3: 10, 4: 10, 5: 10}, {4: 10, 5: 10, 6: 10}])
+    cfg = {**FLAT, "model": "toy", "members": [0, 1]}
+    pd.testing.assert_frame_equal(compute_onset_for_deterministic_model(forecast.isel(member=0, drop=True), {}, OBS_ONSET, **cfg),
+                                  detect_deterministic(forecast.isel(member=0, drop=True), {}, OBS_ONSET, *typed(cfg)))
+    for wrapped, direct in zip(compute_onset_for_all_members(forecast, {}, OBS_ONSET, **cfg),
+                               detect_ensemble(forecast, {}, OBS_ONSET, *typed(cfg))):
+        pd.testing.assert_frame_equal(wrapped, direct)
+
+
+def test_the_detection_extras_reach_the_typed_function():
+    """search_start, restrict_to_season and onset_count are arguments of detect_forecast and kwargs of the wrapper."""
+    forecast = _forecast([{3: 10, 4: 10, 5: 10}]).isel(member=0, drop=True)
+    cfg = {**FLAT, "model": "toy"}
+    rc, case, select = typed(cfg)
+    direct = detect.detect_forecast(forecast, {}, OBS_ONSET, rc, case, select, restrict_to_season=False)
+    wrapped = detect._detect_forecast(forecast, {}, OBS_ONSET, {**cfg, "restrict_to_season": False})
+    assert direct["day"].tolist() == wrapped["day"].tolist() and direct["status"].tolist() == wrapped["status"].tolist()
+    with pytest.raises(ValueError, match="not config keys or selections: surprise"):
+        detect_observed_onset(_obs([("2020-05-10", 3)]), {}, 2020, **{**FLAT, "surprise": 1})

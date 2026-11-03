@@ -875,7 +875,7 @@ def mask_land(da, land=True):
     return _where_keep(da, keep if land else ~keep)
 
 
-def shp_mask(da, region='Ethiopia', resolution='10m', return_mask=False, **kwargs):
+def shp_mask(da, region='Ethiopia', resolution='10m', return_mask=False):
     """`da` with the cells whose centre is not strictly inside the country `region` set to NaN (the implicit shp_only mask).
 
     With return_mask the boolean DataArray of the kept cells is returned too. A region that is not a country of the

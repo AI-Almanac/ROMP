@@ -203,6 +203,29 @@ class OnsetOptions:
     percentage_threshold: float
     explain_cells: tuple | None
 
+    def ingest(self, forecast: bool, units, *, check_units=None) -> dict:
+        """The parity options that `ingest` (or, with `forecast`, `ingest_forecast_info`) takes, as keywords.
+
+        rain_resolution ("tenths" or "exact"), missing, negatives ("default" or "keep"), gaps (observations: "fill" or
+        "refuse") and check_units (forecasts; a per-call choice, not config). An option that is None is left out, so
+        HCWF's own behaviour is what none gives. `units` is the observations' UnitsSpec (or None): a cell transform
+        applies the missing policy to the source cells as it reads them, so the observations are then ingested with
+        "keep".
+        """
+        out = {key: getattr(self, key) for key in (("rain_resolution", "missing", "negatives") if forecast
+                                                   else ("rain_resolution", "missing", "negatives", "gaps"))
+               if getattr(self, key) is not None}
+        if forecast and check_units is not None:
+            out["check_units"] = check_units
+        if not forecast and units is not None and units.how == "cell_transform":
+            out["missing"] = "keep"
+        return out
+
+    def engine(self, units, forecast: bool = False) -> dict:
+        """The run options of the onset engine (horizon and missing-rain policy); none given is HCWF's own."""
+        return {"horizon": self.horizon or "censor",
+                "missing": self.ingest(forecast, units).get("missing")}
+
 
 @dataclass(frozen=True, slots=True)
 class AreaSpec:
@@ -287,6 +310,7 @@ class Selection:
     member_ids: Any = None
     max_member: Any = None
     issue_dates: Any = None
+    first_lead: Any = None
     last_lead: Any = None
     model_files_years: Any = None
     obs_files_years: Any = None
@@ -298,6 +322,7 @@ class Selection:
     shp_only: Any = None
     reference_onset: Any = None
     rain_horizon: Any = None
+    check_units: Any = None
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -341,11 +366,11 @@ def _project_run(v) -> dict:
 
 def _project_units(v) -> dict:
     """{source name: UnitsSpec or None} of the observations, each model and the reference, resolved once per source
-    (io.input.units_spec is pure)."""
-    from hcwf.io.input import units_spec
+    (UnitsSpec.from_flat is pure)."""
+    from hcwf.spatial.units import UnitsSpec
 
     names = ("observations", *_get(v, "model_list"), _get(v, "ref_model"))
-    return {name: units_spec(v, name) for name in names}
+    return {name: UnitsSpec.from_flat(v, name) for name in names}
 
 
 def _project_onset(v):
@@ -388,7 +413,7 @@ def _project_models(v, units) -> tuple[ModelSpec, ...]:
 
 def _project_obs(v, units) -> ObsSpec:
     """The observations."""
-    return ObsSpec(name=_get(v, "obs"), dir=_get(v, "obs_dir"), file_pattern=tuple(_get(v, "obs_file_pattern")),
+    return ObsSpec(name=_get(v, "obs"), dir=_get(v, "obs_dir"), file_pattern=_tuple(_get(v, "obs_file_pattern")),
                    var=_get(v, "obs_var"), unit_cvt=_get(v, "obs_unit_cvt"), paths=_tuple(_get(v, "obs_paths")),
                    dims=_pairs(_get(v, "obs_dims")), day_boundary=_get(v, "obs_day_boundary"),
                    units=units["observations"])

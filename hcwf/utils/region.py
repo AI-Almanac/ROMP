@@ -1,11 +1,28 @@
-"""Region helpers: longitude/latitude orientation fixes, regional subsetting with masks, and domain averaging."""
+"""Region helpers: longitude/latitude orientation fixes, regional subsetting with masks, and domain averaging.
+
+The area of a run is an `AreaSpec` (region, mask, nc_mask); the implicit land and country masks are switched off per
+call by a `Selection` (land_only, shp_only; both on when it does not say), as blend's readers do.
+"""
+from __future__ import annotations
+
 import xarray as xr
 import numpy as np
 from hcwf.params.region_def import domain
 from hcwf.utils.mask import apply_default_mask, default_keep
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover
+    from hcwf.config.model import AreaSpec, Selection
 
 log = logging.getLogger(__name__)
+
+
+def implicit_masks(select: Selection | None) -> tuple[bool, bool]:
+    """(land_only, shp_only) of a selection: the implicit land and country masks are on unless it turns them off."""
+    land = True if select is None or select.land_only is None else select.land_only
+    shp = True if select is None or select.shp_only is None else select.shp_only
+    return land, shp
 
 
 def swap_lon_axis(
@@ -76,7 +93,7 @@ def swap_lon_axis(
     return ds
 
 
-def lon_swap(ds_tag, *, region, **kwargs):
+def lon_swap(ds_tag, *, region):
     """Rename coords to lat/lon, then return the region bounds and dataset in a consistent longitude convention.
 
     Returns
@@ -84,7 +101,7 @@ def lon_swap(ds_tag, *, region, **kwargs):
     tuple
         (lats, latn, lonw, lone, ds_tag); the bounds are conformed to the dataset's longitude range.
     """
-    lats, latn, lonw, lone = domain(region, **kwargs)
+    lats, latn, lonw, lone = domain(region)
 
     coord_list = list(ds_tag.coords.keys())
 
@@ -122,9 +139,9 @@ def lat_swap(ds_tag):
     return ds_tag
 
 
-def coords_fmt(ds_tag, *, region, **kwargs):
+def coords_fmt(ds_tag, *, region):
     """Standardize lon/lat orientation and return (lats, latn, lonw, lone, ds_tag) for the region."""
-    lats, latn, lonw, lone, ds_tag = lon_swap(ds_tag, region=region, **kwargs)
+    lats, latn, lonw, lone, ds_tag = lon_swap(ds_tag, region=region)
     ds_tag = lat_swap(ds_tag)
 
     return lats, latn, lonw, lone, ds_tag
@@ -260,19 +277,19 @@ def _mask_in_place(da, keep):
     return da
 
 
-def mask_region_loaded(obj, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,
-                       dir_fig=None, **kwargs):
+def mask_region_loaded(obj, *, area: AreaSpec, select: Selection | None = None, dataset_name=None, dir_fig=None):
     """Limit an already loaded, box-selected Dataset or DataArray to the cells of the run's mask, others set to NaN.
 
     The same cells as region_select keeps. With the implicit land and country masks the NaNs are written into the
     array's own memory (one pass, no copy); a `mask` section or an nc_mask goes through hcwf.utils.mask or
     apply_nc_mask as in region_select, which build a masked copy.
     """
+    region = area.region
     if not has_box(obj, region):
         return obj
-    if mask or nc_mask:
-        return region_select_masks(obj, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
-                                   mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)
+    land_only, shp_only = implicit_masks(select)
+    if area.mask or area.nc_mask:
+        return region_select_masks(obj, area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)
     if not (land_only or shp_only):
         return obj
     keep = _keep_cells(obj["lat"].values, obj["lon"].values, region, land_only, shp_only)
@@ -286,16 +303,15 @@ def mask_region_loaded(obj, *, region, nc_mask=None, land_only=True, shp_only=Tr
     return obj
 
 
-def region_select_masks(ds_reg, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None,
-                        dataset_name=None, dir_fig=None):
+def region_select_masks(ds_reg, *, area: AreaSpec, select: Selection | None = None, dataset_name=None, dir_fig=None):
     """Apply the cell masks of region_select to a box-selected dataset: `mask`, else nc_mask, land and country masks.
 
     Data without a box (no region, or admin units on a "unit" dimension) has no cells to mask.
     """
-    if not has_box(ds_reg, region):
+    if not has_box(ds_reg, area.region):
         return ds_reg
-    if mask:
-        if nc_mask:
+    if area.mask:
+        if area.nc_mask:
             from hcwf.utils.mask import MaskError
 
             raise MaskError("both `mask` and `nc_mask` are set; use one. nc_mask: <file> is the same as "
@@ -303,19 +319,21 @@ def region_select_masks(ds_reg, *, region, nc_mask=None, land_only=True, shp_onl
                             "masks implicitly")
         from hcwf.utils.mask import apply_region_mask
 
-        return apply_region_mask(ds_reg, mask, dataset_name or "data", dir_fig)
+        return apply_region_mask(ds_reg, area.mask, dataset_name or "data", dir_fig)
 
-    return apply_default_mask(ds_reg, region, land_only, shp_only, nc_mask)
+    land_only, shp_only = implicit_masks(select)
+    return apply_default_mask(ds_reg, area.region, land_only, shp_only, area.nc_mask)
 
 
-def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,
-                  dir_fig=None, read_by=None, keep=None, **kwargs):
+def region_select(ds, *, area: AreaSpec, select: Selection | None = None, dataset_name=None, dir_fig=None,
+                  read_by=None, keep=None):
     """Subset `ds` to the region's lat/lon box, then limit it to the cells of the run's mask.
 
-    With a `mask` mapping (the config's ``mask:`` section) the mask is built on this dataset's own grid by
+    With a mask in `area` (the config's ``mask:`` section) the mask is built on this dataset's own grid by
     hcwf.utils.mask (dataset_name labels it in messages, records and the PNG saved to dir_fig); it replaces
-    the implicit land and country masks below and cannot be combined with nc_mask. Without `mask` the old
-    behaviour is unchanged: the optional NetCDF mask nc_mask, then the land mask and the country-shapefile mask.
+    the implicit land and country masks below and cannot be combined with nc_mask. Without a mask the old
+    behaviour is unchanged: the optional NetCDF mask `area.nc_mask`, then the land mask and the country-shapefile
+    mask (each off when `select` says land_only / shp_only is False).
 
     Without read_by the result stays lazy and the masks are applied with where. With read_by (a dim name) the
     box is read into memory once, block by block along that dim, and the implicit masks are then written in place
@@ -325,10 +343,8 @@ def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, ma
 
     With no region, or on a "unit" dimension, there is no box and no cell mask: the data is read as it is.
     """
-    ds_reg = region_box(ds, region=region)
+    ds_reg = region_box(ds, region=area.region)
     if read_by:
         ds_reg = read_selection(ds_reg, read_by, keep)
-        return mask_region_loaded(ds_reg, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
-                                  mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)
-    return region_select_masks(ds_reg, region=region, nc_mask=nc_mask, land_only=land_only, shp_only=shp_only,
-                               mask=mask, dataset_name=dataset_name, dir_fig=dir_fig)
+        return mask_region_loaded(ds_reg, area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)
+    return region_select_masks(ds_reg, area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)

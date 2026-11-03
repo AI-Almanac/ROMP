@@ -2,7 +2,9 @@
 import shutil
 
 import numpy as np
+import typed_io
 
+from hcwf.config import flat_bridge
 from hcwf.stats import bins
 
 
@@ -21,6 +23,20 @@ def test_year_set_texts_equal_the_plain_join():
         for _ in range(2):   # the second call is served from what the first wrote
             assert list(bins._year_set_texts(years, codes)) == want
     assert bins._year_set_texts(years, np.zeros(0, np.int64)).shape == (0,)
+
+
+def _case_kwargs(config):
+    """The flat arguments of the config's first case, as the flows hand them to the readers (the run's completed record)."""
+    rc, case, select = flat_bridge.from_case_kwargs(config)
+    return flat_bridge.case_kwargs(rc, case, "deterministic", select)
+
+
+def _reference_year(config, year, boundary):
+    """The held reference rain of a year, through the typed reader's inputs."""
+    got = typed_io.inputs(config)
+    from hcwf.io import input as io_input
+
+    return io_input.reference_rain_year(year, got.obs, got.area, got.select, boundary)
 
 
 def _obs_files(folder, years):
@@ -65,14 +81,14 @@ def test_climatology_uses_the_reference_rain_the_thresholds_read(tmp_path, monke
         io_input._loaded_thresholds.clear()
         climatology.reset_memo()
         observed_cache.activate(None)
-        thresholds = io_input.load_thresholds(**config)
+        thresholds = typed_io.thresholds(_case_kwargs(config))
         assert io_input.reference_held() and thresholds["wet_spell_amount"].notnull().any()
         if not shared:
             io_input.release_reference()
         seen = []
         original = io_input._read_obs_year
         monkeypatch.setattr(io_input, "_read_obs_year", lambda year, *a, **k: seen.append(year) or original(year, *a, **k))
-        results[shared] = climatology.compute_climatological_onset_dataset(**config)
+        results[shared] = climatology.climatological_onset_dataset(*flat_bridge.from_case_kwargs(config))
         monkeypatch.setattr(io_input, "_read_obs_year", original)
         reads[shared] = sorted(seen)
         assert not io_input.reference_held()   # freed once the climatology has used it
@@ -93,19 +109,19 @@ def test_reference_year_is_the_year_ingested_alone(tmp_path, monkeypatch):
     config = _reference_config(tmp_path)
     io_input.clear_obs_cache()
     io_input._loaded_thresholds.clear()
-    io_input.load_thresholds(**config)
+    typed_io.thresholds(config)
     boundary = onset_setup(config).obs_day_boundary
     for year in (2000, 2003, 2005):
-        shared = io_input.reference_year(year, config, boundary)
-        alone = ingest(io_input.load_imd_rainfall(year, **config), day_boundary=boundary, units="mm")
+        shared = _reference_year(config, year, boundary)
+        alone = ingest(typed_io.observations(year, config), day_boundary=boundary, units="mm")
         np.testing.assert_array_equal(shared.tenths, alone.tenths)
         np.testing.assert_array_equal(shared.missing, alone.missing)
         for name in ("year", "month", "day"):
             np.testing.assert_array_equal(getattr(shared, name), getattr(alone, name))
         assert shared.dims == alone.dims and shared.calendar == alone.calendar
         np.testing.assert_array_equal(shared.coords["time"], alone.coords["time"])
-    assert io_input.reference_year(2006, config, boundary) is None                       # outside the reference years
-    assert io_input.reference_year(2003, {**config, "obs_var": "other"}, boundary) is None  # other observations
+    assert _reference_year(config, 2006, boundary) is None                       # outside the reference years
+    assert _reference_year({**config, "obs_var": "other"}, 2003, boundary) is None  # other observations
     io_input.clear_obs_cache()
     assert not io_input.reference_held()
 
@@ -123,18 +139,18 @@ def test_shared_reference_rain_keeps_exact_rain_in_millimetres(tmp_path, monkeyp
     config = {**_reference_config(tmp_path), "rain_resolution": "exact"}
     io_input.clear_obs_cache()
     io_input._loaded_thresholds.clear()
-    thresholds = io_input.load_thresholds(**config)
+    thresholds = typed_io.thresholds(config)
     boundary = onset_setup(config).obs_day_boundary
     for year in (2000, 2005):
-        shared = io_input.reference_year(year, config, boundary)
-        alone = ingest(io_input.load_imd_rainfall(year, **config), day_boundary=boundary, units="mm",
+        shared = _reference_year(config, year, boundary)
+        alone = ingest(typed_io.observations(year, config), day_boundary=boundary, units="mm",
                        rain_resolution="exact")
         assert shared.tenths.dtype.kind == "f"
         np.testing.assert_array_equal(shared.tenths, alone.tenths)
     tenths = {**config, "rain_resolution": None}
     io_input.clear_obs_cache()
     io_input._loaded_thresholds.clear()
-    coarse = io_input.load_thresholds(**tenths)
+    coarse = typed_io.thresholds(tenths)
     for name in thresholds:   # exact and tenths thresholds agree to the rounding of the daily rain, not by 10x
         np.testing.assert_allclose(thresholds[name].values, coarse[name].values, rtol=0.05, equal_nan=True)
     io_input.clear_obs_cache()

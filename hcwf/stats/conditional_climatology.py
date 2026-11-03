@@ -11,11 +11,16 @@ consumes (per init, cell and day bin, with Before and After bins); the
 probabilities are exact, so the table carries infinite member counts and the
 fair-score corrections vanish. Deterministic use gives the conditional median
 onset date per init and cell, in the layout of compute_climatology_as_forecast.
+
+`conditional_pairs` takes the typed inputs of hcwf.config.model (run, case, selection); the old kwargs forms (marked
+R2-bridge) stay until step S11.
 """
 
 import numpy as np
 import pandas as pd
 
+from hcwf.config import flat_bridge
+from hcwf.config.model import Selection
 from hcwf.onset.climatology_kde import conditional_probabilities, season_days
 from hcwf.spatial import axes
 import logging
@@ -34,12 +39,17 @@ def is_conditional_climatology(name) -> bool:
     return name == CONDITIONAL_CLIMATOLOGY
 
 
-def climatology_cv_mode(kwargs) -> str:
-    """The climatology_cv setting of a config dict (default leave_one_year_out), checked against CV_MODES."""
-    mode = kwargs.get("climatology_cv") or DEFAULT_CV
+def cv_mode(climatology_cv) -> str:
+    """The climatology_cv setting (default leave_one_year_out), checked against CV_MODES."""
+    mode = climatology_cv or DEFAULT_CV
     if mode not in CV_MODES:
         raise ValueError(f"climatology_cv must be one of {CV_MODES}, got {mode!r}")
     return mode
+
+
+def climatology_cv_mode(kwargs) -> str:  # R2-bridge
+    """cv_mode of a config dict."""
+    return cv_mode(kwargs.get("climatology_cv"))
 
 
 def season_day(dates) -> np.ndarray:
@@ -98,7 +108,7 @@ def conditional_lead_probabilities(clim_onset, year, init_dates, like, horizon, 
     spatial axes of the observed onsets (clim_onset is aligned to them as the scoring does) and init_dates the issue
     dates.
     """
-    cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
+    cv = cv_mode(climatology_cv) == "leave_one_year_out"
     clim = _align(clim_onset, like)
     spatial = axes.spatial_dims(like.dims)
     shape = tuple(like.sizes[d] for d in spatial)
@@ -125,7 +135,7 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     """
     from hcwf.stats.bins import LeadBins
 
-    cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
+    cv = cv_mode(climatology_cv) == "leave_one_year_out"
     bins = LeadBins.from_day_bins(day_bins)
     max_day, min_day = bins.last_day, bins.first_day
     extended_bins = bins.extended
@@ -185,22 +195,24 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     })
 
 
-def multi_year_conditional_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins, **kwargs):
+def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bins):
     """Conditional climatology pair tables of all years in years, concatenated.
 
     A year's observed onsets come from clim_onset when it holds that year,
     otherwise they are detected from the year's rainfall as for the forecasts.
-    kwargs carries the run configuration (init dates, onset definition,
-    climatology_cv).
+    The run `rc` carries the init dates, the onset definition and climatology_cv.
     """
     from hcwf.io.input import get_initialization_dates
 
+    kwargs = flat_bridge.case_kwargs(rc, case, "deterministic", select)   # R2-bridge: what the readers still take
+    cv = cv_mode(rc.reference.climatology_cv)
     tables = []
     for year in years:
         log.debug(f"Conditional climatology pairs for target year {year}")
-        observed = None if year in clim_onset.year.values else _detect_observed_onset(year, kwargs)
+        observed = None if year in clim_onset.year.values else _detect_observed(year, rc, select, kwargs)
         table = create_conditional_climatological_forecast_obs_pairs(
-            clim_onset, year, get_initialization_dates(year, **kwargs), observed, day_bins=day_bins, **_cv(kwargs))
+            clim_onset, year, get_initialization_dates(year, **kwargs), observed, day_bins=day_bins,
+            climatology_cv=cv)
         if len(table):
             tables.append(table)
     if not tables:
@@ -208,17 +220,17 @@ def multi_year_conditional_climatological_forecast_obs_pairs(clim_onset, *, year
     return pd.concat(tables, ignore_index=True)
 
 
-def _cv(kwargs) -> dict:
-    """The climatology_cv entry of a config dict, as keyword arguments."""
-    return {"climatology_cv": climatology_cv_mode(kwargs)}
+def multi_year_conditional_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins, **kwargs):  # R2-bridge
+    """conditional_pairs with the run's flat kwargs."""
+    return conditional_pairs(clim_onset, *flat_bridge.from_case_kwargs(kwargs), years=years, day_bins=day_bins)
 
 
-def _detect_observed_onset(year, kwargs):
+def _detect_observed(year, rc, select, kwargs):
     """The observed onsets (lat, lon) of a year outside the climatology years."""
     from hcwf.io.input import load_imd_rainfall, load_thresholds
-    from hcwf.stats.detect import detect_observed_onset
+    from hcwf.stats.detect import detect_observed
 
-    return detect_observed_onset(load_imd_rainfall(year, **kwargs), load_thresholds(**kwargs), year, **kwargs)
+    return detect_observed(load_imd_rainfall(year, **kwargs), load_thresholds(**kwargs), year, rc, select)
 
 
 def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, observed_onset_da, *,
@@ -231,7 +243,7 @@ def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, ob
     onset (NaN day, no date) when it does not within max_forecast_day, when the
     cell has no KDE.
     """
-    cv = climatology_cv_mode({"climatology_cv": climatology_cv}) == "leave_one_year_out"
+    cv = cv_mode(climatology_cv) == "leave_one_year_out"
     spatial = axes.spatial_dims(observed_onset_da.dims)
     coords = axes.coords_of(observed_onset_da, spatial)
     clim = _align(clim_onset, observed_onset_da)

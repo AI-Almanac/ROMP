@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+from hcwf.config import flat_bridge
 from hcwf.io import input as io_input
 from hcwf.lib import config_schema as schema
 from hcwf.onset import regions as rg
@@ -52,8 +53,8 @@ def test_the_units_section_flattens_to_flat_keys_and_extends_the_regions():
     flat, _, _ = schema.flatten_sections({"region": "kenya", "units": {"weights": "w.csv", "mode": "cell_transform",
                                                                        "box": {"lat_min": 1}}}, errors)
     assert not errors and flat["units_weights"] == "w.csv" and flat["units_mode"] == "cell_transform"
-    assert io_input.units_spec({"region": "kenya"}) is None   # no units keys: grid cells
-    spec = io_input.units_spec({**flat, "region": "kenya"})
+    assert UnitsSpec.from_flat({"region": "kenya"}) is None   # no units keys: grid cells
+    spec = UnitsSpec.from_flat({**flat, "region": "kenya"})
     assert spec.how == "cell_transform" and spec.box == (("lat_min", 1.0),)
 
 
@@ -61,7 +62,7 @@ def test_units_mode_and_weights_may_differ_by_source():
     kwargs = {"units_mode": {"observations": "cell_transform", "ens": "regrid"},
               "units_weights": {"observations": "o.csv", "ens": "m.csv"}, "units_shapefile": "s.shp",
               "units_unit_id_col": "id"}
-    obs, ens = io_input.units_spec(kwargs, "observations"), io_input.units_spec(kwargs, "ens")
+    obs, ens = UnitsSpec.from_flat(kwargs, "observations"), UnitsSpec.from_flat(kwargs, "ens")
     assert (obs.how, obs.weights, obs.shapefile) == ("cell_transform", "o.csv", None)
     assert (ens.how, ens.weights) == ("regrid", "m.csv")
 
@@ -111,10 +112,15 @@ def test_the_fingerprint_of_a_grid_run_has_its_six_parts_and_units_and_options_a
                                                       "reject if": []}},
             "obs_day_boundary": "00 UTC, labelled by start", "model_lead_label": "start", "threshold_years": [2000, 2001]}
     rain = xr.DataArray(np.zeros((2, 2, 2)), dims=("time", "lat", "lon"), coords={"lat": [0.0, 1.0], "lon": [2.0, 3.0]})
-    plain = observed_cache.fingerprint_parts(rain, {}, base)
+    def parts(rain, kwargs):
+        rc, _, select = flat_bridge.from_case_kwargs(kwargs)
+        return observed_cache.fingerprint_parts(rain, {}, rc.observations, rc.area, rc.onset, rc.onset_options, select,
+                                                observed_cache.observed_years(rc.evaluation))
+
+    plain = parts(rain, base)
     assert set(plain) == {"obs_files", "obs_ingest", "cells", "definition", "thresholds", "years"}
-    keyed = observed_cache.fingerprint_parts(rain, {}, {**base, "missing": "zero"})
+    keyed = parts(rain, {**base, "missing": "zero"})
     assert set(keyed) == set(plain) | {"options"} and keyed["options"] != plain.get("options")
-    unit = observed_cache.fingerprint_parts(None, {}, {**base, "units_mode": "cells"})
+    unit = parts(None, {**base, "units_mode": "cells"})
     assert "units" in unit and "cells" not in unit
     assert onset_setup(base) is not None

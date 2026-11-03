@@ -9,6 +9,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+import typed_io
+from hcwf.config.model import AreaSpec, Selection
 from hcwf.io import input as hcwf_input
 from old_flat_rule import old_rule
 from hcwf.utils.region import mask_region_loaded, region_select
@@ -52,9 +54,10 @@ def fresh_cache():
 def test_in_place_land_mask_keeps_the_cells_region_select_keeps():
     """Masking a loaded array in place leaves the same values and NaNs as region_select's lazy where."""
     ds = obs_year(2020, 1).rename(latitude="lat", longitude="lon").isel(time=slice(0, 5))
-    expected = region_select(ds, region="Ethiopia", shp_only=False)["rain"]
+    area, select = AreaSpec("Ethiopia", None, None, None, False), Selection(shp_only=False)
+    expected = region_select(ds, area=area, select=select)["rain"]
     box = ds["rain"].sel(lat=slice(3, 15), lon=slice(33, 48)).load()
-    got = mask_region_loaded(box, region="Ethiopia", shp_only=False)
+    got = mask_region_loaded(box, area=area, select=select)
     assert np.isnan(expected.values).any() and not np.isnan(expected.values).all()
     np.testing.assert_array_equal(got.values, expected.values)
     assert got is box
@@ -70,15 +73,15 @@ def test_obs_year_read_once_and_zarr_equals_netcdf(tmp_path):
     store = tmp_path / "obs.zarr"
     xr.concat(list(years.values()), dim="time").to_zarr(store)
     kw = dict(obs_file_pattern=["{}.nc"], obs_var="rain", obs_unit_cvt=2.0, region="Ethiopia", shp_only=False, years=[2020])
-    from_nc = hcwf_input.load_imd_rainfall(2020, obs_dir=str(nc), **kw)
-    from_zarr = hcwf_input.load_imd_rainfall(2020, obs_dir=str(store), **kw)
+    from_nc = typed_io.observations(2020, {**kw, "obs_dir": str(nc)})
+    from_zarr = typed_io.observations(2020, {**kw, "obs_dir": str(store)})
     xr.testing.assert_identical(from_nc, from_zarr)
-    assert hcwf_input.load_imd_rainfall(2020, obs_dir=str(store), **kw) is from_zarr
+    assert typed_io.observations(2020, {**kw, "obs_dir": str(store)}) is from_zarr
     box = years[2020]["rain"].sel(latitude=slice(3, 15), longitude=slice(33, 48))
     np.testing.assert_array_equal(from_nc.values[~np.isnan(from_nc.values)],
                                   (box.values * 2.0)[~np.isnan(from_nc.values)])
     with pytest.raises(FileNotFoundError):
-        hcwf_input.load_imd_rainfall(2018, obs_dir=str(store), **kw)
+        typed_io.observations(2018, {**kw, "obs_dir": str(store)})
 
 
 @pytest.mark.parametrize("ensemble", [False, True])
@@ -91,17 +94,19 @@ def test_forecast_selects_before_reading_and_zarr_equals_netcdf(tmp_path, ensemb
         ds.to_netcdf(nc / f"{year}.nc")
     store = tmp_path / "m.zarr"
     xr.concat(list(full.values()), dim="time").to_zarr(store)
-    loader = (hcwf_input.get_forecast_probabilistic_twice_weekly if ensemble
-              else hcwf_input.get_forecast_deterministic_twice_weekly)
+    def loader(year, model_dir, **config):
+        """The typed forecast reader on a flat config."""
+        return typed_io.forecast(year, {**config, "model_dir": model_dir}, ensemble)
+
     kw = {**CFG, "members": [1, 3] if ensemble else None, "model_dims": {"member": "number"} if ensemble else None}
     kw = {k: v for k, v in kw.items() if k != "model_dims" or v}
-    from_nc = loader(2020, model_dir=str(nc), **kw)
-    from_zarr = loader(2020, model_dir=str(store), **kw)
+    from_nc = loader(2020, str(nc), **kw)
+    from_zarr = loader(2020, str(store), **kw)
     xr.testing.assert_identical(from_nc, from_zarr)
-    steps = hcwf_input.onset_steps_needed(**kw)
+    steps = typed_io.steps_needed(kw)
     assert from_nc.sizes["step"] == steps and int(from_nc["step"][0]) == 1
     assert from_nc.sizes["init_time"] == len(pd.to_datetime(from_nc.init_time.values))
-    assert list(pd.to_datetime(from_nc.init_time.values)) == list(hcwf_input.get_initialization_dates(2020, **kw))
+    assert list(pd.to_datetime(from_nc.init_time.values)) == list(typed_io.initialization_dates(2020, kw))
     if ensemble:
         assert list(from_nc["member"].values) == [1, 3]
     reference = full[2020]["tp"].sortby("lat").sel(lat=slice(3, 15), lon=slice(33, 48), prediction_timedelta_daily=pd.to_timedelta(
@@ -117,4 +122,4 @@ def test_forecast_selects_before_reading_and_zarr_equals_netcdf(tmp_path, ensemb
     assert keep.any()
     np.testing.assert_array_equal(got[keep], expected[keep])
     with pytest.raises(FileNotFoundError):
-        loader(2018, model_dir=str(store), **kw)
+        loader(2018, str(store), **kw)

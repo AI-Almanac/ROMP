@@ -7,24 +7,27 @@ Design: docs/review/runconfig_design.md section 3 ("Transitional adapter"). Step
     case_kwargs(rc, case, flow)       the flat keyword arguments of one case: the run's settings and the case's own values
     model_kwargs(rc, model, ...)      the same for a model's first window (export, --check)
     from_case_kwargs(kw)              (rc, case, selection): the typed inputs a migrated function used to read from kw
+    reader_inputs(kw)                 the typed inputs of the io readers, from a full or partial flat config
 """
 # R2-bridge
 from __future__ import annotations
 
 import copy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
-from hcwf.config.model import Case, ModelSpec, RunConfig, Selection, Window
+from hcwf.config.model import (AreaSpec, Case, EvaluationSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec,
+                               ParallelSpec, RunConfig, Selection, Window, _project_area, _project_evaluation,
+                               _project_generated, _project_obs, _project_onset_options, _project_parallel)
 from hcwf.lib import config_schema as schema
 
 FLOWS = ("deterministic", "ensemble")
 """The two scoring flows. They differ in how the reference model is built (RunConfig.reference_cases)."""
 SELECTION_KWARGS = {"keep_unit_ids": "keep_unit_ids", "member_ids": "member_ids", "max_member": "max_member",
-                    "issue_dates": "issue_dates", "last_lead": "last_lead", "model_files_years": "model_files_years",
+                    "issue_dates": "issue_dates", "first_lead": "first_lead", "last_lead": "last_lead", "model_files_years": "model_files_years",
                     "obs_files_years": "obs_files_years", "model_paths": "model_paths", "grid_point": "grid_point",
                     "lat": "lat_select", "lon": "lon_select", "land_only": "land_only", "shp_only": "shp_only",
-                    "reference_onset": "reference_onset", "rain_horizon": "rain_horizon"}
+                    "reference_onset": "reference_onset", "rain_horizon": "rain_horizon", "check_units": "check_units"}
 """Selection field -> the kwargs name the readers use."""
 CASE_FIELDS = ("case_name", "model", "model_var", "model_dir", "obs", "obs_var", "ref_model", "ref_model_var",
                "probabilistic", "members", "onset_percentage_threshold", "verification_window", "tolerance_days",
@@ -33,6 +36,8 @@ CASE_FIELDS = ("case_name", "model", "model_var", "model_dir", "obs", "obs_var",
 """The keys a case owns, in the order of the kwargs (the old Case dataclass); the run's settings are every other key."""
 _RUNTIME = {"cache_dir": None, "short_names": False, "lead_window": None}
 """The settings that are not schema keys, with their defaults."""
+_RECORD = ("accumulation_detected", "config_file", "config_sources", "dataset_report", "onset_lead_lines", "run_paths")
+"""The other keys of a resolved flat record (what the resolve step adds); a blend's config carries them through."""
 
 
 def _setting_part(values: Mapping) -> dict:
@@ -76,7 +81,7 @@ def case_kwargs(rc: RunConfig, case: Case, flow: str, selection: Selection | Non
         "daily_boundary": model.daily_boundary, "model_dims": model.dims_map()}
     out = {**_setting_part(rc._values), **{name: mine[name] for name in CASE_FIELDS}}
     if selection is not None:
-        out.update(_selection_kwargs(selection))
+        out.update(selection_kwargs(selection))
     return out
 
 
@@ -93,10 +98,56 @@ def model_kwargs(rc: RunConfig, model: str, *, reference_as: str | None = None, 
     return case_kwargs(rc, case, "deterministic", selection)
 
 
-def _selection_kwargs(selection: Selection) -> dict:
+def selection_kwargs(selection: Selection) -> dict:
     """The kwargs a Selection sets (the fields that are not None)."""
     return {kwarg: getattr(selection, name) for name, kwarg in SELECTION_KWARGS.items()
             if getattr(selection, name) is not None}
+
+
+def _completed(kw: Mapping[str, Any]) -> dict:
+    """The kwargs with what a partial dict leaves out filled in (blend configs and unit tests pass fewer keys than a run
+    holds): each missing schema key a resolved record always holds takes its default (None when it is required or computed), and the case's keys and the
+    per-model lists a missing source needs take placeholders that no reader of the partial dict looks at."""
+    out = dict(kw)
+    for item in schema.FIELDS:
+        if item.fill and item.key not in out:
+            out[item.key] = None if callable(item.default) or item.default is schema.REQUIRED else copy.deepcopy(item.default)
+    if not out.get("years_clim") and None in (out.get("start_year_clim"), out.get("end_year_clim")):
+        out["start_year_clim"], out["end_year_clim"] = 1, 0   # no climatology years
+    for key, placeholder in (("start_date", (1, 1, 1)), ("end_date", (1, 1, 1)), ("init_days", ()), ("day_bins", ())):
+        if out.get(key) is None:
+            out[key] = placeholder
+    out.setdefault("model", (out.get("model_list") or ["model"])[0])
+    out.setdefault("model_dir", "")
+    for key in ("model_var", "unit_cvt", "file_pattern", "accumulation", "daily_boundary", "model_dims"):
+        out.setdefault(key, None)
+    span = out.get("verification_window") or (1, out.get("max_forecast_day") or 1)
+    out["verification_window"] = span
+    out.setdefault("tolerance_days", 0)
+    out.setdefault("case_name", Case(ModelSpec(out["model"], "", None, None, None, None, None, None, None, None, None),
+                                     Window(*span, out["tolerance_days"])).name)
+    for key, value in (("model_list", [out["model"]]), ("model_dir_list", [out["model_dir"]]),
+                       ("model_var_list", [out["model_var"]]), ("unit_cvt_list", [out["unit_cvt"]]),
+                       ("file_pattern_list", [out["file_pattern"]]), ("verification_window_list", [tuple(span)]),
+                       ("tolerance_days_list", [out["tolerance_days"]])):
+        if out.get(key) is None:
+            out[key] = value
+    return out
+
+
+def _model_of(kw: Mapping[str, Any], units) -> ModelSpec:
+    """The source a case reads: the kwargs' own `model*`, `file_pattern`, `unit_cvt`, `accumulation`, `daily_boundary` and
+    `model_dims`, with its resolved `units`."""
+    return ModelSpec(
+        name=kw["model"], dir=kw["model_dir"], var=kw["model_var"], unit_cvt=kw["unit_cvt"],
+        file_pattern=kw["file_pattern"], accumulation=kw["accumulation"], accumulation_detected=None,
+        daily_boundary=kw["daily_boundary"],
+        dims=None if kw["model_dims"] is None else tuple(kw["model_dims"].items()), paths=None, units=units)
+
+
+def _selection_of(kw: Mapping[str, Any]) -> Selection:
+    """The Selection of the kwargs: each selection key that is present."""
+    return Selection(**{name: kw[kwarg] for name, kwarg in SELECTION_KWARGS.items() if kwarg in kw})
 
 
 def from_case_kwargs(kw: Mapping[str, Any]) -> tuple[RunConfig, Case, Selection]:
@@ -109,18 +160,14 @@ def from_case_kwargs(kw: Mapping[str, Any]) -> tuple[RunConfig, Case, Selection]
     """
     case_only = set(CASE_FIELDS) - set(schema.BY_KEY)
     selection_kwargs = set(SELECTION_KWARGS.values())
-    unknown = sorted(set(kw) - set(schema.BY_KEY) - case_only - set(_RUNTIME) - selection_kwargs)
+    unknown = sorted(set(kw) - set(schema.BY_KEY) - case_only - set(_RUNTIME) - set(_RECORD) - selection_kwargs)
     if unknown:
         raise ValueError(f"not config keys or selections: {', '.join(unknown)}")
-    values = {k: v for k, v in kw.items() if k in schema.BY_KEY or k in _RUNTIME}
+    kw = _completed(kw)
+    values = {k: v for k, v in kw.items() if k in schema.BY_KEY or k in _RUNTIME or k in _RECORD}
     rc = RunConfig.from_flat(values, check=False)
-    model = ModelSpec(
-        name=kw["model"], dir=kw["model_dir"], var=kw["model_var"], unit_cvt=kw["unit_cvt"],
-        file_pattern=kw["file_pattern"], accumulation=kw["accumulation"], accumulation_detected=None,
-        daily_boundary=kw["daily_boundary"],
-        dims=None if kw["model_dims"] is None else tuple(kw["model_dims"].items()), paths=None,
-        units=rc.reference.units if kw["model"] == rc.reference.model else
-        next((m.units for m in rc.models if m.name == kw["model"]), None))
+    model = _model_of(kw, rc.reference.units if kw["model"] == rc.reference.model else
+                      next((m.units for m in rc.models if m.name == kw["model"]), None))
     window = Window(*kw["verification_window"], kw["tolerance_days"])
     # a reference that is also one of the forecast models (same name) cannot be told apart, and is read the same way
     reference = kw["model"] == kw["ref_model"] and kw["model"] not in {m.name for m in rc.models}
@@ -128,5 +175,59 @@ def from_case_kwargs(kw: Mapping[str, Any]) -> tuple[RunConfig, Case, Selection]
     if kw["case_name"] != Case(model, window).name:   # the ensemble flow names the reference's case after its model
         for_model = next((m.name for m in rc.models if Case(m, window).name == kw["case_name"]), None)
     case = Case(model, window, reference=reference, for_model=for_model)
-    selection = Selection(**{name: kw[kwarg] for name, kwarg in SELECTION_KWARGS.items() if kwarg in kw})
-    return rc, case, selection
+    return rc, case, _selection_of(kw)
+
+
+@dataclass(frozen=True)
+class ReaderInputs:
+    """The typed inputs of the io readers behind a flat config (see `reader_inputs`)."""
+
+    obs: ObsSpec
+    area: AreaSpec
+    options: OnsetOptions
+    ev: EvaluationSpec
+    model: ModelSpec
+    parallel: ParallelSpec
+    output: OutputSpec
+    select: Selection
+    dir_fig: Any
+    cache_dir: Any
+    kwargs: Mapping
+
+    def onset(self):
+        """The onset setup of the config (memoised by `onset_setup`); an invalid or incomplete config raises."""
+        from hcwf.lib.onset_config import onset_setup
+
+        return onset_setup(self.kwargs)
+
+    def onset_if_units(self):
+        """The onset setup when the observations are on units (it labels their dates), else None."""
+        return self.onset() if self.obs.units is not None else None
+
+    def onset_if_steps(self):
+        """The onset setup when the config has a max_forecast_day (it sets how many leads are read), else None."""
+        return self.onset() if isinstance(self.ev.max_forecast_day, int) else None
+
+
+def reader_inputs(kw: Mapping[str, Any]) -> ReaderInputs:
+    """The typed inputs the io readers take, from a flat config: a run's case kwargs, or fewer keys (blend configs and
+    unit tests pass what the reader needs). Nothing is looked up that the old reader did not look up: a missing key is
+    what `kwargs.get` gave it, so the onset setup is built only when called for (`ReaderInputs.onset`). Values edited in
+    place are kept. Unlike `from_case_kwargs` this builds no RunConfig, so it works without an onset definition."""
+    from hcwf.spatial.units import UnitsSpec
+
+    v = _completed(kw)
+    for key, empty in (("day_bins", ()), ("init_days", ()), ("start_date", (1, 1, 1)), ("end_date", (1, 1, 1))):
+        if v.get(key) is None:   # a reader that needs them was given them; the projection wants a sequence
+            v[key] = empty
+    run_years = tuple(kw.get("years") or ())
+    ev = replace(_project_evaluation(v), years=run_years, max_forecast_day=kw.get("max_forecast_day"))
+    if not kw.get("verification_window_list"):
+        ev = replace(ev, windows=())   # no windows: one threshold pools every lead
+    output = replace(_project_generated(v, OutputSpec, "output"), data_dir=kw.get("dir_out"),
+                     figure_dir=kw.get("dir_fig"))
+    obs_units = UnitsSpec.from_flat(v, "observations")
+    return ReaderInputs(
+        obs=_project_obs(v, {"observations": obs_units}), area=_project_area(v), options=_project_onset_options(v),
+        ev=ev, model=_model_of(v, UnitsSpec.from_flat(v, v["model"])), parallel=_project_parallel(v), output=output,
+        select=_selection_of(kw), dir_fig=kw.get("dir_fig"), cache_dir=kw.get("cache_dir"), kwargs=kw)

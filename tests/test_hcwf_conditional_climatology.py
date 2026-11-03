@@ -11,7 +11,8 @@ from hcwf.io.dict import extract_pd_bins
 from hcwf.metrics.skill import create_score_results, prepare_score_cache
 from hcwf.stats.benchmark import compute_metrics_multiple_years
 from hcwf.stats.bins import multi_year_climatological_forecast_obs_pairs
-from hcwf.stats.climatology import compute_climatological_onset_dataset, compute_climatology_as_forecast
+from hcwf.config import flat_bridge
+from hcwf.stats.climatology import climatological_onset_dataset, compute_climatology_as_forecast
 from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
                                                 create_conditional_climatological_forecast_obs_pairs)
 from hcwf.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
@@ -20,6 +21,11 @@ CLIM_YEARS = tuple(range(2000, 2014))
 TARGET = 2013
 LAT, LON = [10.0, 10.5], [70.0, 70.5]
 DAY_BINS = ((1, 5), (6, 10))
+
+
+def typed(kwargs):
+    """(rc, case, select): the typed inputs of a test's flat kwargs."""
+    return flat_bridge.from_case_kwargs(kwargs)
 
 
 def _write_obs(path):
@@ -84,7 +90,7 @@ def test_probabilistic_reference_gives_skill_scores(config):
 
 def test_pair_table_probabilities_are_conditional(config):
     """Each case's probabilities (Before, bins, After) sum to one, Before is zero, and only inits before the onset are scored."""
-    clim_onset = compute_climatological_onset_dataset(**config)
+    clim_onset = climatological_onset_dataset(*typed(config))
     inits = pd.date_range(f"{TARGET}-05-01", f"{TARGET}-07-30", freq="3D")
     table = create_conditional_climatological_forecast_obs_pairs(clim_onset, TARGET, inits, day_bins=DAY_BINS)
 
@@ -100,7 +106,7 @@ def test_pair_table_probabilities_are_conditional(config):
 
 def test_leave_one_year_out_excludes_the_test_year(config):
     """The leave-one-year-out probabilities differ from the full fit, which saw the test year's onset."""
-    clim_onset = compute_climatological_onset_dataset(**config)
+    clim_onset = climatological_onset_dataset(*typed(config))
     inits = pd.date_range(f"{TARGET}-05-10", f"{TARGET}-06-10", freq="4D")
     loyo = create_conditional_climatological_forecast_obs_pairs(
         clim_onset, TARGET, inits, day_bins=DAY_BINS, climatology_cv="leave_one_year_out")
@@ -121,7 +127,7 @@ def test_deterministic_reference_is_the_conditional_median(config):
     assert len(frame) and {"true_positive", "false_positive", "false_negative", "mae_combined"} <= set(frame.columns)
     assert TARGET in onsets and onsets[TARGET].dtype.kind == "M"
 
-    clim_onset = compute_climatological_onset_dataset(**config)
+    clim_onset = climatological_onset_dataset(*typed(config))
     inits = pd.date_range(f"{TARGET}-05-01", f"{TARGET}-07-30", freq="5D")
     table = compute_conditional_climatology_as_forecast(
         clim_onset, TARGET, inits, onsets[TARGET], max_forecast_day=10)
@@ -142,7 +148,7 @@ def test_climatology_reference_is_unchanged(config):
     """ref_model "climatology" gives the same tables and scores as the climatology functions directly, with or without a climatology_cv."""
     config = dict(config, ref_model="climatology")
     results = create_score_results(**config)
-    clim_onset = compute_climatological_onset_dataset(**config)
+    clim_onset = climatological_onset_dataset(*typed(config))
     pairs = extract_pd_bins(multi_year_climatological_forecast_obs_pairs(clim_onset, **config), DAY_BINS)
 
     assert results["climatology_obs_df"].to_csv() == pairs.to_csv()
@@ -162,9 +168,10 @@ def test_climatology_reference_is_unchanged(config):
 
 def _observed(config):
     """The target year's observed onsets (lat, lon)."""
-    from hcwf.stats.detect import detect_observed_onset
-    return detect_observed_onset(model_input.load_imd_rainfall(TARGET, **config), model_input.load_thresholds(**config),
-                                 TARGET, **config)
+    from hcwf.stats.detect import detect_observed
+    rc, _, select = flat_bridge.from_case_kwargs(config)
+    return detect_observed(model_input.load_imd_rainfall(TARGET, **config), model_input.load_thresholds(**config),
+                           TARGET, rc, select)
 
 
 def test_conditional_reference_scores_better_than_unconditional(config):

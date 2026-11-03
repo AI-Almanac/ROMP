@@ -10,7 +10,8 @@ from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
 from hcwf.metrics.skill import create_score_results, prepare_score_cache
 from hcwf.stats.bins import multi_year_climatological_forecast_obs_pairs
-from hcwf.stats.climatology import compute_climatological_onset_dataset
+from hcwf.config import flat_bridge
+from hcwf.stats.climatology import climatological_onset_dataset
 from hcwf.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
 
 YEARS = (2000, 2001, 2002)
@@ -118,7 +119,7 @@ def test_climatology_reference_is_unchanged(config):
     config = dict(config, ref_model="climatology")
     results = create_score_results(**config)
 
-    clim_onset = compute_climatological_onset_dataset(**config)
+    clim_onset = climatological_onset_dataset(*flat_bridge.from_case_kwargs(config))
     pairs = extract_pd_bins(multi_year_climatological_forecast_obs_pairs(clim_onset, **config), DAY_BINS)
 
     assert results["climatology_obs_df"].to_csv() == pairs.to_csv()

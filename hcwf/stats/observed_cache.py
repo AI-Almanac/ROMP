@@ -9,6 +9,10 @@ options that change the numbers (missing-rain policy, resolution, horizon, the r
 an options part when they are set; without them the fingerprint is the one a grid run always had. While a run is active (``activate``), ``hcwf.stats.detect.detect_observed_onset``
 asks ``lookup`` first and calls ``store`` after detecting, so each year is detected once per fingerprint.
 
+The fingerprint is computed from typed inputs (``fingerprint_parts(rain, thresh, obs, area, onset, options, select,
+years)``; ``parts_for`` takes them from a RunConfig). Its parts are the same hashes the kwargs form gave, so entries
+written by earlier runs are still hits.
+
 On disk (``<cache_dir>/observed_onsets/<fingerprint>/``): ``parts.json`` (the hash of each part) and ``onsets.nc``
 (``onset_date`` over year and the spatial dimensions, lat and lon or unit, plus any per-unit arrays the onsets carry as
 coordinates, such as ``present``). Without a cache folder the cache is in memory for the run only. A failure of the cache never stops a run: the onsets are then simply detected.
@@ -24,6 +28,8 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Codec, Store, file_identity, part_hash
+from hcwf.config import flat_bridge
+from hcwf.config.model import Selection
 
 log = logging.getLogger(__name__)
 
@@ -103,32 +109,29 @@ def threshold_hash(thresh) -> str:
     return result
 
 
-def _years(kwargs) -> list[int]:
-    """The years observed onsets are needed for: the evaluated years and the climatology years."""
-    years = set()
-    for key in ("years", "years_clim"):
-        value = kwargs.get(key)
-        if value and not isinstance(value, str):
-            years.update(int(y) for y in value)
-    return sorted(years)
+def observed_years(ev) -> list[int]:
+    """The years observed onsets are needed for: the evaluated years and the climatology years of an EvaluationSpec."""
+    return sorted({int(y) for y in (*ev.years, *ev.climatology_years)})
 
 
-def obs_files(kwargs, years) -> list:
-    """The identity (name, size, mtime) of the observation file of every year (or of the zarr store, with the years)."""
+def observation_files(obs, files_years, years) -> list:
+    """The identity (name, size, mtime) of the observation file of every year (or of the zarr store, with the years).
+
+    obs is the ObsSpec; files_years is `Selection.obs_files_years` (the years of the listed files to keep)."""
     from hcwf.io.input import is_zarr, year_files
 
-    if kwargs.get("obs_paths"):   # listed files, any number per year
+    if obs.paths:   # listed files, any number per year
         found = []
         for year in years:
-            files = year_files(kwargs["obs_paths"], kwargs.get("obs_dir") or None, kwargs.get("obs_files_years"), year)
+            files = year_files(obs.paths, obs.dir or None, files_years, year)
             found.append([file_identity(f) for f in files] or [f"missing {year}"])
         return found
-    if is_zarr(kwargs["obs_dir"]):
-        return [file_identity(kwargs["obs_dir"]), list(years)]
+    if is_zarr(obs.dir):
+        return [file_identity(obs.dir), list(years)]
     found = []
     for year in years:
-        for pattern in kwargs.get("obs_file_pattern") or ():
-            path = Path(str(kwargs["obs_dir"])) / pattern.format(year)
+        for pattern in obs.file_pattern or ():
+            path = Path(str(obs.dir)) / pattern.format(year)
             if path.exists():
                 found.append(file_identity(path))
                 break
@@ -137,23 +140,42 @@ def obs_files(kwargs, years) -> list:
     return found
 
 
-def _obs_files_hash(kwargs, years) -> str:
-    """Hash of obs_files, memoised for the run."""
-    key = ("files", str(kwargs.get("obs_dir")), str(kwargs.get("obs_file_pattern")), tuple(years),
-           str(kwargs.get("obs_paths")), str(kwargs.get("obs_files_years")))
+def obs_files(kwargs, years) -> list:  # R2-bridge
+    """observation_files with the run's flat kwargs."""
+    rc, _, select = flat_bridge.from_case_kwargs(kwargs)
+    return observation_files(rc.observations, select.obs_files_years, years)
+
+
+def _obs_files_hash(obs, files_years, years) -> str:
+    """Hash of observation_files, memoised for the run."""
+    key = ("files", str(obs.dir), str(obs.file_pattern), tuple(years), str(obs.paths), str(files_years))
     if key not in _memo:
-        _memo[key] = part_hash(obs_files(kwargs, years))
+        _memo[key] = part_hash(observation_files(obs, files_years, years))
     return _memo[key]
 
 
-def _mask_files(kwargs) -> list:
+def _mask_files(area) -> list:
     """Identity of the files the cell selection reads (mask file, condition file, nc_mask, shapefiles)."""
     paths = []
-    mask = kwargs.get("mask")
-    if isinstance(mask, dict):
-        paths += [mask.get("file"), (mask.get("condition") or {}).get("file")]
-    paths += [kwargs.get("nc_mask"), kwargs.get("shpfile_dir")]
+    if area.mask is not None:
+        paths += [area.mask.file, (area.mask.condition or {}).get("file")]
+    paths += [area.nc_mask, area.shpfile_dir]
     return [file_identity(p) for p in paths if p]
+
+
+_MASK_GIVEN = ("land", "country", "file", "variable", "keep_value", "condition", "cell_rule", "overlap_fraction",
+               "resolution")
+"""The keys of a config's `mask:` section (the other MaskSpec fields are set by the implicit masks only)."""
+
+
+def _mask_mapping(mask):
+    """The `mask:` mapping of the config, as far as the MaskSpec tells it: the section's keys that differ from their
+    defaults (a key written with its default value gives the same mask, and the same fingerprint)."""
+    if mask is None:
+        return None
+    default = type(mask)()
+    return {key: list(value) if key == "country" else value for key in _MASK_GIVEN
+            if (value := getattr(mask, key)) != getattr(default, key)}
 
 
 def _reference_part(reference):
@@ -164,52 +186,53 @@ def _reference_part(reference):
     return (reference.month_day, table, reference.computed, reference.statistic)
 
 
-def _options(kwargs) -> dict:
+def _options(options, units, select) -> dict:
     """The run options that change observed onsets and are set: reading policies, the horizon, the reference onset."""
-    from hcwf.io.input import ingest_options
-
-    options = {**ingest_options(kwargs)}
-    if kwargs.get("onset_horizon"):
-        options["horizon"] = kwargs["onset_horizon"]
-    if kwargs.get("reference_onset") is not None:
-        options["reference_onset"] = _reference_part(kwargs["reference_onset"])
-    return options
+    out = {**options.ingest(False, units)}
+    if options.horizon:
+        out["horizon"] = options.horizon
+    if select.reference_onset is not None:
+        out["reference_onset"] = _reference_part(select.reference_onset)
+    return out
 
 
-def fingerprint_parts(rain, thresh, kwargs) -> dict:
+def fingerprint_parts(rain, thresh, obs, area, onset, options, select, years) -> dict:
     """The hash of each fingerprint part for one observed-onset detection (see the module text).
 
-    `rain` supplies the grid of the cells part (a DataArray, or an ingested DailyRain); with evaluation units it is not
-    needed (None is fine): the files and the units specification say which units there are."""
-    from hcwf.io.input import units_files, units_spec
-    from hcwf.lib.onset_config import onset_setup
+    `obs` (ObsSpec), `area` (AreaSpec), `onset` (OnsetSetup) and `options` (OnsetOptions) are the run's, `select` (Selection)
+    the call's, and `years` the years observed onsets are needed for (`observed_years`). `rain` supplies the grid of the
+    cells part (a DataArray, or an ingested DailyRain); with evaluation units it is not needed (None is fine): the files
+    and the units specification say which units there are."""
     from hcwf.onset import definition as definition_mod
 
-    setup = onset_setup(kwargs)
-    years = _years(kwargs)
-    spec = units_spec(kwargs, "observations")
+    spec = obs.units
     parts = {
-        "obs_files": _obs_files_hash(kwargs, years),
-        "obs_ingest": part_hash(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.obs_day_boundary,
-                                kwargs.get("obs_file_pattern")),
-        "definition": part_hash(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check),
+        "obs_files": _obs_files_hash(obs, select.obs_files_years, years),
+        "obs_ingest": part_hash(obs.var, obs.unit_cvt, onset.obs_day_boundary, obs.file_pattern),
+        "definition": part_hash(definition_mod.definition_hash(onset.definition), onset.season, onset.dry_check),
         "thresholds": threshold_hash(thresh),
-        "years": part_hash(years),
+        "years": part_hash(list(years)),
     }
     if spec is None:
         lat, lon = (np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
                     for name in ("lat", "lon"))   # rain is a DataArray, or an ingested DailyRain
-        parts["cells"] = part_hash(kwargs.get("region"), json.dumps(kwargs.get("mask"), sort_keys=True, default=str),
-                                   _mask_files(kwargs), bool(kwargs.get("polygon")), bool(kwargs.get("grid_point")),
-                                   kwargs.get("lat_select") if kwargs.get("grid_point") else None,
-                                   kwargs.get("lon_select") if kwargs.get("grid_point") else None, lat, lon)
+        parts["cells"] = part_hash(area.region, json.dumps(_mask_mapping(area.mask), sort_keys=True, default=str),
+                                   _mask_files(area), bool(area.polygon), bool(select.grid_point),
+                                   select.lat if select.grid_point else None,
+                                   select.lon if select.grid_point else None, lat, lon)
     else:
-        parts["units"] = part_hash(repr(spec), units_files(kwargs), kwargs.get("obs_dims"),
-                                   sorted(kwargs.get("keep_unit_ids") or ()), setup.lead_label)
-    options = _options(kwargs)
-    if options:
-        parts["options"] = part_hash(options)
+        parts["units"] = part_hash(repr(spec), [file_identity(p) for p in spec.files()], obs.dims_map(),
+                                   sorted(select.keep_unit_ids or ()), onset.lead_label)
+    opts = _options(options, spec, select)
+    if opts:
+        parts["options"] = part_hash(opts)
     return parts
+
+
+def parts_for(rain, thresh, rc, select=Selection()) -> dict:
+    """fingerprint_parts of a RunConfig's observations, area, onset and options."""
+    return fingerprint_parts(rain, thresh, rc.observations, rc.area, rc.onset, rc.onset_options, select,
+                             observed_years(rc.evaluation))
 
 
 def fingerprint(parts: dict) -> str:
@@ -225,13 +248,13 @@ def _table(parts: dict) -> dict:
     return _tables[fp]
 
 
-def lookup(rain, thresh, year, kwargs):
+def lookup(rain, thresh, year, rc, select=Selection()):
     """The cached observed onsets of a year as a DataArray over the spatial dims (a per-unit array the onsets carried
     comes back as a coordinate), or None (inactive, or not cached yet)."""
     if not _state["on"]:
         return None
     try:
-        parts = fingerprint_parts(rain, thresh, kwargs)
+        parts = parts_for(rain, thresh, rc, select)
         table = _table(parts)
         values = table["years"].get(int(year))
         if values is None:
@@ -252,12 +275,12 @@ def _entry(onset) -> tuple:
             {name: np.asarray(onset.coords[name].values) for name in onset.coords if name not in onset.dims})
 
 
-def store(rain, thresh, year, kwargs, onset) -> None:
+def store(rain, thresh, year, rc, select, onset) -> None:
     """Keep the detected onsets of a year (memory, and disk when a cache folder is set)."""
     if not _state["on"]:
         return
     try:
-        parts = fingerprint_parts(rain, thresh, kwargs)
+        parts = parts_for(rain, thresh, rc, select)
         fp = _state["store"].fingerprint(parts)
         table = _table(parts)
         dims, coords, extras = _entry(onset)

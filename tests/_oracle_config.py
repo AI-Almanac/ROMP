@@ -1058,3 +1058,109 @@ def check_blend_problems(dic):
     except Exception as exc:  # noqa: BLE001
         return [f"blend: {exc}"]
     return []
+
+
+# ======================================================================= hcwf/stats/observed_cache.py (step S7)
+# The observed-onset cache key as it was before the typed fingerprint_parts: the parts of one detection from the flat
+# kwargs. (Calls the live `onset_setup`, `units_spec`, `units_files` and `ingest_options` of the readers, which S7 does
+# not change.)
+
+def _fp_years(kwargs):
+    years = set()
+    for key in ("years", "years_clim"):
+        value = kwargs.get(key)
+        if value and not isinstance(value, str):
+            years.update(int(y) for y in value)
+    return sorted(years)
+
+
+def _fp_obs_files(kwargs, years):
+    from hcwf.cache import file_identity
+    from hcwf.io.input import is_zarr, year_files
+
+    if kwargs.get("obs_paths"):
+        found = []
+        for year in years:
+            files = year_files(kwargs["obs_paths"], kwargs.get("obs_dir") or None, kwargs.get("obs_files_years"), year)
+            found.append([file_identity(f) for f in files] or [f"missing {year}"])
+        return found
+    if is_zarr(kwargs["obs_dir"]):
+        return [file_identity(kwargs["obs_dir"]), list(years)]
+    found = []
+    for year in years:
+        for pattern in kwargs.get("obs_file_pattern") or ():
+            path = Path(str(kwargs["obs_dir"])) / pattern.format(year)
+            if path.exists():
+                found.append(file_identity(path))
+                break
+        else:
+            found.append([f"missing {year}"])
+    return found
+
+
+def _fp_mask_files(kwargs):
+    from hcwf.cache import file_identity
+
+    paths = []
+    mask = kwargs.get("mask")
+    if isinstance(mask, dict):
+        paths += [mask.get("file"), (mask.get("condition") or {}).get("file")]
+    paths += [kwargs.get("nc_mask"), kwargs.get("shpfile_dir")]
+    return [file_identity(p) for p in paths if p]
+
+
+def _fp_reference_part(reference):
+    if reference is None:
+        return None
+    table = None if reference.table is None else reference.table.to_dict("list")
+    return (reference.month_day, table, reference.computed, reference.statistic)
+
+
+def _fp_options(kwargs):
+    from hcwf.io.input import ingest_options
+
+    options = {**ingest_options(kwargs)}
+    if kwargs.get("onset_horizon"):
+        options["horizon"] = kwargs["onset_horizon"]
+    if kwargs.get("reference_onset") is not None:
+        options["reference_onset"] = _fp_reference_part(kwargs["reference_onset"])
+    return options
+
+
+def fingerprint_parts(rain, thresh, kwargs) -> dict:
+    """The hash of each fingerprint part for one observed-onset detection, from the flat kwargs (the kwargs version)."""
+    import json
+
+    import numpy as np
+
+    from hcwf.cache import part_hash
+    from hcwf.io.input import units_files, units_spec
+    from hcwf.lib.onset_config import onset_setup
+    from hcwf.onset import definition as definition_mod
+    from hcwf.stats.observed_cache import threshold_hash
+
+    setup = onset_setup(kwargs)
+    years = _fp_years(kwargs)
+    spec = units_spec(kwargs, "observations")
+    parts = {
+        "obs_files": part_hash(_fp_obs_files(kwargs, years)),
+        "obs_ingest": part_hash(kwargs.get("obs_var"), kwargs.get("obs_unit_cvt"), setup.obs_day_boundary,
+                                kwargs.get("obs_file_pattern")),
+        "definition": part_hash(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check),
+        "thresholds": threshold_hash(thresh),
+        "years": part_hash(years),
+    }
+    if spec is None:
+        lat, lon = (np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
+                    for name in ("lat", "lon"))
+        parts["cells"] = part_hash(kwargs.get("region"), json.dumps(kwargs.get("mask"), sort_keys=True, default=str),
+                                   _fp_mask_files(kwargs), bool(kwargs.get("polygon")), bool(kwargs.get("grid_point")),
+                                   kwargs.get("lat_select") if kwargs.get("grid_point") else None,
+                                   kwargs.get("lon_select") if kwargs.get("grid_point") else None, lat, lon)
+    else:
+        parts["units"] = part_hash(repr(spec), units_files(kwargs), kwargs.get("obs_dims"),
+                                   sorted(kwargs.get("keep_unit_ids") or ()), setup.lead_label)
+    options = _fp_options(kwargs)
+    if options:
+        parts["options"] = part_hash(options)
+    return parts

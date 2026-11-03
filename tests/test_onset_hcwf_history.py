@@ -3,15 +3,22 @@
 import numpy as np
 import pandas as pd
 import pytest
+import typed_io
 import xarray as xr
 
 from hcwf.io import input as hcwf_input
 from hcwf.lib.onset_config import OnsetConfigError, history_needs_previous_year, onset_setup
 from hcwf.stats.benchmark import compute_onset_metrics_with_windows
 from hcwf.stats.bins import create_forecast_observation_pairs_with_bins
-from hcwf.stats.detect import compute_onset_for_deterministic_model
+from hcwf.config import flat_bridge
+from hcwf.stats.detect import detect_deterministic
 
 BOUNDARY = "00 UTC, labelled by start"
+
+
+def typed(kwargs):
+    """(rc, case, select): the typed inputs of a test's flat kwargs."""
+    return flat_bridge.from_case_kwargs(kwargs)
 
 
 def _cfg(**values):
@@ -76,21 +83,21 @@ def test_load_history_adds_the_previous_year_only_when_needed(tmp_path, monkeypa
     """The history is the year's observations, plus last year's file for a wrapping season."""
     loaded = []
 
-    def fake(year, **kwargs):
+    def fake(year, *args, **kwargs):
         """One year of dry observations."""
         loaded.append(year)
         time = pd.date_range(f"{year}-01-01", f"{year}-12-31")
         return xr.DataArray(np.zeros((len(time), 1, 1)), coords=[("time", time), ("lat", [0.0]), ("lon", [0.0])])
 
-    monkeypatch.setattr(hcwf_input, "load_imd_rainfall", fake)
+    monkeypatch.setattr(hcwf_input, "load_observations", fake)
     current = fake(2020)
     loaded.clear()
-    assert hcwf_input.load_history(2020, current, **_cfg()) is current
-    assert hcwf_input.load_history(2020, current, **_cfg(forecast_history="none")) is None
+    assert typed_io.history(2020, current, _cfg()) is current
+    assert typed_io.history(2020, current, _cfg(forecast_history="none")) is None
     assert loaded == []
     file = tmp_path / "wrap.yaml"
     file.write_text("id: wrap\nversion: 1\ntitle: t\nstatus: draft\nextends: icpac\nseason: {from: 11-01, to: 02-28}\n")
-    history = hcwf_input.load_history(2020, current, **_cfg(onset_definition=str(file)))
+    history = typed_io.history(2020, current, _cfg(onset_definition=str(file)))
     assert loaded == [2019] and history.sizes["time"] == 365 + 366
 
 
@@ -126,18 +133,17 @@ def test_a_spell_started_in_the_observations_is_back_dated():
     """Wet days on 23 and 24 May (observed) and 25 May (lead 1) make an onset on 23 May: onset_day -2, ONSET."""
     history = _history([("2020-05-23", 2)])
     forecast = _forecast("2020-05-25", [1])
-    stitched = compute_onset_for_deterministic_model(forecast, {}, OBS_ONSET, history=history, **DEFINITION)
+    stitched = detect_deterministic(forecast, {}, OBS_ONSET, *typed(DEFINITION), history=history)
     row = stitched.iloc[0]
     assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (-2, "2020-05-23", "ONSET")
-    alone = compute_onset_for_deterministic_model(forecast, {}, OBS_ONSET, **DEFINITION)
+    alone = detect_deterministic(forecast, {}, OBS_ONSET, *typed(DEFINITION))
     assert alone["onset_day"].iloc[0] is None and alone["onset_status"].iloc[0] == "NOT_FOUND"
 
 
 def test_nothing_observed_after_the_init_is_used():
     """Observed wet days after the init do not create an onset in the forecast."""
     history = _history([("2020-05-25", 5)])
-    row = compute_onset_for_deterministic_model(_forecast("2020-05-25", []), {}, OBS_ONSET, history=history,
-                                                **DEFINITION).iloc[0]
+    row = detect_deterministic(_forecast("2020-05-25", []), {}, OBS_ONSET, *typed(DEFINITION), history=history).iloc[0]
     assert row["onset_status"] == "NOT_FOUND"
 
 
@@ -146,15 +152,14 @@ def test_inits_after_the_observed_onset_give_no_rows_and_prior_is_never_scored()
     history = _history([("2020-05-10", 3)])
     obs_onset = xr.DataArray([[np.datetime64("2020-05-10", "ns")]], coords=OBS_ONSET.coords)
     forecast = _forecast("2020-05-25", [])
-    assert compute_onset_for_deterministic_model(forecast, {}, obs_onset, history=history, **DEFINITION).empty
+    assert detect_deterministic(forecast, {}, obs_onset, *typed(DEFINITION), history=history).empty
 
 
 def test_a_prior_result_in_a_scored_row_warns_and_counts_as_no_onset():
     """If the observed onset date disagrees with the history, the PRIOR row is reported without onset, with a warning."""
     history = _history([("2020-05-10", 3)])
     with pytest.warns(UserWarning, match="PRIOR"):
-        df = compute_onset_for_deterministic_model(_forecast("2020-05-25", []), {}, OBS_ONSET, history=history,
-                                                   **DEFINITION)
+        df = detect_deterministic(_forecast("2020-05-25", []), {}, OBS_ONSET, *typed(DEFINITION), history=history)
     assert df["onset_status"].tolist() == ["PRIOR"] and df["onset_day"].iloc[0] is None
 
 
@@ -165,9 +170,8 @@ def test_history_from_the_previous_year_serves_a_wrapping_season(tmp_path):
                     "onset: {reject if: []}\n")
     history = _history([("2019-12-31", 2)], start="2019-11-01", end="2020-03-31")
     obs_onset = xr.DataArray([[np.datetime64("2020-02-10", "ns")]], coords=OBS_ONSET.coords)
-    row = compute_onset_for_deterministic_model(
-        _forecast("2020-01-02", [1]), {}, obs_onset, history=history,
-        **{**DEFINITION, "onset_definition": str(file)}).iloc[0]
+    row = detect_deterministic(_forecast("2020-01-02", [1]), {}, obs_onset,
+                               *typed({**DEFINITION, "onset_definition": str(file)}), history=history).iloc[0]
     assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (-2, "2019-12-31", "ONSET")
 
 
@@ -225,14 +229,14 @@ def test_model_thresholds_are_computed_from_the_forecast_archive_and_cached(tmp_
                   model="TOY", model_dir=str(archive), model_var="tp", file_pattern="{}.nc", unit_cvt=None,
                   date_filter_year=2024, init_days=tuple(range(7)), start_date=(2015, 5, 1), end_date=(2015, 6, 30),
                   members=None, probabilistic=False, max_forecast_day=10, dir_out=str(tmp_path / "out"), region="x")
-    thresholds = hcwf_input.load_thresholds(**kwargs)
+    thresholds = typed_io.thresholds(kwargs)
     amount = thresholds["wet_spell_amount"]
     assert np.allclose(amount.values, 10.0) and amount.attrs["source"].startswith("model:")
     assert list((tmp_path / "out" / ".onset_cache" / "model_thresholds").glob("*/value.nc"))
     hcwf_input._loaded_thresholds.clear()
-    monkeypatch.setattr(hcwf_input, "get_forecast_deterministic_twice_weekly",
+    monkeypatch.setattr(hcwf_input, "load_forecast",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("cache not used")))
-    again = hcwf_input.load_thresholds(**kwargs)
+    again = typed_io.thresholds(kwargs)
     assert np.allclose(again["wet_spell_amount"].values, 10.0)
 
 
@@ -251,16 +255,16 @@ def test_model_thresholds_cache_misses_when_unit_factor_or_variable_changes(tmp_
                   date_filter_year=2024, init_days=tuple(range(7)), start_date=(2015, 5, 1), end_date=(2015, 6, 30),
                   members=None, probabilistic=False, max_forecast_day=10, dir_out=str(tmp_path / "out"), region="x")
     hcwf_input._loaded_thresholds.clear()
-    assert np.allclose(hcwf_input.load_thresholds(**kwargs)["wet_spell_amount"].values, 10.0)
+    assert np.allclose(typed_io.thresholds(kwargs)["wet_spell_amount"].values, 10.0)
     for change in ({"unit_cvt": 2.0}, {"region": "y"}, {"daily_boundary": "06:00"}, {"accumulation": "since_init"}):
         hcwf_input._loaded_thresholds.clear()
         calls = []
-        real = hcwf_input.get_forecast_deterministic_twice_weekly
-        monkeypatch.setattr(hcwf_input, "get_forecast_deterministic_twice_weekly",
+        real = hcwf_input.load_forecast
+        monkeypatch.setattr(hcwf_input, "load_forecast",
                             lambda *a, _real=real, **k: calls.append(1) or _real(*a, **k))
         try:
-            hcwf_input.load_thresholds(**{**kwargs, **change})
+            typed_io.thresholds({**kwargs, **change})
         except Exception:   # noqa: BLE001 - only whether the cache was bypassed matters here
             pass
-        monkeypatch.setattr(hcwf_input, "get_forecast_deterministic_twice_weekly", real)
+        monkeypatch.setattr(hcwf_input, "load_forecast", real)
         assert calls, f"cache served for a changed {change}"

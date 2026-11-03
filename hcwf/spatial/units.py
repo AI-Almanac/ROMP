@@ -23,13 +23,14 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from hcwf.lib import config_schema as schema
 from hcwf.lib.assertion import HCWFConfigError
 from . import ids as unit_ids
 from . import regrid
@@ -434,6 +435,10 @@ class EvaluationUnits:
 # Where the units come from: one specification for a region's `units:` block and a run's `units:` section
 # ---------------------------------------------------------------------------------------------------------------
 
+UNITS_KEYS = {f.key: f.nested_name for f in schema.FIELDS if f.section == "units"}
+"""The flat config keys of the `units:` section and the UnitsSpec field each sets (declared once, in the schema)."""
+_PER_SOURCE = ("units_mode", "units_weights")
+"""Keys that may be a mapping from a source ("observations" or a model's name; "*" for the rest) to its own value."""
 MODES = ("cells", "regrid", "cell_transform")
 BOUNDARIES = ("contains", "intersects")
 DISSEMINATION_SCOPES = ("inputs", "training")
@@ -495,6 +500,45 @@ class UnitsSpec:
             raise UnitsSpecError("units with a shapefile need unit_id_col")
         if isinstance(self.box, dict):
             object.__setattr__(self, "box", tuple(sorted((k, float(v)) for k, v in self.box.items() if v is not None)))
+
+    @classmethod
+    def from_flat(cls, values, source: str = "observations") -> "UnitsSpec | None":
+        """The evaluation units of a source from a flat config record, or None when it has no `units:` keys (the grid
+        cells are used). This is the one place the flat `units_*` keys (declared in the schema's `units` section, field
+        = nested_name) become a UnitsSpec; `RunConfig.from_flat` calls it once per source.
+
+        The keys given extend the region's declared units (its shapefile or weights, replaced when the config names the
+        other): a config with only `units_box` still reads the region's polygons. units_mode and units_weights may be
+        mappings by source, as models on different grids have their own weights (the source is "observations" or a
+        model's name).
+        """
+        given = {}
+        for key, field in UNITS_KEYS.items():
+            value = values.get(key)
+            if isinstance(value, dict) and key in _PER_SOURCE:
+                value = value.get(source, value.get("*"))
+            if value is not None:
+                given[field] = value
+        if not given:
+            return None
+        if "weights" in given:   # a source with its own weights table does not use the shared shapefile
+            for field in ("shapefile", "unit_id_col", "unit_name_col", "parent_col"):
+                given.pop(field, None)
+        base = None
+        if values.get("region"):
+            from hcwf.onset import regions
+
+            try:
+                base = regions.units_spec(str(values["region"]))
+            except regions.RegionError:
+                base = None
+        if base is None:
+            return cls(**given)
+        if "weights" in given:
+            base = replace(base, shapefile=None, unit_id_col=None, unit_name_col=None, parent_col=None)
+        elif "shapefile" in given:
+            base = replace(base, weights=None)
+        return replace(base, **given)
 
     @property
     def how(self) -> str:

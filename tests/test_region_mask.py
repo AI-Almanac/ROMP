@@ -1,6 +1,7 @@
 """Region masks: shapes, mask files and conditions are built on each dataset's own grid, with hand-computed answers."""
 
 import logging
+from dataclasses import replace
 import json
 
 import numpy as np
@@ -436,6 +437,7 @@ def test_relative_mask_paths_are_made_absolute(tmp_path, monkeypatch):
 def test_legacy_nc_mask_path_is_unchanged(tmp_path):
     """Without `mask`, region_select does what it did: box, nc_mask, land and country masks, byte for byte."""
     from hcwf.utils.mask import apply_nc_mask, mask_land, shp_mask
+    from hcwf.config.model import AreaSpec
     from hcwf.utils.region import coords_fmt, region_select
 
     lat, lon = np.arange(6.5, 35.6, 2.0), np.arange(68.0, 91.5, 2.0)
@@ -448,7 +450,8 @@ def test_legacy_nc_mask_path_is_unchanged(tmp_path):
     lats, latn, lonw, lone, prepared = coords_fmt(ds, region="India")
     expected = prepared.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
     expected = shp_mask(mask_land(apply_nc_mask(expected, mask_file)), region="India")
-    actual = region_select(ds, region="India", nc_mask=mask_file, mask=None, dataset_name="obs", dir_fig=str(tmp_path))
+    area = AreaSpec(region="India", mask=None, nc_mask=mask_file, shpfile_dir=None, polygon=False)
+    actual = region_select(ds, area=area, dataset_name="obs", dir_fig=str(tmp_path))
 
     xr.testing.assert_identical(actual, expected)
     expected.to_netcdf(tmp_path / "a.nc")
@@ -459,14 +462,17 @@ def test_legacy_nc_mask_path_is_unchanged(tmp_path):
 
 def test_region_select_with_mask_replaces_the_implicit_masks_and_rejects_nc_mask(tmp_path):
     """With `mask` only the mask limits the cells; with both mask and nc_mask the run stops."""
+    from hcwf.config.model import AreaSpec
     from hcwf.utils.region import region_select
 
     lat, lon = np.arange(6.5, 35.6, 2.0), np.arange(68.0, 91.5, 2.0)
     ds = xr.Dataset({"rain": (("time", "lat", "lon"), np.ones((2, lat.size, lon.size)))},
                     coords={"time": [0, 1], "lat": lat, "lon": lon})
     shape = _geojson(tmp_path, box(70.0, 10.0, 80.0, 20.0))
-    out = region_select(ds, region="India", nc_mask=None, mask={"file": str(shape)}, dataset_name="obs")
+    area = AreaSpec(region="India", mask=MaskSpec.from_mapping({"file": str(shape)}), nc_mask=None, shpfile_dir=None,
+                    polygon=False)
+    out = region_select(ds, area=area, dataset_name="obs")
     kept = out["rain"].isel(time=0).notnull()
     assert float(out["rain"].isel(time=0).sum()) == int(kept.sum()) == 5 * 6      # lats 10.5..18.5, lons 70..80 (the centre on 80 is on the boundary)
     with pytest.raises(MaskError, match="both `mask` and `nc_mask`"):
-        region_select(ds, region="India", nc_mask="x.nc", mask={"file": str(shape)})
+        region_select(ds, area=replace(area, nc_mask="x.nc"))

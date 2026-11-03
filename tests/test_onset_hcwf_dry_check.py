@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from hcwf.io.input import onset_steps_needed
+from hcwf.io.input import steps_needed
 from hcwf.lib.onset_config import OnsetConfigError, onset_setup
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
@@ -79,8 +79,8 @@ def test_dry_spell_check_must_be_a_bool():
 def test_fewer_leads_are_loaded_without_the_check():
     """ICPAC's 21-day dry run needs 21 more leads than the variant without it."""
     kw = dict(max_forecast_day=30)
-    assert onset_steps_needed(**_cfg(**kw)) == 51
-    assert onset_steps_needed(**_cfg(dry_spell_check=False, **kw)) == 32
+    assert steps_needed(30, onset_setup(_cfg(**kw))) == 51
+    assert steps_needed(30, onset_setup(_cfg(dry_spell_check=False, **kw))) == 32
 
 
 def test_generate_config_env_var(tmp_path):

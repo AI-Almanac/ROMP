@@ -6,6 +6,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+import typed_io
 import xarray as xr
 
 from _inputs import LATS, LONS, write_adm3, write_forecast, write_observations
@@ -70,7 +71,7 @@ def test_live_files_with_one_init_each_are_read_as_one_year(tmp_path):
     kwargs = dict(model_var="tp", unit_cvt=None, region=None, date_filter_year=2014, init_days=list(range(7)),
                   start_date=(0, 5, 1), end_date=(0, 7, 31), members=None, model_paths=["live_*.nc"],
                   model_dir=str(tmp_path), model_files_years=[2014, 2013])
-    got = io_input.get_forecast_probabilistic_twice_weekly(2014, **kwargs)
+    got = typed_io.forecast(2014, kwargs, True)
     assert got.sizes["init_time"] == 3 and got.sizes["member"] == 2
     assert pd.to_datetime(got["init_time"].values).date.tolist() == dates
     # each file holds one init: the values are the ones in the file, not another file's
@@ -79,18 +80,18 @@ def test_live_files_with_one_init_each_are_read_as_one_year(tmp_path):
             expect = one["tp"].transpose("time", "number", "day", "lat", "lon").values[0]
         np.testing.assert_array_equal(got.sel(init_time=str(day)).transpose("member", "step", "lat", "lon").values,
                                       expect)
-    only = io_input.get_forecast_probabilistic_twice_weekly(2013, **kwargs)
+    only = typed_io.forecast(2013, kwargs, True)
     assert only.sizes["init_time"] == 1 and other.exists()
     with pytest.raises(FileNotFoundError, match="among the listed paths"):
-        io_input.get_forecast_probabilistic_twice_weekly(2012, **kwargs)
+        typed_io.forecast(2012, kwargs, True)
     with pytest.raises(FileNotFoundError):
-        io_input.get_forecast_probabilistic_twice_weekly(2014, **{**kwargs, "model_files_years": [2013]})
+        typed_io.forecast(2014, {**kwargs, "model_files_years": [2013]}, True)
 
 
 def test_observations_listed_by_path_are_read_for_their_year(tmp_path):
     write_observations(tmp_path, years=(2003, 2004), name=lambda y: f"obs_{y}_v2.nc")
     kwargs = dict(obs_var="precip", obs_unit_cvt=None, region=None, obs_paths=["obs_*.nc"], obs_dir=str(tmp_path))
-    da = io_input.load_imd_rainfall(2004, **kwargs)
+    da = typed_io.observations(2004, kwargs)
     assert pd.DatetimeIndex(da["time"].values).year.unique().tolist() == [2004]
     with xr.open_dataset(tmp_path / "obs_2004_v2.nc") as ds:
         np.testing.assert_array_equal(da.values, ds["precip"].values)
@@ -98,10 +99,10 @@ def test_observations_listed_by_path_are_read_for_their_year(tmp_path):
     ds = xr.open_dataset(tmp_path / "obs_2004_v2.nc").load()
     ds.isel(time=slice(0, 10)).to_netcdf(tmp_path / "part_2004_a.nc")
     ds.isel(time=slice(10, 20)).to_netcdf(tmp_path / "part_2004_b.nc")
-    both = io_input.load_imd_rainfall(2004, **{**kwargs, "obs_paths": ["part_*.nc"]})
+    both = typed_io.observations(2004, {**kwargs, "obs_paths": ["part_*.nc"]})
     np.testing.assert_array_equal(both.values, da.values)
     with pytest.raises(FileNotFoundError):
-        io_input.load_imd_rainfall(1999, **kwargs)
+        typed_io.observations(1999, kwargs)
 
 
 def test_detection_reads_the_first_listed_file(tmp_path):
@@ -209,8 +210,8 @@ def test_a_forecast_without_declared_units_scales_like_onset_blending(tmp_path):
     path = write_forecast(tmp_path / "f2014.nc", [dt.date(2014, 6, 2)], units=None, seed=4)
     kwargs = dict(model_var="tp", region=None, date_filter_year=2014, init_days=list(range(7)), start_date=(0, 5, 1),
                   end_date=(0, 7, 31), members=None, model_dir=str(tmp_path), file_pattern="f{}.nc")
-    plain = io_input.get_forecast_probabilistic_twice_weekly(2014, unit_cvt=None, **kwargs)
-    scaled = io_input.get_forecast_probabilistic_twice_weekly(2014, unit_cvt=0.1, **kwargs)
+    plain = typed_io.forecast(2014, {**kwargs, "unit_cvt": None}, True)
+    scaled = typed_io.forecast(2014, {**kwargs, "unit_cvt": 0.1}, True)
     assert scaled.dtype == np.float32
     np.testing.assert_array_equal(scaled.values, plain.values * np.float32(0.1))
     assert path.exists()

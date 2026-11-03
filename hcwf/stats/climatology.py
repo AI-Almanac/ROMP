@@ -1,8 +1,13 @@
-"""Climatological onset dates from observed rainfall, and climatology used as a baseline forecast."""
+"""Climatological onset dates from observed rainfall, and climatology used as a baseline forecast.
 
+The functions take the typed inputs of hcwf.config.model (the run `rc`, the `case` and the per-call `select`); the old
+kwargs forms (marked R2-bridge) stay until step S11 as wrappers that rebuild them with hcwf.config.flat_bridge.
+"""
+
+from hcwf.config import flat_bridge
+from hcwf.config.model import Selection
 from hcwf.io.input import load_thresholds, obs_years, reference_held, reference_year, release_reference
-from hcwf.stats.detect import detect_observed_onset
-from hcwf.lib.onset_config import onset_setup
+from hcwf.stats.detect import detect_observed
 from hcwf.onset.climatology import ReferenceOnset, reduce_onset_days
 from hcwf.spatial import axes
 from hcwf.utils.practical import restore_args
@@ -15,12 +20,7 @@ import logging
 log = logging.getLogger(__name__)
 
 _MEMO: dict = {}
-"""Climatological onset datasets of this run: {key: (thresholds held so their id stays unique, dataset)}."""
-_MODEL_ONLY = ("model", "model_dir", "model_var", "file_pattern", "unit_cvt", "members", "case_name", "model_dims",
-               "verification_window", "tolerance_days", "accumulation", "daily_boundary", "day_bins",
-               "onset_percentage_threshold", "ref_model", "ref_model_dir", "ref_model_var", "ref_model_file_pattern",
-               "ref_model_unit_cvt", "ref_model_dims")
-"""Settings of the forecast model or of one case that do not change the observed onsets of the climatology years."""
+"""Climatological onset datasets of this run: {key: ((thresholds, onset setup) held so their ids stay unique, dataset)}."""
 
 
 def reset_memo() -> None:
@@ -28,18 +28,23 @@ def reset_memo() -> None:
     _MEMO.clear()
 
 
-def _read_years(years, kwargs, shared=True):
+def _io_kwargs(rc, case, select) -> dict:   # R2-bridge
+    """The flat keyword arguments the readers (hcwf.io.input) still take, until they take the typed inputs."""
+    return flat_bridge.case_kwargs(rc, case, "deterministic", select)
+
+
+def _read_years(years, rc, kwargs, shared=True):
     """Yield (rain, None), or (None, error), for each year's observations (hcwf.io.input.obs_years: read in blocks or ahead).
 
     A year the thresholds were just computed from comes as the DailyRain of that already read and ingested reference
     rainfall (hcwf.io.input.reference_year) instead of being read and converted again; only the other years are read.
-    shared=False reads every year as rainfall.
+    shared=False reads every year as rainfall. `kwargs` are the readers' flat arguments (_io_kwargs).
     """
     years = list(years)
     if not shared or not reference_held():
         yield from obs_years(years, kwargs)
         return
-    boundary = onset_setup(kwargs).obs_day_boundary
+    boundary = rc.onset.obs_day_boundary
     held = {year: reference_year(year, kwargs, boundary) for year in years}
     rest = obs_years([year for year in years if held[year] is None], kwargs)
     for year in years:
@@ -52,20 +57,22 @@ def _axes(rain):
                  for name in axes.spatial_dims(rain.dims))
 
 
-def compute_climatological_onset(*, years_clim,
-                                 grid_point=False, lat_select=None, lon_select=None, **kwargs):
+def climatological_onset(rc, case, select=Selection()):
     """
     Compute climatological onset dates from all available IMD files.
 
     Parameters:
-    years_clim: the years to average over
-    kwargs: the run configuration, in definition mode or with the old flat onset keys (obs_dir, obs_file_pattern, ... as for load_imd_rainfall and load_thresholds)
+    rc: the run (its climatology years, observations, onset definition and thresholds)
+    case: the case whose model the thresholds are loaded for
+    select: the call's choices; `select.grid_point` (with `lat` and `lon`) selects one grid point and also returns the
+        climatological rainfall
 
     Returns:
     climatological_onset_doy: xarray DataArray with climatological onset day of year
     """
-
-    kwargs = restore_args(compute_climatological_onset, kwargs, locals())
+    years_clim = rc.evaluation.climatology_years
+    grid_point = bool(select.grid_point)
+    kwargs = _io_kwargs(rc, case, select)
 
     thresh_da = load_thresholds(**kwargs)
 
@@ -74,7 +81,7 @@ def compute_climatological_onset(*, years_clim,
     all_onset_days = []
     rainfall_all_years = []
 
-    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, kwargs, shared=not grid_point)):
+    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, kwargs, shared=not grid_point)):
         try:
             # Load rainfall data using the existing function that handles both patterns
             if read_error is not None:
@@ -88,7 +95,7 @@ def compute_climatological_onset(*, years_clim,
                 rainfall_all_years.append(rainfall_ds)
 
             # Detect onset for this year
-            onset_da = detect_observed_onset(rainfall_ds, thresh_da, year, **kwargs)
+            onset_da = detect_observed(rainfall_ds, thresh_da, year, rc, select)
 
             # Convert onset dates to day of year
             onset_doy = onset_da.dt.dayofyear.astype(float)
@@ -133,6 +140,12 @@ def compute_climatological_onset(*, years_clim,
         return climatological_onset_doy, rainfall_clim_mean
 
     return climatological_onset_doy
+
+
+def compute_climatological_onset(*, years_clim, grid_point=False, lat_select=None, lon_select=None, **kwargs):  # R2-bridge
+    """climatological_onset with the run's flat kwargs."""
+    kwargs = restore_args(compute_climatological_onset, kwargs, locals())
+    return climatological_onset(*flat_bridge.from_case_kwargs(kwargs))
 
 
 def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, observed_onset_da,
@@ -224,29 +237,28 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
 ###=========  for bin climatology ============
 
 ## This function computes onset dates for all available years in IMD folder and creates a climatological onset dataset
-def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, start_date, years_clim, **kwargs):
+def climatological_onset_dataset(rc, case, select=Selection()):
     """
-    Compute onset dates for all available years in IMD folder and create a climatological dataset.
+    Compute onset dates for all climatology years and create a climatological dataset.
 
     Parameters:
     -----------
-    obs_dir : str
-        Folder containing IMD NetCDF files
-    thresh_slice : xarray.DataArray
-        Rainfall threshold for each grid point
-    years_clim : list, optional
-        Specific years to process. If None, will auto-detect available years
+    rc : RunConfig
+        The run: its observations, area, onset definition and options, and climatology years
+    case : Case
+        The case whose model the thresholds are loaded for (the dataset does not depend on it)
+    select : Selection
+        The call's choices (cells, units, reference onset)
 
     Returns:
     --------
     xarray.DataArray
         3D array with dimensions [year, lat, lon] (or 2D [year, unit] on evaluation units) containing onset dates
     """
-
-    kwargs = restore_args(compute_climatological_onset_dataset, kwargs, locals())
-
+    years_clim = rc.evaluation.climatology_years
+    kwargs = _io_kwargs(rc, case, select)
     thresh_slice = load_thresholds(**kwargs)
-    key = repr((id(thresh_slice), sorted((k, repr(v)) for k, v in kwargs.items() if k not in _MODEL_ONLY)))
+    key = repr((id(thresh_slice), id(rc.onset), rc.observations, rc.area, rc.onset_options, years_clim, select))
     if key in _MEMO:
         log.debug("Climatological onset dataset: reusing the one computed earlier in this run")
         return _MEMO[key][1].copy(deep=True)
@@ -258,7 +270,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     valid_years = []
 
     # Process each year
-    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, kwargs)):
+    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, kwargs)):
         log.debug(f"\nProcessing year {year}...")
 
         try:
@@ -269,7 +281,7 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
             del rain
 
             # Detect onset for this year
-            onset_da = detect_observed_onset(rainfall_ds, thresh_slice, year, **kwargs)
+            onset_da = detect_observed(rainfall_ds, thresh_slice, year, rc, select)
             spatial, values = axes.spatial_dims(onset_da.dims), _axes(rainfall_ds)
 
             # Count valid onsets
@@ -318,5 +330,11 @@ def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, 
     log.debug(f"Method: {climatological_onset_da.attrs['method']}")
 
     release_reference()   # the thresholds' reference rainfall has served; free its memory
-    _MEMO[key] = (thresh_slice, climatological_onset_da)
+    _MEMO[key] = ((thresh_slice, rc.onset), climatological_onset_da)   # held so their ids stay unique
     return climatological_onset_da.copy(deep=True)
+
+
+def compute_climatological_onset_dataset(*, obs_dir, obs_file_pattern, obs_var, start_date, years_clim, **kwargs):  # R2-bridge
+    """climatological_onset_dataset with the run's flat kwargs."""
+    kwargs = restore_args(compute_climatological_onset_dataset, kwargs, locals())
+    return climatological_onset_dataset(*flat_bridge.from_case_kwargs(kwargs))

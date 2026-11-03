@@ -6,6 +6,7 @@ import importlib
 import numpy as np
 import pandas as pd
 import pytest
+import typed_io
 import xarray as xr
 
 from hcwf.io import input as hcwf_input
@@ -241,7 +242,7 @@ def test_hcwf_model_thresholds_are_per_verification_window_and_cached_by_windows
                   members=None, probabilistic=False, max_forecast_day=10, dir_out=str(tmp_path / "out"), region="x",
                   verification_window_list=((1, 5), (6, 10)))
     hcwf_input._loaded_thresholds.clear()
-    amount = hcwf_input.load_thresholds(**kwargs)["wet_spell_amount"]
+    amount = typed_io.thresholds(kwargs)["wet_spell_amount"]
     assert amount.dims == ("window", "lat", "lon")
     assert amount.values[0].tolist() == [[10.0, 10.0]] * 2 and amount.values[1].tolist() == [[30.0, 30.0]] * 2
     assert amount["window_first"].values.tolist() == [1, 6]
@@ -249,11 +250,11 @@ def test_hcwf_model_thresholds_are_per_verification_window_and_cached_by_windows
     assert len(list((cache / "model_thresholds").glob("*/value.nc"))) == 1
 
     hcwf_input._loaded_thresholds.clear()
-    monkeypatch.setattr(hcwf_input, "get_forecast_deterministic_twice_weekly",
+    monkeypatch.setattr(hcwf_input, "load_forecast",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("cache not used")))
-    again = hcwf_input.load_thresholds(**kwargs)["wet_spell_amount"]
+    again = typed_io.thresholds(kwargs)["wet_spell_amount"]
     assert again.values[1].tolist() == [[30.0, 30.0]] * 2
 
     hcwf_input._loaded_thresholds.clear()
     with pytest.raises(AssertionError, match="cache not used"):
-        hcwf_input.load_thresholds(**{**kwargs, "verification_window_list": ((1, 10),)})
+        typed_io.thresholds({**kwargs, "verification_window_list": ((1, 10),)})

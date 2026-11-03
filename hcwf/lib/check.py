@@ -323,6 +323,7 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
     if not mask or path is None:
         return
     report.section("Mask")
+    from hcwf.config.model import AreaSpec
     from hcwf.utils import mask as mask_mod
     from hcwf.utils.region import region_select
     from hcwf.utils.standard import dim_fmt
@@ -331,8 +332,9 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
     try:
         with _open(path) as ds:
             ds = dim_fmt(ds).isel(time=slice(0, 1))
-            region_select(ds, region=dic["region"], mask=mask, nc_mask=dic.get("nc_mask"), dataset_name="obs",
-                          dir_fig=None)
+            area = AreaSpec(region=dic["region"], mask=mask_mod.MaskSpec.from_mapping(mask), nc_mask=dic.get("nc_mask"),
+                            shpfile_dir=None, polygon=False)
+            region_select(ds, area=area, dataset_name="obs", dir_fig=None)
         for record in mask_mod.records().values():
             for line in mask_mod.record_lines(record):
                 report.add(line)
@@ -558,10 +560,11 @@ def _cache(dic: dict, report: CheckReport) -> None:
         from hcwf.config.model import RunConfig
         from hcwf.io.input import load_imd_rainfall, load_thresholds
 
-        kw = {**model_kwargs(RunConfig.from_flat(dic, check=False), dic["model_list"][0]), "dir_fig": None}
+        rc = RunConfig.from_flat(dic, check=False)
+        kw = {**model_kwargs(rc, dic["model_list"][0]), "dir_fig": None}
         year = next(y for y in kw["years"] if _find(kw["obs_dir"], tuple(kw["obs_file_pattern"]), y))
         rain = load_imd_rainfall(year, **kw)
-        parts = observed_cache.fingerprint_parts(rain, load_thresholds(**kw), kw)
+        parts = observed_cache.parts_for(rain, load_thresholds(**kw), rc)
         fp = observed_cache.fingerprint(parts)
         if (folder / observed_cache.SUBFOLDER / fp / "onsets.nc").exists():
             report.add(f"observed onsets: expected cache hit {fp}")
