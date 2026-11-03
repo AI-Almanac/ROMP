@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hcwf.lib import convert
-from hcwf.lib.config_yaml import build_config
-from hcwf.lib.resolved import write_resolved
+from hcwf.config import convert
+from hcwf.config.mapping import build_config
+from hcwf.runs.resolved import write_resolved
 from tests.synthetic_data import write_forecast, write_obs
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -228,8 +228,8 @@ def test_datasets_command_reports_detections_and_problems(synthetic):
 
 def test_write_resolved_records_overrides(tmp_path):
     """An onset override and dry_spell_check = false show up in the printed and recorded override list."""
-    from hcwf.lib.onset_config import onset_setup
-    from hcwf.lib.resolved import definition_lines
+    from hcwf.config.onset import onset_setup
+    from hcwf.runs.resolved import definition_lines
 
     cfg = {"region": "ethiopia", "onset_definition": "icpac", "obs_day_boundary": None,
            "onset_override": {"wet_day": "at least 2 mm"}, "dry_spell_check": False, "dir_out": str(tmp_path),

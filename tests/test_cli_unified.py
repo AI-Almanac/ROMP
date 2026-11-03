@@ -4,18 +4,18 @@ import sys
 
 import pytest
 
-from hcwf.lib.assertion import HCWFConfigError
+from hcwf.errors import HCWFConfigError
 
 
 def test_every_config_error_is_an_hcwf_config_error():
     from hcwf.blend.recipe import RecipeError
     from hcwf.blend.trained import BlendFileError
-    from hcwf.lib.config_schema import ConfigSchemaError
+    from hcwf.config.schema import ConfigSchemaError
     from hcwf.onset.definition import DefinitionError
     from hcwf.onset.regions import RegionError
     from hcwf.onset.units import UnitsError
     from hcwf.spatial.units import AreaError, UnitsSpecError
-    from hcwf.utils.mask import MaskError
+    from hcwf.spatial.masks import MaskError
 
     assert issubclass(HCWFConfigError, ValueError)
     for cls in (RecipeError, BlendFileError, ConfigSchemaError, DefinitionError, RegionError, UnitsError,
@@ -39,6 +39,6 @@ def test_onset_error_is_a_clean_message():
 
 
 def test_cli_does_not_import_driver_until_it_runs():
-    code = "import sys, hcwf.cli; sys.exit('hcwf.driver' in sys.modules)"
+    code = "import sys, hcwf.cli; sys.exit('hcwf.cli.driver' in sys.modules)"
     assert _run("-c", code).returncode == 0
-    assert "hcwf.cli" not in open(__import__("hcwf.driver", fromlist=["x"]).__file__).read().split("if __name__")[0]
+    assert "hcwf.cli" not in open(__import__("hcwf.cli.driver", fromlist=["x"]).__file__).read().split("if __name__")[0]

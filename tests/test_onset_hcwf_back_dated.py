@@ -7,8 +7,8 @@ import xarray as xr
 from hcwf.io.output import add_back_dated_map, save_metrics_to_netcdf, save_score_results
 from hcwf.config.model import Window
 from hcwf.spatial import axes
-from hcwf.stats.benchmark import onset_metrics
-from hcwf.stats.bins import forecast_pairs
+from hcwf.metrics.contingency import onset_metrics
+from hcwf.metrics.bins import forecast_pairs
 
 OBSERVED = {"back_dated": True}   # forecast_history "observed" (the default): back-dated onsets are counted
 NONE = {"back_dated": False}      # forecast_history "none": exactly the old tables

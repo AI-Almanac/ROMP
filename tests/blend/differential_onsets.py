@@ -8,7 +8,7 @@
 reference onset and rain predictors; a cell transform with the "drop" policy and a regrid; thresholds computed from the
 observations with the "zero" policy and climatology windows), and pickles every array of the observed onsets, each
 model's forecast onsets, the climatology and the weekly features (with the legacy tables `frame()` rebuilds), as
-onset_blending's own code makes them (`onset_blending.core.onsets`, `features`) or as hcwf's (`hcwf.stats.detect`,
+onset_blending's own code makes them (`onset_blending.core.onsets`, `features`) or as hcwf's (`hcwf.onset.detect`,
 `hcwf.blend.features`); `compare` demands them bit-identical. tests/blend/test_blend_onsets_differential.py runs all
 three steps when the onset_blending environment exists.
 """

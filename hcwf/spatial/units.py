@@ -30,8 +30,8 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from hcwf.lib import config_schema as schema
-from hcwf.lib.assertion import HCWFConfigError
+from hcwf.config import schema
+from hcwf.errors import HCWFConfigError
 from . import ids as unit_ids
 from . import regrid
 from .regrid import SparseTransform
@@ -214,7 +214,7 @@ class EvaluationUnits:
         """Grid units from HCWF's mask (a `MaskSpec` or its mapping; None keeps every cell) on a grid."""
         if mask is None:
             return cls.from_grid(lat, lon, **kwargs)
-        from hcwf.utils.mask import MaskSpec, build_mask
+        from hcwf.spatial.masks import MaskSpec, build_mask
 
         result = build_mask(MaskSpec.from_mapping(mask), lat, lon, label)
         return cls.from_grid(lat, lon, result.keep, mask_record=result.record, **kwargs)
@@ -320,7 +320,7 @@ class EvaluationUnits:
 
         A dict with any of lat_min, lat_max, lon_min, lon_max (inclusive; a missing bound is open) compares
         the raw longitudes, as onset_blending does. A region name (or alias) takes the region's box as HCWF
-        does (`hcwf.utils.region.region_box`: longitude conventions and the seam are handled). Units without a
+        does (`hcwf.spatial.select.region_box`: longitude conventions and the seam are handled). Units without a
         centroid are outside; no centroid at all is an error.
         """
         lat, lon = self.lat, self.lon
@@ -340,7 +340,7 @@ class EvaluationUnits:
         and longitudes with `region_box` (which also conforms the longitude convention) cuts the units."""
         import xarray as xr
 
-        from hcwf.utils.region import region_box
+        from hcwf.spatial.select import region_box
 
         lat_axis, lon_axis = np.unique(self.lat[np.isfinite(self.lat)]), np.unique(self.lon[np.isfinite(self.lon)])
         axes = xr.Dataset({"axis_lat": ("lat", lat_axis), "axis_lon": ("lon", lon_axis)},
@@ -357,7 +357,7 @@ class EvaluationUnits:
         if boundary not in ("contains", "intersects"):
             raise ValueError("boundary must be 'contains' or 'intersects'")
         if isinstance(outline, (str, os.PathLike)):
-            from hcwf.utils.mask import shape_file_geometry
+            from hcwf.spatial.masks import shape_file_geometry
 
             outline = shape_file_geometry(str(outline))
         lat, lon = self.lat, ((self.lon + 180.0) % 360.0) - 180.0

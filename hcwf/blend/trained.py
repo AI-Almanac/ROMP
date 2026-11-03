@@ -17,7 +17,7 @@ digest on load. Two formats load into this one class:
   recipe from run.yaml and definition.yaml and refuses a file whose definition or recipe no longer rebuild to what
   training used.
 * "onset-blending/trained-blend" (onset_blending, features version 1): its BlendConfig config.yml goes through
-  `hcwf.lib.convert_specs` in memory (as `hcwf-run convert` does) to the run config and recipe; the model, forest,
+  `hcwf.config.convert_specs` in memory (as `hcwf-run convert` does) to the run config and recipe; the model, forest,
   reference, units and observed arrays are used as stored.
 """
 
@@ -40,11 +40,11 @@ import pandas as pd
 import xarray as xr
 import yaml
 
-from hcwf.lib.assertion import HCWFConfigError
+from hcwf.errors import HCWFConfigError
 from hcwf.blend.samples import ObservedOnsets
 from hcwf.cache import atomic_write, file_identity
-from hcwf.lib import dataset_detect
-from hcwf.lib.dataset_schema import resolve_paths
+from hcwf.config import detect as dataset_detect
+from hcwf.config.datasets import resolve_paths
 
 log = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ def frozen_config(mapping: dict, definition_text: str | None = None):
     definition is the frozen one (`definition_text`) when given, else the run's own inline rule. Its `onset` is the
     OnsetSetup and its `blend` the recipe (the invariants of a run that read data are not checked)."""
     from hcwf.config.model import RunConfig, complete_flat
-    from hcwf.lib import config_schema as schema
+    from hcwf.config import schema
 
     errors: list[str] = []
     flat, origin, special = schema.flatten_sections(mapping, errors)
@@ -323,7 +323,7 @@ class TrainedBlend:
     thresholds: dict                    # name -> mm, or a table (id, onset_thresh)
     reference: object                   # hcwf.onset.climatology.ReferenceOnset | None
     frozen_units: dict[str, FrozenUnits]
-    signatures: dict[str, dict]         # model name -> forecast signature (hcwf.lib.dataset_detect)
+    signatures: dict[str, dict]         # model name -> forecast signature (hcwf.config.detect)
     unit_table: pd.DataFrame | None = None
     provenance: dict = field(default_factory=dict)
     forest: object = None               # hcwf.blend.random_forest.FittedForest, when configured
@@ -331,7 +331,7 @@ class TrainedBlend:
 
     @property
     def setup(self):
-        """The resolved onset setup (hcwf.lib.onset_config.OnsetSetup)."""
+        """The resolved onset setup (hcwf.config.onset.OnsetSetup)."""
         return self.rc.onset
 
     @property
@@ -345,7 +345,7 @@ class TrainedBlend:
     def from_training(cls, result) -> "TrainedBlend":
         """The blend a training run produced (`hcwf.blend.training.TrainingResult`)."""
         from hcwf.io import input as io_input
-        from hcwf.lib.resolved import resolved_config_text_of
+        from hcwf.runs.resolved import resolved_config_text_of
         from hcwf.onset import definition as definition_mod
 
         rc, recipe, setup, inputs = result.rc, result.recipe, result.setup, result.inputs
@@ -543,7 +543,7 @@ class TrainedBlend:
     def _load_old(cls, manifest: dict, members: dict) -> "TrainedBlend":
         """An onset_blending trained blend: its config.yml converted in memory (as `hcwf-run convert` does), its
         arrays as stored."""
-        from hcwf.lib.convert_specs import ConvertError, convert_blend
+        from hcwf.config.convert_specs import ConvertError, convert_blend
         from hcwf.onset import definition as definition_mod
 
         try:

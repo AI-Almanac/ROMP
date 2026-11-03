@@ -8,7 +8,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 
-from hcwf.graphics.field import colorbar_extend, draw_field  # noqa: E402
+from hcwf.figures.field import colorbar_extend, draw_field  # noqa: E402
 
 
 def _field(values):

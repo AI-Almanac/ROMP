@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from hcwf.utils.mask import _nearest, _overlap, cell_bounds, cell_shares
+from hcwf.spatial.masks import _nearest, _overlap, cell_bounds, cell_shares
 
 from . import ids as unit_ids
 
@@ -377,7 +377,7 @@ def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", mea
     with a share of at most `min_share` are left out. `clip_to` is a geometry each polygon is first cut to (for
     instance the area the observations cover, see `coverage_geometry`).
 
-    The overlap is the one `hcwf.utils.mask.rasterise` thresholds (`cell_shares`).
+    The overlap is the one `hcwf.spatial.masks.rasterise` thresholds (`cell_shares`).
     """
     _check_options(cell_area, measure)
     lat, lon = np.asarray(lat, dtype=float).reshape(-1), np.asarray(lon, dtype=float).reshape(-1)
@@ -453,7 +453,7 @@ def grid_weights(source_lat, source_lon, lat, lon, *, cell_area: str = "planar")
     """Conservative weights from the cells of one lat/lon grid to the cells of another.
 
     A (len(lat) * len(lon), len(source_lat) * len(source_lon)) matrix in latitude-major order, the area each
-    target cell shares with each source cell (the separable overlaps `hcwf.utils.mask.align_raster_mask` uses).
+    target cell shares with each source cell (the separable overlaps `hcwf.spatial.masks.align_raster_mask` uses).
     Source longitudes are first shifted by whole turns to the target's convention. `cell_area="cos_lat"`
     multiplies by the cosine of the source cell's latitude.
     """

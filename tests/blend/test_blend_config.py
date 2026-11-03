@@ -7,9 +7,9 @@ import xarray as xr
 
 from hcwf.blend import recipe as R
 from hcwf.config import Blend, Config, Dataset, Units
-from hcwf.lib import config_schema as schema
-from hcwf.lib.config_schema import ConfigSchemaError
-from hcwf.lib.config_yaml import build_config
+from hcwf.config import schema
+from hcwf.config.schema import ConfigSchemaError
+from hcwf.config.mapping import build_config
 
 BASE = {"model_list": ("m",), "blend_years": {"training": [2000, 2001], "cv_holdout": [2001]},
         "blend_formulas": {"f": "outcome ~ prob_clim_qx"}}
@@ -158,7 +158,7 @@ def test_config_objects_carry_units_and_blend_sections_and_listed_files():
 
 
 def test_check_says_which_box_a_region_name_selects():
-    from hcwf.lib.check import _box_text
+    from hcwf.runs.check import _box_text
 
     plain = _box_text({"region": "india"})
     assert _box_text({"region": "India"}) == plain   # the spelling does not matter

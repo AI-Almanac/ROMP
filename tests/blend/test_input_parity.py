@@ -17,8 +17,8 @@ from _oracle.spatial_id_utils import GridIdConvention
 from hcwf.io import input as io_input
 from hcwf.onset.ingest import ingest
 from hcwf.spatial import EvaluationUnits
-from hcwf.utils.region import load_blocks
-from hcwf.utils.standard import dim_fmt, dim_fmt_model_ensemble
+from hcwf.spatial.select import load_blocks
+from hcwf.io.dims import dim_fmt, dim_fmt_model_ensemble
 
 BOUNDARY = "00 UTC, labelled by start"
 CONVENTION = GridIdConvention(2, "fixed", "explicit")

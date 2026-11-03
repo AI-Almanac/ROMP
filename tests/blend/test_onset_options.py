@@ -370,7 +370,7 @@ def test_exact_curve_rules_are_refused():
 
 def test_forecast_reach_counts_a_dry_run_beginning_inside_like_one_starting_inside():
     from types import SimpleNamespace
-    from hcwf.lib.onset_config import forecast_reach
+    from hcwf.config.onset import forecast_reach
 
     text = DEFINITIONS["begins"]
     def reach(t):

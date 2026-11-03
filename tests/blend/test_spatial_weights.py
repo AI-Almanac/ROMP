@@ -6,7 +6,7 @@ from shapely.geometry import Polygon, box
 
 from _oracle import geometry_utils as legacy
 from hcwf.spatial import SparseTransform, regrid
-from hcwf.utils.mask import cell_shares, rasterise
+from hcwf.spatial.masks import cell_shares, rasterise
 
 LAT = np.array([0.5, 1.5, 2.5, 3.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5, 4.5])

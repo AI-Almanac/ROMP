@@ -1,7 +1,7 @@
 # HCWF run config (YAML). Run it with:  hcwf-run -p examples/config.yaml
 # Start your own with `hcwf-run init --obs /path/to/obs --model /path/to/model`, which fills in the dataset
 # values it detects from your files. Only what you must decide is here: the region supplies the onset
-# definition, day boundary and climatology years; unset keys take defaults (hcwf/lib/config_schema.py lists
+# definition, day boundary and climatology years; unset keys take defaults (hcwf/config/schema.py lists
 # every key). Each run writes its resolved config (all values and their sources) next to its outputs. Check a
 # config first with `hcwf-run -p examples/config.yaml --check` (it runs nothing). Leave out output.data_dir to
 # get a run folder (runs/ next to this file, named from region, definition, years and a fingerprint).

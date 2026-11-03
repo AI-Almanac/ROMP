@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 
 from _oracle import climatology_utils as legacy
-from hcwf.onset import climatology_kde as kde
-from hcwf.stats.conditional_climatology import season_day
+from hcwf.references import kde
+from hcwf.references.conditional import season_day
 
 HORIZONS = [
     {"start_md": "05-01", "end_md": "05-31", "forecast_window": 30},

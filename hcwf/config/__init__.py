@@ -14,7 +14,7 @@
 Only what you set is written to YAML: region defaults, schema defaults and values detected from your
 files are resolved by ``to_flat`` at run time (every detection is reported in ``flat["dataset_report"]``).
 Sections (Onset, Evaluation, Metrics, Output) have one attribute per key of the YAML section of the
-same name; see hcwf.lib.config_schema for each key's type, default and help. Unset keys are the
+same name; see hcwf.config.schema for each key's type, default and help. Unset keys are the
 ``UNSET`` sentinel.
 """
 from __future__ import annotations
@@ -25,10 +25,10 @@ from typing import Any
 
 import yaml
 
-from hcwf.lib import config_schema as schema
-from hcwf.lib.config_schema import ConfigSchemaError
-from hcwf.lib.config_yaml import build_config
-from hcwf.lib.convert import plain, render_yaml
+from hcwf.config import schema
+from hcwf.config.schema import ConfigSchemaError
+from hcwf.config.mapping import build_config
+from hcwf.config.convert import plain, render_yaml
 
 
 class _Unset:
@@ -87,7 +87,7 @@ class Mask:
     Parts given intersect: land (Natural Earth land), country (a name or list of names), file (0/1 NetCDF with
     variable and keep_value, or a shapefile / GeoJSON) and condition ({file, variable, above, below}).
     cell_rule is 'centre' or 'overlap_fraction' (with overlap_fraction, default 0.5); resolution is the Natural
-    Earth resolution ('10m', '50m' (default) or '110m'). Unset keys are UNSET. See hcwf.utils.mask.
+    Earth resolution ('10m', '50m' (default) or '110m'). Unset keys are UNSET. See hcwf.spatial.masks.
     """
 
     land: Any = UNSET

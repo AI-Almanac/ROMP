@@ -1,4 +1,4 @@
-"""`hcwf-run convert`: onset_blending configs and legacy spec sets become HCWF run YAML (hcwf.lib.convert_specs).
+"""`hcwf-run convert`: onset_blending configs and legacy spec sets become HCWF run YAML (hcwf.config.convert_specs).
 
 The conversions are checked against what blending itself does with the same settings (the file lists, rain-window
 numbers) and against onset_blending's shipped configs and archived spec sets."""
@@ -11,8 +11,8 @@ import pytest
 import yaml
 
 from _recipes import ORACLE_SRC, blending_dict, converted, partial, with_stub_data
-from hcwf.lib import convert_specs as C
-from hcwf.lib.dataset_schema import file_year, resolve_paths
+from hcwf.config import convert_specs as C
+from hcwf.config.datasets import file_year, resolve_paths
 
 CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
 SPECS = ORACLE_SRC / "archive" / "specs"
@@ -152,7 +152,7 @@ def test_a_converted_run_has_no_benchmark_settings_and_still_loads(tmp_path):
 def test_benchmark_keys_a_blend_run_does_state_are_kept(tmp_path):
     """Given dates are not replaced by the ones derived from blend.years; a run without a blend still needs them."""
     from typed_io import flat_config
-    from hcwf.lib.config_schema import ConfigSchemaError
+    from hcwf.config.schema import ConfigSchemaError
 
     mapping = with_stub_data(C.convert_blend(minimal(tmp_path)).mapping, tmp_path / "stub")
     stated = flat_config({**mapping, "evaluation": {"start_date": [2002, 5, 1], "end_date": [2003, 6, 1],

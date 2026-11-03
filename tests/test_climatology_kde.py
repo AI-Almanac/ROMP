@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hcwf.onset import climatology_kde as kde
+from hcwf.references import kde
 
 ONSET_BLENDING = "/home/hcwf/code/onset_blending"
 

@@ -10,11 +10,12 @@ import pandas as pd
 import pytest
 
 import _oracle_config as old
-from hcwf.app import bin_skill_score, spatial_far_mr_mae
+from hcwf.scoring import probabilistic as bin_skill_score
+from hcwf.scoring import deterministic as spatial_far_mr_mae
 from typed_io import flat_config
 from hcwf.config.model import RunConfig
-from hcwf.metrics import skill
-from hcwf.stats.parallel import Pending
+from hcwf.scoring import pairs as skill
+from hcwf.parallel import Pending
 from test_oracle_config import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
 
 REFERENCES = ("two_models_windows", "model_reference")   # climatology reference, model reference; 2 models x 2 windows
@@ -77,7 +78,7 @@ def test_ensemble_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
 
 def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
     """The reference each model is scored against is RunConfig.reference_cases(for_model=model), the reference's own
-    settings: the rule lives there only (metrics/skill.py asks for it)."""
+    settings: the rule lives there only (scoring/pairs.py asks for it)."""
     dic, rc = _run(configs, "model_reference", True)
     read = []
     monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: read.append(model) or Pending.finished(table))

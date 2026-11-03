@@ -9,7 +9,7 @@
 ``RunConfig`` keeps the resolved flat record (``rc.values``, read-only): run.yaml, the fingerprint and
 RunResult.config are computed from it. The specs are projections of that record, built once in ``from_flat``. They
 declare attribute names and types only: every key, default, help text and choice is declared once, in
-hcwf/lib/config_schema.py, and ``OutputSpec`` and ``MetricsSpec`` are generated from its ``output`` and ``metrics``
+hcwf/config/schema.py, and ``OutputSpec`` and ``MetricsSpec`` are generated from its ``output`` and ``metrics``
 sections. tests/test_runconfig_coverage.py checks that every schema key is read by a projection.
 
 Imports of the heavy modules (io.input, onset_config, blend.recipe) are inside the functions, so that
@@ -23,14 +23,14 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
-from hcwf.lib import config_schema as schema
+from hcwf.config import schema
 
 if TYPE_CHECKING:  # pragma: no cover
     from hcwf.blend.recipe import Recipe
-    from hcwf.lib.onset_config import OnsetSetup
-    from hcwf.lib.run_folder import RunPaths
+    from hcwf.config.onset import OnsetSetup
+    from hcwf.runs.folder import RunPaths
     from hcwf.spatial.units import UnitsSpec
-    from hcwf.utils.mask import MaskSpec
+    from hcwf.spatial.masks import MaskSpec
 
 Dims = tuple[tuple[str, str], ...]
 """Canonical dimension name -> name in the files, as sorted-as-given pairs (a dict is not hashable)."""
@@ -301,7 +301,7 @@ class Case:
     @property
     def name(self) -> str:
         """Today's case_name, e.g. "AIFS_1-15"."""
-        from hcwf.utils.printing import combi_to_str
+        from hcwf.naming import combi_to_str
 
         return combi_to_str((self.for_model or self.model.name, self.window.span)).replace(" ", "_")
 
@@ -415,7 +415,7 @@ def _project_units(v) -> dict:
 
 def _project_onset(v):
     """The resolved onset setup."""
-    from hcwf.lib.onset_config import onset_setup
+    from hcwf.config.onset import onset_setup
 
     return onset_setup(v)
 
@@ -436,7 +436,7 @@ def _project_blend(v, onset, lenient: bool = False):
 
 def _project_models(v, units) -> tuple[ModelSpec, ...]:
     """The forecast models, one per entry of the *_list keys."""
-    from hcwf.utils.practical import set_dir
+    from hcwf.io.paths import set_dir
 
     out = []
     for i, name in enumerate(_get(v, "model_list")):
@@ -501,7 +501,7 @@ def _project_area(v) -> AreaSpec:
     """The region and its masks."""
     mask = _get(v, "mask")
     if mask:
-        from hcwf.utils.mask import MaskSpec
+        from hcwf.spatial.masks import MaskSpec
 
         mask = MaskSpec.from_mapping(mask)
     given = _get(v, "mask")

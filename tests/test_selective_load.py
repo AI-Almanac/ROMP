@@ -13,7 +13,7 @@ import typed_io
 from hcwf.config.model import AreaSpec, Selection
 from hcwf.io import input as hcwf_input
 from old_flat_rule import old_rule
-from hcwf.utils.region import mask_region_loaded, region_select
+from hcwf.spatial.select import mask_region_loaded, region_select
 
 LAT = np.arange(2.0, 17.0, 1.0)
 LON = np.arange(32.0, 50.0, 1.0)

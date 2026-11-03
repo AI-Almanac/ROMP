@@ -27,24 +27,24 @@ import pandas as pd
 import xarray as xr
 from hcwf.cache import NETCDF, NETCDF_GROUPS, Store, file_identity
 from hcwf.config.model import Selection
-from hcwf.stats import observed_cache
-from hcwf.utils.workers import ordered_prefetch, worker_count
-from hcwf.lib.onset_config import Thresholds, forecast_reach, history_needs_previous_year
+from hcwf.onset import observed_cache
+from hcwf.parallel import ordered_prefetch, worker_count
+from hcwf.config.onset import Thresholds, forecast_reach, history_needs_previous_year
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.climatology import ThresholdCache, compute_thresholds_from_forecasts, harmonic_seasons
-from hcwf.lib.dataset_schema import DatasetError, file_year, is_zarr, resolve_paths
+from hcwf.config.datasets import DatasetError, file_year, is_zarr, resolve_paths
 from hcwf.onset.thresholds import ThresholdScale, read_threshold_grid, read_threshold_table, scale_values
 from hcwf.onset.ingest import IngestInfo, ingest, ingest_forecast_info, observation_shift_days, unit_scale
 from hcwf.spatial import axes, ids as unit_ids
 from hcwf.spatial.units import UNITS_KEYS, EvaluationUnits, UnitsSpec
-from hcwf.utils.standard import (dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim, rename_model_dims)
-from hcwf.utils.region import implicit_masks, load_blocks, region_box, region_select
+from hcwf.io.dims import (dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim, rename_model_dims)
+from hcwf.spatial.select import implicit_masks, load_blocks, region_box, region_select
 import logging
 
 if TYPE_CHECKING:  # pragma: no cover
     from hcwf.config.model import (AreaSpec, EvaluationSpec, ModelSpec, ObsSpec, OnsetOptions,
                                    ParallelSpec)
-    from hcwf.lib.onset_config import OnsetSetup
+    from hcwf.config.onset import OnsetSetup
 
 log = logging.getLogger(__name__)
 
@@ -504,7 +504,7 @@ def _warm_masks(lazy, var, dataset_name, area, select, dir_fig):
     `lazy` is the (dim-standardised) Dataset; a zero field on its region box is masked in place with the run's
     settings, which fills the same mask caches (and logs the same mask text) as the real read.
     """
-    from hcwf.utils.region import mask_region_loaded, region_box
+    from hcwf.spatial.select import mask_region_loaded, region_box
 
     box = region_box(lazy[[var]], region=area.region)
     lat, lon = np.asarray(box["lat"].values), np.asarray(box["lon"].values)
@@ -517,7 +517,7 @@ def warm_up(onset, obs, area, options, ev, output, *, model=None, select=_NO_SEL
             cache_dir=None):
     """Read or build in this process what every year of a run shares: the thresholds and the cell masks of both grids.
 
-    Done once before the years go to worker processes, which then get these (see hcwf.stats.parallel.snapshot)
+    Done once before the years go to worker processes, which then get these (see hcwf.parallel.snapshot)
     instead of each building them, and whose messages are logged once. The first of the evaluation years picks the
     NetCDF files whose grids are looked at. Thresholds are loaded as the years would load them; the masks are best effort
     (a grid that cannot be looked at is left to the workers, which raise the real error if there is one).

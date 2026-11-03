@@ -3,7 +3,7 @@
 import pytest
 
 from hcwf.io.input import steps_needed
-from hcwf.lib.onset_config import onset_setup
+from hcwf.config.onset import onset_setup
 
 
 @pytest.mark.parametrize(("definition", "needed"), [("icpac", 30 + 21), ("moron_robertson_mok", 30 + 4)])

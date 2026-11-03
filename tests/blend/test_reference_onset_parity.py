@@ -15,7 +15,7 @@ from hcwf.onset import definition as D
 from hcwf.onset import engine
 from hcwf.onset.climatology import ReferenceOnset, reduce_onset_days
 from hcwf.onset.ingest import ingest
-from hcwf.stats.climatology import compute_climatology_as_forecast
+from hcwf.references.climatology import compute_climatology_as_forecast
 from test_onset_options import BOUNDARY, ENGINE_RULE, HEAD, observed_case
 
 UNITS = np.array(["10.00_70.00", "10.00_70.25", "10.25_70.00", "10.25_70.25"])

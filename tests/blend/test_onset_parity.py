@@ -14,7 +14,7 @@ import pytest
 
 from _oracle import legacy_onset_utils as legacy
 from _oracle.onset_rule import OnsetRule, find_onsets
-from hcwf.lib.convert_specs import rule_body
+from hcwf.config.convert_specs import rule_body
 from hcwf.onset import definition as D
 from hcwf.onset import plan as P
 from hcwf.onset.backends import numba_cpu, reference

@@ -14,7 +14,7 @@ import copy
 from typing import Mapping
 
 from hcwf.config.model import Case, RunConfig, Selection
-from hcwf.lib import config_schema as schema
+from hcwf.config import schema
 
 FLOWS = ("deterministic", "ensemble")
 """The two scoring flows. They build the reference the same way (its own settings); the ensemble flow names its cases after

@@ -7,8 +7,8 @@ import pytest
 
 from _recipes import ORACLE_SRC, blending_dict, partial
 from hcwf.blend import recipe as R
-from hcwf.lib.convert_specs import convert_blend
-from hcwf.stats.bins import LeadBins
+from hcwf.config.convert_specs import convert_blend
+from hcwf.metrics.bins import LeadBins
 
 CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
 

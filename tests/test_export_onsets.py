@@ -14,19 +14,19 @@ import pytest
 import xarray as xr
 import yaml
 
-from hcwf import export
+from hcwf.runs import export
 from hcwf.config.model import RunConfig
 from hcwf.io.input import forecast_of, history_of, initialization_dates, observations_of, thresholds_of
 from typed_io import flat_config
-from hcwf.lib.config_yaml import build_config
+from hcwf.config.mapping import build_config
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.model import Status
-from hcwf.stats.climatology import climatological_onset, climatological_onset_dataset
-from hcwf.stats.climatology import compute_climatology_as_forecast
-from hcwf.stats.observed_cache import threshold_hash
-from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
+from hcwf.references.climatology import climatological_onset, climatological_onset_dataset
+from hcwf.references.climatology import compute_climatology_as_forecast
+from hcwf.onset.observed_cache import threshold_hash
+from hcwf.references.conditional import (compute_conditional_climatology_as_forecast,
                                                 create_conditional_climatological_forecast_obs_pairs)
-from hcwf.stats.detect import detect_deterministic, detect_ensemble, detect_observed
+from hcwf.onset.detect import detect_deterministic, detect_ensemble, detect_observed
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIM_YEARS = range(2006, 2021)

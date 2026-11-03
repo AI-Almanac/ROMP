@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from hcwf.lib.convert_specs import Conversion, convert_blend, validate_conversion
+from hcwf.config.convert_specs import Conversion, convert_blend, validate_conversion
 
 ORACLE_SRC = Path(os.environ.get("ONSET_BLENDING_SRC", "/home/hcwf/code/onset_blending"))
 
@@ -75,7 +75,7 @@ def converted(data: dict, cache_dir=None, region=None) -> Loaded:
     without one)."""
     from hcwf.config.build import resolve
     from hcwf.blend.recipe import recipe_from_config
-    from hcwf.lib.onset_config import onset_setup
+    from hcwf.config.onset import onset_setup
 
     conversion = convert_blend(data, region=region)
     tmp = Path(tempfile.mkdtemp(prefix="blend-run-"))
@@ -87,7 +87,7 @@ def converted(data: dict, cache_dir=None, region=None) -> Loaded:
 
 def partial(conversion: Conversion) -> Loaded:
     """The Recipe and OnsetSetup of a conversion without reading any data file (so the shipped configs, whose data is
-    not on this machine, can be loaded): `hcwf.lib.convert_specs.validate_conversion`."""
+    not on this machine, can be loaded): `hcwf.config.convert_specs.validate_conversion`."""
     cfg, recipe, setup = validate_conversion(conversion)
     return Loaded(cfg, recipe, setup, conversion)
 

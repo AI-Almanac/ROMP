@@ -20,7 +20,7 @@ their own names into ``<run folder>/blend/``), and ``observed`` and ``scores`` a
 not written and nothing is created on disk (temporary folders hold what the pipeline needs and are deleted;
 the observed-onset cache lives in memory), which suits notebooks. ``write=True`` writes the run exactly as
 ``hcwf-run`` does (run folder, or the config's data_dir); ``overwrite=True`` re-runs a run folder that exists.
-Further keyword arguments override config values by their flat names (the names of hcwf.lib.config_schema,
+Further keyword arguments override config values by their flat names (the names of hcwf.config.schema,
 for example ``verification_window_list``, ``max_forecast_day``, ``start_date``, ``probabilistic``).
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.config.model import RunConfig
-from hcwf.utils import log as logs
+from hcwf import log as logs
 
 log = logging.getLogger(__name__)
 
@@ -66,10 +66,10 @@ class RunResult:
     def forecasts(self) -> dict:
         """{source: xarray.Dataset} of the gridded onset dates of every model and climatology reference.
 
-        Computed on first use with hcwf.export (the scoring's own detection, repeated) and kept.
+        Computed on first use with hcwf.runs.export (the scoring's own detection, repeated) and kept.
         """
         if self._forecasts is None:
-            from hcwf import export
+            from hcwf.runs import export
 
             rc = self.run_config
             self._forecasts = {source: export._collect(rc, source) for source in export.default_sources(rc)[1:]}
@@ -77,10 +77,10 @@ class RunResult:
 
 
 def check(cfg, overwrite: bool = False, **overrides):
-    """The plan of a run as a hcwf.lib.check.CheckReport (``.text()``, ``.errors``, ``.warnings``, ``.ok``); runs nothing."""
+    """The plan of a run as a hcwf.runs.check.CheckReport (``.text()``, ``.errors``, ``.warnings``, ``.ok``); runs nothing."""
     from hcwf.config.build import resolve
-    from hcwf.lib.assertion import HCWFConfigError
-    from hcwf.lib.check import build_report
+    from hcwf.errors import HCWFConfigError
+    from hcwf.runs.check import build_report
 
     rc, found = resolve(cfg, overrides, check=True)
     if rc is None:
@@ -112,7 +112,7 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
 def _observed_dataset(rc: RunConfig) -> xr.Dataset | None:
     """The observed onsets of this run (from the observed-onset cache) as one Dataset, or None."""
     from hcwf.io.output import with_unit_labels
-    from hcwf.stats import observed_cache
+    from hcwf.onset import observed_cache
 
     tables = [(fp, t) for fp, t in observed_cache.current().items() if t["years"]]
     if not tables:
@@ -148,7 +148,7 @@ def _scores(results, probabilistic_tables) -> dict:
 
 def _trainer():
     """`hcwf.blend.training.train`, or a clear error when the training module is not in this checkout."""
-    from hcwf.lib.assertion import HCWFConfigError
+    from hcwf.errors import HCWFConfigError
 
     try:
         from hcwf.blend.training import train
@@ -165,9 +165,9 @@ def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: in
     The run folder is prepared as for a benchmark (refused when it exists unless overwrite), run.log and the resolved config
     are written, and the TrainingResult is saved into the run folder's blend/ subfolder (artifact names are kept).
     """
-    from hcwf.lib import run_folder
-    from hcwf.lib.resolved import definition_lines, write_resolved
-    from hcwf.utils.printing import print_hcwf_banner
+    from hcwf.runs import folder as run_folder
+    from hcwf.runs.resolved import definition_lines, write_resolved
+    from hcwf.log import print_hcwf_banner
 
     train = _trainer()
     paths, recipe = rc.paths, rc.blend
@@ -193,7 +193,8 @@ def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: in
                 result.save(paths.blend, **extra)
                 log.info(f"  Blend artifacts  : {paths.blend}")
         finally:
-            from hcwf.stats import observed_cache, parallel
+            from hcwf.onset import observed_cache
+            from hcwf import parallel
 
             parallel.shutdown()
             observed_cache.reset()
@@ -211,15 +212,19 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
     """
     if rc.blend is not None:
         return _execute_blend(rc, write=write, overwrite=overwrite, verbosity=verbosity)
-    from hcwf.app.bin_skill_score import skill_score_in_bins
-    from hcwf.app.spatial_far_mr_mae import spatial_far_mr_mae_map
-    from hcwf.lib import run_folder
-    from hcwf.lib.explain_cells import write_explain_cells
-    from hcwf.lib.resolved import definition_lines, write_resolved
-    from hcwf.stats import benchmark, climatology, detect, observed_cache, parallel
+    from hcwf.scoring.probabilistic import skill_score_in_bins
+    from hcwf.scoring.deterministic import spatial_far_mr_mae_map
+    from hcwf.runs import folder as run_folder
+    from hcwf.onset.explain_cells import write_explain_cells
+    from hcwf.runs.resolved import definition_lines, write_resolved
+    from hcwf.scoring import onset_tables as benchmark
+    from hcwf.references import climatology
+    from hcwf.onset import detect
+    from hcwf.onset import observed_cache
+    from hcwf import parallel
     from hcwf.io import input as io_input
-    from hcwf.utils import mask as mask_mod
-    from hcwf.utils.printing import print_hcwf_banner
+    from hcwf.spatial import masks as mask_mod
+    from hcwf.log import print_hcwf_banner
 
     paths = rc.paths
     if write:
@@ -255,7 +260,7 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
                 write_explain_cells(rc)
                 if rc.output.save_onsets:
                     try:
-                        from hcwf.export import export_onsets
+                        from hcwf.runs.export import export_onsets
 
                         export_onsets(rc)
                     except Exception as exc:  # noqa: BLE001 - the scores matter more than the export

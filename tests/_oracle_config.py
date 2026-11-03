@@ -5,11 +5,11 @@ It holds, verbatim (only imports and the `loader.` prefixes of calls between the
 
 * `Case`, `Setting` (hcwf/lib/convention.py) and `make_case`, `iter_list`, `init_dataclass`, ... (hcwf/lib/control.py);
 * the two reference-case constructions of the scoring flows, written out as `deterministic_reference_kwargs`
-  (app/spatial_far_mr_mae.py, reference loop) and `ensemble_reference_kwargs` (metrics/skill.py:reference_model_kwargs
-  applied to the case dict of app/bin_skill_score.py), and `case_kwargs` (export.py);
+  (scoring/deterministic.py, reference loop) and `ensemble_reference_kwargs` (metrics/skill.py:reference_model_kwargs
+  applied to the case dict of scoring/probabilistic.py), and `case_kwargs` (export.py);
 * the four finishing variants of a flat config: the loader's `build_cfg`/`plan_run`/`load_run_config`, `api._flat`/
   `_prepare`, `export.load_cfg`/`_complete`/`_as_dict`, and the dict branch of `driver._run` (`driver_finish`),
-  with the argparse parser (hcwf/lib/parser.py) they use.
+  with the argparse parser (hcwf/cli/parser.py) they use.
 
 Not frozen (live code both sides call, which R2 does not replace): the schema, `Config`, `build_config`,
 `run_folder.plan/apply`, `apply_lead_window`. The validators (`HCWFValidator`, `check_config`, the units and blend problems
@@ -27,9 +27,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, Union
 
-from hcwf.lib.assertion import HCWFConfigError
-from hcwf.utils.practical import set_dir
-from hcwf.utils.printing import combi_to_str
+from hcwf.errors import HCWFConfigError
+from hcwf.io.paths import set_dir
+from hcwf.naming import combi_to_str
 
 
 
@@ -89,14 +89,14 @@ _RUNTIME_SETTINGS = (
 
 
 def _setting_fields() -> list:
-    """The fields of Setting: every config key of the schema (hcwf.lib.config_schema, the one list of keys) that is not
+    """The fields of Setting: every config key of the schema (hcwf.config.schema, the one list of keys) that is not
     a Case field, and the run's own settings. Case fields are left out because the scoring merges a Setting over a
     Case, so a Setting must not overwrite the case's own values."""
     import copy
     from dataclasses import fields as dataclass_fields
     from typing import Any
 
-    from hcwf.lib import config_schema as schema
+    from hcwf.config import schema
 
     case_names = {f.name for f in dataclass_fields(Case)}
     out = []
@@ -312,7 +312,7 @@ def reference_model_kwargs(kwargs):
             'model_dims': kwargs.get('ref_model_dims')}
 
 
-# ======================================================================= hcwf/export.py
+# ======================================================================= hcwf/runs/export.py
 
 def case_kwargs(dic: dict, model: str, *, reference: bool = False) -> dict:
     """The keyword arguments the scoring builds for one model: Setting and Case values of its first window.
@@ -334,7 +334,7 @@ def case_kwargs(dic: dict, model: str, *, reference: bool = False) -> dict:
     return {**asdict(init_dataclass(Setting, dic)), **asdict(case)}
 
 
-# ======================================================================= hcwf/lib/parser.py
+# ======================================================================= hcwf/cli/parser.py
 
 def create_parser(config, cli_args=None):
     """Parse CLI overrides, using the config dict values as defaults; unknown arguments are ignored."""
@@ -548,7 +548,7 @@ def ensure_config_exists(param_path: str) -> Path:
     return path
 
 
-# ======================================================================= hcwf/lib/loader.py
+# ======================================================================= hcwf/cli/parser.py
 
 def _get_config_path_pre_parse(cli_args=None):
     """Return the config path from -p/--param in cli_args, else the HCWF_CONFIG environment variable.
@@ -570,7 +570,7 @@ def _get_config_path_pre_parse(cli_args=None):
 def _read_config(config_path):
     """Read a YAML run config into the flat config dict (validated, datasets described, defaults resolved)."""
     from hcwf.config import Config
-    from hcwf.lib.config_yaml import is_yaml_path
+    from hcwf.config.mapping import is_yaml_path
 
     config_item = set_dir(config_path)
     if not config_item.exists():
@@ -658,7 +658,7 @@ def _anchor_mme_weights(dic):
 def build_cfg(cli_args=None):
     """Read the YAML run config, resolve paths, apply CLI overrides and plan the run folders; return the config dict.
 
-    Nothing is created on disk: dic["run_paths"] (hcwf.lib.run_folder.RunPaths) says where the run will write, and
+    Nothing is created on disk: dic["run_paths"] (hcwf.runs.folder.RunPaths) says where the run will write, and
     dic["config_file"] is the config's path. The folders are made by run_folder.prepare when the run starts.
     """
     config_path = ensure_config_exists(_get_config_path_pre_parse(cli_args))
@@ -676,15 +676,15 @@ def build_cfg(cli_args=None):
 
 def plan_run(dic, config_file=None, write=True):
     """Finish a flat config for a run: the lead window and the run folders planned from the final values."""
-    from hcwf.lib import run_folder
+    from hcwf.runs import folder as run_folder
 
     if "lead_window" not in dic:
-        from hcwf.lib import config_schema as schema
+        from hcwf.config import schema
 
         if schema.has_blend(dic):   # a blend reads each model's leads itself (lead_days), not HCWF's benchmark window
             dic["lead_window"], dic["onset_lead_lines"] = (1, dic["max_forecast_day"]), ()
         else:
-            from hcwf.lib.lead_window import apply_lead_window
+            from hcwf.config.leads import apply_lead_window
 
             apply_lead_window(dic)
     return run_folder.apply(dic, run_folder.plan(dic, config_file, write))
@@ -710,8 +710,8 @@ _NO_FILES = {"save_fig": False, "save_nc_spatial_far_mr_mae": False, "save_csv_s
 def _flat(source, overrides: dict) -> dict:
     """The flat config of a path, Config, mapping or flat dict, with the keyword overrides applied and checked."""
     from hcwf.config import Config
-    from hcwf.lib import config_schema as schema
-    from hcwf.lib.config_yaml import build_config
+    from hcwf.config import schema
+    from hcwf.config.mapping import build_config
 
     config_file = None
     if isinstance(source, (str, Path)):
@@ -757,7 +757,7 @@ def _prepare(source, overrides: dict, write: bool, tmp: Path | None) -> dict:
     return dic
 
 
-# ======================================================================= hcwf/export.py
+# ======================================================================= hcwf/runs/export.py
 
 def load_cfg(path) -> dict:
     """The flat config dict of a run YAML as the run itself builds it (paths resolved, lead window shortened).
@@ -772,7 +772,7 @@ def load_cfg(path) -> dict:
 
 def _complete(dic: dict) -> dict:
     """Finish a flat config the way the loader does (paths, lead window); finishing a dict that is already done changes nothing."""
-    from hcwf.lib.lead_window import apply_lead_window
+    from hcwf.config.leads import apply_lead_window
 
     _resolve_paths(dic)
     if "lead_window" not in dic:
@@ -792,7 +792,7 @@ def _as_dict(cfg) -> dict:
 
 
 # ======================================================================= the flows' case loops, written out
-# (hcwf/app/spatial_far_mr_mae.py and hcwf/app/bin_skill_score.py: the lines that build the dict handed to
+# (hcwf/scoring/deterministic.py and hcwf/scoring/probabilistic.py: the lines that build the dict handed to
 # compute_metrics_multiple_years / prepare_score_cache / create_score_results; the loop bodies are copied, the
 # scoring calls are left out)
 
@@ -851,7 +851,7 @@ def ensemble_reference_cases(dic: dict) -> list[tuple[tuple, dict]]:
     return [(combi, reference_model_kwargs(prep_cfg)) for combi, prep_cfg, _ in ensemble_cases(dic)]
 
 
-# ======================================================================= hcwf/driver.py:_run (the config part)
+# ======================================================================= hcwf/cli/driver.py:_run (the config part)
 
 def driver_finish(cfg, cli_args=None) -> dict:
     """The flat config driver._run hands to execute(): from the CLI via load_run_config, or from a given dict or
@@ -867,17 +867,17 @@ def driver_finish(cfg, cli_args=None) -> dict:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Validation as it was before step S2 (hcwf/lib/assertion.py HCWFValidator, hcwf/lib/onset_config.py check_config, and
-# the problems hcwf/lib/check.py `_units` and `_blend` reported), kept to compare hcwf.config.validate with.
+# Validation as it was before step S2 (hcwf/errors.py HCWFValidator, hcwf/config/onset.py check_config, and
+# the problems hcwf/runs/check.py `_units` and `_blend` reported), kept to compare hcwf.config.validate with.
 # ---------------------------------------------------------------------------------------------------------------
 from datetime import datetime
-from hcwf.lib.onset_config import OnsetConfigError as _OnsetConfigError, onset_setup as _onset_setup
+from hcwf.config.onset import OnsetConfigError as _OnsetConfigError, onset_setup as _onset_setup
 
 
 def check_config(dic: dict) -> None:
     """Validate a raw config dict: keys earlier versions read (the flat onset keys and the other removed ones) are
     refused with the message a YAML config gets, then the onset part is fully resolved."""
-    from hcwf.lib import config_schema as schema
+    from hcwf.config import schema
 
     removed = [key for key in schema.REMOVED_KEYS if dic.get(key) is not None]
     if removed:
@@ -1059,7 +1059,7 @@ def check_blend_problems(dic):
     return []
 
 
-# ======================================================================= hcwf/stats/observed_cache.py (step S7)
+# ======================================================================= hcwf/onset/observed_cache.py (step S7)
 # The observed-onset cache key as it was before the typed fingerprint_parts: the parts of one detection from the flat
 # kwargs. (Calls the live `onset_setup`, `UnitsSpec.from_flat`, `units_files` and the typed options of the readers.)
 
@@ -1135,9 +1135,9 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
     from hcwf.cache import part_hash
     from hcwf.io.input import units_files
     from hcwf.spatial.units import UnitsSpec
-    from hcwf.lib.onset_config import onset_setup
+    from hcwf.config.onset import onset_setup
     from hcwf.onset import definition as definition_mod
-    from hcwf.stats.observed_cache import threshold_hash
+    from hcwf.onset.observed_cache import threshold_hash
 
     setup = onset_setup(kwargs)
     years = _fp_years(kwargs)

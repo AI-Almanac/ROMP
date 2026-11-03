@@ -47,8 +47,8 @@ from packaging.version import Version
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from hcwf.stats.parallel import map_items
-from hcwf.utils import workers as pool
+from hcwf.parallel import map_items
+from hcwf import parallel as pool
 
 from . import design
 from .design import Plan

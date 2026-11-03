@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.onset.cli import main
+from hcwf.cli.onset import main
 
 
 def write_obs(path):

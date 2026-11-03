@@ -20,8 +20,8 @@ import pandas as pd
 from scipy.special import expit, logit
 from sklearn.linear_model import LogisticRegression
 
-from hcwf.stats.parallel import map_items
-from hcwf.utils import workers as pool
+from hcwf.parallel import map_items
+from hcwf import parallel as pool
 
 _EPS = 1e-6
 

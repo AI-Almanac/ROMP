@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from hcwf.lib.assertion import HCWFConfigError
+from hcwf.errors import HCWFConfigError
 from hcwf.onset.definition import registry_ids as definition_ids
 from hcwf.onset.ingest import parse_day_boundary
 from hcwf.onset.model import Definition

@@ -1,5 +1,5 @@
-"""hcwf.stats.detect keeps the old output schemas; expected values are worked out by hand from the old rules, which
-`hcwf-run convert` writes as a definition (hcwf.lib.convert.flat_onset_to_rule)."""
+"""hcwf.onset.detect keeps the old output schemas; expected values are worked out by hand from the old rules, which
+`hcwf-run convert` writes as a definition (hcwf.config.convert.flat_onset_to_rule)."""
 
 import typed_io
 import logging
@@ -8,13 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-from hcwf.stats.detect import (
+from hcwf.onset.detect import (
     check_alignment,
     detect_deterministic,
     detect_ensemble,
     detect_observed,
 )
-from hcwf.stats import detect
+from hcwf.onset import detect
 
 from old_flat_rule import old_rule as _old_rule
 

@@ -2,9 +2,9 @@
 
 Only the live files (and, optionally, the issue date) come from the caller. The run config, onset definition, recipe,
 reference data and observed onsets all come from the `TrainedBlend`, and the live files must have the structure the
-blend was trained on (`hcwf.lib.dataset_detect.signature_differences`); every difference is reported before any work
+blend was trained on (`hcwf.config.detect.signature_differences`); every difference is reported before any work
 starts. The live files are read through `hcwf.io.input` (only the tiles of the trained units), onsets are detected by
-`hcwf.stats.detect` with the frozen definition and options, and the features are `hcwf.blend.features`'.
+`hcwf.onset.detect` with the frozen definition and options, and the features are `hcwf.blend.features`'.
 
 Operationally each raw model gives one file holding one initialisation, and that is the issue date forecast. Files
 holding a season of issues (a replay) forecast every issue in it, or the one `issue_date` names.
@@ -25,7 +25,7 @@ import xarray as xr
 
 from hcwf.blend import features, training
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE
-from hcwf.lib import dataset_detect
+from hcwf.config import detect as dataset_detect
 
 WEEKLY_FILENAME = "blended_forecast_probabilities.csv"
 DAILY_FILENAME = "daily_onset_probabilities.csv"
@@ -273,7 +273,7 @@ def run(blend, forecasts: dict, *, issue_date=None, fewer_members: bool = False,
 
 def _thresholds(blend):
     """The frozen thresholds as the detection reads them."""
-    from hcwf.lib.onset_config import Thresholds
+    from hcwf.config.onset import Thresholds
 
     return Thresholds(blend.thresholds)
 

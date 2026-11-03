@@ -12,9 +12,9 @@ import xarray as xr
 from hcwf.metrics.error import create_spatial_far_mr_mae
 from hcwf.config.model import Window
 from hcwf.spatial import axes
-from hcwf.stats.benchmark import onset_metrics
-from hcwf.stats.bins import create_climatological_forecast_obs_pairs, forecast_pairs
-from hcwf.stats.climatology import compute_climatology_as_forecast
+from hcwf.metrics.contingency import onset_metrics
+from hcwf.metrics.bins import create_climatological_forecast_obs_pairs, forecast_pairs
+from hcwf.references.climatology import compute_climatology_as_forecast
 from itertools import product
 from datetime import datetime, timedelta
 

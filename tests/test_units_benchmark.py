@@ -14,7 +14,7 @@ geopandas = pytest.importorskip("geopandas")
 from shapely.geometry import MultiPolygon, box  # noqa: E402
 
 import hcwf  # noqa: E402
-from hcwf import export  # noqa: E402
+from hcwf.runs import export
 from typed_io import flat_config  # noqa: E402
 
 LAT, LON = [6.0, 7.0, 8.0, 9.0], [38.0, 39.0, 40.0, 41.0]
@@ -164,8 +164,8 @@ def test_ensemble_run_writes_the_spatial_products_on_units(world):
 
 def test_pair_tables_are_per_unit_cases():
     """Member onsets of units become (init, unit) cases with bins, and score like grid cases."""
-    from hcwf.stats.bins import forecast_pairs
-    from hcwf.stats.score import calculate_brier_score, calculate_rps
+    from hcwf.metrics.bins import forecast_pairs
+    from hcwf.metrics.score import calculate_brier_score, calculate_rps
 
     inits = pd.to_datetime(["2020-05-01", "2020-05-08"])
     rows = [(i, u, m, d) for i in inits for u, d in (("a", 3.0), ("b", np.nan)) for m in range(3)]
@@ -201,7 +201,7 @@ def test_onset_export_per_unit(world):
 def test_a_single_field_draws_cells_or_polygons():
     import matplotlib.pyplot as plt
 
-    from hcwf.graphics.field import draw_field, extent
+    from hcwf.figures.field import draw_field, extent
     from hcwf.spatial import EvaluationUnits
 
     table = pd.DataFrame({"id": ["a", "b"], "lat": [0.5, 0.5], "lon": [0.5, 1.5]})

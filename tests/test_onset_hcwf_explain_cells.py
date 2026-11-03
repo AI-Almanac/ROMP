@@ -7,10 +7,10 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from hcwf.lib import explain_cells
+from hcwf.onset import explain_cells
 from test_oracle_config import configs, world  # noqa: F401  (fixtures)
 from hcwf.config import validate
-from hcwf.lib.assertion import HCWFConfigError
+from hcwf.errors import HCWFConfigError
 
 
 def rain_year(year):

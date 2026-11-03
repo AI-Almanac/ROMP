@@ -19,7 +19,7 @@ import _oracle_config as old
 from typed_io import flat_config
 from hcwf.config.model import RunConfig, Selection
 from hcwf.onset.climatology import ReferenceOnset
-from hcwf.stats import observed_cache
+from hcwf.onset import observed_cache
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_oracle_config import build_world, fixture_configs  # noqa: E402

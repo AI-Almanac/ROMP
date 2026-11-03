@@ -9,13 +9,16 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 PACKAGE = REPO / "hcwf"
 
-KWARGS_AREAS = ("io", "stats", "metrics", "graphics", "app")
-KWARGS_FILES = ("export.py",)
-KWARGS_ALLOWED = {("graphics/field.py", "draw_field"): "style options passed on to matplotlib",
-                  ("stats/parallel.py", "map_items"): "options of start_items"}
+KWARGS_AREAS = ("io", "references", "metrics", "figures", "scoring")
+KWARGS_FILES = ("runs/export.py", "parallel.py", "onset/detect.py", "onset/observed_cache.py")
+KWARGS_ALLOWED = {("figures/field.py", "draw_field"): "style options passed on to matplotlib",
+                  ("parallel.py", "map_items"): "options of start_items",
+                  ("parallel.py", "__init__"): "SharedArrays takes its arrays by name",
+                  ("figures/visual.py", "heatmap"): "style options passed on to pcolormesh",
+                  ("figures/visual.py", "annotate_heatmap"): "text options passed on to matplotlib"}
 """The functions of those areas that may take a `**` parameter, and why (plot-style and worker-pool options)."""
 
-VALUES_READERS = {"api.py", "lib/run_folder.py", "lib/resolved.py", "lib/check.py"}
+VALUES_READERS = {"api.py", "runs/folder.py", "runs/resolved.py", "runs/check.py"}
 """Outside hcwf/config/, the files that read `RunConfig.values` (the flat record): `RunResult.config` (api.py), the run
 folder and the resolved config it writes, and the `--check` report."""
 RUN_NAMES = {"rc", "run_config", "run"}

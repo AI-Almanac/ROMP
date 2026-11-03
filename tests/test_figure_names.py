@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from hcwf.config.model import FigureSpec
-from hcwf.lib.run_folder import RunPaths, file_name
+from hcwf.runs.folder import RunPaths, file_name
 
 FIGURES = {"heatmap": (("M", "1-10"), "skill_scores_heatmap_M_1-10.png"),
            "reliability": (("M", "1-10"), "reliability_M_1-10.png"),
@@ -44,10 +44,10 @@ def test_data_names_are_short_in_run_folders_and_historical_otherwise():
 
 
 def test_figure_and_writer_functions_take_specs_not_kwargs():
-    from hcwf.graphics import func_map, heatmap, maps, onset_map, panel_bar_skill, panel_portrait_error, \
+    from hcwf.figures import func_map, heatmap, maps, onset_map, panel_bar_skill, panel_portrait_error, \
         panel_portrait_skill, reliability
     from hcwf.io import output
-    from hcwf.utils import visual
+    from hcwf.figures import visual
 
     for func in (func_map.spatial_metrics_map, heatmap.create_heatmap, maps.plot_spatial_metrics,
                  onset_map.plot_spatial_climatology_onset, panel_bar_skill.panel_bar_bss_rpss_auc,

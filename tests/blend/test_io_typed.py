@@ -16,8 +16,8 @@ from _inputs import write_adm3, write_forecast
 from hcwf.config.model import (AreaSpec, EvaluationSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec, Selection,
                                Window)
 from hcwf.io import input as io_input
-from hcwf.lib import config_schema as schema
-from hcwf.lib.onset_config import onset_setup
+from hcwf.config import schema
+from hcwf.config.onset import onset_setup
 from hcwf.spatial.units import UnitsSpec
 
 BOUNDARY = "00 UTC, labelled by start"
@@ -270,7 +270,7 @@ def test_units_are_resolved_once_per_source_and_read_from_the_spec():
 
 
 # the modules whose flat-key reads moved to the typed specs and `Selection` (design S6)
-MODULES = ("io/input.py", "spatial/units.py", "utils/region.py", "utils/mask.py", "utils/practical.py")
+MODULES = ("io/input.py", "spatial/units.py", "spatial/select.py", "spatial/masks.py", "io/paths.py")
 CONFIG_NAMES = {"kwargs", "kw", "cfg", "config", "values", "dic"}
 
 

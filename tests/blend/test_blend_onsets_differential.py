@@ -1,5 +1,5 @@
 """The same synthetic files and configs through onset_blending's onsets and features (its own environment) and
-hcwf's (hcwf.stats.detect, hcwf.blend.features) give bit-identical observed onsets, forecast onset counts, climatology
+hcwf's (hcwf.onset.detect, hcwf.blend.features) give bit-identical observed onsets, forecast onset counts, climatology
 and weekly features, legacy tables included (tests/blend/differential_onsets.py)."""
 
 import os

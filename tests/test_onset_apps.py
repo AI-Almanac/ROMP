@@ -4,7 +4,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from hcwf.app import onset_spatial, onset_time_series
+from hcwf.figures import notebook as onset_spatial
+from hcwf.figures import notebook as onset_time_series
 from hcwf.io import input as hcwf_input
 
 BOUNDARY = "00 UTC, labelled by start"

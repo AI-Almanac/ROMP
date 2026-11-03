@@ -1,6 +1,6 @@
 """Run-config paths of the `units:` section start at the config file; the settings of a case have one key per schema key."""
 
-from hcwf.lib import config_schema as schema
+from hcwf.config import schema
 from hcwf.config import build as loader
 from flat_values import CASE_FIELDS, _setting_part
 

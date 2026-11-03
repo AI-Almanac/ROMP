@@ -412,7 +412,7 @@ detect(plan, tenths: (S, T) int32, missing: (S, T) bool,
   gives the median onset day of year per cell and season, from the observed
   detection.
 
-### 7.1 Conditional climatology (`hcwf.onset.climatology_kde`)
+### 7.1 Conditional climatology (`hcwf.references.kde`)
 
 The reference forecast `ref_model = "conditional_climatology"` is the
 probability that onset falls on lead k given no onset by the issue date,
@@ -455,7 +455,7 @@ against each other, often by exactly one day.
   verdicts from prepared sample arrays: the forecast is aligned once against a
   stacked (lag, ...) view of the observed days and every lag and lead is
   correlated in one vectorised step.
-* `hcwf.lib.align_sample` is the fast check behind `hcwf-run --check
+* `hcwf.onset.sample_alignment` is the fast check behind `hcwf-run --check
   --alignment` and the lead-label detection of zarr datasets. It reads a
   deterministic sample once (up to 40 inits spread over the evaluated period,
   up to about 3000 cells on a regular subgrid of the shared land cells, leads

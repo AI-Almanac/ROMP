@@ -122,7 +122,7 @@ def dump_hcwf(root: Path) -> dict:
     from hcwf.io import input as io_input
     from hcwf.spatial import EvaluationUnits
     from hcwf.spatial.ids import GridIdConvention
-    from hcwf.utils.standard import dim_fmt, dim_fmt_model_ensemble
+    from hcwf.io.dims import dim_fmt, dim_fmt_model_ensemble
 
     out = {}
     convention = GridIdConvention(2, "fixed", "explicit")

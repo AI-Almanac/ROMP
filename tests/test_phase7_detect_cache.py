@@ -3,8 +3,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from hcwf.lib import dataset_detect as detect
-from hcwf.utils import mask as mask_mod
+from hcwf.config import detect
+from hcwf.spatial import masks as mask_mod
 
 
 

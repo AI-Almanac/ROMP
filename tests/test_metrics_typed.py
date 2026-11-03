@@ -8,10 +8,12 @@ import pickle
 import pandas as pd
 import pytest
 from hcwf.config.model import Selection
-from hcwf.metrics.skill import create_score_results, prepare_pairs
-from hcwf.stats import benchmark, parallel
-from hcwf.stats.benchmark import compute_metrics
-from hcwf.stats.bins import _pairs_of_years
+from hcwf.metrics.skill import create_score_results
+from hcwf.scoring.pairs import prepare_pairs
+from hcwf.scoring import onset_tables as benchmark
+from hcwf import parallel
+from hcwf.scoring.onset_tables import compute_metrics
+from hcwf.scoring.pairs import _pairs_of_years
 from old_flat_rule import old_rule
 from test_skill_reference_model import YEARS, DAY_BINS, _write_model, _write_obs
 from tests.test_oracle_config import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)

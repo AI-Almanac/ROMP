@@ -12,7 +12,7 @@ from test_oracle_config import build_world
 from test_run_experience import raw_config, write_config
 from typed_io import flat_config
 from hcwf.config.model import RunConfig
-from hcwf.lib.convert import flat_to_mapping
+from hcwf.config.convert import flat_to_mapping
 
 
 @pytest.fixture(scope="module")

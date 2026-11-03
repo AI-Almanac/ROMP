@@ -5,9 +5,9 @@ import pandas as pd
 import xarray as xr
 from hcwf.metrics.error import year_points
 from hcwf.spatial import axes
-from hcwf.stats.bins import get_target_bins
-from hcwf.lib.run_folder import file_name
-from hcwf.utils.printing import tuple_to_str
+from hcwf.metrics.bins import get_target_bins
+from hcwf.runs.folder import file_name
+from hcwf.naming import tuple_to_str
 import logging
 
 log = logging.getLogger(__name__)
@@ -219,7 +219,7 @@ def save_metrics_to_netcdf(spatial_metrics, case, paths, output, ev, units, desc
     if desc_dict is not None:
         ds.attrs.update(desc_dict)
 
-    from hcwf.utils.mask import mask_attrs
+    from hcwf.spatial.masks import mask_attrs
 
     ds.attrs.update(mask_attrs())   # nothing unless a region mask is in use
 
@@ -236,8 +236,8 @@ def save_climatology_onset(onset_da_dict, paths, output, units, years_clim):
 
     onset_da_dict is the reference case's {year: onset}: every year holds the same climatological field.
     """
-    from hcwf.utils.mask import mask_attrs
-    from hcwf.utils.printing import tuple_to_str_range
+    from hcwf.spatial.masks import mask_attrs
+    from hcwf.naming import tuple_to_str_range
 
     fout = os.path.join(output.data_dir, file_name(paths, "climatology", tuple_to_str_range(years_clim)))
     climatological_onset_doy = with_unit_labels(next(iter(onset_da_dict.values())), units)

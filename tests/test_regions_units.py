@@ -9,7 +9,7 @@ from hcwf.onset import calendar as cal
 from hcwf.onset import definition as dfn
 from hcwf.onset import regions as rg
 from hcwf.onset.model import DayRef, Season
-from hcwf.params.region_def import domain
+from hcwf.spatial.region_def import domain
 
 NE_COUNTRY = {"ethiopia": "Ethiopia", "india": "India", "kenya": "Kenya"}
 
@@ -33,7 +33,7 @@ def test_every_region_has_a_box():
 @pytest.mark.parametrize("ident,country", NE_COUNTRY.items())
 def test_country_box_holds_its_geometry(ident, country):
     """A country's box contains its Natural Earth shape's centroid and, within a margin, its whole outline."""
-    from hcwf.utils.mask import country_geometry
+    from hcwf.spatial.masks import country_geometry
 
     geometry = country_geometry([country], "110m")[0]
     lats, latn, lonw, lone = rg.box(ident)

@@ -5,8 +5,8 @@ import re
 import pytest
 
 from hcwf.config import Config, Dataset, Evaluation, Onset
-from hcwf.lib.config_schema import ConfigSchemaError, FIELDS, describe_schema
-from hcwf.lib.config_yaml import build_config
+from hcwf.config.schema import ConfigSchemaError, FIELDS, describe_schema
+from hcwf.config.mapping import build_config
 from tests.synthetic_data import write_forecast, write_obs
 
 
@@ -152,7 +152,7 @@ def test_an_unset_env_var_in_a_path_says_which_variable(data, monkeypatch):
 def test_explicit_years_use_the_blend_year_syntax_and_one_parser(data):
     """evaluation.years / climatology_years: text or a list, may skip years, sorted; blend.years parses the same way."""
     from hcwf.blend.recipe import years_of
-    from hcwf.lib.dataset_schema import parse_year_list
+    from hcwf.config.datasets import parse_year_list
 
     evaluation = {"start_date": [2018, 5, 1], "end_date": [2022, 7, 31], "start_year_clim": 2010,
                   "end_year_clim": 2020, "years": "2018:2019,2022", "climatology_years": [2016, 2012, "2014:2015"]}

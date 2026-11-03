@@ -7,11 +7,11 @@ import typed_io
 import xarray as xr
 
 from hcwf.io import input as hcwf_input
-from hcwf.lib.onset_config import OnsetConfigError, history_needs_previous_year, onset_setup
+from hcwf.config.onset import OnsetConfigError, history_needs_previous_year, onset_setup
 from hcwf.config.model import Window
-from hcwf.stats.benchmark import onset_metrics
-from hcwf.stats.bins import forecast_pairs
-from hcwf.stats.detect import detect_deterministic
+from hcwf.metrics.contingency import onset_metrics
+from hcwf.metrics.bins import forecast_pairs
+from hcwf.onset.detect import detect_deterministic
 
 BOUNDARY = "00 UTC, labelled by start"
 

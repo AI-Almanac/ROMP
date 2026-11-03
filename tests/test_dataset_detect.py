@@ -2,8 +2,8 @@
 
 import pytest
 
-from hcwf.lib import dataset_detect as detect
-from hcwf.lib.dataset_schema import DatasetError, TEMPLATES, expand_path, get_dataset, load_datasets, parse_dataset
+from hcwf.config import detect
+from hcwf.config.datasets import DatasetError, TEMPLATES, expand_path, get_dataset, load_datasets, parse_dataset
 from tests.synthetic_data import write_forecast, write_obs
 
 
@@ -211,6 +211,6 @@ def test_importing_dataset_detect_does_not_pull_in_the_input_stack():
     import subprocess
     import sys
 
-    code = "import sys, hcwf.lib.dataset_detect; print('hcwf.io.input' in sys.modules)"
+    code = "import sys, hcwf.config.detect; print('hcwf.io.input' in sys.modules)"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "False"

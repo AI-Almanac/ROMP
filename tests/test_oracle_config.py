@@ -15,13 +15,13 @@ import pytest
 import yaml
 
 import _oracle_config as old
-from hcwf import export
+from hcwf.runs import export
 from hcwf.config.model import RunConfig
 from hcwf.config import Config
 from typed_io import flat_config, flat_command_line
-from hcwf.lib.assertion import HCWFConfigError
-from hcwf.lib.run_folder import fingerprint
-from hcwf.lib.resolved import resolved_config_text
+from hcwf.errors import HCWFConfigError
+from hcwf.runs.folder import fingerprint
+from hcwf.runs.resolved import resolved_config_text
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_run_experience import MAX_LEAD, _write_ensemble, raw_config, write_config, write_forecast, write_obs  # noqa: E402
@@ -171,7 +171,7 @@ def test_cli_flags_equal_run_overrides(configs):
     assert {k for k, v in cli["config_sources"].items() if v == "command line"} == set(overrides)
     assert {k for k, v in api_like["config_sources"].items() if v == "override"} == set(overrides)
     assert not [v for k, v in cli["config_sources"].items() if v == "override"]
-    from hcwf.lib.resolved import resolved_config_text
+    from hcwf.runs.resolved import resolved_config_text
 
     assert "command line" in resolved_config_text(cli)
     assert cli["run_paths"].fingerprint == api_like["run_paths"].fingerprint != flat_config(path)["run_paths"].fingerprint

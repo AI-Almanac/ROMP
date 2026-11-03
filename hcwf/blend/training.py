@@ -12,7 +12,7 @@ artifacts under the contract's own names (not HCWF's short ones), plus the chose
 config, the recipe, the fitted model and forest, the observed onsets, the units, the thresholds and reference onsets,
 and the climatology's years, which is all a forecast needs.
 
-Workers are the run's (`rc.parallel`; `hcwf.utils.workers`), the memory budget is half of the memory available now;
+Workers are the run's (`rc.parallel`; `hcwf.parallel`), the memory budget is half of the memory available now;
 every stage runs on the run's worker pool.
 """
 
@@ -33,9 +33,9 @@ from hcwf.cache import atomic_write
 from hcwf.config.model import RunConfig
 from hcwf.io import input as io_input
 from hcwf.onset.climatology import ReferenceOnset
-from hcwf.onset.climatology_kde import Climatology
-from hcwf.stats.parallel import spec_workers
-from hcwf.utils import workers as pool
+from hcwf.references.kde import Climatology
+from hcwf.parallel import spec_workers
+from hcwf import parallel as pool
 
 log = logging.getLogger(__name__)
 
@@ -139,7 +139,7 @@ class TrainingResult:
 
     @property
     def setup(self):
-        """The resolved onset setup (hcwf.lib.onset_config.OnsetSetup)."""
+        """The resolved onset setup (hcwf.config.onset.OnsetSetup)."""
         return self.rc.onset
 
     @property

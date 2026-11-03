@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from hcwf.lib.lead_window import apply_lead_window, count_leads, usable_last_lead
-from hcwf.lib.onset_config import OnsetConfigError
+from hcwf.config.leads import apply_lead_window, count_leads, usable_last_lead
+from hcwf.config.onset import OnsetConfigError
 
 
 def _cfg(definition="icpac", **values):

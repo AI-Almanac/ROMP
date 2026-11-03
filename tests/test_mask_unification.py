@@ -1,4 +1,4 @@
-"""The implicit land and country masks keep exactly the cells the old hcwf.utils.land_mask kept.
+"""The implicit land and country masks keep exactly the cells the old land_mask module kept.
 
 tests/_oracle_land_mask.py is a verbatim copy of the old module (TEST-ONLY). Every check compares the boolean
 cells (or the NaN pattern and values of masked data) of the pipeline's functions with the oracle's, on the real
@@ -14,9 +14,9 @@ import xarray as xr
 
 import _oracle_land_mask as old
 from hcwf.onset import regions
-from hcwf.utils import mask as new_mask
+from hcwf.spatial import masks as new_mask
 from hcwf.config.model import AreaSpec, Selection
-from hcwf.utils import region as new_region
+from hcwf.spatial import select as new_region
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 def _area(region, **values):

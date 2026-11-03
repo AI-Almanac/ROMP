@@ -3,7 +3,7 @@
 import pandas as pd
 
 from hcwf.config.model import Window
-from hcwf.stats.benchmark import onset_metrics
+from hcwf.metrics.contingency import onset_metrics
 
 
 def test_year_with_no_forecast_onsets_yields_empty_metrics():

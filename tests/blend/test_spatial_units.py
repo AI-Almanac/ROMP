@@ -7,7 +7,7 @@ import pytest
 from shapely.geometry import box
 
 from hcwf.spatial import EvaluationUnits, GridIdConvention
-from hcwf.utils import mask as mask_mod
+from hcwf.spatial import masks as mask_mod
 
 LAT = np.array([0.5, 1.5, 2.5, 3.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5, 4.5])

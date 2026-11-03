@@ -1,4 +1,4 @@
-"""Tests of the sampled alignment check (hcwf.lib.align_sample) against the whole-year check."""
+"""Tests of the sampled alignment check (hcwf.onset.sample_alignment) against the whole-year check."""
 import os
 from pathlib import Path
 
@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from hcwf.lib import align_sample
+from hcwf.onset import sample_alignment as align_sample
 from hcwf.onset.alignment import check_forecast_alignment, forecast_alignment_from_samples
 from hcwf.onset.ingest import ingest, ingest_forecast
 

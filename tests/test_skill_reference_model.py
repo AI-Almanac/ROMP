@@ -9,10 +9,11 @@ import xarray as xr
 import hcwf.io.input as model_input
 from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
-from hcwf.metrics.skill import create_score_results, prepare_pairs
-from hcwf.stats.bins import climatological_pairs
-from hcwf.stats.climatology import climatological_onset_dataset
-from hcwf.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
+from hcwf.metrics.skill import create_score_results
+from hcwf.scoring.pairs import prepare_pairs
+from hcwf.scoring.pairs import climatological_pairs
+from hcwf.references.climatology import climatological_onset_dataset
+from hcwf.metrics.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
 
 YEARS = (2000, 2001, 2002)
 LAT, LON = [10.0, 10.5], [70.0, 70.5]

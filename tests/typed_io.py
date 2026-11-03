@@ -18,7 +18,7 @@ from hcwf.config.model import (AreaSpec, Case, EvaluationSpec, FigureSpec, Model
                                ParallelSpec, RunConfig, Selection, Window, _project_area, _project_evaluation,
                                _project_generated, _project_obs, _project_onset_options, _project_parallel)
 from hcwf.io import input as io_input
-from hcwf.lib import config_schema as schema
+from hcwf.config import schema
 
 
 def flat_config(source, overrides=None, **options) -> dict:
@@ -92,7 +92,7 @@ class ReaderInputs:
 
     def onset(self):
         """The onset setup of the config (memoised by `onset_setup`); an invalid or incomplete config raises."""
-        from hcwf.lib.onset_config import onset_setup
+        from hcwf.config.onset import onset_setup
 
         return onset_setup(self.kwargs)
 

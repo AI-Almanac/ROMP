@@ -9,13 +9,14 @@ import xarray as xr
 import hcwf.io.input as model_input
 from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
-from hcwf.metrics.skill import create_score_results, prepare_pairs
-from hcwf.stats.benchmark import compute_metrics
-from hcwf.stats.bins import climatological_pairs
-from hcwf.stats.climatology import climatological_onset_dataset, compute_climatology_as_forecast
-from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
+from hcwf.metrics.skill import create_score_results
+from hcwf.scoring.pairs import prepare_pairs
+from hcwf.scoring.onset_tables import compute_metrics
+from hcwf.scoring.pairs import climatological_pairs
+from hcwf.references.climatology import climatological_onset_dataset, compute_climatology_as_forecast
+from hcwf.references.conditional import (compute_conditional_climatology_as_forecast,
                                                 create_conditional_climatological_forecast_obs_pairs)
-from hcwf.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
+from hcwf.metrics.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
 
 CLIM_YEARS = tuple(range(2000, 2014))
 TARGET = 2013
@@ -176,7 +177,7 @@ def test_climatology_reference_is_unchanged(config):
 
 def _observed(config):
     """The target year's observed onsets (lat, lon)."""
-    from hcwf.stats.detect import detect_observed
+    from hcwf.onset.detect import detect_observed
     rc, _, select = typed_io.from_case_kwargs(config)
     return detect_observed(typed_io.observations(TARGET, config), typed_io.thresholds(config),
                            TARGET, rc, select)

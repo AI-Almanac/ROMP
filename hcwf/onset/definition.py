@@ -15,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from hcwf.lib.assertion import HCWFConfigError
+from hcwf.errors import HCWFConfigError
 from hcwf.onset import units
 from hcwf.onset.model import (
     Comparison, Condition, Curve, DayRef, Definition, DerivedSeasons, FirstPassage,

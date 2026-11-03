@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from hcwf.io.input import steps_needed
-from hcwf.lib.onset_config import OnsetConfigError, onset_setup
+from hcwf.config.onset import OnsetConfigError, onset_setup
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
 

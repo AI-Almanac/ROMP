@@ -1,7 +1,7 @@
 """The rule of the old flat onset keys as the onset definition `hcwf-run convert` writes for it, for tests that used
 those keys: wet days of 1 mm, a 3-day spell above 20 mm, a 7-day dry run (checked 10 days when dry_extent says so), run
 as the old flat-key mode ran: forecasts as given (history none), leads labelled by their end."""
-from hcwf.lib.convert import flat_onset_to_rule
+from hcwf.config.convert import flat_onset_to_rule
 
 
 def old_rule(**changes):

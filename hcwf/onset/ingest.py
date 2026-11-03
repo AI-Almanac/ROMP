@@ -16,7 +16,7 @@ import numpy as np
 import xarray as xr
 
 from hcwf.onset.model import MISSING_POLICIES, RESOLUTIONS, DailyRain, ForecastRain
-from hcwf.utils.standard import ROLE_ALIASES, find_dim
+from hcwf.io.dims import ROLE_ALIASES, find_dim
 
 MM_PER_UNIT = {
     **{name: 1.0 for name in ("mm", "mm/day", "mm/d", "mm day-1", "mm d-1", "mm day**-1", "kg m-2", "kg m**-2",

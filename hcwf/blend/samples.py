@@ -1,7 +1,7 @@
 """What the blend works on: onsets per unit, and the weekly samples built from them.
 
 `ObservedOnsets` (observed onsets over unit and year) and `ForecastOnsets` (a model's member onset counts per issue,
-unit and lead day) are what `hcwf.stats.detect` returns for evaluation units, collected over files
+unit and lead day) are what `hcwf.onset.detect` returns for evaluation units, collected over files
 (`hcwf.blend.features`). `Weekly` is one sample per unit and issue date with a column per feature (`take` gives a
 column's values per sample, for `rows` (positions) or every sample; `frame()` rebuilds the legacy table);
 `DailyInputs` is what the random forest reads for each sample, in the samples' order. The blend methods

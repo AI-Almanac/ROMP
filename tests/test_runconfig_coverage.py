@@ -13,7 +13,7 @@ import pytest
 
 from typed_io import flat_config
 from hcwf.config.model import RunConfig
-from hcwf.lib import config_schema as schema
+from hcwf.config import schema
 from test_oracle_config import configs, world  # noqa: F401  (fixtures)
 
 RUN_KEYS = ("accumulation_detected", "config_file", "config_sources", "dataset_report", "lead_window",
@@ -60,7 +60,7 @@ ONSET_SETUP_KEYS = {"onset_definition", "onset_override", "onset_rule", "onset_s
 
 
 def test_every_schema_key_and_run_key_is_claimed_by_one_projection(configs):
-    from hcwf.lib import onset_config
+    from hcwf.config import onset as onset_config
 
     dic = flat_config(configs["model_reference"])
     assert set(RUN_KEYS) <= set(dic)

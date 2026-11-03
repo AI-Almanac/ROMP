@@ -40,7 +40,7 @@ def _exec_config(tmp_path: Path) -> dict:
     """Load the generated YAML and return the flat config dict the pipeline would use."""
     import yaml
 
-    from hcwf.lib.config_yaml import build_config
+    from hcwf.config.mapping import build_config
 
     return build_config(yaml.safe_load((tmp_path / "config.yaml").read_text()))
 

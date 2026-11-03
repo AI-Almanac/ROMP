@@ -30,7 +30,7 @@ shpreader.natural_earth(resolution='50m', category='physical', name='coastline')
 print("  -> 50m cultural/admin_0_boundary_lines_land")
 shpreader.natural_earth(resolution='50m', category='cultural', name='admin_0_boundary_lines_land')
 
-# 4b. Region masks (hcwf.utils.mask: `mask.land`, `mask.country`) read land and admin_0_countries at the
+# 4b. Region masks (hcwf.spatial.masks: `mask.land`, `mask.country`) read land and admin_0_countries at the
 #     resolution `mask.resolution` (default 50m), so fetch all three resolutions of both layers.
 for _res in ("10m", "50m", "110m"):
     for _category, _name in (("cultural", "admin_0_countries"), ("physical", "land")):

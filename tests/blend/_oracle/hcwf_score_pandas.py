@@ -1,5 +1,5 @@
 """TEST-ONLY ORACLE: HCWF's pandas Brier and AUC calculations as they were before they became adapters of
-hcwf.metrics.probabilistic (hcwf/stats/score.py at 7d1bbd9), kept to prove the new results are byte-identical.
+hcwf.metrics.probabilistic (hcwf/metrics/score.py at 7d1bbd9), kept to prove the new results are byte-identical.
 Nothing in hcwf imports this file.
 """
 

@@ -2,7 +2,7 @@
 import numpy as np
 import xarray as xr
 
-from hcwf.lib import check
+from hcwf.runs import check
 from hcwf.onset import ingest
 
 
@@ -17,7 +17,7 @@ def test_check_has_no_second_lead_reader_and_hours_axis_is_read_as_hours():
 
 def test_panel_portrait_error_compiles_without_escape_warnings():
     import ast
-    import hcwf.graphics.panel_portrait_error as module
+    import hcwf.figures.panel_portrait_error as module
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("error")

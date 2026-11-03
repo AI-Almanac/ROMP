@@ -16,8 +16,8 @@ import pytest
 import _oracle_config as old
 from typed_io import flat_config
 from hcwf.config.model import MetricsSpec, ModelSpec, OutputSpec, RunConfig, Selection
-from hcwf.lib import config_schema as schema
-from hcwf.lib.run_folder import fingerprint
+from hcwf.config import schema
+from hcwf.runs.folder import fingerprint
 from test_oracle_config import _norm, _same, configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
 
 FLOWS = flat_values.FLOWS
@@ -273,7 +273,7 @@ def test_a_blend_config_has_its_recipe(world, tmp_path):
 
 def test_importing_the_config_package_stays_light():
     code = ("import sys, hcwf.config, hcwf.config.model, hcwf.config.build\n"
-            "heavy = [m for m in ('hcwf.io.input', 'hcwf.blend.recipe', 'hcwf.utils.mask') "
+            "heavy = [m for m in ('hcwf.io.input', 'hcwf.blend.recipe', 'hcwf.spatial.masks') "
             "if m in sys.modules]\n"
             "assert not heavy, heavy\n")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

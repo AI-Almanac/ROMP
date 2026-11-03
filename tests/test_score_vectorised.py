@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hcwf.stats.score import calculate_rps
+from hcwf.metrics.score import calculate_rps
 
 
 def _old_calculate_rps(forecast_obs_df):

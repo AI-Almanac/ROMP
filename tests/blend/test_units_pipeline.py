@@ -6,10 +6,10 @@ import pandas as pd
 import pytest
 import xarray as xr
 from hcwf.io import input as io_input
-from hcwf.lib import config_schema as schema
+from hcwf.config import schema
 from hcwf.onset import regions as rg
 from hcwf.spatial import EvaluationUnits, UnitsSpec, UnitsSpecError
-from hcwf.stats import observed_cache
+from hcwf.onset import observed_cache
 
 LAT, LON = np.array([0.0, 1.0, 2.0]), np.array([10.0, 11.0])
 
@@ -101,7 +101,7 @@ def test_declared_units_win_over_the_configured_factor():
 
 
 def test_the_fingerprint_of_a_grid_run_has_its_six_parts_and_units_and_options_add_their_own(monkeypatch):
-    from hcwf.lib.onset_config import onset_setup
+    from hcwf.config.onset import onset_setup
 
     base = {"obs_dir": "/nowhere", "obs_file_pattern": ("{}.nc",), "obs_var": "p", "obs_unit_cvt": None,
             "region": "kenya", "years": [2001], "onset_rule": {

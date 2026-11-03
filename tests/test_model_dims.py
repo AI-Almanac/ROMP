@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from hcwf.utils.standard import dim_fmt_model, dim_fmt_model_ensemble
+from hcwf.io.dims import dim_fmt_model, dim_fmt_model_ensemble
 
 
 def _forecast(coord_order, member=None):

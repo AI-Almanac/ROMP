@@ -10,10 +10,10 @@ import xarray as xr
 
 import typed_io
 from hcwf.config.model import ParallelSpec
-from hcwf.lib.config_schema import ConfigSchemaError
-from hcwf.lib.config_yaml import build_config
-from hcwf.stats import parallel
-from hcwf.utils.workers import cores, ordered_prefetch, worker_count
+from hcwf.config.schema import ConfigSchemaError
+from hcwf.config.mapping import build_config
+from hcwf import parallel
+from hcwf.parallel import cores, ordered_prefetch, worker_count
 from tests.test_config_schema import _raw, data  # noqa: F401 - the synthetic-data fixture
 from tests.test_oracle_config import configs, world  # noqa: F401 - the fixture world and its configs
 
@@ -130,7 +130,7 @@ def noisy_years(years):
 @pytest.mark.parametrize("quiet", [False, True])
 def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, quiet):
     """A worker's warning and info record each appear once in run.log (with the year) and on the console as asked."""
-    from hcwf.utils import log as logs
+    from hcwf import log as logs
 
     logfile = tmp_path / "run.log"
     with logs.session(logs.QUIET if quiet else logs.NORMAL, logfile):
@@ -149,7 +149,7 @@ def test_equal_thresholds_reloaded_each_window_detect_once(configs, monkeypatch)
     """Equal thresholds loaded afresh per window share onset tables (the typed path); a different threshold does not."""
     from typed_io import flat_config
     from hcwf.config.model import RunConfig
-    from hcwf.stats import benchmark
+    from hcwf.scoring import onset_tables as benchmark
 
     rc = RunConfig.from_flat(flat_config(configs["two_models_windows"]), check=False)
     first, second, *_ = [c for c in rc.cases() if c.model == rc.models[0]]

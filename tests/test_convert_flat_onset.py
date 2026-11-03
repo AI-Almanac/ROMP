@@ -7,8 +7,8 @@ import pytest
 import yaml
 
 from hcwf.cli import main as cli_main
-from hcwf.lib.config_schema import ConfigSchemaError
-from hcwf.lib.convert import convert_flat_onset, flat_onset_to_rule
+from hcwf.config.schema import ConfigSchemaError
+from hcwf.config.convert import convert_flat_onset, flat_onset_to_rule
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.model import Amount, Comparison, DayRef, DryRun, FirstPassage, Season, Span, Total, Veto, WetDays
 
@@ -126,7 +126,7 @@ def test_the_command_converts_and_a_run_config_with_the_keys_is_refused(tmp_path
     source = _old_run_yaml(tmp_path)
     assert cli_main(["convert", str(source), "-o", str(tmp_path / "new.yaml")]) in (0, None)
     assert "onset" in yaml.safe_load((tmp_path / "new.yaml").read_text())
-    from hcwf.lib.config_yaml import build_config
+    from hcwf.config.mapping import build_config
 
     with pytest.raises(ConfigSchemaError, match="hcwf-run convert"):
         build_config(yaml.safe_load(source.read_text()))
@@ -135,7 +135,7 @@ def test_the_command_converts_and_a_run_config_with_the_keys_is_refused(tmp_path
 @pytest.mark.parametrize("key", ["layout", "work_dir", "pkg_dir", "debug", "fallback_date"])
 def test_removed_keys_are_named_as_removed(key):
     """A key that had no effect and was removed gets a message saying so, not a spelling suggestion."""
-    from hcwf.lib.config_yaml import build_config
+    from hcwf.config.mapping import build_config
 
     with pytest.raises(ConfigSchemaError, match=f"unknown key '{key}'. This key was removed"):
         build_config({key: None})

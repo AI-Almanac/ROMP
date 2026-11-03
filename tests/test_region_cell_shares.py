@@ -2,7 +2,7 @@
 import numpy as np
 from shapely.geometry import Polygon, box
 
-from hcwf.utils.mask import cell_bounds, cell_shares, rasterise
+from hcwf.spatial.masks import cell_bounds, cell_shares, rasterise
 
 LAT = np.array([0.5, 1.5, 2.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5])

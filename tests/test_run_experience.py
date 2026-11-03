@@ -17,19 +17,19 @@ import xarray as xr
 import yaml
 
 import hcwf
-from hcwf import export
-from hcwf.lib import check as check_mod
-from hcwf.lib import dataset_detect as detect
-from hcwf.lib import run_folder
-from hcwf.lib.config_yaml import build_config
+from hcwf.runs import export
+from hcwf.runs import check as check_mod
+from hcwf.config import detect
+from hcwf.runs import folder as run_folder
+from hcwf.config.mapping import build_config
 import typed_io
 from hcwf.config.model import RunConfig
-from hcwf.lib.dataset_schema import DatasetError, parse_dataset
+from hcwf.config.datasets import DatasetError, parse_dataset
 from typed_io import flat_config
-from hcwf.params.region_def import domain
-from hcwf.stats import detect as stats_detect
-from hcwf.stats import observed_cache
-from hcwf.utils import log as logs
+from hcwf.spatial.region_def import domain
+from hcwf.onset import detect as stats_detect
+from hcwf.onset import observed_cache
+from hcwf import log as logs
 
 ROOT = Path(__file__).resolve().parents[1]
 LAT, LON = [6.0, 8.0, 10.0], [38.0, 40.0, 42.0]
@@ -175,8 +175,8 @@ def test_progress_uses_tqdm_when_installed_and_on_a_terminal(monkeypatch, capsys
 
 def test_no_print_is_left_on_the_run_path():
     """The run path logs instead of printing (the CLI front end, onset explain and init print on purpose)."""
-    allowed = {"hcwf/cli.py", "hcwf/onset/cli.py", "hcwf/lib/init_config.py", "hcwf/utils/printing.py",
-               "hcwf/lib/assertion.py", "hcwf/driver.py"}
+    allowed = {"hcwf/cli/__init__.py", "hcwf/cli/onset.py", "hcwf/config/init.py", "hcwf/naming.py",
+               "hcwf/errors.py", "hcwf/cli/driver.py"}
     pattern = re.compile(r"(?<![\w.])print\(")
     offenders = []
     for path in (ROOT / "hcwf").rglob("*.py"):
@@ -279,7 +279,7 @@ def test_daily_boundary_is_a_forecast_dataset_key():
                                      "daily_boundary": "03 UTC"}],
                          "evaluation": {"start_date": [2019, 5, 1], "end_date": [2019, 6, 1]}})
     assert flat["daily_boundary_list"] == ("03 UTC",) and flat["accumulation_list"] == ("since_init",)
-    from hcwf.lib.resolved import resolved_config_text
+    from hcwf.runs.resolved import resolved_config_text
 
     text = resolved_config_text(flat)
     assert "daily_boundary" in text and "since_init" in text   # given by the user: written back
@@ -323,7 +323,7 @@ def test_accumulated_forecasts_score_like_per_day_forecasts(world, tmp_path):
 def test_climatology_cv_reaches_the_conditional_scoring(world, tmp_path, monkeypatch, configured, expected):
     """Setting and the scoring kwargs carry climatology_cv, in both modes, to the conditional climatology."""
     seen = []
-    from hcwf.stats import benchmark
+    from hcwf.scoring import onset_tables as benchmark
 
     real = benchmark.compute_conditional_climatology_as_forecast
 
@@ -586,7 +586,7 @@ def test_a_start_date_beyond_the_data_is_a_config_error_naming_the_years(world, 
     """`--start_date 2030 1 1` on forecasts of 2019-2020 is a config error that names the years the files cover (it was
     an IndexError while the lead window was being counted), through hcwf.run and through the command line; a period past
     the data that still has years names them too."""
-    from hcwf.lib.assertion import HCWFConfigError
+    from hcwf.errors import HCWFConfigError
 
     path = _fresh(world, tmp_path)
     with pytest.raises(HCWFConfigError, match=r"no year to evaluate.*DET files.*cover the years 2019-2020"):

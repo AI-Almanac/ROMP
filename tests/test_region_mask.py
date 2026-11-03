@@ -9,10 +9,10 @@ import pytest
 import xarray as xr
 from shapely.geometry import box, mapping
 
-from hcwf.lib.config_schema import ConfigSchemaError
-from hcwf.lib.config_yaml import build_config
-from hcwf.utils import mask as mask_mod
-from hcwf.utils.mask import MaskError, MaskSpec, align_raster_mask, build_mask, rasterise
+from hcwf.config.schema import ConfigSchemaError
+from hcwf.config.mapping import build_config
+from hcwf.spatial import masks as mask_mod
+from hcwf.spatial.masks import MaskError, MaskSpec, align_raster_mask, build_mask, rasterise
 
 LAT = np.array([0.5, 1.5, 2.5, 3.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5])
@@ -387,7 +387,7 @@ def mask_errors(root, mask):
 
 def test_mask_section_is_validated_with_help(data_dirs):
     """The mask section accepts the documented keys; mistakes name the key and suggest."""
-    from hcwf.lib.config_schema import describe_mask_schema, describe_schema
+    from hcwf.config.schema import describe_mask_schema, describe_schema
 
     flat = build_config(minimal(data_dirs, mask={"land": True, "country": "Ethiopia",
                                       "condition": {"file": "/d.nc", "variable": "elevation", "above": 1500}}))
@@ -436,9 +436,9 @@ def test_relative_mask_paths_are_made_absolute(tmp_path, monkeypatch):
 
 def test_legacy_nc_mask_path_is_unchanged(tmp_path):
     """Without `mask`, region_select does what it did: box, nc_mask, land and country masks, byte for byte."""
-    from hcwf.utils.mask import apply_nc_mask, mask_land, shp_mask
+    from hcwf.spatial.masks import apply_nc_mask, mask_land, shp_mask
     from hcwf.config.model import AreaSpec
-    from hcwf.utils.region import coords_fmt, region_select
+    from hcwf.spatial.select import coords_fmt, region_select
 
     lat, lon = np.arange(6.5, 35.6, 2.0), np.arange(68.0, 91.5, 2.0)
     rng = np.random.default_rng(0)
@@ -463,7 +463,7 @@ def test_legacy_nc_mask_path_is_unchanged(tmp_path):
 def test_region_select_with_mask_replaces_the_implicit_masks_and_rejects_nc_mask(tmp_path):
     """With `mask` only the mask limits the cells; with both mask and nc_mask the run stops."""
     from hcwf.config.model import AreaSpec
-    from hcwf.utils.region import region_select
+    from hcwf.spatial.select import region_select
 
     lat, lon = np.arange(6.5, 35.6, 2.0), np.arange(68.0, 91.5, 2.0)
     ds = xr.Dataset({"rain": (("time", "lat", "lon"), np.ones((2, lat.size, lon.size)))},

@@ -4,7 +4,7 @@
     rc = resolve(cfg, {"max_forecast_day": 12})                      # with overrides (flat keys, validated)
     rc = resolve_command_line(sys.argv[1:])                          # the command line: -p path and override flags
 
-``resolve`` returns the RunConfig. Every entry (hcwf.run / hcwf.check, hcwf-run and --check, hcwf.export, the run-wide
+``resolve`` returns the RunConfig. Every entry (hcwf.run / hcwf.check, hcwf-run and --check, hcwf.runs.export, the run-wide
 config of the apps) goes through the same steps: read the source, apply the overrides (normalised against the schema and recorded in
 ``config_sources``), resolve the paths, plan the lead window and the run folder, then validate. Nothing is created
 on disk: ``flat["run_paths"]`` says where the run will write.
@@ -15,8 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from hcwf.lib import config_schema as schema
-from hcwf.utils.practical import set_dir
+from hcwf.config import schema
+from hcwf.io.paths import set_dir
 
 _NO_FILES = {"save_fig": False, "save_nc_spatial_far_mr_mae": False, "save_csv_score": False,
              "save_nc_climatology": False, "save_onsets": False, "plot_spatial_far_mr_mae": False,
@@ -57,8 +57,8 @@ def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool =
 def resolve_command_line(cli_args=None, **kwargs):
     """The validated RunConfig named by -p/--param (or HCWF_CONFIG) of the command line, with its override flags applied and
     recorded as 'command line' (cli_args is sys.argv[1:] when None); check=True returns (RunConfig or None, problems)."""
-    from hcwf.lib.loader import _get_config_path_pre_parse
-    from hcwf.lib.parser import parse_overrides
+    from hcwf.cli.parser import _get_config_path_pre_parse
+    from hcwf.cli.parser import parse_overrides
 
     return resolve(_get_config_path_pre_parse(cli_args), parse_overrides(cli_args),
                    override_source="command line", **kwargs)
@@ -100,9 +100,9 @@ def _resolve_values(source, overrides, *, write, tmp, override_source, check):
 def _read(source) -> tuple[dict, str | None]:
     """(a new flat dict, the config file's path or None) of a path, Config, mapping, namespace or flat dict."""
     from hcwf.config import Config
-    from hcwf.lib.assertion import HCWFConfigError
-    from hcwf.lib.config_yaml import build_config, is_yaml_path
-    from hcwf.lib.parser import ensure_config_exists
+    from hcwf.errors import HCWFConfigError
+    from hcwf.config.mapping import build_config, is_yaml_path
+    from hcwf.cli.parser import ensure_config_exists
 
     if isinstance(source, (str, Path)):
         path = ensure_config_exists(source)
@@ -160,14 +160,14 @@ def _select_models(values: dict, names, errors: list[str]) -> None:
 
 def finish(values: dict, config_file: str | None, write: bool = True) -> dict:
     """Finish a flat config in place: resolve the paths, then the lead window and the run folder plan."""
-    from hcwf.lib import run_folder
+    from hcwf.runs import folder as run_folder
 
     _resolve_paths(values)
     if "lead_window" not in values:
         if schema.has_blend(values):   # a blend reads each model's leads itself (lead_days), not HCWF's benchmark window
             values["lead_window"], values["onset_lead_lines"] = (1, values["max_forecast_day"]), ()
         else:
-            from hcwf.lib.lead_window import apply_lead_window
+            from hcwf.config.leads import apply_lead_window
 
             apply_lead_window(values)
     return run_folder.apply(values, run_folder.plan(values, config_file, write))

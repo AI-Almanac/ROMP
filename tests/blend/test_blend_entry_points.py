@@ -11,7 +11,7 @@ import yaml
 
 import differential_onsets as synthetic
 from hcwf.cli import main as cli_main
-from hcwf.lib.convert_specs import convert_blend
+from hcwf.config.convert_specs import convert_blend
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def write_run(tmp_path, data, name="plain", file="run.yaml", **changes):
 
 def run_cli(args, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["hcwf-run", *args])
-    from hcwf.driver import run_hcwf
+    from hcwf.cli.driver import run_hcwf
 
     code = 0
     try:
@@ -79,7 +79,7 @@ def test_hcwf_run_trains_the_blend_and_writes_into_the_run_folder(tmp_path, data
     assert sorted(p.name for p in folder.iterdir()) == ["blend", "definition.yaml", "run.log", "run.yaml"]
     assert sorted(p.name for p in (folder / "blend").iterdir()) == ["summary_models_pooled.csv", "trained.blend"]
     # the written run.yaml reproduces the run: it loads again, with the same blend section and sources
-    from hcwf.lib.config_yaml import build_config
+    from hcwf.config.mapping import build_config
 
     again = build_config(yaml.safe_load((folder / "run.yaml").read_text()), source="run.yaml")
     assert again["blend_years"] == cfg["blend_years"] and tuple(again["obs_paths"]) == tuple(cfg["obs_paths"])
@@ -216,7 +216,7 @@ def test_convert_refuses_a_run_config_and_bad_blending_configs(tmp_path, capsys)
 
 
 def test_init_can_write_a_blend_section(tmp_path):
-    from hcwf.lib.init_config import render
+    from hcwf.config.init import render
 
     text = render(blend=True, models=[], years=(2000, 2010))
     raw = yaml.safe_load(text)

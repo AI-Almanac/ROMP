@@ -23,7 +23,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from hcwf.utils import workers as pool
+from hcwf import parallel as pool
 
 from ._crps_tree import CRPSForest
 from .samples import DailyInputs, Weekly

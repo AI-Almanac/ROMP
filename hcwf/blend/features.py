@@ -1,6 +1,6 @@
 """Features: onsets collected over files, and the weekly features the blend trains on, built from them.
 
-The onsets come from `hcwf.stats.detect` (the one adapter between HCWF and the onset engine: evaluation units,
+The onsets come from `hcwf.onset.detect` (the one adapter between HCWF and the onset engine: evaluation units,
 search-start variants, member onset counts); this module only collects its per-file arrays, in parallel on the run's
 pool, into `ObservedOnsets` and `ForecastOnsets`, and takes the members' mean rainfall for the rain predictors
 (`member_mean`, the one blend-specific piece of that read).
@@ -11,7 +11,7 @@ features (climatology logits, binned forecast probabilities, rain predictors, th
 arrays directly and held as arrays (`Weekly`); the legacy table is `Weekly.frame()`. The random forest reads its
 day-level inputs as arrays too (`daily_inputs`).
 
-Weeks are `hcwf.stats.bins.LeadBins` (column slices for the weekly sums, `codes` for the outcome); rain-predictor
+Weeks are `hcwf.metrics.bins.LeadBins` (column slices for the weekly sums, `codes` for the outcome); rain-predictor
 windows are read from the onset definition (`Definition.windows()`, via the recipe). The numerics are the legacy
 connector's (week sums, winsorised logits, rolling rain sums over the week's start days, rain transforms), operation
 for operation, without its day-level table.
@@ -32,14 +32,14 @@ from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, Recipe, probability_feature_b
 from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Weekly
 from hcwf.config.model import Case, Selection, Window
 from hcwf.io import input as io_input
-from hcwf.lib.dataset_schema import file_year
+from hcwf.config.datasets import file_year
 from hcwf.onset.climatology import ReferenceOnset
-from hcwf.onset import climatology_kde as kde
-from hcwf.onset.climatology_kde import Climatology
+from hcwf.references import kde
+from hcwf.references.kde import Climatology
 from hcwf.onset.thresholds import unit_thresholds
-from hcwf.stats import detect
-from hcwf.stats.parallel import map_items
-from hcwf.utils.workers import workers_within
+from hcwf.onset import detect
+from hcwf.parallel import map_items
+from hcwf.parallel import workers_within
 
 log = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
 
 def climatology(recipe: Recipe, setup, observed_onsets: ObservedOnsets, forecast_years, *,
                 test_years: tuple[int, int] | None = None, workers: int = 1) -> Climatology:
-    """The KDE climatologies for the issue dates of the test years (`hcwf.onset.climatology_kde`): the training
+    """The KDE climatologies for the issue dates of the test years (`hcwf.references.kde`): the training
     window's and one per extra year window of the recipe. test_years overrides the recipe's (a live season scores
     one year); the recipe's own worker count, if any, wins over `workers`."""
     spec = recipe.climatology

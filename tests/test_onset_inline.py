@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from hcwf.lib.onset_config import OnsetConfigError, onset_setup
+from hcwf.config.onset import OnsetConfigError, onset_setup
 from hcwf.onset import definition as definition_mod
 
 

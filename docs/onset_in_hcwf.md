@@ -1,6 +1,6 @@
 # Onset in HCWF
 
-HCWF detects onset with the `hcwf.onset` component (contract: `docs/onset_spec.md`). `hcwf/stats/detect.py` is a thin adapter: it runs one definition on the observations and on every forecast and shapes the results for the metrics code.
+HCWF detects onset with the `hcwf.onset` component (contract: `docs/onset_spec.md`). `hcwf/onset/detect.py` is a thin adapter: it runs one definition on the observations and on every forecast and shapes the results for the metrics code.
 
 ## Quick start
 
@@ -30,7 +30,7 @@ hcwf-run onset regions              # regions with their defaults
 hcwf-run onset schematic icpac --png icpac.png
 ```
 
-A rule that differs a little goes in `onset.override`, or in a shared YAML file with `extends: <id>` (set `definition` to its path). A region you define yourself in `params/region_def.py` has no defaults: set `onset_definition` and `obs_day_boundary`.
+A rule that differs a little goes in `onset.override`, or in a shared YAML file with `extends: <id>` (set `definition` to its path). A region you define yourself in `spatial/region_def.py` has no defaults: set `onset_definition` and `obs_day_boundary`.
 
 ## Onset keys (the `onset:` section; flat names in brackets)
 
@@ -116,7 +116,7 @@ Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `"start
 
 ## Exporting onset dates
 
-`hcwf-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to the run's `onsets/` folder (`dir_out/onsets/` with an explicit `dir_out`) before a normal run scores (the detection runs twice). In Python: `hcwf.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}` (files `<source>.nc` in a run folder, `onsets_<source>.nc` with an explicit `dir_out`); `hcwf.export.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
+`hcwf-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to the run's `onsets/` folder (`dir_out/onsets/` with an explicit `dir_out`) before a normal run scores (the detection runs twice). In Python: `hcwf.runs.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}` (files `<source>.nc` in a run folder, `onsets_<source>.nc` with an explicit `dir_out`); `hcwf.runs.export.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
 
 The values are the ones HCWF scores: the export calls the scoring's own functions with the keyword arguments the scoring builds (masks, shortened lead window, `forecast_history`, thresholds, definition). Unlike the scored tables, which keep only cases with an observed onset and an init before it, the files hold every init and cell; the flag `scored` (1 for those cases) marks what HCWF scores. Dates are CF times (int32 days since 1970-01-01, with the data's calendar; cftime for non-standard calendars); no onset is the fill value (NaT) and NaN in the float variables. Onset date, day of year and lead are set only where `status` is `ONSET`: a `PRIOR` search is reported as no onset, as scored. Files are zlib-compressed NetCDF4, CF-1.8, with global attributes holding the definition (id, version, hash, sentence, YAML, overrides), thresholds (source, years, files, values hash), mask summary, forecast history, lead label and window, day boundaries, dataset paths, HCWF version, creation time and the resolved run config (`resolved_config_yaml`).
 
@@ -133,7 +133,7 @@ The values are the ones HCWF scores: the export calls the scoring's own function
 | `onsets_conditional_climatology.nc` | `onset_date`, `onset_doy`, `onset_lead`, `onset_day`, `status`, `scored` | `init_time, season, lat, lon` | The conditional median onset (first lead whose conditional CDF reaches 0.5). |
 | | `onset_probability` | `init_time, season, lead, lat, lon` | The conditional CDF of the onset over leads 0 to the lead window (NaN for cells without a KDE). `climatology_cv` records the mode the scoring used. |
 
-xarray cannot decode masked dates on a non-standard calendar and decodes `units: days` as a timedelta, so open files with `hcwf.export.open_onsets(path)`, which gives cftime objects (None for no onset) and plain lead numbers.
+xarray cannot decode masked dates on a non-standard calendar and decodes `units: days` as a timedelta, so open files with `hcwf.runs.export.open_onsets(path)`, which gives cftime objects (None for no onset) and plain lead numbers.
 
 ## Looking inside a result
 
@@ -143,7 +143,7 @@ xarray cannot decode masked dates on a non-standard calendar and decodes `units:
 
 ## Region masks
 
-The `mask:` section (`hcwf/utils/mask.py`, schema in `hcwf/lib/config_schema.py`) chooses the cells that are evaluated. `Config(mask=Mask(...))` in Python is the same thing.
+The `mask:` section (`hcwf/spatial/masks.py`, schema in `hcwf/config/schema.py`) chooses the cells that are evaluated. `Config(mask=Mask(...))` in Python is the same thing.
 
 | key | meaning |
 |---|---|
@@ -166,7 +166,7 @@ All given parts intersect. Shapes (land, countries, a shapefile) are intersected
 
 ## Converting the old flat keys
 
-Earlier versions read the rule from flat keys at the top level of the YAML (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`, `mok`) and ran a legacy mode. That mode is gone: every run needs an onset definition (explicit or the region's). `hcwf-run convert old.yaml -o new.yaml` rewrites such a run YAML with an `onset.rule` (and `onset.thresholds` for a `thresh_file`) that reproduces the old detection; `hcwf.lib.convert.flat_onset_to_rule` does the translation. The converter also writes `onset.forecast_history: none` and `onset.lead_label: end` (unless the config sets them), because the old mode always searched the forecast leads alone and dated lead k as init + k; without them the converted run would stitch observed rain before each forecast and could date leads differently. Old `years` / `years_clim` become `evaluation.years` / `evaluation.climatology_years`. `scripts/generate_config.py` writes definition configs only; its flat `HCWF_WET_*`, `HCWF_DRY_*` and `HCWF_THRESH_FILE` variables are refused.
+Earlier versions read the rule from flat keys at the top level of the YAML (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`, `mok`) and ran a legacy mode. That mode is gone: every run needs an onset definition (explicit or the region's). `hcwf-run convert old.yaml -o new.yaml` rewrites such a run YAML with an `onset.rule` (and `onset.thresholds` for a `thresh_file`) that reproduces the old detection; `hcwf.config.convert.flat_onset_to_rule` does the translation. The converter also writes `onset.forecast_history: none` and `onset.lead_label: end` (unless the config sets them), because the old mode always searched the forecast leads alone and dated lead k as init + k; without them the converted run would stitch observed rain before each forecast and could date leads differently. Old `years` / `years_clim` become `evaluation.years` / `evaluation.climatology_years`. `scripts/generate_config.py` writes definition configs only; its flat `HCWF_WET_*`, `HCWF_DRY_*` and `HCWF_THRESH_FILE` variables are refused.
 
 Translation: a wet day has at least `wet_init` mm. The season runs from `earliest_onset_date` (or the month and day of `start_date`) to the month and day of `end_date` plus 47 days minus `wet_spell - 1` (written as a fixed date; dates may be written `YYYY-MM-DD`, `MM-DD`, lists or YAML dates, as before). A candidate needs all `wet_spell` days wet and a total above the threshold. With `dry_extent > wet_spell` and `dry_extent >= dry_spell`, a dry run of `dry_spell` days within days 2 to `dry_extent + 1` after the candidate cancels it.
 

@@ -19,7 +19,7 @@ contract (names, columns and formats): the contract's names are kept as they are
 
 The blend-only settings are the `Recipe`'s (years, CV methods, formulas, baselines, scoring, MME, external
 predictions, forest). The dissemination units are given as ids (`dissemination_ids` reads them from the units
-specification). Parallel work runs on the run's worker pool (`hcwf.stats.parallel`).
+specification). Parallel work runs on the run's worker pool (`hcwf.parallel`).
 
 Changed from the legacy script: the MME aligns any number of sources on their samples (id and issue date), where the
 script's merge failed for two or more; `evaluation.mme.optimize: always` optimises whatever the holdout years.

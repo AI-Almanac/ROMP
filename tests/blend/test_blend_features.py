@@ -5,7 +5,7 @@ import pandas as pd
 from hcwf.blend.features import _week_sums, member_mean
 from hcwf.blend.samples import Weekly
 from hcwf.onset.engine import lead_counts
-from hcwf.stats.bins import LeadBins
+from hcwf.metrics.bins import LeadBins
 
 
 def test_member_mean_is_pandas_grouped_mean_in_the_file_dtype():

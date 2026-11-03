@@ -5,8 +5,8 @@ from matplotlib.path import Path
 from typing import Union
 import regionmask
 import xarray as xr
-from hcwf.params.region_def import polygon_boundary
-from hcwf.utils.standard import dim_fmt
+from hcwf.spatial.region_def import polygon_boundary
+from hcwf.io.dims import dim_fmt
 import logging
 
 log = logging.getLogger(__name__)

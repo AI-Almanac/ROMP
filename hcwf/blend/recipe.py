@@ -1,6 +1,6 @@
 """The blend-specific settings of a run: what the `blend:` section of the run YAML holds, and nothing HCWF's config has.
 
-HCWF's resolved run config (`hcwf.config`, `hcwf.lib.config_schema`, `hcwf.lib.onset_config.OnsetSetup`) already says
+HCWF's resolved run config (`hcwf.config`, `hcwf.config.schema`, `hcwf.config.onset.OnsetSetup`) already says
 where the observations and forecasts are (obs_*, model_* keys, `dataset_schema` entries), the onset definition and its
 run options (onset_definition / onset_rule, rain_resolution, missing, negatives, gaps, onset_horizon), the backend,
 years and workers. A `Recipe` is used *together with* that config: it holds only what blending adds, each field naming
@@ -19,13 +19,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from hcwf.lib.assertion import HCWFConfigError
-from hcwf.lib.dataset_schema import DatasetError, parse_year_list, suggest
+from hcwf.errors import HCWFConfigError
+from hcwf.config.datasets import DatasetError, parse_year_list, suggest
 
 from hcwf.blend.design import Formula, WindowVariant
 from hcwf.blend.random_forest import Params as ForestParams
 from hcwf.onset.model import Definition
-from hcwf.stats.bins import LeadBins
+from hcwf.metrics.bins import LeadBins
 
 __all__ = [
     "Baselines", "ClimatologySpec", "Evaluation", "ExternalPrediction", "Features",
@@ -150,7 +150,7 @@ class OnsetExtras:
 
 @dataclass(frozen=True)
 class ClimatologySpec:
-    """The KDE climatology (BlendConfig.climatology), the arguments of `hcwf.onset.climatology_kde`."""
+    """The KDE climatology (BlendConfig.climatology), the arguments of `hcwf.references.kde`."""
 
     issue_end: str = "07-31"
     forecast_window: int | None = None

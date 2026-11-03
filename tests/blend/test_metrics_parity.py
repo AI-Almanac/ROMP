@@ -1,7 +1,7 @@
 """hcwf.metrics.probabilistic and LeadBins: the blending package's numbers, and HCWF's own, to the last bit.
 
 Blending side: the legacy functions of onset_blending@1e6d696 (tests/blend/_oracle/blend_metrics.py) on synthetic
-cv_preds frames. HCWF side: the pandas calculations hcwf/stats/score.py had before (hcwf_score_pandas.py).
+cv_preds frames. HCWF side: the pandas calculations hcwf/metrics/score.py had before (hcwf_score_pandas.py).
 """
 
 import numpy as np
@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 
 from hcwf.metrics import probabilistic as prob
-from hcwf.stats import score
-from hcwf.stats.bins import LeadBins
+from hcwf.metrics import score
+from hcwf.metrics.bins import LeadBins
 from tests.blend._oracle import blend_metrics as legacy
 from tests.blend._oracle import hcwf_score_pandas as hcwf_old
 

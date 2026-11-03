@@ -15,10 +15,10 @@ import differential_onsets as synthetic
 from hcwf.config import validate
 from hcwf.config.build import resolve
 from typed_io import flat_config
-from hcwf.lib.assertion import HCWFConfigError
-from hcwf.lib.check import build_report
-from hcwf.lib.convert_specs import convert_blend
-from hcwf.utils import log as logs
+from hcwf.errors import HCWFConfigError
+from hcwf.runs.check import build_report
+from hcwf.config.convert_specs import convert_blend
+from hcwf import log as logs
 from test_oracle_config import build_world, fixture_configs
 
 GOLDEN = Path(__file__).parent / "data" / "check"

@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from hcwf.cli import main as cli_main
-from hcwf.lib.convert import convert_flat_onset
+from hcwf.config.convert import convert_flat_onset
 from tests import legacy_reference as ref
 
 REFERENCE = Path(__file__).parent / "data" / "legacy_reference"

@@ -11,11 +11,11 @@ import xarray as xr
 
 from _inputs import LATS, LONS, write_adm3, write_forecast, write_observations
 from hcwf.io import input as io_input
-from hcwf.lib import dataset_detect as detect
-from hcwf.lib.dataset_schema import DatasetError, file_year, parse_dataset, parse_years, resolve_paths
+from hcwf.config import detect
+from hcwf.config.datasets import DatasetError, file_year, parse_dataset, parse_years, resolve_paths
 from hcwf.onset import ingest as ing
-from hcwf.utils import standard
-from hcwf.utils.standard import ROLE_ALIASES, dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim
+from hcwf.io import dims as standard
+from hcwf.io.dims import ROLE_ALIASES, dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim
 
 BOUNDARY = "00 UTC, labelled by start"
 
@@ -121,7 +121,7 @@ def test_detection_reads_the_first_listed_file(tmp_path):
 # ---------------------------------------------------------------------------------- one table of dimension names
 
 def test_the_three_alias_tables_are_one():
-    from hcwf.lib import dataset_detect as dd
+    from hcwf.config import detect as dd
 
     assert not any(hasattr(mod, name) for mod, name in [(ing, "_TIME_DIMS"), (ing, "_LAT_DIMS"), (ing, "_LON_DIMS"),
                                                         (ing, "_INIT_DIMS"), (ing, "_LEAD_DIMS"),

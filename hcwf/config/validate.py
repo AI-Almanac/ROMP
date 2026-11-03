@@ -52,7 +52,7 @@ class Problems:
     def raise_if_any(self) -> None:
         """Raise one HCWFConfigError holding every problem."""
         if self:
-            from hcwf.lib.assertion import HCWFConfigError
+            from hcwf.errors import HCWFConfigError
 
             raise HCWFConfigError(self.message())
 
@@ -157,8 +157,8 @@ def _probabilistic(cfg) -> list[str]:
 def _onset(cfg) -> list[str]:
     """Keys earlier versions read (the flat onset keys and the other removed ones) are refused with the message a YAML
     config gets, then the onset part is fully resolved: every needed setting is known."""
-    from hcwf.lib import config_schema as schema
-    from hcwf.lib.onset_config import OnsetConfigError, onset_setup
+    from hcwf.config import schema
+    from hcwf.config.onset import OnsetConfigError, onset_setup
 
     dic = vars(cfg)
     try:
@@ -186,8 +186,8 @@ def _explain_cells(cfg) -> list[str]:
 
 def _mask(cfg) -> list[str]:
     """The mask section builds a MaskSpec (a run builds it when it reads the first file)."""
-    from hcwf.lib.assertion import HCWFConfigError
-    from hcwf.utils.mask import MaskSpec
+    from hcwf.errors import HCWFConfigError
+    from hcwf.spatial.masks import MaskSpec
 
     mask = getattr(cfg, "mask", None)
     if mask is None:
@@ -213,12 +213,12 @@ def _units(values) -> tuple[dict, tuple[str, ...]]:
 def _blend(values) -> tuple[Any, tuple[str, ...]]:
     """(the blend Recipe, the problems) of a `blend:` section as the run reads it (with the onset settings); (None, ())
     for a config without one."""
-    from hcwf.lib.config_schema import has_blend
+    from hcwf.config.schema import has_blend
 
     if not has_blend(values):
         return None, ()
     from hcwf.blend.recipe import RecipeError, recipe_from_config
-    from hcwf.lib.onset_config import onset_setup
+    from hcwf.config.onset import onset_setup
 
     try:
         return recipe_from_config(values, onset_setup(values)), ()
