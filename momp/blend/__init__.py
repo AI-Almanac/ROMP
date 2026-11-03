@@ -6,4 +6,14 @@ probabilities too.
 mme: the multi-model ensemble, a weighted mixture of other predictions.
 calibration: Platt recalibration of week-bin probabilities.
 design: formulas and design matrices from arrays. predictions: a model's probabilities with the samples' keys.
+trained: TrainedBlend (momp.blend.trained), the operational file; forecast: applying it to live forecast files.
 """
+
+
+def __getattr__(name):
+    """`momp.blend.TrainedBlend`, imported on first use (the blend modules load lazily)."""
+    if name == "TrainedBlend":
+        from momp.blend.trained import TrainedBlend
+
+        return TrainedBlend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

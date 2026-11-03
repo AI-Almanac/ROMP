@@ -1,7 +1,7 @@
 """momp.blend.training: the whole in-memory pipeline on a small synthetic region, from files to the fitted model.
 
-The training parts of onset_blending's tests/test_pipeline.py (the trained-blend file and forecasting are later
-steps); the end-to-end comparison with onset_blending's `train` is tests/blend/test_blend_training_differential.py.
+The training parts of onset_blending's tests/test_pipeline.py (the trained-blend file and forecasting are
+tests/blend/test_blend_forecast.py); the end-to-end comparison with onset_blending's `train` is tests/blend/test_blend_training_differential.py.
 """
 import datetime as dt
 
@@ -126,7 +126,7 @@ def test_a_training_run_saves_netcdf_and_csv_artifacts(region, tmp_path):
     assert {p.name for p in out.iterdir()} == {
         f"formula_sample_support{tag}.json", f"cv_preds_blended_model_global{tag}.nc",
         f"coefs_blended_model_global{tag}.nc", f"summary_models{tag}.csv", f"summary_models_pooled{tag}.csv",
-        f"yearly_metrics_global{tag}.csv", "weekly_features.nc"}
+        f"yearly_metrics_global{tag}.csv", "weekly_features.nc", "trained.blend"}
     preds = Predictions.open(out / f"cv_preds_blended_model_global{tag}.nc")
     xr.testing.assert_identical(preds.data, result.evaluation.cv_preds[("blended_model", "global")].data)
     with xr.open_dataset(out / f"coefs_blended_model_global{tag}.nc") as stored:

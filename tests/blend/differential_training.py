@@ -12,8 +12,9 @@ from a table, a cell transform and a regrid) and saves each result into OUTDIR/<
 artifact of blending's output contract identical: CSV and JSON files byte for byte, NetCDF files variable for
 variable (name, dims, dtype, values, attributes). The Pietra index is scipy's ks_2samp statistic, whose last bit
 differs between scipy versions: when the two dumps ran under different versions (the oracle's own environment has
-1.18, ROMP's 1.17) it is compared to 1e-12 and every other number exactly. trained.blend and config.yml are blending's own and not written by
-momp yet. tests/blend/test_blend_training_differential.py runs all three steps when the onset_blending environment
+1.18, ROMP's 1.17) it is compared to 1e-12 and every other number exactly. trained.blend and config.yml are each package's own
+format and are left out here (tests/blend/differential_forecast.py compares what the two trained blends forecast).
+tests/blend/test_blend_training_differential.py runs all three steps when the onset_blending environment
 exists.
 """
 import json

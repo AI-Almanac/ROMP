@@ -10,6 +10,8 @@
 
     plan = momp.check("run.yaml")                              # the same report as `momp-run -p run.yaml --check`
 
+    fc = momp.api.forecast("run/blend/trained.blend", {"aifs": "live/aifs.nc"})   # a trained blend on live forecasts
+
 A config with a ``blend:`` section trains the blend instead of benchmarking: ``result.blend`` is the
 ``momp.blend.training.TrainingResult`` (evaluation tables and the trained blend; ``write=True`` saves its artifacts under
 their own names into ``<run folder>/blend/``), and ``observed`` and ``scores`` are empty.
@@ -340,3 +342,31 @@ def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NO
             climatology.reset_memo()
     return RunResult(observed=observed, scores=_scores(results, tables), folder=paths.root if write else None,
                      config=dic)
+
+
+def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=None, write=False):
+    """Apply a trained blend to live forecast files and return the `momp.blend.forecast.Forecast`.
+
+        fc = momp.api.forecast("run/blend/trained.blend", {"aifs": "live/aifs_2026-06-09.nc"})
+        fc.weekly           # xarray.Dataset of blended week probabilities over (time, id)
+        fc.weekly_table     # the same as blending's contract table (id, time, onset_threshold, lat, lon, cv_*, clim_*)
+
+    `blend` is a trained.blend path (momp's format, or onset_blending's) or a `momp.blend.TrainedBlend`; `forecasts`
+    maps each trained model to a file, a glob or a list of them. The live files may hold more than the blend was
+    trained on (lead days, members, a larger domain), never less, and must have its units, accumulation, grid spacing and
+    issue hour (`momp.blend.forecast.IncompatibleForecast` lists every difference); `issue_date` picks one issue of files
+    holding several, `fewer_members` lets an ensemble hold only some of the trained members. With `write` the forecast
+    is saved into `output`, default `forecasts/<issue date>/` beside the blend file (`Forecast.folder`).
+    """
+    from momp.blend.trained import TrainedBlend
+
+    path = None if isinstance(blend, TrainedBlend) else Path(blend)
+    trained = blend if path is None else TrainedBlend.load(path)
+    result = trained.forecast(forecasts, issue_date=issue_date, fewer_members=fewer_members)
+    if write:
+        if output is None:
+            if path is None:
+                raise ValueError("give output: a TrainedBlend that was not read from a file has no folder to write beside")
+            output = path.resolve().parent / "forecasts" / result.label
+        result.save(output)
+    return result

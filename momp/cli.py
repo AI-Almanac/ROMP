@@ -9,7 +9,7 @@
     momp-run convert old.in -o run.yaml   convert an old config.in to YAML
     momp-run convert blend.yml -o run.yaml          convert an onset_blending config to a run YAML with a blend: section
     momp-run convert --specs ... -o run.yaml        the same from a legacy spec set
-    momp-run forecast ...           reserved (applying a trained blend to new forecasts; not implemented yet)
+    momp-run forecast BLEND... --forecast MODEL=PATH [...]   apply trained blends (trained.blend) to live forecasts
     momp-run export -p run.yaml     write the gridded onset dates of each source as NetCDF (no scoring)
     momp-run -h                     this help (with a config, -h lists the run-time overrides)
 """
@@ -25,6 +25,7 @@ HELP = """usage: momp-run [-p run.yaml] [--check] [--overwrite] [--quiet|--verbo
        momp-run datasets -p run.yaml            show how the config's datasets resolve
        momp-run convert old.in -o run.yaml      convert an old config.in to YAML
        momp-run convert blend.yml -o run.yaml   convert an onset_blending config (or --specs ...) to run YAML
+       momp-run forecast BLEND --forecast MODEL=PATH   apply a trained blend to live forecast files
        momp-run export -p run.yaml              write the gridded onset dates as NetCDF
 
 ROMP (Rainy season Onset Metrics Package) benchmarks rainy-season onset forecasts.
@@ -45,7 +46,16 @@ commands:
              equivalent run YAML (-o FILE, --force, --region ID for blending configs, which have none). Blending
              configs and specs become `onset: {rule: ...}` with the parity options, `units:` and a `blend:`
              section; what is not carried over is listed in comments at the top.
-  forecast   reserved for applying a trained blend; not implemented yet.
+  forecast   apply trained blends (the trained.blend a blend run writes into its blend/ folder, or one of
+             onset_blending's) to live forecast files: `momp-run forecast BLEND... --forecast MODEL=PATH
+             [--forecast ...] [--issue-date YYYY-MM-DD] [--fewer-members] [-o DIR]`. PATH is a file or a glob;
+             give each trained model once (repeat for several files of a model). The live files may
+             hold more than the blend was trained on (leads, members, a larger domain) but not less, and must have
+             its units, accumulation, grid spacing and issue hour; every difference is reported before anything is
+             read. The issue date is the one the files hold, else the latest, and must lie in the blend's issue
+             window. Writes blended_forecast_probabilities.csv (+ .nc), and daily_onset_probabilities.csv (+ .nc)
+             for a random forest blend, into -o DIR (default: forecasts/<issue date>/ beside the blend). Several
+             blends (one per region) are applied one after another to the same live files.
   export     run only the onset detection of a config and write one NetCDF per source (observed, each model,
              climatology, conditional_climatology) with the dates exactly as ROMP scores them. Options:
              --sources observed,AIFS,climatology (default: all the run uses), --out DIR (default: the run's onsets folder, dir_out/onsets with an explicit data_dir).
@@ -195,10 +205,41 @@ def _converted(target) -> int:
 
 
 def _forecast(argv) -> int:
-    """`momp-run forecast`: reserved for applying a trained blend to new forecasts (not implemented yet)."""
-    print("Error: `momp-run forecast` is reserved and not implemented yet. A trained blend is written to the run "
-          "folder's blend/ subfolder by `momp-run -p run.yaml` for a config with a `blend:` section.", file=sys.stderr)
-    return 2
+    """`momp-run forecast BLEND... --forecast MODEL=PATH [...]`: apply trained blends to live forecast files."""
+    p = argparse.ArgumentParser(prog="momp-run forecast", description="Apply trained blends (trained.blend files) to "
+                                "live forecast files and write the blended onset probabilities.")
+    p.add_argument("blend", nargs="+", help="a trained.blend file (several: one region each, applied in turn)")
+    p.add_argument("--forecast", action="append", required=True, metavar="MODEL=PATH",
+                   help="the live forecast file(s) of a trained model: a file or glob (repeat per model, or per file)")
+    p.add_argument("--issue-date", help="forecast this issue date only (YYYY-MM-DD); default the one the files hold")
+    p.add_argument("--fewer-members", action="store_true",
+                   help="allow live ensembles that hold only some of the trained members")
+    p.add_argument("-o", "--output", help="new folder for the forecast (default forecasts/<issue date>/ beside the "
+                                          "blend; with several blends, one subfolder each)")
+    args = p.parse_args(argv)
+    from momp.api import forecast
+    from momp.blend.forecast import IncompatibleForecast, parse_forecast_arguments
+    from momp.blend.trained import BlendFileError
+
+    try:
+        files = parse_forecast_arguments(args.forecast)
+    except ValueError as exc:
+        p.error(str(exc))
+    failed = 0
+    for index, path in enumerate(args.blend):
+        target = None
+        if args.output:
+            target = Path(args.output) if len(args.blend) == 1 else \
+                Path(args.output) / (Path(path).resolve().parent.name or f"blend{index + 1}")
+        try:
+            written = forecast(path, files, issue_date=args.issue_date, fewer_members=args.fewer_members, output=target,
+                               write=True).folder
+        except (IncompatibleForecast, BlendFileError, FileExistsError, FileNotFoundError, ValueError) as exc:
+            print(f"{path}: {exc}", file=sys.stderr)
+            failed += 1
+            continue
+        print(f"Wrote {written}")
+    return 1 if failed else 0
 
 
 def _export(argv) -> int:

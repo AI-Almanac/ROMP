@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from momp.cache import Store, file_identity
@@ -775,3 +776,194 @@ def warn_all(res: Resolution) -> None:
     """Issue the resolution's warnings as UserWarnings too (so they show in logs and tests)."""
     for message in res.warnings:
         warnings.warn(message, UserWarning, stacklevel=3)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Forecast signatures: what a forecast file holds, apart from its issue dates
+# ---------------------------------------------------------------------------------------------------------------
+#
+# A trained blend stores the signature of its training files and compares it with every live forecast file before
+# anything is read. The signature is made of the file's resolved dataset entry (`resolve_entry`: the variable, the
+# rainfall units it is read in, the accumulation, the dimension roles) plus what the entry does not say: the lead days,
+# the member ids, the grid (or unit ids), the issue hours of the day, other dimension sizes and how the file says its
+# daily values were aggregated (its cell methods). Comparing two signatures is `signature_differences`; the stored
+# signature of an older blend may hold fewer fields, and only the fields it holds are compared.
+
+_AGGREGATION_PAIR = re.compile(r"([^\s:]+):\s*([^\s:]+)")
+
+
+def _lead_numbers(values) -> list[int]:
+    """The lead days of a step coordinate: whole days, from numbers or timedeltas."""
+    values = np.asarray(values).reshape(-1)
+    if values.dtype.kind == "m":
+        values = values / np.timedelta64(1, "D")
+    return [int(v) for v in values]
+
+
+def _issue_stamps(values) -> tuple[list[int], list]:
+    """(issue hours, issue dates) of an init-time coordinate (decoded datetimes or cftime objects)."""
+    import datetime as dt
+
+    values = np.asarray(values).reshape(-1)
+    if values.dtype.kind == "M":
+        stamps = [t.to_pydatetime() for t in pd.DatetimeIndex(values)]
+    else:
+        stamps = list(values)
+    return sorted({int(t.hour) for t in stamps}), sorted({dt.date(t.year, t.month, t.day) for t in stamps})
+
+
+def _aggregation(ds, variable, lead_dim: str | None) -> dict:
+    """How the file says its daily values were made: the cell method over its lead dimension (e.g. sum) and the window
+    its lead coordinate states (e.g. the UTC day ending at the issue time plus the lead); None where it does not say."""
+    method = None
+    if lead_dim is not None:
+        for name, how in _AGGREGATION_PAIR.findall(str(variable.attrs.get("cell_methods", "") or "")):
+            if name in (lead_dim, "day") or lead_dim.startswith(name):
+                method = how.lower()
+    window = None
+    if lead_dim is not None and lead_dim in ds.variables:
+        attrs = ds[lead_dim].attrs
+        text = attrs.get("description") or attrs.get("long_name")
+        window = " ".join(str(text).lower().split()) if text else None
+    return {"method": method, "window": window}
+
+
+def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, selected: bool = True) -> tuple[dict, list]:
+    """(signature, issue dates) of a forecast file.
+
+    entry holds the dataset keys the file is resolved with (`variable`, and `dims` as role -> file dimension,
+    `unit_cvt`, as `resolve_entry` takes them); the units, accumulation, members and dimension roles are detected from
+    the file. selected: the signature after the model's lead-day window `lead_days` (first, last) and its `max_member`,
+    as training reads the file; else everything the (live) file holds. Raises ValueError saying why a file cannot be
+    described (no such variable, units that cannot be read, dimensions that cannot be told apart).
+    """
+    path, name = str(path), Path(str(path)).name
+    given = {"paths": [path], "variable": entry["variable"]}
+    if entry.get("unit_cvt") is not None:
+        given["unit_cvt"] = entry["unit_cvt"]
+    if entry.get("dims"):
+        try:
+            with open_data(path) as ds:
+                present = set(map(str, ds[entry["variable"]].dims)) if entry["variable"] in ds.variables else None
+        except Exception as exc:  # noqa: BLE001 - any reader error is reported against the file
+            raise ValueError(f"{name}: cannot open it: {exc}") from None
+        # A role the file has no dimension for (a deterministic file of an ensemble blend) is simply absent.
+        dims = {role: dim for role, dim in entry["dims"].items() if present is None or dim in present}
+        if dims:
+            given["dims"] = dims
+    res = resolve_entry(given, "forecast", detect_lead_label=False, lead_label_default=True)
+    values = res.values
+    problems = dict(res.problems)
+    problems.pop("lead_label", None)    # the live file cannot say it; the run's own is used
+    if problems.pop("accumulation", None) is not None or "accumulation" not in values:
+        values["accumulation"] = "auto"      # a series that does not say is left to be worked out when read
+    if problems:
+        raise ValueError(f"{name}: " + "; ".join(f"{key}: {message}" for key, message in problems.items()))
+    roles = values["dims"]
+    units = "mm" if "units" in values else f"undeclared (x{float(values.get('unit_cvt', 1.0)):g})"
+    signature: dict = {"variable": entry["variable"], "units": units, "accumulation": values["accumulation"],
+                       "dims": {}}
+    dates: list = []
+    with open_data(path) as ds:
+        variable = ds[entry["variable"]]
+        by_name = {file_dim: role for role, file_dim in roles.items()}
+        signature["aggregation"] = _aggregation(ds, variable, roles.get("step"))
+        for dim in variable.dims:
+            role = by_name.get(str(dim))
+            if dim in ds.variables:
+                found = np.asarray(ds[dim].values)
+            else:
+                found = np.arange(ds.sizes[dim])
+            if role == "init_time":
+                signature["issue_hours"], dates = _issue_stamps(found)
+            elif role == "step":
+                days = _lead_numbers(found)
+                if selected and lead_days is not None:
+                    days = [d for d in days if lead_days[0] <= d <= lead_days[1]]
+                signature["lead_days"] = days
+            elif role == "member":
+                members = [int(v) for v in found]
+                if selected and max_member is not None:
+                    members = [m for m in members if m <= max_member]
+                signature["members"] = members
+            elif role in ("lat", "lon"):
+                signature[role] = sorted(round(float(v), 6) for v in found)
+            elif role == "unit":
+                signature["unit_ids"] = sorted(str(v) for v in found)
+            else:
+                signature["dims"][str(dim)] = len(found)
+    return signature, dates
+
+
+def forecast_signature(path, entry: dict, **options) -> dict:
+    """What a forecast file holds, apart from its issue dates (see read_forecast_file)."""
+    return read_forecast_file(path, entry, **options)[0]
+
+
+def forecast_issue_dates(path, entry: dict) -> list:
+    """The issue dates (datetime.date) a forecast file holds."""
+    return read_forecast_file(path, entry, selected=False)[1]
+
+
+def signature_differences(trained: dict, live: dict, *, fewer_members: bool = False) -> list[str]:
+    """How a live file fails to cover the trained signature, one reason each (empty when it covers it).
+
+    It may hold more (longer leads, more members, a larger domain such as the globe): a blend reads only what it was
+    trained on. It may not hold less, nor another grid spacing, units, accumulation, daily aggregation, issue hour or
+    variable. Only the fields the trained signature holds are compared. fewer_members: a live ensemble may hold only
+    some of the trained members (any one will do); its onset probabilities are then shares of those.
+    """
+    out = []
+    for key, label in (
+        ("variable", "variable"), ("units", "rainfall units"), ("accumulation", "accumulation"),
+        ("aggregation", "daily aggregation"), ("issue_hours", "issue hour (UTC)"), ("dims", "other dimensions"),
+    ):
+        if key in trained and trained.get(key) != live.get(key):
+            out.append(f"{label} {_brief(live.get(key))}, trained on {_brief(trained.get(key))}")
+    for key, label in (("lead_days", "lead days"), ("members", "members"), ("unit_ids", "unit ids")):
+        if key not in trained and key not in live:
+            continue
+        have, need = live.get(key), trained.get(key)
+        if (have is None) != (need is None):
+            out.append(f"{label} {_brief(have)}, trained on {_brief(need)}")
+        elif key == "members" and fewer_members and need is not None and set(need) & set(have):
+            continue
+        elif need is not None and set(need) - set(have):
+            missing = sorted(set(need) - set(have))
+            out.append(f"{label} {_brief(have)}, trained on {_brief(need)} (missing {_brief(missing)})")
+    for key, label in (("lat", "latitudes"), ("lon", "longitudes")):
+        if key not in trained and key not in live:
+            continue
+        have, need = live.get(key), trained.get(key)
+        if (have is None) != (need is None):
+            out.append(f"{label} {_brief(have)}, trained on {_brief(need)}")
+        elif need is not None:
+            have_step, need_step = _grid_step(have), _grid_step(need)
+            if None not in (have_step, need_step) and have_step != need_step:
+                out.append(f"{label} every {_degrees(have_step)}, trained on every {_degrees(need_step)} "
+                           "(another resolution)")
+            elif set(need) - set(have):
+                out.append(f"{label} {_span(have)}, trained on {_span(need)}: the trained domain is not covered")
+    return out
+
+
+def _grid_step(values: list) -> float | None:
+    """A grid's spacing (the median gap between its distinct values)."""
+    distinct = np.unique(values)
+    return round(float(np.median(np.diff(distinct))), 6) if len(distinct) > 1 else None
+
+
+def _degrees(step: float | None) -> str:
+    return "?" if step is None else f"{step:g}\N{DEGREE SIGN}"
+
+
+def _span(values: list) -> str:
+    return f"{min(values):g}\N{EN DASH}{max(values):g}" if values else "none"
+
+
+def _brief(value) -> str:
+    if isinstance(value, list) and len(value) > 6:
+        if all(isinstance(v, int) for v in value) and value == list(range(value[0], value[-1] + 1)):
+            return f"{value[0]}\N{EN DASH}{value[-1]}"
+        return f"{len(value)} values {value[0]}\N{HORIZONTAL ELLIPSIS}{value[-1]}"
+    return repr(value)

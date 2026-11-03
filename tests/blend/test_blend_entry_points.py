@@ -179,10 +179,11 @@ def test_a_glob_that_matches_nothing_is_an_error(tmp_path, monkeypatch, capsys):
     assert code == 1 and "no run file matches" in out.out
 
 
-def test_forecast_is_reserved(capsys):
+def test_forecast_needs_the_live_files(capsys):
+    # `momp-run forecast` applies a trained blend (tests/blend/test_blend_forecast.py); it asks for the live files.
     with pytest.raises(SystemExit) as caught:
         cli_main(["forecast", "trained.blend"])
-    assert caught.value.code == 2 and "reserved" in capsys.readouterr().err
+    assert caught.value.code == 2 and "--forecast" in capsys.readouterr().err
 
 
 def test_convert_writes_a_run_yaml_from_a_blending_config(tmp_path, data, capsys):

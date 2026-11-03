@@ -7,9 +7,10 @@ onsets, the forecast onsets of each model (units the climatology keeps), the cli
 blend-only settings (`momp.blend.recipe.Recipe`) and `setup` the resolved onset setup (`OnsetSetup`).
 
 `TrainingResult.save` writes blending's output contract (docs/pipeline-redesign.md in onset_blending): the evaluation's
-artifacts under the contract's own names (not ROMP's short ones), plus the chosen intermediates. The trained-blend
-file and the blend config are written by later steps from what the result keeps: the recipe, the fitted model and
-forest, the observed onsets, the units, the thresholds and reference onsets, the climatology's settings.
+artifacts under the contract's own names (not ROMP's short ones), plus the chosen intermediates. The trained blend
+(`trained.blend`, `momp.blend.trained.TrainedBlend.from_training`) is written beside them: it keeps the run's resolved
+config, the recipe, the fitted model and forest, the observed onsets, the units, the thresholds and reference onsets,
+and the climatology's years, which is all a forecast needs.
 
 Workers and the memory budget are the run's: `parallel` / `parallel_workers` / `memory_budget` of `cfg`
 (`momp.utils.workers`); every stage runs on the run's worker pool.
@@ -143,8 +144,8 @@ class TrainingResult:
         return self.evaluation.final_forest
 
     def save(self, directory, *, intermediates=("weekly",)) -> Path:
-        """Write the evaluation's artifacts and the chosen intermediates into a new directory, all or nothing: the
-        weekly features (`Weekly.open` reads them) and the observed onsets as NetCDF, nothing else."""
+        """Write the evaluation's artifacts, `trained.blend` and the chosen intermediates into a new directory, all or
+        nothing: the weekly features (`Weekly.open` reads them) and the observed onsets as NetCDF, nothing else."""
         directory = Path(directory)
         if directory.exists() and any(directory.iterdir()):
             raise FileExistsError(f"{directory} exists and is not empty")
@@ -155,6 +156,9 @@ class TrainingResult:
         def write(staging: Path) -> None:
             staging.mkdir()
             self.evaluation.save(staging, pickles=self.recipe.outputs.pickles)
+            from momp.blend.trained import TRAINED_FILENAME, TrainedBlend
+
+            TrainedBlend.from_training(self).save(staging / TRAINED_FILENAME)
             for name in intermediates:
                 if name == "observed":
                     self.inputs.observed.data.to_netcdf(staging / "observed_onsets.nc")
