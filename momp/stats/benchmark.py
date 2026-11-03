@@ -288,22 +288,11 @@ def compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
                                    unit_cvt, file_pattern, tolerance_days, verification_window, max_forecast_day,
                                    members,  onset_percentage_threshold, probabilistic, save_nc_climatology, **kwargs):
 
-    """Compute onset metrics for multiple years (the onset dates are detected once per source, see onset_tables)."""
+    """Compute onset metrics for multiple years (the onset dates are detected once per source, see onset_tables).
+
+    Probabilistic runs are evaluated from the ensemble onset (the member-agreement onset of
+    compute_onset_for_all_members), deterministic ones from the model's own onset.
+    """
     kwargs = restore_args(compute_metrics_multiple_years, kwargs, locals())
-    tables, extra = onset_tables(ens=False, **kwargs)
-    return _metrics_of_tables(tables, extra, **kwargs)
-
-
-def ens_compute_metrics_multiple_years(*, obs_dir, obs_file_pattern, obs_var,
-                                   thresh_file, thresh_var, wet_threshold,
-                                   wet_init, wet_spell, dry_spell, dry_threshold, dry_extent,
-                                   start_date, end_date, fallback_date, earliest_onset_date, years, years_clim,
-                                   model_dir, model_var, ref_model, date_filter_year, init_days,
-                                   unit_cvt, file_pattern, tolerance_days, verification_window, max_forecast_day,
-                                   members,  onset_percentage_threshold, probabilistic, save_nc_climatology, **kwargs):
-
-    """Compute onset metrics for multiple years, ensemble forecasts."""
-
-    kwargs = restore_args(ens_compute_metrics_multiple_years, kwargs, locals())
-    tables, extra = onset_tables(ens=True, **kwargs)
+    tables, extra = onset_tables(ens=bool(probabilistic), **kwargs)
     return _metrics_of_tables(tables, extra, **kwargs)

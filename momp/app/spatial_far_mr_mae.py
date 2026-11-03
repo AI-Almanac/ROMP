@@ -1,4 +1,4 @@
-"""Compute, save and plot spatial MAE, FAR and MR maps for deterministic forecast models."""
+"""Compute, save and plot spatial MAE, FAR and MR maps for deterministic and ensemble (probabilistic) forecast models."""
 from dataclasses import asdict
 from itertools import product
 import copy
@@ -24,17 +24,14 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
 
     Also evaluates the reference model (climatology or a user-specified model)
     when cfg.ref_model is set. Returns a nested dict of spatial metrics keyed by
-    case combination, or None if the configuration is probabilistic.
+    case combination. For an ensemble run the forecast onset is the ensemble onset (compute_metrics_multiple_years
+    picks it from cfg.probabilistic); the climatology reference never reads a forecast.
     """
 
     if cfg is None:
         cfg = get_cfg()
     if setting is None:
         setting = get_setting()
-
-    # only executed for deterministic forecasts
-    if cfg.probabilistic:
-        return
 
     results = {}
 

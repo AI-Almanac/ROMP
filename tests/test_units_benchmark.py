@@ -130,6 +130,21 @@ def test_ensemble_scores_and_figures_pool_the_units(world):
     assert any(n.startswith("reliability") for n in figs) and any(n.startswith("skill_scores_heatmap") for n in figs)
 
 
+def test_ensemble_run_writes_the_spatial_products_on_units(world):
+    """An ensemble run maps and writes the same spatial products as a deterministic one, from the ensemble onset."""
+    _, runs = world
+    out = Path(runs["ENS"].folder)
+    table = pd.read_csv(out / "spatial_metrics_ENS_1-10.csv")
+    assert list(table["unit_id"]) == IDS and {"mean_mae", "false_alarm_rate", "miss_rate"} <= set(table)
+    ds = xr.open_dataset(out / "spatial_metrics_ENS_1-10.nc")
+    assert ds["mean_mae"].dims == ("unit",) and {"mae_2019", "mae_2020"} <= set(ds)
+    assert len(geopandas.read_file(out / "spatial_metrics_ENS_1-10.geojson")) == 4
+    assert (out / "spatial_metrics_climatology_1-10.nc").exists()
+    names = {p.name for p in Path(runs["ENS"].config["dir_fig"]).glob("*.png")}
+    assert {"spatial_metrics_ENS_1-10.png", "spatial_metrics_climatology_1-10.png"} <= names
+    assert any(n.startswith("panel_portrait_MAE") or "portrait" in n for n in names)
+
+
 def test_pair_tables_are_per_unit_cases():
     """Member onsets of units become (init, unit) cases with bins, and score like grid cases."""
     from momp.stats.bins import create_forecast_observation_pairs_with_bins

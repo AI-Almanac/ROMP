@@ -692,7 +692,9 @@ def test_ensemble_run_returns_score_tables_and_writes_short_csv_names(world, tmp
     assert list(result.scores["overall"][["model", "window"]].iloc[0]) == ["ENS", "1-10"]
     assert "Fair_Brier_Skill_Score" in result.scores["overall"].columns
     written = momp.run(write_config(tmp_path, raw), write=True, quiet=True)
-    assert sorted(p.name for p in (written.folder / "scores").iterdir()) == ["binned_ENS_1-10.csv", "overall_ENS_1-10.csv"]
+    names = sorted(p.name for p in (written.folder / "scores").iterdir())
+    assert names == ["binned_ENS_1-10.csv", "climatology_onset.nc", "overall_ENS_1-10.csv", "spatial_ENS_1-10.nc",
+                     "spatial_climatology_1-10.nc"]
     saved = pd.read_csv(written.folder / "scores" / "overall_ENS_1-10.csv")
     assert saved["Fair_Brier_Skill_Score"].iloc[0] == pytest.approx(result.scores["overall"]["Fair_Brier_Skill_Score"].iloc[0])
 
