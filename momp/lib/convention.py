@@ -1,5 +1,5 @@
 """Dataclasses holding per-case (Case) and global (Setting) configuration."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields, make_dataclass
 from typing import Optional, Union
 
 
@@ -61,120 +61,46 @@ class Case:
                 setattr(self, key, value)
 
 
-@dataclass
-class Setting:
-    """Run-wide settings shared by all cases (paths, dates, metrics and output switches)."""
+_RUNTIME_SETTINGS = (
+    # Set by the run, not config keys: the shared cache folder (None: next to dir_out), whether output file names are
+    # short, the (first, last) leads searched (set by the loader in definition mode) and whether the config uses the old
+    # flat onset keys (set by the loader).
+    ("cache_dir", None), ("short_names", False), ("lead_window", None), ("onset_legacy", False))
 
-    work_dir: str = field(default="~/")
-    pkg_dir: str = field(default="~/")
 
-    layout: list = field(default_factory=list)
-    model_list: tuple[str, ...] = field(default=None)
-    verification_window_list: tuple[tuple[int, int], ...] = field(default=None)
+def _setting_fields() -> list:
+    """The fields of Setting: every config key of the schema (momp.lib.config_schema, the one list of keys) that is not
+    a Case field, and the run's own settings. Case fields are left out because the scoring merges a Setting over a
+    Case, so a Setting must not overwrite the case's own values."""
+    import copy
+    from dataclasses import fields as dataclass_fields
+    from typing import Any
 
-    start_date: tuple[int, int, int] = field(default=(2019,5,1))
-    end_date: tuple[int, int, int] = field(default=(2024,10,31))
-    start_year_clim: int = field(default=1980)
-    end_year_clim: int = field(default=2000)
-    fallback_date: Optional[tuple[int, int]] = field(default=None)
+    from momp.lib import config_schema as schema
 
-    onset_definition: Optional[str] = field(default=None)
-    onset_override: Optional[dict] = field(default=None)
-    onset_rule: Optional[dict] = field(default=None)
-    onset_season: Optional[str] = field(default=None)
-    threshold_years: Optional[tuple[int, int]] = field(default=None)
-    thresholds: Optional[dict] = field(default=None)
-    obs_day_boundary: Optional[str] = field(default=None)
-    model_lead_label: Optional[str] = field(default=None)
-    check_alignment: bool = field(default=False)
-    dry_spell_check: bool = field(default=True)
-    forecast_history: Optional[str] = field(default=None)
-    threshold_source: Optional[str] = field(default=None)
-    onset_backend: str = field(default="numba")
-    # cross-validation of the conditional climatology reference: "none" or "leave_one_year_out"
-    climatology_cv: str = field(default="leave_one_year_out")
-    # The `units:` section (momp.spatial.UnitsSpec): evaluate on admin units or weighted cells instead of grid cells.
-    # All None for a grid run; units_mode and units_weights may map a source name to its own value.
-    units_mode: Optional[Union[str, dict]] = field(default=None)
-    units_shapefile: Optional[str] = field(default=None)
-    units_unit_id_col: Optional[str] = field(default=None)
-    units_unit_name_col: Optional[str] = field(default=None)
-    units_parent_col: Optional[str] = field(default=None)
-    units_weights: Optional[Union[str, dict]] = field(default=None)
-    units_centroids: Optional[str] = field(default=None)
-    units_centroid_id_col: Optional[str] = field(default=None)
-    units_dissemination: Optional[str] = field(default=None)
-    units_dissemination_id_col: Optional[str] = field(default=None)
-    units_dissemination_scope: Optional[str] = field(default=None)
-    units_box: Optional[dict] = field(default=None)
-    units_outline: Optional[str] = field(default=None)
-    units_boundary: Optional[str] = field(default=None)
-    units_id_digits: Optional[int] = field(default=None)
-    units_id_format: Optional[str] = field(default=None)
-    # Set by the run: the shared cache folder (None: next to dir_out) and whether output file names are short.
-    cache_dir: Optional[str] = field(default=None)
-    short_names: bool = field(default=False)
-    # Set by the loader in definition mode: the (first, last) leads searched.
-    lead_window: Optional[tuple[int, int]] = field(default=None)
-    # Set by the loader: True when the config uses the old flat onset keys.
-    onset_legacy: bool = field(default=False)
+    case_names = {f.name for f in dataclass_fields(Case)}
+    out = []
+    for item in schema.FIELDS:
+        if item.key in case_names:
+            continue
+        default = None if callable(item.default) or item.default is schema.REQUIRED else item.default
+        out.append((item.key, Any, field(default_factory=lambda d=default: copy.deepcopy(d))
+                    if isinstance(default, (list, dict, set)) else field(default=default)))
+    out.extend((name, Any, field(default=default)) for name, default in _RUNTIME_SETTINGS)
+    return out
 
-    init_days: tuple = field(default=(0,3))
-    date_filter_year: int = field(default=2024)
 
-    MAE: bool = field(default=False)
-    FAR: bool = field(default=False)
-    MR: bool = field(default=False)
-    BS: bool = field(default=False)
-    RPS: bool = field(default=False)
-    AUC: bool = field(default=False)
+def _update(self, updates):
+    """Set the fields named in updates; keys that are not fields are ignored."""
+    names = {f.name for f in dataclass_fields(self)}
+    for key, value in updates.items():
+        if key in names:
+            setattr(self, key, value)
 
-    skill_score: bool = field(default=False)
 
-    obs_dir: str = field(default="../data")
-    ref_model_dir: Optional[str] = field(default="../data")
-
-    shpfile_dir: Optional[str] = field(default=None)
-    nc_mask: Optional[str] = field(default=None)
-    # the run's region mask (momp.utils.mask): land, country, file, condition, cell_rule, ...
-    mask: Optional[dict] = field(default=None)
-
-    obs_file_pattern: str = field(default="{}.nc")
-    ref_model_file_pattern: Optional[str] = field(default="{}.nc")
-
-    obs_unit_cvt: Optional[float] = field(default=None)
-    ref_model_unit_cvt: Optional[float] = field(default=None)
-
-    dir_out: str = field(default="../output")
-    dir_fig: str = field(default="../figures")
-
-    save_fig: bool = field(default=False)
-
-    save_nc_spatial_far_mr_mae: bool = field(default=False)
-    save_csv_score: bool = field(default=False)
-    save_nc_climatology: bool = field(default=False)
-
-    polygon: bool = field(default=False)
-
-    plot_spatial_far_mr_mae: bool = field(default=False)
-    plot_heatmap_bss_auc: bool = field(default=False)
-    plot_reliability: bool = field(default=False)
-    plot_portrait: bool = field(default=False)
-    plot_climatology_onset: bool = field(default=False)
-    plot_panel_heatmap_error: bool = field(default=False)
-    plot_panel_heatmap_skill: bool = field(default=False)
-    plot_bar_bss_rpss_auc: bool = field(default=False)
-    show_plot: bool = field(default=False)
-    show_panel: bool = field(default=False)
-
-    parallel: bool = field(default=True)
-    parallel_workers: Optional[int] = field(default=None)
-
-    debug: bool = field(default=False)
-    project_name: str = field(default="ROMP application project")
-
-    def update(self, updates):
-        """Set the fields named in updates; keys that are not fields are ignored."""
-        for key, value in updates.items():
-            if key in self.__annotations__:
-                setattr(self, key, value)
+Setting = make_dataclass(
+    "Setting", _setting_fields(), namespace={"update": _update, "__module__": __name__,
+                                             "__doc__": "Run-wide settings shared by all cases: one field per config "
+                                                        "key of the schema (paths, dates, metrics, output switches, "
+                                                        "units, onset) except the Case fields, and the run's own "
+                                                        "settings."})

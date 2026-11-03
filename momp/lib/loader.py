@@ -94,6 +94,8 @@ def _resolve_paths(dic):
             if not Path(str(dic[key])).is_absolute():
                 dic[key] = set_dir(dic[key])
 
+    _anchor_units_paths(dic)
+
     if isinstance(dic.get("mask"), dict):
         mask = dict(dic["mask"])
         if mask.get("file") and not Path(str(mask["file"])).is_absolute():
@@ -109,6 +111,30 @@ def _resolve_paths(dic):
         }
 
     return dic
+
+
+_UNITS_PATH_KEYS = ("units_shapefile", "units_weights", "units_centroids", "units_dissemination", "units_outline")
+"""The `units:` keys that name files (units_weights may also map a source name to its file)."""
+
+
+def _anchor_units_paths(dic):
+    """Make the relative file paths of the `units:` section start at the folder of the config file (the working directory
+    when the config is not from a file), as a region file's units start at the region file."""
+    config_file = dic.get("config_file")
+    if not config_file:
+        return
+    base = Path(str(config_file)).expanduser().resolve().parent
+
+    def anchor(path):
+        path = Path(str(path)).expanduser()
+        return str(path if path.is_absolute() else (base / path).resolve())
+
+    for key in _UNITS_PATH_KEYS:
+        value = dic.get(key)
+        if isinstance(value, dict):
+            dic[key] = {source: anchor(path) for source, path in value.items()}
+        elif value is not None:
+            dic[key] = anchor(value)
 
 
 def _resolve_threshold_ref(ref):
@@ -129,6 +155,7 @@ def build_cfg(cli_args=None):
     dic = _read_config(config_path)
     dic = _rename_deprecated_keys(dic)
     dic = _set_onset_mode(dic)
+    dic["config_file"] = str(config_path)
     dic = _resolve_paths(dic)
 
     args = create_parser(dic, cli_args=cli_args)

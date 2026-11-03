@@ -12,7 +12,7 @@ import copy
 
 def init_dataclass(dc, dic):
     """Instantiate dataclass dc from the entries of dic that match its annotated field names."""
-    keys = dc.__annotations__.keys()
+    keys = [f.name for f in fields(dc)]
     subset = {key: dic[key] for key in keys if key in dic}
     return dc(**subset)
 
