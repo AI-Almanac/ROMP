@@ -90,5 +90,28 @@ Wave 4
 - W4b benchmarking on political boundaries: scoring, exports, maps on the unit axis
   (see branch `adm3-support` for an earlier attempt and its demo outputs).
 
+Wave 6 (user, 2026-11-03): rename everything to HCWF, clean break: package `momp` -> `hcwf`,
+project ROMP -> HCWF, `momp-run` -> `hcwf-run`, `MOMP_*` -> `HCWF_*`, cache dirs, format id
+`momp/trained-blend` -> `hcwf/trained-blend` (files saved under the old id still load); no aliases.
+
 Wave 5: end-to-end parity runs (synthetic + real data, Ethiopia and India), docs, dependencies,
 retire onset_blending.
+
+Wave 7 (user, 2026-11-03; reordered: before any performance work), after the rename:
+read-only review agents in parallel (package layout by concept; leftovers of the original
+implementation such as flat keys under sections, the Setting dataclass, config.in, the
+case-sensitive India box, print-style output, per-app modules; consistency and dead code;
+a fresh duplication sweep). Each also proposes speed and memory improvements for its area,
+including data operations and datatypes (smallest dtype that gives identical results, object/string
+arrays to integer positions, silent copies from astype, vectorised numpy/numba instead of Python loops
+and pandas groupby/apply on hot paths, in-place ops and views, memory layout for the kernels, xarray
+overhead in inner loops, chunk-aligned reads, sparse unit weights, no frame-to-array round trips;
+changes that would alter numbers are flagged as trade-offs for the user, not applied), backed by targeted profiles of the real-data workloads (phase7 slices on NetCDF and zarr,
+Ethiopia and India training and forecasts, an admin-unit benchmark). One combined proposal
+(restructuring + measured hot spots with expected gains) goes to the user for approval.
+
+Wave 8: implementation — restructuring first, then performance fixes on the new structure
+(py-spy, memray, cProfile across worker processes; before/after numbers for wall time, peak
+RSS and CPU use on the fixed benchmark set; memory-efficient by design, not caps). Each
+change verified (byte-identical ROMP outputs, blending parity, full suite) and committed
+separately.
