@@ -462,17 +462,6 @@ class Climatology:
         array = self.data[name] if leads is None else self.data[name].isel(lead=leads)
         return _gather(array, unit, year, season_day)
 
-    def legacy_tables(self) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """The (conditional, unconditional) tables the legacy pipeline wrote."""
-        return (
-            _legacy_table(self.data["conditional"].isel(lead=slice(1, None)), self.data, True),
-            _legacy_table(self.data["unconditional"], self.data, False),
-        )
-
-    def legacy_window_table(self, window: tuple[int, int]) -> pd.DataFrame:
-        """The legacy conditional table of a year window's climatology."""
-        return _legacy_table(self.windows[window].isel(lead=slice(1, None)), self.data, True)
-
 
 def _gather(array: xr.DataArray, unit, year, season_day) -> np.ndarray:
     """array's values at rows given as unit positions, years and season days."""
@@ -480,26 +469,6 @@ def _gather(array: xr.DataArray, unit, year, season_day) -> np.ndarray:
     if "year" in array.dims:
         return array.values[unit, np.searchsorted(array["year"].values, year), day]
     return array.values[unit, day]
-
-
-def _legacy_table(array: xr.DataArray, data: xr.Dataset, conditional: bool) -> pd.DataFrame:
-    """The legacy pipeline's table (time, year, id, model, predicted_prob_day_k) of a probability array."""
-    cv = bool(data.attrs["cv_by_year"])
-    model = ("clim_kde" if conditional else "clim_kde_unc") + ("_cv" if cv else "")
-    units = array["unit"].values
-    n_issue = data.sizes["issue"]
-    unit_rows = np.repeat(np.arange(len(units)), n_issue)
-    issue_rows = np.tile(np.arange(n_issue), len(units))
-    years = data["issue_year"].values[issue_rows]
-    columns = {
-        "time": pd.Series(np.tile(pd.DatetimeIndex(data["issue"].values).date, len(units)), dtype=object),
-        "year": years.astype(np.int64),
-        "id": pd.Series(units[unit_rows], dtype=str),
-        "model": pd.Series(np.full(len(unit_rows), model, dtype=object), dtype=str),
-    }
-    values = _gather(array, unit_rows, years, data["issue_season_day"].values[issue_rows])
-    leads = [f"predicted_prob_day_{d}" for d in array["lead"].values]
-    return pd.concat([pd.DataFrame(columns), pd.DataFrame(values, columns=leads, copy=False)], axis=1)
 
 
 def build_climatology(onsets: pd.DataFrame, grid: pd.DataFrame, by_year: bool, max_h: int, *,

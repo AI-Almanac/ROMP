@@ -112,7 +112,7 @@ def test_a_table_and_a_computed_field_give_per_unit_search_starts():
 
     doy = xr.DataArray(np.array([[100.0, 120.0, np.nan, 150.0, 90.0, 80.0], [102.0, 118.0, np.nan, 148.0, 91.0, 79.0]]),
                        dims=("year", "lat"), coords={"year": [1, 2]})
-    computed = ReferenceOnset.from_onsets(doy, "mean")
+    computed = ReferenceOnset(computed=reduce_onset_days(doy, "mean"))
     entry = computed.search_start([2001, 2002])
     assert np.isnat(entry.values[:, 2]).all()
     assert pd.Timestamp(entry.values[0, 0]) == pd.Timestamp("2001-01-01") + pd.Timedelta(days=100)  # mean 101, doy 101

@@ -210,6 +210,15 @@ class Weekly:
         table.attrs.update(self.attrs)
         return table
 
+    def columns_of(self, rows: np.ndarray | None = None, columns=None) -> dict:
+        """Some rows (positions) and columns as a mapping of arrays, for Patsy: the
+        table's columns without building the table (a categorical column of a
+        table taken by from_frame stays a Series, which keeps its category order)."""
+        wanted = self.columns if columns is None else [c for c in self.columns if c in set(columns)]
+        return {name: pd.Series(self.take(name, rows), dtype=self.dtypes[name])
+                if isinstance(self.dtypes.get(name), pd.CategoricalDtype) else self.take(name, rows)
+                for name in wanted}
+
     def _series(self, name: str, rows):
         if name in self.dtypes:
             return pd.Series(self.take(name, rows), dtype=self.dtypes[name])

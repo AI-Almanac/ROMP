@@ -280,10 +280,10 @@ def _input_columns(model, weekly) -> list[str]:
 
 def _probabilities(blend, rows: pd.DataFrame) -> pd.DataFrame:
     labels = blend.recipe.outcome_labels()
-    predicted = blend.model.predict(rows)
+    predicted = dict(zip(blend.model.classes, blend.model.predict(rows).T))
     out = rows[["id", "time", "onset_threshold", "lat", "lon"]].copy()
     for label in labels:
-        out[f"cv_{label}"] = predicted[f"cv_{label}"].to_numpy()
+        out[f"cv_{label}"] = predicted[label]
     # The climatology the blend starts from, as probabilities.
     weeks = [label for label in labels if label != "later"]
     clim = 1.0 / (1.0 + np.exp(-rows[[f"{CLIMATOLOGY_FEATURE}_{w}" for w in weeks]].to_numpy()))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import xarray as xr
 
 from _oracle import climatology_utils as legacy
 from hcwf.references import kde
@@ -49,6 +50,26 @@ def test_the_issue_grid_is_the_legacy_plans(horizons):
     pd.testing.assert_frame_equal(new, old, check_exact=True)
 
 
+def _legacy_table(array: xr.DataArray, data: xr.Dataset, conditional: bool) -> pd.DataFrame:
+    """The legacy pipeline's table (time, year, id, model, predicted_prob_day_k) of a probability array."""
+    cv = bool(data.attrs["cv_by_year"])
+    model = ("clim_kde" if conditional else "clim_kde_unc") + ("_cv" if cv else "")
+    units = array["unit"].values
+    n_issue = data.sizes["issue"]
+    unit_rows = np.repeat(np.arange(len(units)), n_issue)
+    issue_rows = np.tile(np.arange(n_issue), len(units))
+    years = data["issue_year"].values[issue_rows]
+    columns = {
+        "time": pd.Series(np.tile(pd.DatetimeIndex(data["issue"].values).date, len(units)), dtype=object),
+        "year": years.astype(np.int64),
+        "id": pd.Series(units[unit_rows], dtype=str),
+        "model": pd.Series(np.full(len(unit_rows), model, dtype=object), dtype=str),
+    }
+    values = kde._gather(array, unit_rows, years, data["issue_season_day"].values[issue_rows])
+    leads = [f"predicted_prob_day_{d}" for d in array["lead"].values]
+    return pd.concat([pd.DataFrame(columns), pd.DataFrame(values, columns=leads, copy=False)], axis=1)
+
+
 def onsets_table(n_units=12, seed=0):
     """Observed onsets (id, year, onset_day since the season start), some units short of onsets."""
     rng = np.random.default_rng(seed)
@@ -81,7 +102,8 @@ def test_a_season_of_probabilities_is_the_legacy_pipelines(cv, horizons):
                                            cv_by_year=cv)["forecasts"]
         expected[conditional] = out
     legacy._kde_cdf.cache_clear()
-    new_conditional, new_unconditional = result.legacy_tables()
+    new_conditional = _legacy_table(result.data["conditional"].isel(lead=slice(1, None)), result.data, True)
+    new_unconditional = _legacy_table(result.data["unconditional"], result.data, False)
     for new, old in ((new_conditional, expected[True]), (new_unconditional, expected[False])):
         assert list(new.columns) == list(old.columns)
         pd.testing.assert_frame_equal(

@@ -43,6 +43,10 @@ class FrameSamples:
         table = self.table[wanted] if rows is None else self.table.iloc[rows][wanted]
         return table.reset_index(drop=True)
 
+    def columns_of(self, rows=None, columns=None):
+        return {name: self.take(name, rows) for name in (self.columns if columns is None else
+                                                          [c for c in self.columns if c in set(columns)])}
+
 
 def weekly_table(seed=0, years=range(2010, 2021), n_cells=4, issues=8):
     """The legacy tests' weekly table: outcomes that depend on the features, 5% unknown, one non-finite predictor."""

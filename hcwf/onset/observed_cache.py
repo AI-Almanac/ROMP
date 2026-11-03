@@ -201,7 +201,7 @@ def _reference_part(reference):
     if reference is None:
         return None
     table = None if reference.table is None else reference.table.to_dict("list")
-    return (reference.month_day, table, reference.computed, reference.statistic)
+    return (reference.month_day, table, reference.computed)
 
 
 def _options(options, units, select) -> dict:

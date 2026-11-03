@@ -482,7 +482,7 @@ class ReferenceOnset:
 
     Sources: a fixed month-day ("06-02") in every year and unit, a table of dates keyed by unit id and/or year
     (onset_blending's reference_onset), or a computed field: the mean or median onset day of year over many years
-    (`from_onsets`), as the climatology reference forecast and the derived seasons use.
+    (`reduce_onset_days`), as the climatology reference forecast and the derived seasons use.
     Consumers: `dates` (a date per (year, unit)), `search_start` (the entry for hcwf.onset.engine's detect_*
     search_start, so an onset search never begins before the reference onset) and `doy_field` (day of year per cell).
     """
@@ -490,17 +490,11 @@ class ReferenceOnset:
     month_day: str | None = None
     table: pd.DataFrame | None = field(default=None, compare=False)
     computed: xr.DataArray | None = field(default=None, compare=False)
-    statistic: str | None = None
 
     def __post_init__(self):
         """Exactly one source."""
         if sum(x is not None for x in (self.month_day, self.table, self.computed)) != 1:
             raise ValueError("a reference onset is exactly one of a month-day, a table or a computed day of year")
-
-    @classmethod
-    def from_onsets(cls, doy: xr.DataArray, how: str = "mean") -> "ReferenceOnset":
-        """The mean or median of the onset days of year `doy` (dims year, *spatial) over the years (reduce_onset_days)."""
-        return cls(computed=reduce_onset_days(doy, how), statistic=how)
 
     @classmethod
     def read(cls, path, *, date_col: str | None = None, year_col: str | None = None, day_col: str | None = None,
@@ -555,15 +549,35 @@ class ReferenceOnset:
                 offset = np.where(np.isfinite(doy), doy, 1).astype(np.int64) - 1
             out = (jan1 + offset.astype("timedelta64[D]")).astype("datetime64[ns]")
             return np.where(np.isfinite(doy), out, none)
+        return self._table_dates(unit_ids, years)
+
+    def _table_dates(self, unit_ids, years):
+        """The table's date for each unit and year (NaT where it has none): arrays
+        of ids and years that broadcast together, the dates in their shape."""
         keys = [k for k in ("id", "year") if k in self.table.columns]
-        if not keys:
-            return none
+        queries = {"id": np.asarray(unit_ids, dtype=str), "year": np.asarray(years, dtype=int)}
+        shape = np.broadcast_shapes(queries["id"].shape, queries["year"].shape)
+        if not keys or not len(self.table):
+            return np.full(shape, np.datetime64("NaT"), dtype="datetime64[ns]")
         table = self.table.drop_duplicates(keys + ["ref_onset_date"])
         if table.duplicated(keys).any():
             raise ValueError("The reference onset table gives a unit and year more than one date")
-        pairs = pd.DataFrame({"id": pd.Series(np.asarray(unit_ids, dtype=str)), "year": years})
-        found = pairs[keys].merge(table, on=keys, how="left")["ref_onset_date"]
-        return pd.to_datetime(found).to_numpy().astype("datetime64[ns]")
+        # Each key as a position among the table's values (-1 when the table lacks it), then one code per pair.
+        table_code = np.zeros(len(table), dtype=np.int64)
+        query_code = np.zeros(shape, dtype=np.int64)
+        for key in keys:
+            values = table[key].to_numpy(dtype=str if key == "id" else int)
+            known = np.unique(values)
+            position = np.searchsorted(known, queries[key]).clip(max=len(known) - 1)
+            found = known[position] == queries[key]
+            table_code = table_code * len(known) + np.searchsorted(known, values)
+            query_code = np.where(found & (query_code >= 0), query_code * len(known) + position, -1)
+        order = np.argsort(table_code, kind="stable")
+        sorted_code = table_code[order]
+        at = np.searchsorted(sorted_code, query_code).clip(max=len(sorted_code) - 1)
+        hit = (query_code >= 0) & (sorted_code[at] == query_code)
+        onsets = pd.to_datetime(table["ref_onset_date"]).to_numpy().astype("datetime64[ns]")[order]
+        return np.where(hit, onsets[at], np.datetime64("NaT")).astype("datetime64[ns]")
 
     def search_start(self, years, unit_ids=None, *, dims: tuple[str, ...] = ("unit",)):
         """The `search_start` entry of detect_observed / detect_forecast for these years.
@@ -588,9 +602,12 @@ class ReferenceOnset:
                 raise ValueError("a reference onset table keyed by unit needs the unit ids")
             unit_ids = [""]
         unit_ids = np.asarray(unit_ids)
-        grid_years = np.repeat(years, len(unit_ids))
-        grid_units = np.tile(unit_ids, len(years))
-        values = self.dates(grid_units, grid_years).reshape(len(years), len(unit_ids))
+        if self.table is not None:
+            values = self._table_dates(unit_ids[None, :], years[:, None])
+        else:
+            grid_years = np.repeat(years, len(unit_ids))
+            grid_units = np.tile(unit_ids, len(years))
+            values = self.dates(grid_units, grid_years).reshape(len(years), len(unit_ids))
         return xr.DataArray(values, dims=("year", dims[0]), coords={"year": years, dims[0]: unit_ids})
 
     def doy_field(self, like: xr.DataArray) -> xr.DataArray:

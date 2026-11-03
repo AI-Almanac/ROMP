@@ -43,6 +43,11 @@ def _legacy_fit_final_model(formula_str, train_df):
     return {"coefs": pd.DataFrame(rows), "scaler": scaler, "features": feature_cols, "formula": formula_str}
 
 
+def _predicted(model, test):
+    """model.predict as a table on the test rows' index."""
+    return pd.DataFrame(model.predict(test), columns=[f"cv_{c}" for c in model.classes], index=test.index)
+
+
 def _legacy_apply(coef_bundle, test_df):
     """apply_blend_model.py's prediction path, as it was."""
     coef_df, scaler, feature_cols = coef_bundle["coefs"], coef_bundle["scaler"], coef_bundle["features"]
@@ -133,7 +138,7 @@ def test_predictions_are_apply_blend_models():
     test.loc[105, "diff_m_week1"] = 0.5
     test.loc[103, "prob_clim_week2"] = np.nan
 
-    predicted = model.predict(test)
+    predicted = _predicted(model, test)
 
     pd.testing.assert_frame_equal(predicted, _legacy_apply(model.to_legacy_bundle(), test), check_exact=True)
     assert list(predicted.columns) == ["cv_later", "cv_week1", "cv_week2"]
@@ -148,7 +153,7 @@ def test_cv_fold_bundles_predict_like_apply_blend_model():
     test = weekly_table(seed=2, years=[2021])
 
     for bundle in coefs.values():
-        pd.testing.assert_frame_equal(FittedModel.from_legacy_bundle(bundle).predict(test),
+        pd.testing.assert_frame_equal(_predicted(FittedModel.from_legacy_bundle(bundle), test),
                                       _legacy_apply(bundle, test), check_exact=True)
 
 
@@ -163,7 +168,7 @@ def test_bundles_without_scaler_or_formula():
     unscaled = FittedModel.from_legacy_bundle(bundle, formula=FORMULA)
 
     assert unscaled.scaler_mean is None and unscaled.to_arrays()[0]["n_samples"] is None
-    pd.testing.assert_frame_equal(unscaled.predict(test), _legacy_apply({**bundle, "formula": FORMULA}, test),
+    pd.testing.assert_frame_equal(_predicted(unscaled, test), _legacy_apply({**bundle, "formula": FORMULA}, test),
                                   check_exact=True)
 
 

@@ -137,7 +137,9 @@ def test_a_saved_blend_forecasts_like_its_model(region):
     probabilities = forecast.weekly_table.filter(like="cv_")
     assert np.allclose(probabilities.sum(axis=1), 1.0)
     direct = result.model.predict(forecast.features)
-    assert np.array_equal(direct[probabilities.columns].to_numpy(), probabilities.to_numpy())
+    by_class = dict(zip(result.model.classes, direct.T))
+    for column in probabilities:
+        assert np.array_equal(by_class[column.removeprefix("cv_")], probabilities[column].to_numpy())
     one_date = blend.forecast({"ens": root / "ens" / "2013.nc"}, issue_date="2013-05-15")
     assert set(pd.to_datetime(one_date.weekly_table["time"]).dt.date) == {dt.date(2013, 5, 15)}
     assert one_date.issue_dates == [dt.date(2013, 5, 15)]

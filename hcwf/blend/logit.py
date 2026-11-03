@@ -106,43 +106,33 @@ class FittedModel:
         if has_scaler:
             set_(self, "n_samples", int(self.n_samples))
 
-    def predict(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Class probabilities `cv_<class>` for each row of `frame`, on its index.
+    def predict(self, data: Mapping | pd.DataFrame) -> np.ndarray:
+        """Class probabilities (rows, classes), in `classes` order, for the rows of
+        `data` (a table or a mapping of feature arrays).
 
         Rows with a non-finite feature get NaN. As apply_blend_model.py: the
         design is built from the saved formula and must have exactly the
         saved features, at least one of them finite.
         """
         features = list(self.features)
-        design = design_matrix(self.formula, frame)
-        missing = [f for f in features if f not in design]
-        unexpected = [f for f in design if f not in features]
+        names, X = design_matrix(self.formula, data)
+        missing = [f for f in features if f not in names]
+        unexpected = [f for f in names if f not in features]
         if missing or unexpected:
             raise ValueError(
                 "Applied design matrix does not match the saved training schema. "
                 f"Missing: {missing}; unexpected: {unexpected}."
             )
-        design = design.loc[:, features]
-        all_nonfinite = [
-            column
-            for column in features
-            if not np.isfinite(
-                pd.to_numeric(design[column], errors="coerce").to_numpy(dtype=float)
-            ).any()
-        ]
+        X = X[:, [names.index(f) for f in features]]
+        all_nonfinite = [f for f, column in zip(features, X.T) if not np.isfinite(column).any()]
         if all_nonfinite:
             raise ValueError(
                 "Saved model features have no finite values in the application "
                 f"data: {all_nonfinite}."
             )
         if self.scaler_mean is not None:
-            design = pd.DataFrame(
-                self._scaler().transform(design.values.astype(float)),
-                columns=features,
-                index=design.index,
-            )
+            X = self._scaler().transform(X)
 
-        X = design[features].values.astype(float)
         scores = X @ self.coef.T + self.intercept
         bad = ~np.isfinite(X).all(axis=1)
         probs = np.full((len(X), len(self.classes)), np.nan)
@@ -151,7 +141,7 @@ class FittedModel:
             s -= s.max(axis=1, keepdims=True)
             exp_s = np.exp(s)
             probs[~bad] = exp_s / exp_s.sum(axis=1, keepdims=True)
-        return pd.DataFrame(probs, columns=[f"cv_{c}" for c in self.classes], index=design.index)
+        return probs
 
     @classmethod
     def from_estimators(cls, formula: str, features, clf, scaler) -> FittedModel:
@@ -307,27 +297,31 @@ def fold_models(data: xr.Dataset) -> dict[int, FittedModel]:
     return out
 
 
-def design_matrix(formula: str, data: pd.DataFrame) -> pd.DataFrame:
-    """The formula's right-hand side as a Patsy design matrix, without the
-    intercept column and keeping rows with missing values."""
-    rhs = formula.split("~", 1)[1].strip() if "~" in formula else formula
-    return patsy.dmatrix(
-        rhs, data, return_type="dataframe", NA_action=patsy.NAAction(NA_types=[])
-    ).drop(columns=["Intercept"], errors="ignore")
+def design_matrix(formula: str, data: Mapping | pd.DataFrame) -> tuple[list[str], np.ndarray]:
+    """The formula's right-hand side as a Patsy design: (column names, float
+    matrix), without the intercept column and keeping rows with missing values."""
+    matrix = patsy.dmatrix(
+        design.right_hand_side(formula), data, NA_action=patsy.NAAction(NA_types=[])
+    )
+    return _without_intercept(matrix)
 
 
-def fit(formula: str, train: pd.DataFrame) -> FittedModel:
+def _without_intercept(matrix) -> tuple[list[str], np.ndarray]:
+    names = list(matrix.design_info.column_names)
+    keep = [j for j, name in enumerate(names) if name != "Intercept"]
+    return [names[j] for j in keep], np.asarray(matrix, dtype=float)[:, keep]
+
+
+def fit(formula: str, train: Mapping | pd.DataFrame) -> FittedModel:
     """Fit the formula on the rows with a known outcome and finite features."""
-    design = design_matrix(formula, train)
-    features = list(design.columns)
-    y = train["outcome"].values
+    features, X = design_matrix(formula, train)
+    y = np.asarray(train["outcome"])
     valid = np.array([isinstance(v, str) for v in y])
-    X = design.values.astype(float)
     mask = valid & np.isfinite(X).all(axis=1)
     X_fit, y_fit = X[mask], y[mask]
     if len(np.unique(y_fit)) < 2:
         raise ValueError("Fewer than 2 outcome classes in training data — cannot fit model.")
-    log_fit(int(mask.sum()), len(train), np.unique(y_fit), features)
+    log_fit(int(mask.sum()), len(y), np.unique(y_fit), features)
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_fit)
@@ -356,7 +350,7 @@ def fit_samples(formula: str, weekly: Weekly, rows: np.ndarray) -> FittedModel:
     when the formula has a design plan, with the same numerics."""
     plan = design.plan(formula, weekly.column_dtypes())
     if plan is None:
-        return fit(formula, weekly.frame(rows))
+        return fit(formula, weekly.columns_of(rows))
     clf, scaler, used, total = fit_final_rows(
         lambda j: plan.column(j, weekly.take, rows), len(plan.columns), weekly.take("outcome", rows)
     )
@@ -425,11 +419,11 @@ def global_cv_frames(formula: str, weekly: Weekly, rows: np.ndarray, trainable: 
         )
         test = np.flatnonzero(year == test_year)
         _check_fold(test_year, train, test, outcome[train], training_years, required_classes)
-        fitted = _fit_frames(formula, weekly.frame(rows[train], columns), outcome[train])
+        fitted = _fit_frames(formula, weekly.columns_of(rows[train], columns), outcome[train])
         if fitted is None:
             raise ValueError(f"Global CV model fitting failed for holdout year {test_year}.")
         clf, scaler, info = fitted
-        probabilities = _predict_frame(clf, scaler, info, weekly.frame(rows[test], columns))
+        probabilities = _predict_frame(clf, scaler, info, weekly.columns_of(rows[test], columns))
         model = FittedModel.from_estimators(formula, info[1], clf, scaler)
         out.append((int(test_year), test, probabilities, model))
     return out
@@ -651,7 +645,7 @@ class _Fits:
         if self.plan is not None:
             fitted = _fit_scaled(self.plan.build(self.weekly.take, self.rows[train], order="F"), y)
             return None if fitted is None else (*fitted, None)
-        return _fit_frames(self.formula, self.weekly.frame(self.rows[train], self.columns), y)
+        return _fit_frames(self.formula, self.weekly.columns_of(self.rows[train], self.columns), y)
 
     def predict(self, fitted, test: np.ndarray):
         """(probabilities, classes) for the test positions, or None without a fit."""
@@ -659,7 +653,7 @@ class _Fits:
             return None
         clf, scaler, info = fitted
         if info is not None:
-            frame = self.weekly.frame(self.rows[test], self.columns)
+            frame = self.weekly.columns_of(self.rows[test], self.columns)
             return _predict_frame(clf, scaler, info, frame), tuple(clf.classes_)
         X = scaler.transform(self.plan.build(self.weekly.take, self.rows[test], order="F"))
         return _predict(clf, X), tuple(clf.classes_)
@@ -670,23 +664,25 @@ def _frame_columns(formula: str, weekly: Weekly) -> list[str]:
     return [c for c in dict.fromkeys(design.formula_columns(formula)) if c in weekly.columns]
 
 
-def _fit_frames(formula: str, train: pd.DataFrame, y: np.ndarray):
+def _fit_frames(formula: str, train: Mapping, y: np.ndarray):
     """fit_predict's fit on a Patsy design of the training table: (classifier,
     scaler, (design info, design columns)), or None."""
-    matrix = patsy.dmatrix(design.right_hand_side(formula), train, return_type="dataframe")
-    info = (matrix.design_info, [c for c in matrix.columns if c != "Intercept"])
-    matrix = matrix.drop(columns=["Intercept"], errors="ignore")
-    fitted = _fit_scaled(matrix.values.astype(float), y)
+    matrix = patsy.dmatrix(design.right_hand_side(formula), train)
+    columns, X = _without_intercept(matrix)
+    info = (matrix.design_info, columns)
+    fitted = _fit_scaled(X, y)
     return None if fitted is None else (*fitted, info)
 
 
-def _predict_frame(clf, scaler, info, frame: pd.DataFrame) -> np.ndarray:
+def _predict_frame(clf, scaler, info, frame: Mapping) -> np.ndarray:
     """Probabilities for a test table, its design built with the training
     design's info, as _fit_predict_multinom predicted them."""
     design_info, columns = info
-    matrix = patsy.dmatrix(design_info, frame, return_type="dataframe")
-    matrix = matrix.drop(columns=["Intercept"], errors="ignore").reindex(columns=columns, fill_value=0.0)
-    return _predict(clf, scaler.transform(matrix.values.astype(float)))
+    names, X = _without_intercept(patsy.dmatrix(design_info, frame))
+    if names != columns:   # absent columns are zero, extra ones dropped
+        position = {name: j for j, name in enumerate(names)}
+        X = np.column_stack([X[:, position[c]] if c in position else np.zeros(len(X)) for c in columns])
+    return _predict(clf, scaler.transform(X))
 
 
 def _rows(design: np.ndarray, rows: np.ndarray) -> np.ndarray:
