@@ -423,7 +423,7 @@ def test_config_object_and_yaml_roundtrip(tmp_path):
 
 def test_relative_mask_paths_are_made_absolute(tmp_path, monkeypatch):
     """The loader resolves mask.file and mask.condition.file like nc_mask."""
-    from hcwf.lib import loader
+    from hcwf.config import build as loader
 
     monkeypatch.setattr(loader, "set_dir", lambda p: tmp_path / p)
     dic = {"work_dir": ".", "pkg_dir": ".", "mask": {"file": "m.nc", "condition": {"file": "d.nc", "above": 1}}}

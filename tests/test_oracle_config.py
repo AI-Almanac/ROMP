@@ -8,13 +8,17 @@ over the four regression configs when they are present. Later steps compare the 
 import dataclasses
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 import _oracle_config as old
-from hcwf import api, export
-from hcwf.lib import control, convention, loader
+from hcwf import export
+from hcwf.config import Config
+from hcwf.config.build import resolve_cli, resolve_flat
+from hcwf.lib import control, convention
+from hcwf.lib.assertion import HCWFConfigError
 from hcwf.lib.run_folder import fingerprint
 from hcwf.lib.resolved import resolved_config_text
 
@@ -92,41 +96,121 @@ def test_oracle_has_the_frozen_classes():
 
 
 def test_loader_variant_agrees(configs):
-    """loader.build_cfg / load_run_config of the oracle and of the live code resolve every config to the same dict."""
+    """The oracle's build_cfg / load_run_config and the live resolve_cli give every config the same dict."""
     for name, path in configs.items():
         args = ["-p", str(path)]
-        _same(old.build_cfg(args), loader.build_cfg(args))
-        _same(old.load_run_config(args), loader.load_run_config(args))
+        _same(old.build_cfg(args), resolve_cli(args))
+        _same(old.load_run_config(args), resolve_flat(path))
 
 
 def test_loader_variant_agrees_with_cli_override(configs):
+    """A command-line flag gives the oracle's values; only its record differs ('command line', which the oracle lacks)."""
     path = configs["det_climatology"]
     args = ["-p", str(path), "--max_forecast_day", "12"]
-    new, ref = loader.load_run_config(args), old.load_run_config(args)
-    _same(ref, new)
+    new, ref = resolve_cli(args), old.load_run_config(args)
     assert new["max_forecast_day"] == 12
+    assert new["config_sources"]["max_forecast_day"] == "command line"
+    assert ref["config_sources"]["max_forecast_day"] != "command line"
+    for key in ref:
+        if key not in ("config_sources", "run_paths", "dataset_report"):
+            assert new[key] == ref[key], key
 
 
 def test_api_variant_agrees(configs, tmp_path):
-    """api._prepare of the oracle and of the live code: a path with overrides, write on and off, and a mapping."""
+    """The oracle's api._prepare and resolve_flat: a path with overrides, write on and off, and a mapping."""
     for name, path in configs.items():
         for write in (True, False):
-            _same(old._prepare(path, {}, write, tmp_path), api._prepare(path, {}, write, tmp_path))
+            _same(old._prepare(path, {}, write, tmp_path), resolve_flat(path, write=write, tmp=tmp_path))
     path = configs["two_models_windows"]
-    _same(old._prepare(path, {"max_forecast_day": 12}, True, None), api._prepare(path, {"max_forecast_day": 12}, True, None))
+    _same(old._prepare(path, {"max_forecast_day": 12}, True, None), resolve_flat(path, {"max_forecast_day": 12}))
     mapping = yaml.safe_load(Path(configs["det_climatology"]).read_text())
-    _same(old._prepare(mapping, {}, False, tmp_path), api._prepare(mapping, {}, False, tmp_path))
+    _same(old._prepare(mapping, {}, False, tmp_path), resolve_flat(mapping, write=False, tmp=tmp_path))
+
+
+def test_every_source_gives_the_same_dict(configs, tmp_path):
+    """A path, a Config, a nested mapping and a flat dict resolve to equal dicts (and equal the oracle's)."""
+    path = configs["det_climatology"]
+    from_path = resolve_flat(path)
+    mapping = yaml.safe_load(Path(path).read_text())
+    # a Config or mapping has no file: the paths that start at the config file (runs/) start at the working directory
+    from_mapping = resolve_flat(mapping)
+    from_config = resolve_flat(Config.from_mapping(mapping))
+    _same(from_mapping, from_config)
+    for key in from_path:
+        if key not in ("run_paths", "config_file", "dataset_report", "config_sources", "dir_out", "dir_fig", "cache_dir"):
+            assert from_path[key] == from_mapping[key], key
+    again = resolve_flat(from_path)                       # a finished flat dict resolves to itself
+    _same(from_path, again)
+    _same(from_path, resolve_flat(SimpleNamespace(**from_path)))
+    _same(old._as_dict(path), from_path)
+    _same(old._as_dict(dict(from_path)), again)
+    _same(old._complete(dict(from_path)), again)
 
 
 def test_export_variant_agrees(configs):
-    """export.load_cfg / _complete / _as_dict of the oracle and of the live code."""
+    """The oracle's export.load_cfg and resolve_flat of a path."""
     for name, path in configs.items():
-        live, frozen = export.load_cfg(path), old.load_cfg(path)
-        _same(frozen, live)
-        _same(old._as_dict(path), export._as_dict(path))
-        flat = loader.load_run_config(["-p", str(path)])
-        _same(old._as_dict(dict(flat)), export._as_dict(dict(flat)))
-        _same(old._complete(dict(flat)), export._complete(dict(flat)))
+        _same(old.load_cfg(path), resolve_flat(path))
+
+
+def test_cli_flags_equal_run_overrides(configs):
+    """Every override flag gives what hcwf.run's keyword overrides give, recorded as 'command line' (CLI) or 'override'."""
+    path = configs["two_models_windows"]
+    args = ["-p", str(path), "--max_forecast_day", "10", "--verification_window_list", "1,5", "--tolerance_days_list", "2",
+            "--start_date", "2019", "6", "1", "--probabilistic", "false", "--parallel", "no", "--day_bins", "1,5",
+            "--region", "ethiopia", "--onset_percentage_threshold", "0.4", "--show_plot", "false"]
+    cli = resolve_cli(args)
+    overrides = {"max_forecast_day": 10, "verification_window_list": ((1, 5),), "tolerance_days_list": (2,),
+                 "start_date": (2019, 6, 1), "probabilistic": False, "parallel": False, "day_bins": ((1, 5),),
+                 "region": "ethiopia", "onset_percentage_threshold": 0.4, "show_plot": False}
+    api_like = resolve_flat(path, overrides)
+    for key in api_like:
+        if key != "config_sources":
+            assert _norm(cli[key]) == _norm(api_like[key]), key
+    assert {k for k, v in cli["config_sources"].items() if v == "command line"} == set(overrides)
+    assert {k for k, v in api_like["config_sources"].items() if v == "override"} == set(overrides)
+    assert not [v for k, v in cli["config_sources"].items() if v == "override"]
+    from hcwf.lib.resolved import resolved_config_text
+
+    assert "command line" in resolved_config_text(cli)
+    assert cli["run_paths"].fingerprint == api_like["run_paths"].fingerprint != resolve_flat(path)["run_paths"].fingerprint
+
+
+def test_bad_cli_values_are_validated(configs):
+    path = str(configs["det_climatology"])
+    with pytest.raises(HCWFConfigError, match="max_forecast_day"):
+        resolve_flat(path, {"max_forecast_day": "soon"}, override_source="command line")
+    with pytest.raises(HCWFConfigError, match="tolerance_days_list"):   # one tolerance for each window
+        resolve_cli(["-p", path, "--verification_window_list", "1,5 6,10"])
+    with pytest.raises(TypeError, match="unknown override"):
+        resolve_flat(path, {"max_forecast_dya": 3})
+
+
+def test_model_list_selects_models(configs):
+    """--model_list keeps the named models (in the order given) with each model's own entries; an unknown name fails."""
+    path = configs["two_models_windows"]
+    full = resolve_flat(path)
+    assert full["model_list"] == ("DET", "DETC")
+    only = resolve_cli(["-p", str(path), "--model_list", "DETC"])
+    assert only["model_list"] == ("DETC",) and only["config_sources"]["model_list"] == "command line"
+    for key in ("model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list", "accumulation_list",
+                "daily_boundary_list", "accumulation_detected"):
+        if key in full:
+            assert only[key] == (full[key][1],), key
+    flipped = resolve_flat(path, {"model_list": ("DETC", "DET")})
+    assert flipped["model_dir_list"] == full["model_dir_list"][::-1]
+    with pytest.raises(HCWFConfigError, match="unknown model 'NOPE'"):
+        resolve_cli(["-p", str(path), "--model_list", "NOPE"])
+
+
+def test_export_on_a_dict_validates_and_plans(configs):
+    """export_onsets resolves a mapping like every entry: it plans the run folder and rejects an invalid config."""
+    raw = yaml.safe_load(Path(configs["det_climatology"]).read_text())
+    bad = {**raw, "evaluation": {**raw.get("evaluation", {}), "verification_windows": [[1, 5]], "tolerances": [3, 2]}}
+    with pytest.raises(HCWFConfigError):
+        export.export_onsets(bad)
+    dic = resolve_flat(raw)
+    assert dic["run_paths"] is not None and export.onsets_folder(dic) == dic["run_paths"].onsets
 
 
 def test_driver_variant_finishes_like_the_loader(configs):
@@ -134,8 +218,9 @@ def test_driver_variant_finishes_like_the_loader(configs):
     for name, path in configs.items():
         args = ["-p", str(path)]
         dic = old.driver_finish(None, args)
-        _same(dic, loader.load_run_config(args))
+        _same(dic, resolve_cli(args))
         _same(old.driver_finish(dic), dic)
+        _same(resolve_flat(dic), dic)
 
 
 def _case_dicts(case_cfg):
@@ -145,7 +230,7 @@ def _case_dicts(case_cfg):
 def test_cases_and_case_kwargs_agree(configs):
     """The oracle's make_case / case_kwargs equal the live ones for every model, window and reference rule."""
     for name, path in configs.items():
-        dic = loader.load_run_config(["-p", str(path)])
+        dic = resolve_flat(path)
         assert old.iter_list(dic) == control.iter_list(dic)
         setting = convention.Setting
         live_setting = control.init_dataclass(setting, dic)
@@ -165,7 +250,7 @@ def test_cases_and_case_kwargs_agree(configs):
 def test_reference_rules_are_the_two_documented_ones(configs):
     """Deterministic flow: the reference inherits models[0]'s accumulation and boundary and has no model_dims.
     Ensemble flow: the current model's own, and ref_model_dims (design section 1.5)."""
-    dic = loader.load_run_config(["-p", str(configs["model_reference"])])
+    dic = resolve_flat(configs["model_reference"])
     first = dic["model_list"][0]
     det = old.deterministic_reference_cases(dic)
     assert len(det) == len(dic["verification_window_list"])
@@ -188,7 +273,7 @@ def test_reference_rules_are_the_two_documented_ones(configs):
 def test_flow_case_dicts_have_the_documented_shape(configs):
     """The flows' case dicts hold 147 keys (Setting 124 + Case 23); the setting wins in the deterministic flow and
     the case in the ensemble flow, which agree because the field sets do not overlap."""
-    dic = loader.load_run_config(["-p", str(configs["two_models_windows"])])
+    dic = resolve_flat(configs["two_models_windows"])
     for combi, kw in old.deterministic_cases(dic):
         assert len(kw) == 147
         assert kw["model"] == combi[0] and kw["verification_window"] == combi[1]
@@ -201,6 +286,6 @@ def test_fingerprints_agree(configs):
     """The run folder fingerprint and the resolved config text are the same through both resolve variants."""
     for name, path in configs.items():
         a = old.load_run_config(["-p", str(path)])
-        b = loader.load_run_config(["-p", str(path)])
+        b = resolve_flat(path)
         assert fingerprint(a) == fingerprint(b) == a["run_paths"].fingerprint
         assert resolved_config_text(a).replace(" (cached)", "") == resolved_config_text(b).replace(" (cached)", "")

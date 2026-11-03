@@ -70,41 +70,6 @@ _COMPRESSION = {"zlib": True, "complevel": 4, "shuffle": True}
 
 # --- configuration ----------------------------------------------------------------------------------
 
-def load_cfg(path) -> dict:
-    """The flat config dict of a run YAML as the run itself builds it (paths resolved, lead window shortened).
-
-    Reads the file with the loader's own steps and the validator, but without its global cache.
-    """
-    from hcwf.lib.assertion import HCWFValidator
-    from hcwf.lib.loader import build_cfg
-
-    dic = build_cfg(["-p", str(path)])
-    HCWFValidator(dic).validate()
-    return _complete(dic)
-
-
-def _complete(dic: dict) -> dict:
-    """Finish a flat config the way the loader does (paths, lead window); finishing a dict that is already done changes nothing."""
-    from hcwf.lib import loader
-    from hcwf.lib.lead_window import apply_lead_window
-
-    loader._resolve_paths(dic)
-    if "lead_window" not in dic:
-        apply_lead_window(dic)
-    return dic
-
-
-def _as_dict(cfg) -> dict:
-    """A flat config dict from a dict, SimpleNamespace, hcwf.config.Config object or the path of a run YAML."""
-    if isinstance(cfg, (str, Path)):
-        return load_cfg(cfg)
-    if hasattr(cfg, "to_flat"):
-        cfg = cfg.to_flat()
-    elif isinstance(cfg, SimpleNamespace):
-        cfg = vars(cfg)
-    return _complete(dict(cfg))
-
-
 def case_kwargs(dic: dict, model: str, *, reference: bool = False) -> dict:
     """The keyword arguments the scoring builds for one model: Setting and Case values of its first window.
 
@@ -708,14 +673,17 @@ def _collect(dic: dict, source: str) -> xr.Dataset:
 def export_onsets(cfg, sources=None, out=None) -> dict:
     """Write the onset dates of each requested source to NetCDF; return {source: path}.
 
-    cfg is a flat config dict (or SimpleNamespace, hcwf.config.Config, or the path of a run YAML).
+    cfg is the path of a run YAML, a hcwf.config.Config, a mapping or a flat config dict (resolved, validated and
+    planned by hcwf.config.build.resolve_flat).
     sources is a list or comma-separated text of "observed", model names, "climatology" and
     "conditional_climatology" (default: observed, every model, and the climatology reference the run uses).
     out is the folder (default: the run's onsets folder, dir_out/onsets for an explicit dir_out). Files are named
     onsets_<source>.nc, or <source>.nc inside a run folder. Only the detection is run, with the scoring's own
     functions and settings; nothing is scored.
     """
-    dic = _as_dict(cfg)
+    from hcwf.config.build import resolve_flat
+
+    dic = resolve_flat(cfg)
     names = _check_sources(dic, sources)
     folder = Path(out) if out is not None else onsets_folder(dic)
     paths = {}

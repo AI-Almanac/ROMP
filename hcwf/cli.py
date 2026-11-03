@@ -252,7 +252,7 @@ def _forecast(argv) -> int:
 
 def _export(argv) -> int:
     """`hcwf-run export -p run.yaml [--sources ...] [--out DIR]`: write the gridded onset dates as NetCDF."""
-    from hcwf.export import export_onsets, load_cfg
+    from hcwf.export import export_onsets
 
     p = argparse.ArgumentParser(prog="hcwf-run export", description="Write the gridded onset dates of a run as "
                                 "NetCDF, one file per source, running only the detection.")
@@ -264,7 +264,7 @@ def _export(argv) -> int:
     if not args.param:
         p.error("give the run config with -p run.yaml (or set HCWF_CONFIG)")
     try:
-        paths = export_onsets(load_cfg(args.param), sources=args.sources, out=args.out)
+        paths = export_onsets(args.param, sources=args.sources, out=args.out)
     except Exception as exc:  # noqa: BLE001 - config and data problems carry their own fix text
         print(f"Error: {exc}", file=sys.stderr)
         return 1

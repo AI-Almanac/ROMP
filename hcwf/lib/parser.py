@@ -4,148 +4,63 @@ import ast
 from pathlib import Path
 
 
-def create_parser(config, cli_args=None):
-    """Parse CLI overrides, using the config dict values as defaults; unknown arguments are ignored."""
+OVERRIDE_FLAGS = ("model_list", "verification_window_list", "max_forecast_day", "dry_spell_check", "forecast_history",
+                  "threshold_source", "onset_percentage_threshold", "tolerance_days_list", "day_bins", "start_date",
+                  "end_date", "show_plot", "show_panel", "probabilistic", "parallel", "region")
+"""The command-line flags that override a config value (the flat key names; `model_list` selects models of `models:`)."""
 
+
+def create_parser():
+    """The command-line parser: every override flag defaults to None (not given), the run-control flags are flags."""
     parser = argparse.ArgumentParser(description="HCWF Package Parameter Loader")
-
-    parser.add_argument(
-        "--model_list",
-        nargs="+",
-        default=config["model_list"],
-        help=f"Model list (default: {config['model_list']})"
-    )
-
-    parser.add_argument(
-        "--verification_window_list",
-        type=parse_window_list,
-        default=config['verification_window_list'],
-        help="Verification window as start end day (default: {config['verification_window_list']}), \
-                (e.g., '1,15 16,20')"
-    )
-
-    parser.add_argument(
-        "--max_forecast_day",
-        type=int,
-        default=config['max_forecast_day'],
-        help="Max forecast day (default: {config['max_forecast_day']})"
-    )
-
-    if "dry_spell_check" in config:
-        parser.add_argument(
-            "--dry_spell_check",
-            type=str2bool,
-            default=config["dry_spell_check"],
-            help=f"Keep the definition's dry-spell condition, True or False (default: {config['dry_spell_check']})"
-        )
-
+    add = parser.add_argument
+    add("--model_list", nargs="+", default=None, help="evaluate only these models of the config's models: section")
+    add("--verification_window_list", type=parse_window_list, default=None,
+        help="verification windows as start,end lead days (e.g., '1,15 16,20')")
+    add("--max_forecast_day", type=int, default=None, help="max forecast day")
+    add("--dry_spell_check", type=str2bool, default=None,
+        help="keep the definition's dry-spell condition, True or False")
     for name, choices in (("forecast_history", ("observed", "none")), ("threshold_source", ("observations", "model"))):
-        if name in config:
-            parser.add_argument(f"--{name}", choices=choices, default=config[name],
-                                help=f"{name}: {' or '.join(choices)} (default: {config[name]})")
-
-    parser.add_argument(
-        "--onset_percentage_threshold",
-        type=float,
-        default=config['onset_percentage_threshold'],
-        help=f"Probability threshold (0.0-1.0) for ensemble onset (default: {config['onset_percentage_threshold']})"
-    )
-
-    # Allowed error margin (in days)
-    parser.add_argument(
-        "--tolerance_days_list",
-        nargs='+',
-        type=int,
-        action=ForceTupleAction,
-        default=config['tolerance_days_list'],
-        help=f"Allowed error margins in days e.g., 3 5 (default: {config['tolerance_days_list']})"
-    )
-
-    # Time windows for grouping statistics
-    parser.add_argument(
-        "--day_bins",
-        type=parse_window_list,
-        default=config['day_bins'],
-        help=f"Day bins for statistics e.g., '1,15 16,30' (default: {config['day_bins']})"
-    )
-
-    # Date range for evaluation
-    parser.add_argument(
-        "--start_date",
-        nargs=3,
-        type=int,
-        action=ForceTupleAction,
-        default=config['start_date'],
-        help="Start date as: YYYY M D (e.g., 2024 5 1)"
-    )
-
-    parser.add_argument(
-        "--end_date",
-        nargs=3,
-        type=int,
-        action=ForceTupleAction,
-        default=config['end_date'],
-        help=f"Evaluation end date as YYYY M D (e.g., 2024 10 31) (default: {config['end_date']})"
-    )
-
-    parser.add_argument(
-        "--show_plot",
-        type=str2bool,
-        default=config['show_plot'],
-        help="Toggle individual model plot display, True of False (default: {config['show_plot']})"
-    )
-
-    parser.add_argument(
-        "--show_panel",
-        type=str2bool,
-        default=config['show_panel'],
-        help="Toggle panel plot display, True of False (default: {config['show_panel']})"
-    )
-
-    parser.add_argument(
-        "--probabilistic",
-        type=str2bool,
-        default=config['probabilistic'],
-        help=f"Ensemble evaluation toggle, True or False (default: {config['probabilistic']})"
-    )
-
-    parser.add_argument(
-        "--parallel",
-        type=str2bool,
-        default=config['parallel'],
-        help="parallelization, True of False (default: {config['parallel']})"
-    )
-
-    parser.add_argument(
-        "--region",
-        type=str,
-        default=config['region'],
-        help="region as defined in params.region_def (default: {config['region']})"
-    )
+        add(f"--{name}", choices=choices, default=None, help=f"{name}: {' or '.join(choices)}")
+    add("--onset_percentage_threshold", type=float, default=None,
+        help="probability threshold (0.0-1.0) for ensemble onset")
+    add("--tolerance_days_list", nargs="+", type=int, action=ForceTupleAction, default=None,
+        help="allowed error margins in days e.g., 3 5")
+    add("--day_bins", type=parse_window_list, default=None, help="day bins for statistics e.g., '1,15 16,30'")
+    add("--start_date", nargs=3, type=int, action=ForceTupleAction, default=None,
+        help="evaluation start date as YYYY M D (e.g., 2024 5 1)")
+    add("--end_date", nargs=3, type=int, action=ForceTupleAction, default=None,
+        help="evaluation end date as YYYY M D (e.g., 2024 10 31)")
+    add("--show_plot", type=str2bool, default=None, help="toggle individual model plot display, True or False")
+    add("--show_panel", type=str2bool, default=None, help="toggle panel plot display, True or False")
+    add("--probabilistic", type=str2bool, default=None, help="ensemble evaluation toggle, True or False")
+    add("--parallel", type=str2bool, default=None, help="parallelization, True or False")
+    add("--region", type=str, default=None, help="region as defined in params.region_def")
 
     # run control (handled by the driver, not config values)
-    parser.add_argument("--check", action="store_true",
-                        help="validate and resolve the config, print the plan (settings, datasets, files, leads, "
-                             "hints, run folder, cache) and run nothing; exit 1 on errors")
-    parser.add_argument("--alignment", action="store_true",
-                        help="with --check: also run the observation/forecast alignment check (off by default)")
-    parser.add_argument("--overwrite", action="store_true",
-                        help="re-run a config whose run folder already exists (clears that folder first)")
-    parser.add_argument("--quiet", action="store_true", help="show only warnings and errors")
-    parser.add_argument("--verbose", action="store_true", help="show debug detail (run.log always has it)")
+    add("--check", action="store_true",
+        help="validate and resolve the config, print the plan (settings, datasets, files, leads, "
+             "hints, run folder, cache) and run nothing; exit 1 on errors")
+    add("--alignment", action="store_true",
+        help="with --check: also run the observation/forecast alignment check (off by default)")
+    add("--overwrite", action="store_true",
+        help="re-run a config whose run folder already exists (clears that folder first)")
+    add("--quiet", action="store_true", help="show only warnings and errors")
+    add("--verbose", action="store_true", help="show debug detail (run.log always has it)")
+    return parser
 
-    # cli_args can be passed explicitly; if None, default to sys.argv
-    if cli_args is None:
-        args, unknown = parser.parse_known_args()
-    else:
-        args, unknown = parser.parse_known_args(cli_args)
 
-    # ---- Convert list → tuple if needed ----
-    # Only convert if user supplied; default already tuple
-    if isinstance(args.model_list, list):
-        args.model_list = tuple(args.model_list)
+def parse_overrides(cli_args=None) -> dict:
+    """The config overrides given on the command line, {flat key: value}; unknown arguments are ignored.
 
-    return args
+    Only the flags actually given are returned; build.resolve_flat validates and records them as 'command line'.
+    cli_args is the argument list (sys.argv[1:] when None).
+    """
+    args, _ = create_parser().parse_known_args(cli_args)
+    out = {key: getattr(args, key) for key in OVERRIDE_FLAGS if getattr(args, key) is not None}
+    if "model_list" in out:
+        out["model_list"] = tuple(out["model_list"])
+    return out
 
 
 class ForceTupleAction(argparse.Action):

@@ -15,7 +15,7 @@ from shapely.geometry import MultiPolygon, box  # noqa: E402
 
 import hcwf  # noqa: E402
 from hcwf import export  # noqa: E402
-from hcwf.lib.config_yaml import build_config  # noqa: E402
+from hcwf.config.build import resolve_flat  # noqa: E402
 
 LAT, LON = [6.0, 7.0, 8.0, 9.0], [38.0, 39.0, 40.0, 41.0]
 STEPS, MAX_LEAD, MEMBERS = 14, 10, 3
@@ -165,7 +165,7 @@ def test_pair_tables_are_per_unit_cases():
 
 def test_onset_export_per_unit(world):
     base, _ = world
-    cfg = export._complete(build_config(_raw(base, "DET", False)))
+    cfg = resolve_flat(_raw(base, "DET", False))
     paths = export.export_onsets(cfg, sources=["observed", "DET", "climatology", "conditional_climatology"],
                                  out=base / "onsets_det")
     observed = export.open_onsets(paths["observed"])
@@ -177,7 +177,7 @@ def test_onset_export_per_unit(world):
     assert climatology["climatological_onset_doy"].dims == ("season", "unit")
     conditional = export.open_onsets(paths["conditional_climatology"])
     assert conditional["onset_probability"].dims == ("init_time", "season", "lead", "unit")
-    ens = export.export_onsets(export._complete(build_config(_raw(base, "ENS", True))), sources=["ENS"],
+    ens = export.export_onsets(resolve_flat(_raw(base, "ENS", True)), sources=["ENS"],
                                out=base / "onsets_ens")
     members = export.open_onsets(ens["ENS"])
     assert members["ensemble_onset_date"].dims[-1] == "unit" and members["members_by_status"].dims[-1] == "unit"

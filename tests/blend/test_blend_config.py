@@ -191,7 +191,7 @@ def test_mme_weights_are_a_mapping_or_a_file_and_must_fit_the_sources(tmp_path):
     with pytest.raises(R.RecipeError, match="blend.mme.weights.m"):
         R.recipe_from_config({**cfg, "blend_mme": {"weights": {"m": "heavy"}}})
     # the loader anchors a relative weights file at the config file
-    from hcwf.lib.loader import _anchor_mme_weights
+    from hcwf.config.build import _anchor_mme_weights
 
     dic = {"blend_mme": {"weights": "w/weights.csv"}, "config_file": str(tmp_path / "run.yaml")}
     _anchor_mme_weights(dic)

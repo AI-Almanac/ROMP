@@ -64,16 +64,16 @@ def blending_dict(path) -> dict:
 
 
 def converted(data: dict, cache_dir=None, region=None) -> Loaded:
-    """Convert a BlendConfig mapping, load the run YAML through the normal path (`hcwf.api._prepare`: the same steps as
+    """Convert a BlendConfig mapping, load the run YAML through the normal path (`hcwf.config.build.resolve_flat`: the same steps as
     `hcwf-run`) and build its Recipe and OnsetSetup. Computed thresholds are kept in cache_dir (a new temporary folder
     without one)."""
-    from hcwf import api
+    from hcwf.config.build import resolve_flat
     from hcwf.blend.recipe import recipe_from_config
     from hcwf.lib.onset_config import onset_setup
 
     conversion = convert_blend(data, region=region)
     tmp = Path(tempfile.mkdtemp(prefix="blend-run-"))
-    cfg = api._prepare(conversion.mapping, {}, False, tmp)
+    cfg = resolve_flat(conversion.mapping, write=False, tmp=tmp)
     cfg["cache_dir"] = str(cache_dir or tmp / "cache")
     setup = onset_setup(cfg)
     return Loaded(cfg, recipe_from_config(cfg, setup), setup, conversion)

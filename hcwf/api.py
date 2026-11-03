@@ -41,12 +41,6 @@ import xarray as xr
 from hcwf.utils import log as logs
 
 log = logging.getLogger(__name__)
-_NO_FILES = {"save_fig": False, "save_nc_spatial_far_mr_mae": False, "save_csv_score": False,
-             "save_nc_climatology": False, "save_onsets": False, "plot_spatial_far_mr_mae": False,
-             "plot_heatmap_bss_auc": False, "plot_reliability": False, "plot_climatology_onset": False,
-             "plot_panel_heatmap_error": False, "plot_panel_heatmap_skill": False, "plot_bar_bss_rpss_auc": False,
-             "plot_portrait": False, "show_plot": False, "show_panel": False, "explain_cells": None}
-"""Config values that turn every file-writing step off (write=False)."""
 
 
 @dataclass
@@ -80,64 +74,13 @@ class RunResult:
         return self._forecasts
 
 
-def _flat(source, overrides: dict) -> dict:
-    """The flat config of a path, Config, mapping or flat dict, with the keyword overrides applied and checked."""
-    from hcwf.config import Config
-    from hcwf.lib import config_schema as schema
-    from hcwf.lib.config_yaml import build_config
-
-    config_file = None
-    if isinstance(source, (str, Path)):
-        config_file = str(Path(source).expanduser().resolve())
-        flat = Config.from_yaml(config_file).to_flat(source=config_file)
-    elif isinstance(source, Config):
-        flat = source.to_flat()
-    elif isinstance(source, SimpleNamespace):
-        flat = dict(vars(source))
-    elif isinstance(source, dict) and ("model_list" in source or "obs_dir" in source):
-        flat = dict(source)
-    elif isinstance(source, dict):
-        flat = build_config(source, source="<mapping>")
-    else:
-        raise TypeError(f"hcwf.run needs a YAML path, a hcwf.config.Config or a mapping, got {type(source).__name__}")
-    errors: list[str] = []
-    for key, value in overrides.items():
-        field_ = schema.BY_KEY.get(key)
-        if field_ is None or field_.internal:
-            raise TypeError(f"unknown override '{key}'.{schema.suggest(key, [k for k in schema.BY_KEY])} Overrides "
-                            "are flat config keys, e.g. max_forecast_day, verification_window_list, start_date")
-        flat[key] = schema.normalise_value(field_, value, key, errors)
-        flat.setdefault("config_sources", {})[key] = "override"
-    schema.raise_errors(errors, "<overrides>")
-    flat["config_file"] = config_file
-    return flat
-
-
-def _prepare(source, overrides: dict, write: bool, tmp: Path | None) -> dict:
-    """The flat config of a run, finished (paths, lead window, run folder plan) and validated."""
-    from hcwf.lib import loader
-    from hcwf.lib.assertion import HCWFValidator
-
-    dic = _flat(source, overrides)
-    dic = loader._resolve_paths(dic)
-    loader.plan_run(dic, dic.get("config_file"), write)
-    HCWFValidator(dic).validate()
-    if not write:
-        for key, value in _NO_FILES.items():
-            if key in dic or key == "explain_cells":
-                dic[key] = value
-        if tmp is not None:
-            dic["dir_out"] = dic["dir_fig"] = str(tmp)
-            dic["cache_dir"] = None
-    return dic
-
-
 def check(cfg, overwrite: bool = False, **overrides):
     """The plan of a run as a hcwf.lib.check.CheckReport (``.text()``, ``.errors``, ``.warnings``, ``.ok``); runs nothing."""
+    from hcwf.config.build import resolve_flat
     from hcwf.lib.check import build_report
 
     with logs.session(logs.QUIET):
-        return build_report(_prepare(cfg, overrides, True, None), overwrite=overwrite)
+        return build_report(resolve_flat(cfg, overrides), overwrite=overwrite)
 
 
 def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = False, verbose: bool = False,
@@ -149,9 +92,11 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
     folder that already holds a run unless overwrite=True. quiet and verbose set how much is printed.
     Other keyword arguments override flat config keys.
     """
+    from hcwf.config.build import resolve_flat
+
     tmp = None if write else Path(tempfile.mkdtemp(prefix="hcwf_"))
     try:
-        dic = _prepare(cfg, overrides, write, tmp)
+        dic = resolve_flat(cfg, overrides, write=write, tmp=tmp)
         return execute(dic, write=write, overwrite=overwrite, verbosity=logs.verbosity_from(quiet, verbose))
     finally:
         if tmp is not None:
@@ -255,7 +200,7 @@ def _execute_blend(dic: dict, *, write: bool, overwrite: bool, verbosity: int) -
 
 
 def execute(dic: dict, *, write: bool, overwrite: bool, verbosity: int = logs.NORMAL) -> RunResult:
-    """Run the benchmark for a finished flat config (see _prepare) and return the RunResult.
+    """Run the benchmark for a finished flat config (see hcwf.config.build.resolve_flat) and return the RunResult.
 
     This is what ``hcwf-run`` and ``hcwf.run`` share: prepare the run folder (refusing or clearing an existing
     one), attach run.log, print the settings, write the resolved config, optionally explain cells and export the

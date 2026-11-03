@@ -21,7 +21,6 @@ import logging
 import os
 import sys
 import traceback
-from types import SimpleNamespace
 
 from hcwf.lib.assertion import HCWFConfigError
 from hcwf.lib.config_schema import ConfigSchemaError
@@ -68,11 +67,11 @@ def _argv_for(argv, path: str) -> list[str]:
 
 def _check(flags, cli_args=None) -> int:
     """`--check`: print the plan of the run (or why the config cannot be resolved); return the exit code."""
+    from hcwf.config.build import resolve_cli
     from hcwf.lib.check import build_report
-    from hcwf.lib.loader import load_run_config
 
     try:
-        dic = load_run_config(cli_args)
+        dic = resolve_cli(cli_args)
     except ConfigSchemaError as exc:
         print("\n".join(getattr(exc, "report", ())) or "(no datasets described)")
         print(f"\n{exc}\n\ncheck: the config cannot be resolved; nothing was run")
@@ -91,18 +90,11 @@ def _check(flags, cli_args=None) -> int:
 def _run(cfg, flags, cli_args=None) -> int:
     """Load (or take) a config and run it; the exit code: 0, or 1 after printing why it failed."""
     from hcwf.api import execute
-    from hcwf.lib import loader
-    from hcwf.lib.assertion import HCWFValidator
+    from hcwf.config.build import resolve_cli, resolve_flat
     from hcwf.lib.run_folder import RunExistsError
 
     try:
-        if cfg is None:
-            dic = loader.load_run_config(cli_args)
-        else:
-            dic = dict(vars(cfg)) if isinstance(cfg, SimpleNamespace) else dict(cfg)
-            if "run_paths" not in dic:
-                loader.plan_run(dic, dic.get("config_file"))
-            HCWFValidator(dic).validate()
+        dic = resolve_cli(cli_args) if cfg is None else resolve_flat(cfg)
     except (HCWFConfigError, FileNotFoundError) as e:
         print(f"Error: {e}")
         return 1

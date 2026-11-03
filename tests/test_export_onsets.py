@@ -17,6 +17,7 @@ import yaml
 from hcwf import export
 from hcwf.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
                            get_initialization_dates, load_history, load_imd_rainfall, load_thresholds)
+from hcwf.config.build import resolve_flat
 from hcwf.lib.config_yaml import build_config
 from hcwf.lib.onset_config import onset_setup
 from hcwf.onset import definition as definition_mod
@@ -94,7 +95,7 @@ def world(tmp_path_factory):
     _write_forecast(base / "DET", 0)
     _write_forecast(base / "ENS", MEMBERS)
     raws = {"DET": _raw(base, "DET", False), "ENS": _raw(base, "ENS", True)}
-    cfgs = {name: export._complete(build_config(raw)) for name, raw in raws.items()}
+    cfgs = {name: resolve_flat(raw) for name, raw in raws.items()}
     paths = {"DET": export.export_onsets(cfgs["DET"], sources=["observed", "DET", "climatology",
                                                                 "conditional_climatology"]),
              "ENS": export.export_onsets(cfgs["ENS"], sources=["ENS"])}
@@ -168,7 +169,7 @@ def test_overrides_and_threshold_hash_are_recorded(world):
     base = world.base
     raw = _raw(base, "DET", False, override={"wet_day": "at least 2 mm"})
     raw["output"]["data_dir"] = str(base / "out_override")
-    cfg = export._complete(build_config(raw))
+    cfg = resolve_flat(raw)
     path = export.export_onsets(cfg, sources=["observed"])["observed"]
     attrs = _open(path).attrs
     assert attrs["definition_overrides"] == "wet_day,reject if (dry_spell_check = false)"
@@ -287,7 +288,7 @@ def test_non_standard_calendar_observed_export(tmp_path):
         xr.Dataset({"precip": (("time", "lat", "lon"), rain, {"units": "mm"})},
                    coords={"time": time, "lat": LAT, "lon": LON}).to_netcdf(base / "obs" / f"{year}.nc")
     _write_forecast(base / "DET", 0)
-    cfg = export._complete(build_config(_raw(base, "DET", False)))
+    cfg = resolve_flat(_raw(base, "DET", False))
     path = export.export_onsets(cfg, sources=["observed"], out=base / "nl")["observed"]
     ds = export.open_onsets(path)
     assert ds.attrs["calendar"] == "noleap"

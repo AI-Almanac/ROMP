@@ -2,7 +2,7 @@
 import dataclasses
 
 from hcwf.lib import config_schema as schema
-from hcwf.lib import loader
+from hcwf.config import build as loader
 from hcwf.lib.control import init_dataclass
 from hcwf.lib.convention import Case, Setting
 

@@ -151,16 +151,16 @@ def test_a_converted_run_has_no_benchmark_settings_and_still_loads(tmp_path):
 
 def test_benchmark_keys_a_blend_run_does_state_are_kept(tmp_path):
     """Given dates are not replaced by the ones derived from blend.years; a run without a blend still needs them."""
-    from hcwf import api
+    from hcwf.config.build import resolve_flat
     from hcwf.lib.config_schema import ConfigSchemaError
 
     mapping = with_stub_data(C.convert_blend(minimal(tmp_path)).mapping, tmp_path / "stub")
-    stated = api._prepare({**mapping, "evaluation": {"start_date": [2002, 5, 1], "end_date": [2003, 6, 1],
-                                                     "start_year_clim": 2001, "end_year_clim": 2002}}, {}, False, tmp_path)
+    stated = resolve_flat({**mapping, "evaluation": {"start_date": [2002, 5, 1], "end_date": [2003, 6, 1],
+                                                     "start_year_clim": 2001, "end_year_clim": 2002}}, write=False, tmp=tmp_path)
     assert stated["start_date"] == (2002, 5, 1) and stated["config_sources"]["start_date"] == "run config"
     benchmark = {k: v for k, v in mapping.items() if k != "blend"}
     with pytest.raises(ConfigSchemaError, match="start_date"):
-        api._prepare(benchmark, {}, False, tmp_path)
+        resolve_flat(benchmark, write=False, tmp=tmp_path)
 
 
 def test_unknown_keys_and_missing_parts_are_reported_together_with_suggestions(tmp_path):
@@ -346,3 +346,17 @@ def test_saved_mme_weights_are_an_explicit_input_after_conversion(tmp_path):
     conversion = C.convert_blend(data)
     assert "weights_year_tag" not in conversion.mapping["blend"]["mme"]
     assert any("blend.mme.weights" in note and "_2000_2024" in note for note in conversion.notes)
+
+
+def test_a_blend_gets_the_blend_lead_window_through_every_entry(tmp_path):
+    """Path, Config, mapping, flat dict and command line all give a blend (1, max_forecast_day), not the benchmark window."""
+    from hcwf.config import Config
+    from hcwf.config.build import resolve_cli, resolve_flat
+
+    mapping = with_stub_data(C.convert_blend(minimal(tmp_path)).mapping, tmp_path / "stub")
+    path = tmp_path / "blend_run.yaml"
+    path.write_text(yaml.safe_dump(mapping))
+    flat = resolve_flat(mapping, write=False, tmp=tmp_path)
+    for dic in (flat, resolve_flat(path), resolve_flat(Config.from_mapping(mapping)), resolve_flat(dict(flat)),
+                resolve_cli(["-p", str(path)])):
+        assert dic["lead_window"] == (1, dic["max_forecast_day"]) and dic["onset_lead_lines"] == ()

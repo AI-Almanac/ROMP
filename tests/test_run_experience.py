@@ -24,7 +24,7 @@ from hcwf.lib import run_folder
 from hcwf.lib.config_yaml import build_config
 from hcwf.lib.convention import Setting
 from hcwf.lib.dataset_schema import DatasetError, parse_dataset
-from hcwf.lib.loader import load_run_config
+from hcwf.config.build import resolve_flat
 from hcwf.params.region_def import domain
 from hcwf.stats import detect as stats_detect
 from hcwf.stats import observed_cache
@@ -419,7 +419,7 @@ def test_the_cache_is_inactive_outside_a_run():
 def test_run_folder_name_has_region_definition_years_and_fingerprint(world, tmp_path):
     """The name is <region>_<definition>[+mod]_<years>_<4 hex>, at most 40 characters, next to the config file."""
     path = _fresh(world, tmp_path)
-    dic = load_run_config(["-p", str(path)])
+    dic = resolve_flat(path)
     paths = dic["run_paths"]
     assert re.fullmatch(r"ethiopia_icpac\+mod_2019-2020_[0-9a-f]{4}", paths.name) and len(paths.name) <= 40   # dry check off
     plain = {"region": "Ethiopia", "start_date": (2019, 5, 1), "end_date": (2020, 5, 31),
@@ -427,7 +427,7 @@ def test_run_folder_name_has_region_definition_years_and_fingerprint(world, tmp_
     assert run_folder.run_name(plain, "ab12cd") == "ethiopia_icpac_2019-2020_ab12"
     assert paths.root == tmp_path / "runs" / paths.name and paths.cache_dir == tmp_path / "runs" / ".cache"
     assert not (tmp_path / "runs").exists()   # planning creates nothing
-    modified = load_run_config(["-p", str(_fresh(world, tmp_path, onset={"override": {"wet_day": "at least 2 mm"}}))])
+    modified = resolve_flat(_fresh(world, tmp_path, onset={"override": {"wet_day": "at least 2 mm"}}))
     assert re.fullmatch(r"ethiopia_icpac\+mod_2019-2020_[0-9a-f]{4}", modified["run_paths"].name)
     assert modified["run_paths"].name != paths.name
     assert modified["run_paths"].fingerprint != paths.fingerprint
@@ -435,9 +435,9 @@ def test_run_folder_name_has_region_definition_years_and_fingerprint(world, tmp_
 
 def test_fingerprint_follows_results_not_output_switches(world, tmp_path):
     """Plotting and the backend leave the fingerprint alone; windows and data change it."""
-    base = load_run_config(["-p", str(_fresh(world, tmp_path))])
-    plots = load_run_config(["-p", str(_fresh(world, tmp_path, output={"plot_reliability": True}, onset={"backend": "reference"}))])
-    other = load_run_config(["-p", str(_fresh(world, tmp_path, evaluation={"verification_windows": [[1, 8]], "tolerances": [3]}))])
+    base = resolve_flat(_fresh(world, tmp_path))
+    plots = resolve_flat(_fresh(world, tmp_path, output={"plot_reliability": True}, onset={"backend": "reference"}))
+    other = resolve_flat(_fresh(world, tmp_path, evaluation={"verification_windows": [[1, 8]], "tolerances": [3]}))
     assert base["run_paths"].fingerprint == plots["run_paths"].fingerprint != other["run_paths"].fingerprint
 
 
@@ -451,14 +451,14 @@ def test_long_names_are_cut_to_forty_characters():
 
 def test_subfolders_only_when_they_would_hold_more_than_one_file(world, tmp_path):
     """Scores and onsets get folders here; figures (nothing planned) stay in the run folder."""
-    paths = load_run_config(["-p", str(_fresh(world, tmp_path))])["run_paths"]
+    paths = resolve_flat(_fresh(world, tmp_path))["run_paths"]
     assert paths.dir_out == paths.root / "scores" and paths.onsets == paths.root / "onsets"
     assert paths.dir_fig == paths.root
-    quiet = load_run_config(["-p", str(_fresh(world, tmp_path, output={
-        "save_nc_spatial_far_mr_mae": False, "save_nc_climatology": False}))])["run_paths"]
+    quiet = resolve_flat(_fresh(world, tmp_path, output={
+        "save_nc_spatial_far_mr_mae": False, "save_nc_climatology": False}))["run_paths"]
     assert quiet.dir_out == quiet.root
-    figs = load_run_config(["-p", str(_fresh(world, tmp_path, output={
-        "plot_spatial_far_mr_mae": True, "plot_climatology_onset": True}))])["run_paths"]
+    figs = resolve_flat(_fresh(world, tmp_path, output={
+        "plot_spatial_far_mr_mae": True, "plot_climatology_onset": True}))["run_paths"]
     assert figs.dir_fig == figs.root / "figures"
 
 
@@ -500,8 +500,8 @@ def test_explicit_data_dir_wins_and_keeps_the_old_file_names(world, tmp_path):
 def test_export_goes_to_the_runs_onsets_folder_with_short_names(world, tmp_path):
     """hcwf-run export in a run folder writes onsets/<source>.nc."""
     path = _fresh(world, tmp_path)
-    paths = export.export_onsets(export.load_cfg(path), sources=["observed", "DET"])
-    folder = tmp_path / "runs" / load_run_config(["-p", str(path)])["run_paths"].name / "onsets"
+    paths = export.export_onsets(path, sources=["observed", "DET"])
+    folder = tmp_path / "runs" / resolve_flat(path)["run_paths"].name / "onsets"
     assert {k: v for k, v in paths.items()} == {"observed": folder / "observed.nc", "DET": folder / "DET.nc"}
     assert all(p.exists() for p in paths.values())
 
@@ -613,7 +613,7 @@ def test_help_lists_the_run_control_flags(world, tmp_path):
 
 def _dic(world, tmp_path):
     """The resolved flat config of the synthetic run."""
-    return load_run_config(["-p", str(_fresh(world, tmp_path))])
+    return resolve_flat(_fresh(world, tmp_path))
 
 
 def test_hint_lat_order_and_grid_mismatch(tmp_path):
