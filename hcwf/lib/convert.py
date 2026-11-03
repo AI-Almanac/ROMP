@@ -19,7 +19,8 @@ from hcwf.lib.dataset_schema import suggest
 
 SECTION_ORDER = ("observations", "reference", "models", "onset", "units", "blend", "evaluation", "metrics", "output")
 INTERNAL_KEYS = ("dataset_report", "config_sources", "lead_window", "onset_lead_lines", "run_paths",
-                 "config_file", "cache_dir", "short_names", "run_overrides", "accumulation_detected")
+                 "config_file", "cache_dir", "short_names", "run_overrides", "accumulation_detected",
+                 "ref_model_accumulation_detected")
 """Keys the loader adds; they are not part of a run config."""
 _MODEL_LISTS = ("model_list", "model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list",
                 "model_dims_list", "model_paths_list")
@@ -73,6 +74,8 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
             if value:
                 sections["observations"][_OBS_LISTED[key]] = plain(value)
             continue
+        if key == "ref_model_accumulation" and (flat.get("ref_model_accumulation_detected") or value == "auto"):
+            continue   # a detected value is re-detected on the next run
         field = schema.BY_KEY.get(key)
         if field is None:
             errors.append(f"unknown key '{key}'.{suggest(key, schema.BY_KEY)}")

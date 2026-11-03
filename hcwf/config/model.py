@@ -3,8 +3,8 @@
     rc = resolve("run.yaml")
     for case in rc.cases():                     # every model with every verification window
         case.model.dir, case.window.span, case.window.tolerance
-    rc.reference_cases()                        # the reference, deterministic rule (models[0]'s accumulation)
-    rc.reference_cases(like=model)              # the reference, ensemble rule (that model's, and reference.dims)
+    rc.reference_cases()                        # the reference, with its own accumulation, daily boundary and dims
+    rc.reference_cases(for_model=model)         # the same source; the cases are named after that forecast model
 
 ``RunConfig`` keeps the resolved flat record (``rc.values``, read-only): run.yaml, the fingerprint and
 RunResult.config are computed from it. The specs are projections of that record, built once in ``from_flat``. They
@@ -159,15 +159,17 @@ class ReferenceSpec:
     unit_cvt: float | None
     dims: Dims | None
     units: UnitsSpec | None
+    accumulation: str | None = None
+    accumulation_detected: bool | None = None
+    daily_boundary: str | None = None
 
-    def as_model(self, like: ModelSpec, *, dims: Dims | None) -> ModelSpec:
-        """The reference as a source to read: its own name, data and unit conversion, and `like`'s accumulation and daily
-        boundary (the two rules of today's flows, written once: the deterministic flow passes models[0] and no dims, the
-        ensemble flow the current model and `self.dims`; `RunConfig.reference_cases` does both)."""
+    def as_model(self) -> ModelSpec:
+        """The reference as a source to read: its own name, data, unit conversion, dims, accumulation and daily boundary
+        (a climatology reference has no accumulation or boundary of its own: None)."""
         return ModelSpec(name=self.model, dir=self.dir, var=self.var, unit_cvt=self.unit_cvt,
-                         file_pattern=self.file_pattern, accumulation=like.accumulation,
-                         accumulation_detected=like.accumulation_detected, daily_boundary=like.daily_boundary,
-                         dims=dims, paths=None, units=self.units)
+                         file_pattern=self.file_pattern, accumulation=self.accumulation,
+                         accumulation_detected=self.accumulation_detected, daily_boundary=self.daily_boundary,
+                         dims=self.dims, paths=None, units=self.units)
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,7 +466,9 @@ def _project_reference(v, units) -> ReferenceSpec:
                          climatology_cv=_get(v, "climatology_cv"), dir=_get(v, "ref_model_dir"),
                          file_pattern=_get(v, "ref_model_file_pattern"), var=_get(v, "ref_model_var"),
                          unit_cvt=_get(v, "ref_model_unit_cvt"), dims=_pairs(_get(v, "ref_model_dims")),
-                         units=units[name])
+                         units=units[name], accumulation=_get(v, "ref_model_accumulation"),
+                         accumulation_detected=_get(v, "ref_model_accumulation_detected"),
+                         daily_boundary=_get(v, "ref_model_daily_boundary"))
 
 
 def _project_evaluation(v) -> EvaluationSpec:
@@ -610,21 +614,19 @@ class RunConfig:
         """Every model with every window, in the order of product(model_list, verification_window_list)."""
         return tuple(Case(m, w) for m in self.models for w in self.evaluation.windows)
 
-    def reference_cases(self, like: ModelSpec | None = None) -> tuple[Case, ...]:
-        """The reference with every window. Two rules, kept for parity: with no `like` (the deterministic flow) the
-        reference has models[0]'s accumulation and daily boundary and no model dims; with `like` (the ensemble flow, one
-        model at a time) it has that model's accumulation and daily boundary and `reference.dims`."""
-        if like is None:
-            source, for_model = self.reference.as_model(self.models[0], dims=None), None
-        else:
-            source, for_model = self.reference.as_model(like, dims=self.reference.dims), like.name
-        return tuple(Case(source, w, reference=True, for_model=for_model) for w in self.evaluation.windows)
+    def reference_cases(self, for_model: ModelSpec | None = None) -> tuple[Case, ...]:
+        """The reference with every window, read with the reference's own settings (`ReferenceSpec.as_model`: its data,
+        accumulation, daily boundary and dims) in both flows. `for_model` (the ensemble flow, one forecast model at a time)
+        only names the cases after that model, so that each model's results keep their own file names."""
+        source = self.reference.as_model()
+        name = None if for_model is None else for_model.name
+        return tuple(Case(source, w, reference=True, for_model=name) for w in self.evaluation.windows)
 
     def first_case(self, model: str, *, reference_as: str | None = None) -> Case:
         """The first window's case of one model (the detection does not depend on the window, so it stands for all).
 
         With `reference_as` (a source name: "climatology" or "conditional_climatology") the case is the reference's, under
-        that name, built with the deterministic rule (`reference_cases()`); `model` is then ignored."""
+        that name, built by `reference_cases()`; `model` is then ignored."""
         if reference_as is None:
             return next(c for c in self.cases() if c.model.name == model)
         case = self.reference_cases()[0]

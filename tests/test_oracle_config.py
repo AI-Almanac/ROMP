@@ -243,21 +243,20 @@ def test_cases_and_case_kwargs_agree(configs):
             frozen = old.case_kwargs(dic, dic["ref_model"], reference=True)
             assert frozen.pop("model_list") == (dic["ref_model"],)
             live = flat_values.model_kwargs(rc, dic["ref_model"], reference_as=dic["ref_model"])
-            assert live.pop("model_list") == dic["model_list"] and frozen == live
+            assert live.pop("model_list") == dic["model_list"] and {**frozen, **flat_values.reference_settings(dic)} == live
 
 
-def test_reference_rules_are_the_two_documented_ones(configs):
-    """Deterministic flow: the reference inherits models[0]'s accumulation and boundary and has no model_dims.
-    Ensemble flow: the current model's own, and ref_model_dims (design section 1.5)."""
+def test_oracles_two_reference_rules_are_the_ones_replaced(configs):
+    """What the oracle (the pre-R2 flows) gave the reference, which the live code no longer does: the deterministic flow
+    gave it models[0]'s accumulation and boundary and no model_dims; the ensemble flow the current model's and
+    ref_model_dims. The live reference takes its own (tests/test_runconfig.py, tests/test_reference_own_settings.py)."""
     dic = flat_config(configs["model_reference"])
-    first = dic["model_list"][0]
     det = old.deterministic_reference_cases(dic)
     assert len(det) == len(dic["verification_window_list"])
     for combi, kw in det:
         assert kw["model"] == dic["ref_model"] and kw["model_dims"] is None
         assert kw["accumulation"] == dic["accumulation_list"][0] and kw["daily_boundary"] == dic["daily_boundary_list"][0]
         assert kw["model_dir"] == dic["ref_model_dir"] and kw["unit_cvt"] == dic["ref_model_unit_cvt"]
-    # case_kwargs(reference=True) follows the deterministic rule
     kw = old.case_kwargs(dic, dic["ref_model"], reference=True)
     assert kw["accumulation"] == dic["accumulation_list"][0] and kw["model_dims"] is None
     ens = old.ensemble_cases(dic)
@@ -270,11 +269,11 @@ def test_reference_rules_are_the_two_documented_ones(configs):
 
 
 def test_flow_case_dicts_have_the_documented_shape(configs):
-    """The flows' case dicts hold 147 keys (Setting 124 + Case 23); the setting wins in the deterministic flow and
+    """The flows' case dicts hold 150 keys (Setting 127, the schema's other keys, + Case 23); the setting wins in the deterministic flow and
     the case in the ensemble flow, which agree because the field sets do not overlap."""
     dic = flat_config(configs["two_models_windows"])
     for combi, kw in old.deterministic_cases(dic):
-        assert len(kw) == 147
+        assert len(kw) == 150
         assert kw["model"] == combi[0] and kw["verification_window"] == combi[1]
     for (combi, prep, kw), (_, det) in zip(old.ensemble_cases(dic), old.deterministic_cases(dic)):
         assert prep.keys() == kw.keys() == det.keys()

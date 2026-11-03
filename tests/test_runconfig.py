@@ -61,22 +61,22 @@ def test_cases_are_the_flows_loop(runs):
 @pytest.mark.parametrize("flow", FLOWS)
 def test_case_kwargs_equal_the_oracle_merge(runs, flow):
     """case_kwargs(rc, case, flow) is {**asdict(Setting), **asdict(Case)} of the oracle: same keys in the same order, equal
-    values, for every model and window, and for the reference cases of the flow's rule."""
+    values, for every model and window, and for the reference cases (the oracle's, with the reference's own accumulation,
+    daily boundary and dims in place of the two old rules)."""
     for name, (dic, rc) in runs.items():
         for case, (combi, flow_kw) in zip(rc.cases(), old.deterministic_cases(dic)):
             expected = _merge(dic, _oracle_case(dic, combi))
             kw = flat_values.case_kwargs(rc, case, flow)
             assert kw == expected == flow_kw, (name, combi)
             assert list(kw) == list(expected), (name, combi)
+        own = flat_values.reference_settings(dic)
         if flow == "deterministic":
-            references = [(rc.reference_cases(), expected) for expected in [old.deterministic_reference_cases(dic)]]
-            pairs = list(zip(references[0][0], [kw for _, kw in references[0][1]]))
+            pairs = [(c, {**kw, **own}) for c, (_, kw) in zip(rc.reference_cases(), old.deterministic_reference_cases(dic))]
         else:
             pairs = []
-            ensemble = old.ensemble_reference_cases(dic)
-            per_model = iter(kw for _, kw in ensemble)
+            per_model = iter(kw for _, kw in old.ensemble_reference_cases(dic))
             for model in rc.models:
-                pairs += [(c, next(per_model)) for c in rc.reference_cases(like=model)]
+                pairs += [(c, {**next(per_model), **own}) for c in rc.reference_cases(for_model=model)]
         assert pairs, name
         for case, expected in pairs:
             assert case.reference
@@ -91,23 +91,26 @@ def test_ensemble_cases_have_the_oracles_prepare_dict(runs):
             assert case.window.bins(rc.evaluation.day_bins) == narrowed["day_bins"]
 
 
-def test_reference_rules(runs):
-    """Deterministic: models[0]'s accumulation and daily boundary, no model dims. Ensemble: the current model's, and
-    reference.dims. The case of an ensemble reference is named after the forecast model."""
+def test_reference_settings_are_its_own(runs):
+    """One rule in both flows: the reference is read with its own accumulation, daily boundary and dims, not a forecast
+    model's. Only the ensemble flow's case name follows the forecast model."""
     dic, rc = runs["model_reference"]
     first, second = rc.models
-    assert first.accumulation != second.accumulation
+    assert first.accumulation != second.accumulation == rc.reference.accumulation   # DETC, accumulated, is the reference
+    assert rc.reference.accumulation_detected and rc.reference.daily_boundary is None
     for case in rc.reference_cases():
         assert case.reference and case.for_model is None and case.model.name == "DETC"
-        assert (case.model.accumulation, case.model.daily_boundary) == (first.accumulation, first.daily_boundary)
-        assert case.model.dims is None and case.model.dir == rc.reference.dir and case.name.startswith("DETC_")
+        assert case.model == rc.reference.as_model() and case.model.dir == rc.reference.dir
+        assert case.model.accumulation == rc.reference.accumulation != first.accumulation
+        assert case.model.dims == rc.reference.dims and case.name.startswith("DETC_")
     for model in rc.models:
-        for case in rc.reference_cases(like=model):
-            assert case.model.accumulation == model.accumulation and case.model.dims == rc.reference.dims
+        for case, plain in zip(rc.reference_cases(for_model=model), rc.reference_cases()):
+            assert case.model == plain.model and case.window == plain.window
             assert case.for_model == model.name and case.name.startswith(model.name + "_")
             assert case.model.name == "DETC" and case.key[0] == "DETC"
     assert rc.reference.kind == "model"
-    assert runs["det_climatology"][1].reference.kind == "climatology"
+    clim = runs["det_climatology"][1].reference
+    assert clim.kind == "climatology" and clim.accumulation is None and clim.daily_boundary is None
 
 
 @pytest.mark.parametrize("flow", FLOWS)
@@ -116,7 +119,7 @@ def test_from_case_kwargs_round_trips(runs, flow):
     for name, (dic, rc) in runs.items():
         cases = list(rc.cases())
         cases += rc.reference_cases() if flow == "deterministic" else \
-            [c for m in rc.models for c in rc.reference_cases(like=m)]
+            [c for m in rc.models for c in rc.reference_cases(for_model=m)]
         for case in cases:
             kw = flat_values.case_kwargs(rc, case, flow)
             rc2, case2, selection = typed_io.from_case_kwargs(kw)

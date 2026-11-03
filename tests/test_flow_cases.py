@@ -36,7 +36,9 @@ def test_deterministic_flow_gives_the_oracles_kwargs(configs, monkeypatch, name)
     monkeypatch.setattr(spatial_far_mr_mae, "create_spatial_far_mr_mae", lambda *a: {})
     monkeypatch.setattr(spatial_far_mr_mae, "add_back_dated_map", lambda *a: None)
     spatial_far_mr_mae.spatial_far_mr_mae_map(rc)
-    expected = [kw for _, kw in old.deterministic_cases(dic) + old.deterministic_reference_cases(dic)]
+    own = flat_values.reference_settings(dic)   # the reference's own settings replace the oracle's models[0] rule
+    expected = [kw for _, kw in old.deterministic_cases(dic)] + \
+        [{**kw, **own} for _, kw in old.deterministic_reference_cases(dic)]
     assert len(seen) == len(expected) == 2 * 2 + 2
     for (rc_, case), want in zip(seen, expected):
         assert rc_ is rc
@@ -74,8 +76,8 @@ def test_ensemble_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
 
 
 def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
-    """The reference each model is scored against is RunConfig.reference_cases(like=model), with the ensemble rule:
-    the rule lives there only (metrics/skill.py asks for it)."""
+    """The reference each model is scored against is RunConfig.reference_cases(for_model=model), the reference's own
+    settings: the rule lives there only (metrics/skill.py asks for it)."""
     dic, rc = _run(configs, "model_reference", True)
     read = []
     monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: read.append(model) or Pending.finished(table))
@@ -84,14 +86,15 @@ def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
     for model in rc.models:
         read.clear()
         prepared = skill.prepare_pairs(rc, model)
-        assert read == [model, rc.reference_cases(like=model)[0].model]
+        assert read == [model, rc.reference_cases(for_model=model)[0].model]
         assert prepared.reference is table and prepared.climatology is None
-    # ... and it is what the oracle's frozen reference_model_kwargs gives for each model's first window
+    # ... and it is the oracle's frozen reference_model_kwargs for each model's first window, with the reference's own
+    # accumulation and daily boundary in place of the forecast model's
     firsts = {}
     for combi, kw in old.ensemble_reference_cases(dic):
-        firsts.setdefault(combi[0], kw)
+        firsts.setdefault(combi[0], {**kw, **flat_values.reference_settings(dic)})
     for model in rc.models:
-        assert flat_values.case_kwargs(rc, rc.reference_cases(like=model)[0], "ensemble") == firsts[model.name]
+        assert flat_values.case_kwargs(rc, rc.reference_cases(for_model=model)[0], "ensemble") == firsts[model.name]
 
 
 def test_ensemble_flow_does_nothing_for_a_deterministic_run(configs):

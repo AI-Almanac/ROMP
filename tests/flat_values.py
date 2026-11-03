@@ -17,7 +17,8 @@ from hcwf.config.model import Case, RunConfig, Selection
 from hcwf.lib import config_schema as schema
 
 FLOWS = ("deterministic", "ensemble")
-"""The two scoring flows. They differ in how the reference model is built (RunConfig.reference_cases)."""
+"""The two scoring flows. They build the reference the same way (its own settings); the ensemble flow names its cases after
+the forecast model (RunConfig.reference_cases)."""
 SELECTION_KWARGS = {"keep_unit_ids": "keep_unit_ids", "member_ids": "member_ids", "max_member": "max_member",
                     "issue_dates": "issue_dates", "first_lead": "first_lead", "last_lead": "last_lead", "model_files_years": "model_files_years",
                     "obs_files_years": "obs_files_years", "model_paths": "model_paths", "grid_point": "grid_point",
@@ -53,7 +54,7 @@ def case_kwargs(rc: RunConfig, case: Case, flow: str, selection: Selection | Non
     """The settings and the case's own values as one dict, as the old code's `**case_cfg`.
 
     The settings part is the run's flat record (`_setting_part`); the case part comes from the typed case. For a reference case `flow` is "deterministic" or "ensemble" and must be the flow
-    that built it with `rc.reference_cases` (no `like` or `like`): the case then has that flow's rule. day_bins are the
+    that built it with `rc.reference_cases` (no `for_model` or `for_model`): the cases differ in their name only. day_bins are the
     run's whole bins; the ensemble flow's create_score_results narrows them to the window with `Window.bins`.
     A `selection` adds its keys that are set.
     """
@@ -79,8 +80,16 @@ def model_kwargs(rc: RunConfig, model: str, *, reference_as: str | None = None, 
     """The kwargs of one model's first window (the detection does not depend on the window, so it stands for all).
 
     With `reference_as` (a source name: "climatology" or "conditional_climatology") the case is the reference's, under
-    that name, built with the deterministic rule (`RunConfig.reference_cases()`); `model` is then ignored."""
+    that name, built by `RunConfig.reference_cases()`; `model` is then ignored."""
     return case_kwargs(rc, rc.first_case(model, reference_as=reference_as), "deterministic", selection)
+
+
+def reference_settings(values: Mapping) -> dict:
+    """The case keys a reference has of its own, from a flat record: its accumulation, daily boundary and dims (None for a
+    climatology reference, which has none). The oracle gave the reference models[0]'s accumulation and boundary and, in the
+    deterministic flow, no dims; tests lay these over the oracle's reference kwargs."""
+    return {"accumulation": values.get("ref_model_accumulation"), "daily_boundary": values.get("ref_model_daily_boundary"),
+            "model_dims": values.get("ref_model_dims")}
 
 
 def selection_kwargs(selection: Selection) -> dict:

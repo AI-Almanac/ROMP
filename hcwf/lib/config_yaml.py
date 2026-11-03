@@ -254,7 +254,8 @@ def _resolve_reference(config, sources, block, datasets, errors):
             entry, _ = _entry_from_dataset(ds)
             for flat, key in (("ref_model", "name"), ("ref_model_dir", "path"), ("ref_model_file_pattern", "file_pattern"),
                               ("ref_model_var", "variable"), ("ref_model_unit_cvt", "unit_cvt"),
-                              ("ref_model_dims", "dims")):
+                              ("ref_model_dims", "dims"), ("ref_model_accumulation", "accumulation"),
+                              ("ref_model_daily_boundary", "daily_boundary")):
                 if flat not in config and (key in entry or key == "unit_cvt"):
                     config[flat] = ds.name or ds.id if key == "name" else (ds.unit_cvt if key == "unit_cvt" else entry[key])
                     sources[flat] = f"dataset '{ds.id}'"
@@ -267,6 +268,35 @@ def _resolve_reference(config, sources, block, datasets, errors):
             config["ref_model_unit_cvt"] = unit_factor(block["units"], "reference.units")
         except DatasetError as exc:
             errors.append(str(exc))
+
+
+def _resolve_reference_settings(config, sources, given_units, report):
+    """The accumulation of a reference model's files (and its daily boundary, given only), resolved as a forecast model's
+    are: a given `reference.accumulation` is kept, otherwise it is detected from the first file with the same detection
+    (dataset_detect.resolve_entry), and "auto" (worked out when read) if the files say nothing. A climatology reference
+    has no files of its own and no settings."""
+    if str(config.get("ref_model", "climatology")).endswith("climatology") or not config.get("ref_model_dir"):
+        return
+    entry = {"name": config["ref_model"], "path": expand_path(config["ref_model_dir"]),
+             "variable": config.get("ref_model_var"), "file_pattern": config.get("ref_model_file_pattern")}
+    if config.get("ref_model_dims"):
+        entry["dims"] = config["ref_model_dims"]
+    if config.get("ref_model_unit_cvt") is not None:
+        entry["unit_cvt"] = config["ref_model_unit_cvt"]
+    elif given_units:
+        entry["units"] = given_units
+    for key, flat in (("accumulation", "ref_model_accumulation"), ("daily_boundary", "ref_model_daily_boundary")):
+        if config.get(flat):
+            entry[key] = config[flat]
+    entry = {k: v for k, v in entry.items() if v is not None}
+    res = detect.resolve_entry(entry, "forecast", sources={}, detect_lead_label=False, lead_label_default=True)
+    if not config.get("ref_model_accumulation"):
+        config["ref_model_accumulation"] = res.values.get("accumulation") or "auto"
+        config["ref_model_accumulation_detected"] = any(
+            l.key == "accumulation" and l.how.startswith("detected") for l in res.lines)
+        sources["ref_model_accumulation"] = "detected" if config["ref_model_accumulation_detected"] else "default"
+    report.append(f"reference {config['ref_model']}: accumulation {config['ref_model_accumulation']}"
+                  + (f", days cut at {config['ref_model_daily_boundary']}" if config.get("ref_model_daily_boundary") else ""))
 
 
 def _check_blend(config, errors):
@@ -409,6 +439,7 @@ def build_config(raw, source="<config>") -> dict:
         errors.append("'mask' and 'nc_mask' are both set. Fix: use one; `nc_mask: file.nc` is the old flat key "
                       "(it also applies the land and country masks implicitly), `mask: {file: file.nc}` the new section")
     _derive(config, sources, errors)
+    _resolve_reference_settings(config, sources, special["reference"].get("units"), report)
     _check_blend(config, errors)
     skip = _MODEL_LISTS if any(e.startswith(("'models", "missing required key 'models'")) for e in errors) else ()
     filled = schema.apply_defaults(config, errors, skip=skip)

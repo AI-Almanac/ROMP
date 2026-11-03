@@ -42,9 +42,9 @@ def _climatology_pairs(clim_onset, rc, case, select):
 
 
 def _reference_model(rc, model):
-    """The reference as a source to read when `model` is the forecast model it is scored against (the ensemble flow's rule,
+    """The reference as a source to read when `model` is the forecast model it is scored against (its own settings,
     written once in RunConfig.reference_cases)."""
-    return rc.reference_cases(like=model)[0].model
+    return rc.reference_cases(for_model=model)[0].model
 
 
 def prepare_pairs(rc, model, select=Selection()):

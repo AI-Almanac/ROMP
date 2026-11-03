@@ -113,6 +113,10 @@ an extension channel: blend and export add keys that are not in the schema (`kee
     `skill.reference_model_kwargs` (skill.py:16) instead: the **current model's** accumulation and boundary, and
     `ref_model_dims`.
   * `export.case_kwargs(reference=True)` follows the deterministic rule. Parity requires keeping both rules (§4 Q2).
+    **Superseded (Q2 decision, after R2):** both rules are replaced by one: the reference is read with its own
+    `accumulation`, `daily_boundary` and `dims` (`reference.accumulation` / `.daily_boundary` / `.dims`, the accumulation
+    detected from the reference files like a model's); `RunConfig.reference_cases(for_model=...)` only names the ensemble
+    flow's cases after the forecast model.
 * The 24-entry `cache_key` (bin_skill_score.py:59-84) holds only run-wide values plus per-model values. Within one
   run it is equivalent to the model name.
 

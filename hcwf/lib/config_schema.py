@@ -527,6 +527,13 @@ def _fields() -> tuple[Field, ...]:
               nullable=True, internal=True),
         Field("ref_model_dims", "dims", "dimension names of the reference files", None, "reference", "dims",
               nullable=True, fill=False),
+        Field("ref_model_accumulation", "str", "accumulation of the reference model's files: 'daily', 'since_init' or "
+              "'auto' (default: detected from the first file; only a reference model has one)", None, "reference",
+              "accumulation", choices=("daily", "since_init", "auto"), nullable=True, fill=False),
+        Field("ref_model_daily_boundary", "str", "UTC clock time at which the reference model's days are cut, e.g. "
+              "'03 UTC' (default: none)", None, "reference", "daily_boundary", nullable=True, fill=False),
+        Field("ref_model_accumulation_detected", "bool", "whether ref_model_accumulation was detected, not given",
+              False, nullable=True, fill=False, internal=True),
     ]
     onset = [
         Field("onset_definition", "str", "registry id or path of a definition YAML (null: the region's)", None,
