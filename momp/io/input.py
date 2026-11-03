@@ -274,7 +274,7 @@ def _stream_reference(setup, years, kwargs, source):
             raise _NotContiguous
         if out is None:
             shape = one.tenths.shape[:-1] + (total,)
-            out = DailyRain(tenths=np.empty(shape, dtype=np.int32), missing=np.empty(shape, dtype=bool),
+            out = DailyRain(tenths=np.empty(shape, dtype=one.tenths.dtype), missing=np.empty(shape, dtype=bool),
                             dims=one.dims, coords={**one.coords, "time": np.empty(total, dtype="datetime64[ns]")},
                             year=np.empty(total, dtype=np.int64), month=np.empty(total, dtype=np.int64),
                             day=np.empty(total, dtype=np.int64), calendar=one.calendar,

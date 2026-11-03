@@ -109,3 +109,33 @@ def test_reference_year_is_the_year_ingested_alone(tmp_path, monkeypatch):
     assert io_input.reference_year(2003, {**config, "obs_var": "other"}, boundary) is None  # other observations
     io_input.clear_obs_cache()
     assert not io_input.reference_held()
+
+
+def test_shared_reference_rain_keeps_exact_rain_in_millimetres(tmp_path, monkeypatch):
+    """With rain_resolution exact, the multi-year reference rain is float mm, equal to each year ingested alone.
+
+    It was preallocated as int32, which truncated exact rain to whole mm and made computed thresholds ~10x too low."""
+    from momp.io import input as io_input
+    from momp.lib.onset_config import onset_setup
+    from momp.onset.ingest import ingest
+
+    _obs_files(tmp_path / "obs", range(2000, 2007))
+    monkeypatch.setattr(io_input, "region_select", lambda ds, **kwargs: ds)
+    config = {**_reference_config(tmp_path), "rain_resolution": "exact"}
+    io_input.clear_obs_cache()
+    io_input._loaded_thresholds.clear()
+    thresholds = io_input.load_thresholds(**config)
+    boundary = onset_setup(config).ingest_boundary
+    for year in (2000, 2005):
+        shared = io_input.reference_year(year, config, boundary)
+        alone = ingest(io_input.load_imd_rainfall(year, **config), day_boundary=boundary, units="mm",
+                       rain_resolution="exact")
+        assert shared.tenths.dtype.kind == "f"
+        np.testing.assert_array_equal(shared.tenths, alone.tenths)
+    tenths = {**config, "rain_resolution": None}
+    io_input.clear_obs_cache()
+    io_input._loaded_thresholds.clear()
+    coarse = io_input.load_thresholds(**tenths)
+    for name in thresholds:   # exact and tenths thresholds agree to the rounding of the daily rain, not by 10x
+        np.testing.assert_allclose(thresholds[name].values, coarse[name].values, rtol=0.05, equal_nan=True)
+    io_input.clear_obs_cache()
