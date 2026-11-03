@@ -69,6 +69,12 @@ class MaskSpec:
     file: a 0/1 NetCDF mask (variable, keep_value) or a shapefile / GeoJSON. condition: {file, variable, above,
     below}, a mask from a field. cell_rule and overlap_fraction: how shapes (and finer mask files) are turned
     into data cells. resolution: Natural Earth resolution of land and country shapes.
+
+    The last four fields are not read from a config; ``default_mask`` sets them for the implicit masks.
+    land_resolution: resolution of the land shape if not ``resolution``. boundary: ``inclusive`` (a cell centre on
+    the shape's edge is inside) or ``strict`` (only inside the edge), for the centre rule. regrid: how a finer mask
+    file is brought to the data grid, ``area`` (kept share) or ``nearest`` (the nearest mask cell). allow_empty: a
+    mask that keeps no cell is not an error.
     """
 
     land: bool = False
@@ -80,6 +86,10 @@ class MaskSpec:
     cell_rule: str = "centre"
     overlap_fraction: float = 0.5
     resolution: str = "50m"
+    land_resolution: str | None = None
+    boundary: str = "inclusive"
+    regrid: str = "area"
+    allow_empty: bool = False
 
     @classmethod
     def from_mapping(cls, raw) -> "MaskSpec":
@@ -209,10 +219,10 @@ def cell_shares(geom, lat, lon):
     return rows, cols, share.reshape(rows.size, cols.size)
 
 
-def rasterise(geom, lat, lon, rule="centre", fraction=0.5) -> np.ndarray:
+def rasterise(geom, lat, lon, rule="centre", fraction=0.5, strict=False) -> np.ndarray:
     """The cells of the grid (ascending centres lat, lon) kept by a shape under the cell rule; shape (nlat, nlon).
 
-    centre: the cell centre is inside the shape (on its boundary counts as inside). overlap_fraction: the part
+    centre: the cell centre is inside the shape (on its boundary counts as inside unless `strict`). overlap_fraction: the part
     of the cell's area (planar, in degrees squared) inside the shape is at least `fraction` (see cell_shares).
     The shape is in longitude -180..180; cell longitudes are wrapped into that range.
     """
@@ -231,7 +241,7 @@ def rasterise(geom, lat, lon, rule="centre", fraction=0.5) -> np.ndarray:
         return out
     shapely.prepare(geom)
     xx, yy = np.meshgrid(wrapped[cols], lat[rows])
-    out[np.ix_(rows, cols)] = shapely.intersects_xy(geom, xx, yy)
+    out[np.ix_(rows, cols)] = (shapely.contains_xy if strict else shapely.intersects_xy)(geom, xx, yy)
     return out
 
 
@@ -310,12 +320,17 @@ def country_geometry(names, resolution):
     return shapely.union_all(chosen), matched, path
 
 
+_LAND_GEOMETRY: dict = {}
+
+
 def land_geometry(resolution):
-    """The union of the Natural Earth land polygons and the shapefile path."""
+    """The union of the Natural Earth land polygons and the shapefile path, cached."""
     import shapely
 
-    path, records = natural_earth_records(resolution, "land")
-    return shapely.union_all([_make_valid(r.geometry) for r in records]), path
+    if resolution not in _LAND_GEOMETRY:
+        path, records = natural_earth_records(resolution, "land")
+        _LAND_GEOMETRY[resolution] = (shapely.union_all([_make_valid(r.geometry) for r in records]), path)
+    return _LAND_GEOMETRY[resolution]
 
 
 def shape_file_geometry(path):
@@ -418,13 +433,13 @@ def _nearest(values, targets) -> tuple[np.ndarray, np.ndarray]:
     return pick, np.abs(values[pick] - targets)
 
 
-def align_raster_mask(kept, mlat, mlon, lat, lon, fraction=0.5, label="mask file"):
+def align_raster_mask(kept, mlat, mlon, lat, lon, fraction=0.5, label="mask file", regrid="area"):
     """Bring a boolean mask on its own grid onto the data grid (ascending centres lat, lon).
 
     Returns (kept on the data grid, actions): the actions are the printable steps taken, in order: latitude
     flip, longitude wrap, then either direct use (coordinates equal within a hundredth of a cell) or the
     regridding of the mask (area-weighted fraction >= `fraction` for a finer mask, nearest cell for a coarser
-    or equally fine one). A mask that does not cover the data extent raises MaskError naming both extents.
+    or equally fine one; with regrid="nearest" also for a finer one). A mask that does not cover the data extent raises MaskError naming both extents.
     """
     actions = []
     kept = np.asarray(kept, dtype=bool)
@@ -471,9 +486,9 @@ def align_raster_mask(kept, mlat, mlon, lat, lon, fraction=0.5, label="mask file
             f"{_deg(elon[0])}..{_deg(elon[-1])}")
     offsets = f"largest distance from a data cell centre to the nearest mask centre: {_deg(dlat.max())} deg " \
               f"latitude, {_deg(dlon.max())} deg longitude"
-    if mres[0] >= dres[0] - tol and mres[1] >= dres[1] - tol:
+    if regrid == "nearest" or (mres[0] >= dres[0] - tol and mres[1] >= dres[1] - tol):
         actions.append(f"regridded the mask onto the data grid by the nearest mask cell (mask cells "
-                       f"{_deg(mres[1])} x {_deg(mres[0])} deg are not finer than the data's "
+                       f"{_deg(mres[1])} x {_deg(mres[0])} deg, data cells "
                        f"{_deg(dres[1])} x {_deg(dres[0])} deg); {offsets}")
         return kept[np.ix_(ilat, ilon)], actions
     rows = np.nonzero((mlat_e[1:] > elat[0] - ctol) & (mlat_e[:-1] < elat[-1] + ctol))[0]
@@ -531,10 +546,11 @@ def build_mask(spec: MaskSpec, lat, lon, label="data") -> MaskResult:
     lines, sources, shapes, rasters = [], [], [], []
     shape_names = []
     if spec.land:
-        geom, path = land_geometry(spec.resolution)
+        resolution = spec.land_resolution or spec.resolution
+        geom, path = land_geometry(resolution)
         shapes.append(geom)
         shape_names.append("land")
-        sources.append(_source("land", f"natural_earth {spec.resolution} physical/land", path))
+        sources.append(_source("land", f"natural_earth {resolution} physical/land", path))
     if spec.country:
         geom, matched, path = country_geometry(spec.country, spec.resolution)
         shapes.append(geom)
@@ -567,12 +583,13 @@ def build_mask(spec: MaskSpec, lat, lon, label="data") -> MaskResult:
         for other in shapes[1:]:
             shape = _make_valid(shapely.intersection(shape, other))
         outline = shape
-        raster = rasterise(shape, slat, slon, spec.cell_rule, spec.overlap_fraction)
+        raster = rasterise(shape, slat, slon, spec.cell_rule, spec.overlap_fraction, spec.boundary == "strict")
         keep &= raster
         parts.append((" + ".join(shape_names) + f" rasterised on the data grid by the {_rule_short(spec)}", int(raster.sum())))
     for text, kept, mlat, mlon, notes in rasters:
         lines.append(f"  {text}: {notes}")
-        aligned, actions = align_raster_mask(kept, mlat, mlon, slat, slon, spec.overlap_fraction, label="mask")
+        aligned, actions = align_raster_mask(kept, mlat, mlon, slat, slon, spec.overlap_fraction, label="mask",
+                                          regrid=spec.regrid)
         lines.extend(f"    - {a}" for a in actions)
         keep &= aligned
         parts.append((text, int(aligned.sum())))
@@ -588,7 +605,7 @@ def build_mask(spec: MaskSpec, lat, lon, label="data") -> MaskResult:
     record = {"dataset": label, "rule": spec.cell_rule, "overlap_fraction": spec.overlap_fraction,
               "resolution": spec.resolution, "sources": sources, "kept": count, "total": total,
               "actions": [line.strip("- ").strip() for line in lines]}
-    if count == 0:
+    if count == 0 and not spec.allow_empty:
         raise MaskError("\n".join(summary) + f"\nthe mask keeps no cell of the {label} grid")
     return MaskResult(keep=out, lines=summary, record=record, outline=outline, lat=lat, lon=lon)
 
@@ -687,7 +704,11 @@ def apply_region_mask(ds, mask, dataset="data", dir_fig=None):
     The mask is built on this dataset's own grid, so the data are never regridded. Variables without both
     lat and lon dimensions are left as they are.
     """
-    keep = region_mask(ds["lat"].values, ds["lon"].values, mask, dataset, dir_fig)
+    return _where_keep(ds, region_mask(ds["lat"].values, ds["lon"].values, mask, dataset, dir_fig))
+
+
+def _where_keep(ds, keep):
+    """`ds` (Dataset or DataArray with lat and lon) with the cells outside the boolean (lat, lon) `keep` set to NaN."""
     cond = xr.DataArray(keep, dims=("lat", "lon"), coords={"lat": ds["lat"], "lon": ds["lon"]})
     if isinstance(ds, xr.DataArray):
         return ds.where(cond)
@@ -729,12 +750,20 @@ def mask_attrs() -> dict:
     return out
 
 
+
 # ----------------------------------------------------------------------------------------------------------
-# the implicit land and country masks (land_only, shp_only) and the older mask helpers
+# the implicit masks (land_only, shp_only, nc_mask): a preset of the same algorithm
 # ----------------------------------------------------------------------------------------------------------
-# Used when a run sets no `mask:` section. They keep the cells whose centre is on regionmask's Natural Earth
-# 110m land (land_only) and strictly inside the 10m country shape of the run's region (shp_only); build_mask
-# above is the configurable one.
+# Used when a run sets no `mask:` section. `default_mask` states them as a MaskSpec and `build_mask` evaluates
+# it: the cells whose centre is strictly inside the Natural Earth 110m land (land_only) and the 10m shape of the
+# run's country (shp_only), and the nearest cell of the nc_mask file. The results are cached per grid.
+
+_MAX_DEFAULT = 64
+_RAW_MASKS: dict = {}
+"""The MaskResult of each implicit mask built, by cache key (insertion-ordered, at most _MAX_DEFAULT)."""
+_LAND_BOOL: dict = {}
+"""The read-only boolean cells kept by each implicit mask, by cache key; the workers' copy (stats/parallel.py)."""
+
 
 def _grid_key(lat, lon) -> str:
     """A hash of the lat and lon values (as float64), the cache key of a grid."""
@@ -743,128 +772,10 @@ def _grid_key(lat, lon) -> str:
     return hashlib.sha256(str(lat.shape).encode() + lat.tobytes() + str(lon.shape).encode() + lon.tobytes()).hexdigest()
 
 
-_RAW_MASKS: dict = {}
-"""Raw land masks by grid key (insertion-ordered, at most _MAX_GRIDS)."""
-_MAX_GRIDS = 16
-
-
-def _raw_land_mask(key: str, lat: xr.DataArray, lon: xr.DataArray) -> xr.DataArray:
-    """regionmask's land mask (0 on land, NaN at sea) on the grid of lat and lon, rasterised once per grid key."""
-    if key not in _RAW_MASKS:
-        if len(_RAW_MASKS) >= _MAX_GRIDS:
-            _RAW_MASKS.pop(next(iter(_RAW_MASKS)))
-        import regionmask
-
-        land_mask = regionmask.defined_regions.natural_earth_v5_0_0.land_110
-        _RAW_MASKS[key] = land_mask.mask(lon, lat=lat)
-    return _RAW_MASKS[key]
-
-
 def clear_land_masks() -> None:
-    """Forget every cached land mask (for tests)."""
+    """Forget every cached implicit mask (for tests)."""
     _RAW_MASKS.clear()
     _LAND_BOOL.clear()
-
-
-_LAND_BOOL: dict = {}
-"""Read-only boolean land masks by grid key."""
-
-
-def land_mask_for(lat, lon) -> np.ndarray:
-    """Boolean land mask of shape (nlat, nlon) for 1-D lat and lon values, True on land.
-
-    Built once per grid in this process (cached by a hash of the coordinates) and returned read-only, so callers
-    can apply it in place on numpy arrays, e.g. ``arr[..., ~land_mask_for(lat, lon)] = np.nan``. It selects the
-    same cells as ``mask_land``.
-    """
-    lat = np.asarray(lat, dtype="float64")
-    lon = np.asarray(lon, dtype="float64")
-    key = _grid_key(lat, lon)
-    if key not in _LAND_BOOL:
-        if len(_LAND_BOOL) >= _MAX_GRIDS:
-            _LAND_BOOL.pop(next(iter(_LAND_BOOL)))
-        raw = _raw_land_mask(key, xr.DataArray(lat, dims="lat", coords={"lat": lat}, name="lat"),
-                             xr.DataArray(lon, dims="lon", coords={"lon": lon}, name="lon"))
-        out = np.array(~np.isnan(raw.transpose("lat", "lon").values))
-        out.setflags(write=False)
-        _LAND_BOOL[key] = out
-    return _LAND_BOOL[key]
-
-
-def create_land_sea_mask(
-    obj: Union[xr.Dataset, xr.DataArray],
-    as_boolean: bool = False,
-) -> xr.DataArray:
-    """Generate a land-sea mask (1 for land, 0 for sea) for a given xarray Dataset or DataArray.
-    stemed from pcmdi_metrics.utils.land_sea_mask
-
-    Parameters
-    ----------
-    obj : Union[xr.Dataset, xr.DataArray]
-        The Dataset or DataArray object.
-    as_boolean : bool, optional
-        Set mask value to True (land) or False (ocean), by default False, thus 1 (land) and 0 (ocean).
-
-    Returns
-    -------
-    xr.DataArray
-        A DataArray of land-sea mask (1 or 0 for land or sea, or True or False for land or sea).
-
-    Examples
-    --------
-    >>> mask = create_land_sea_mask(ds)  #  Generate land-sea mask (land: 1, sea: 0)
-    >>> mask = create_land_sea_mask(ds, as_boolean=True)  # Generate land-sea mask (land: True, sea: False)
-    """
-
-    lon = obj["lon"]
-    lat = obj["lat"]
-
-    # Mask the land-sea mask to match the dataset's coordinates (rasterised once per grid, then copied)
-    land_sea_mask = _raw_land_mask(_grid_key(lat.values, lon.values), lat, lon).copy()
-
-    if as_boolean:
-        # Convert the 0 (land) & nan (ocean) land-sea mask to a boolean mask
-        land_sea_mask = xr.where(land_sea_mask, False, True)
-    else:
-        # Convert the boolean land-sea mask to a 1/0 mask
-        land_sea_mask = xr.where(land_sea_mask, 0, 1)
-
-    return land_sea_mask
-
-
-def mask_land(da, land=True):
-    """
-    Mask a DataArray to select either land or sea areas.
-
-    Parameters
-    ----------
-    da : xarray.DataArray
-        Input DataArray to be masked.
-    land : bool, optional
-        If True, keep land areas (default). If False, keep sea areas.
-
-    Returns
-    -------
-    xarray.DataArray
-        Masked DataArray with values retained for land or sea, NaNs elsewhere.
-    """
-
-    land_sea_mask = create_land_sea_mask(da)
-
-    if land:
-        da_masked = da.where(land_sea_mask == 1)
-    else:
-        da_masked = da.where(land_sea_mask == 0)
-
-    return da_masked
-
-
-def get_shp(region='Ethiopia', resolution='10m'):
-    """The Natural Earth country shape named `region` (NAME, or the registry title of the name), None if absent."""
-    names = {region, _registry_title(region)}
-    for country in natural_earth_records(resolution, "country")[1]:
-        if country.attributes['NAME'] in names:
-            return country.geometry
 
 
 def _registry_title(region):
@@ -877,22 +788,104 @@ def _registry_title(region):
         return region
 
 
+def _country_record(region, resolution="10m"):
+    """The Natural Earth country record named `region` (NAME, or the registry title of the name), None if absent."""
+    names = {region, _registry_title(region)}
+    for country in natural_earth_records(resolution, "country")[1]:
+        if country.attributes['NAME'] in names:
+            return country
+
+
+def get_shp(region='Ethiopia', resolution='10m'):
+    """The Natural Earth country shape named `region` (NAME, or the registry title of the name), None if absent."""
+    record = _country_record(region, resolution)
+    return None if record is None else record.geometry
+
+
+def default_mask(region=None, land_only=True, shp_only=True, nc_mask=None, resolution="10m") -> MaskSpec:
+    """The MaskSpec of the implicit masks of a run with no `mask:` section.
+
+    land_only: land (Natural Earth 110m); shp_only: the country `region` (Natural Earth `resolution`, default 10m;
+    a region that is not a country adds no part and a warning); nc_mask: a 0/1 NetCDF file, each data cell takes
+    the nearest mask cell. A cell is kept when its centre is strictly inside the shape. The result may be empty.
+    """
+    country = ()
+    if shp_only:
+        record = _country_record(region, resolution)
+        if record is None:
+            log.warning("specified region is not in cartopy.io.shapereader")
+        else:
+            country = (record.attributes["NAME"],)
+    return MaskSpec(land=bool(land_only), country=country, file=str(nc_mask) if nc_mask else None,
+                    resolution=resolution, land_resolution="110m", boundary="strict", regrid="nearest",
+                    allow_empty=True)
+
+
+def default_keep(lat, lon, region=None, land_only=True, shp_only=True, nc_mask=None) -> np.ndarray:
+    """Boolean (nlat, nlon) cells kept by the implicit masks (`default_mask`) on a grid, True where kept.
+
+    Built by build_mask once per grid, region and options in this process (cached by a hash of the coordinates) and
+    returned read-only, so callers can apply it in place on numpy arrays, e.g. ``arr[..., ~keep] = np.nan``.
+    """
+    lat = np.asarray(lat, dtype="float64")
+    lon = np.asarray(lon, dtype="float64")
+    key = (_grid_key(lat, lon), str(region) if shp_only else None, bool(land_only), bool(shp_only),
+           str(nc_mask) if nc_mask else None)
+    if key not in _LAND_BOOL:
+        spec = default_mask(region, land_only, shp_only, nc_mask)
+        if spec.land or spec.country or spec.file:
+            result = build_mask(spec, lat, lon, label="default")
+            if len(_RAW_MASKS) >= _MAX_DEFAULT:
+                _RAW_MASKS.pop(next(iter(_RAW_MASKS)))
+            _RAW_MASKS[key] = result
+            keep = np.array(result.keep)
+        else:
+            keep = np.ones((lat.size, lon.size), dtype=bool)
+        keep.setflags(write=False)
+        if len(_LAND_BOOL) >= _MAX_DEFAULT:
+            _LAND_BOOL.pop(next(iter(_LAND_BOOL)))
+        _LAND_BOOL[key] = keep
+    return _LAND_BOOL[key]
+
+
+def land_mask_for(lat, lon) -> np.ndarray:
+    """Boolean land mask of shape (nlat, nlon) for 1-D lat and lon values, True on land (see default_keep)."""
+    return default_keep(lat, lon, None, True, False)
+
+
+def apply_default_mask(obj, region=None, land_only=True, shp_only=True, nc_mask=None):
+    """`obj` (Dataset or DataArray with lat and lon) with the cells outside the implicit masks set to NaN."""
+    keep = default_keep(obj["lat"].values, obj["lon"].values, region, land_only, shp_only, nc_mask)
+    return obj if keep.all() else _where_keep(obj, keep)
+
+
+def create_land_sea_mask(
+    obj: Union[xr.Dataset, xr.DataArray],
+    as_boolean: bool = False,
+) -> xr.DataArray:
+    """A land-sea mask on the grid of `obj` (lat, lon): 1 for land, 0 for sea, or True / False with as_boolean."""
+    keep = land_mask_for(obj["lat"].values, obj["lon"].values)
+    out = xr.DataArray(np.array(keep), dims=("lat", "lon"), coords={"lat": obj["lat"], "lon": obj["lon"]})
+    return out if as_boolean else out.astype(int)
+
+
+def mask_land(da, land=True):
+    """`da` with the sea cells (land=True) or the land cells (land=False) set to NaN."""
+    keep = land_mask_for(da["lat"].values, da["lon"].values)
+    return _where_keep(da, keep if land else ~keep)
+
+
 def shp_mask(da, region='Ethiopia', resolution='10m', return_mask=False, **kwargs):
     """`da` with the cells whose centre is not strictly inside the country `region` set to NaN (the implicit shp_only mask).
 
     With return_mask the boolean DataArray of the kept cells is returned too. A region that is not a country of the
     shapefile leaves `da` as it is.
     """
-    from shapely.vectorized import contains
-
-    region_geom = get_shp(region=region, resolution=resolution)
-    if region_geom is None:
-        log.warning("specified region is not in cartopy.io.shapereader")
+    spec = default_mask(region, False, True, resolution=resolution)
+    if not spec.country:
         return da
-
-    lons, lats = np.meshgrid(da.lon, da.lat)
-    points = np.column_stack((lons.ravel(), lats.ravel()))
-    keep = contains(region_geom, points[:, 0], points[:, 1]).reshape(lons.shape)
+    lat, lon = da["lat"].values, da["lon"].values
+    keep = build_mask(spec, lat, lon, label="default").keep
     mask_da = xr.DataArray(keep, dims=['lat', 'lon'], coords={'lat': da.lat, 'lon': da.lon})
     da_masked = da.where(mask_da)
     if return_mask:
@@ -901,62 +894,14 @@ def shp_mask(da, region='Ethiopia', resolution='10m', return_mask=False, **kwarg
 
 
 def apply_nc_mask(ds, nc_mask, mask_var=None, keep_value=1):
+    """`ds` with the cells where the 0/1 NetCDF mask `nc_mask` is not `keep_value` set to NaN.
+
+    mask_var names the variable of the file (auto-picked if it has only one). Each data cell takes the nearest mask cell.
     """
-    Mask an xarray Dataset/DataArray using a 0/1 mask stored in a NetCDF file.
+    spec = MaskSpec(file=str(nc_mask), variable=mask_var, keep_value=keep_value, regrid="nearest", allow_empty=True)
+    keep = build_mask(spec, ds["lat"].values, ds["lon"].values, label="nc_mask").keep
+    return _where_keep(ds, keep)
 
-    Parameters
-    ----------
-    ds : xr.Dataset or xr.DataArray
-        Data to mask.
-    nc_mask : str
-        Path to NetCDF mask file (e.g., "land.nc").
-    mask_var : str, optional
-        Variable name inside mask file. If None, auto-pick if only one var exists.
-    keep_value : int or float, default 1
-        Which value means "keep". Commonly 1 (keep) and 0 (mask out).
-
-    Returns
-    -------
-    xr.Dataset or xr.DataArray
-        Masked data (values where mask is False become NaN).
-    """
-
-    from hcwf.utils.standard import dim_fmt
-
-    mask_ds = xr.open_dataset(nc_mask)
-    mask_ds = dim_fmt(mask_ds)
-
-    mask_ds = mask_ds.sel(lat=ds.lat, lon=ds.lon, method="nearest")
-
-    try:
-        # pick mask variable
-        if mask_var is None:
-            if len(mask_ds.data_vars) != 1:
-                raise ValueError(
-                    f"Mask file has multiple variables {list(mask_ds.data_vars)}; "
-                    "please specify mask_var."
-                )
-            mask = next(iter(mask_ds.data_vars.values()))
-        else:
-            mask = mask_ds[mask_var]
-
-        # convert 0/1 (or numeric) to boolean
-        if mask.dtype == bool:
-            mask_bool = mask
-        else:
-            mask_bool = (mask == keep_value)
-
-        # align to prevent accidental broadcasting (and catch mismatched grids)
-        mask_bool, ds_aligned = xr.align(mask_bool, ds, join="exact")
-
-        for var in ds_aligned.data_vars:
-            # This uses numpy's broadcasting which is very fast
-            ds_aligned[var].values = np.where(mask_bool.values, ds_aligned[var].values, np.nan)
-
-        return ds_aligned
-
-    finally:
-        mask_ds.close()
 
 
 def points_inside_polygon(polygon_lon, polygon_lat, grid_lons, grid_lats):

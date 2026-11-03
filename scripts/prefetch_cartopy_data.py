@@ -11,7 +11,7 @@ import cartopy.crs as ccrs
 
 print("Prefetching Natural Earth data for HCWF...")
 
-# 1. 10m admin_0_countries — used by get_shp() / shp_mask() / shp_outline()
+# 1. 10m admin_0_countries — used by get_shp() / default_mask() / shp_mask() / shp_outline()
 print("  -> 10m cultural/admin_0_countries")
 shpreader.natural_earth(resolution='10m', category='cultural', name='admin_0_countries')
 

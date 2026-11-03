@@ -188,14 +188,14 @@ rainfall units, so it does not overlap anything in this slice.
   Then reimplement `engine.regional` as a one-target transform so there is only one implementation. Its
   rounding (mean of tenths, then `rint`) must be kept or deliberately changed.
 
-### 1.12 Masks (R:utils/mask.py, R:utils/land_mask.py, R:utils/region.py:144-285)
+### 1.12 Masks (R:utils/mask.py (land_mask.py is merged in), R:utils/region.py:144-285)
 - **ROMP:**
   - Binary keep-masks on each dataset's own grid: land (Natural Earth or regionmask), country (Natural Earth
     `admin_0`, matched on NAME, NAME_LONG or ADM0_A3), file (NetCDF 0/1 or shp/geojson, whose features are
     **all unioned**, :284-294), and condition.
   - Masks intersect, are recorded, and produce a PNG.
   - Legacy implicit masks: `land_only` plus `shp_only` (country), which are True by default
-    (R:utils/region.py:216-285, R:utils/land_mask.py:304-329).
+    (R:utils/region.py:216-285, now `default_mask` in R:utils/mask.py, a preset of the same `build_mask`).
 - **Blending:** no masks. Cells come from what the observation file covers, then `AreaFilter`, then
   dissemination.
 - **Verdict:** keep ROMP's masks as the way to pick grid units. They do not support admin-unit aggregation:
@@ -243,7 +243,7 @@ rainfall units, so it does not overlap anything in this slice.
 - The I/O, masks, observed cache ((year, lat, lon), R:stats/observed_cache.py:198) and benchmark tables are
   lat/lon.
 - Political boundaries: only a country keep-mask (Natural Earth `admin_0`, R:utils/mask.py:247-273;
-  R:utils/land_mask.py:277-329) and an arbitrary shp/geojson unioned into one keep-mask. There is **no
+  `default_mask` in the same module) and an arbitrary shp/geojson unioned into one keep-mask. There is **no
   admin-unit aggregation**. The only aggregation is a single region mean (`engine.regional`).
 
 **Recommendation: one representation, an `EvaluationUnits` table plus one transform per source grid**

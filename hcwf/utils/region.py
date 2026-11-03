@@ -2,7 +2,7 @@
 import xarray as xr
 import numpy as np
 from hcwf.params.region_def import domain
-from hcwf.utils.mask import mask_land, shp_mask, apply_nc_mask, land_mask_for
+from hcwf.utils.mask import apply_default_mask, default_keep
 import logging
 
 log = logging.getLogger(__name__)
@@ -150,24 +150,9 @@ def region_box(ds, *, region):
     return ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
 
 
-_KEEP_CACHE = {}
-
-
 def _keep_cells(lat, lon, region, land_only, shp_only):
-    """Boolean (lat, lon) array of the cells the implicit land and country masks keep; cached by grid and region.
-
-    The land part is hcwf.utils.mask.land_mask_for (cached per grid); the country part is shp_mask run on a
-    2-D field of ones, so the cells are exactly those the masks would leave unmasked on any data with these coordinates.
-    """
-    key = (np.asarray(lat).tobytes(), np.asarray(lon).tobytes(), str(region), bool(land_only), bool(shp_only))
-    if key not in _KEEP_CACHE:
-        keep = land_mask_for(lat, lon).copy() if land_only else np.ones((len(lat), len(lon)), dtype=bool)
-        if shp_only:
-            field = xr.DataArray(np.ones((len(lat), len(lon)), dtype="float32"), dims=("lat", "lon"),
-                                 coords={"lat": np.asarray(lat), "lon": np.asarray(lon)})
-            keep &= ~np.isnan(shp_mask(field, region=region).values)
-        _KEEP_CACHE[key] = keep
-    return _KEEP_CACHE[key]
+    """Boolean (lat, lon) array of the cells the implicit land and country masks keep (hcwf.utils.mask.default_keep, cached)."""
+    return default_keep(lat, lon, region, land_only, shp_only)
 
 
 _BLOCK_BYTES = 64 * 1024 * 1024
@@ -320,16 +305,7 @@ def region_select_masks(ds_reg, *, region, nc_mask=None, land_only=True, shp_onl
 
         return apply_region_mask(ds_reg, mask, dataset_name or "data", dir_fig)
 
-    if nc_mask:
-        ds_reg = apply_nc_mask(ds_reg, nc_mask)
-
-    if land_only:
-        ds_reg = mask_land(ds_reg)
-
-    if shp_only:
-        ds_reg = shp_mask(ds_reg, region=region)
-
-    return ds_reg
+    return apply_default_mask(ds_reg, region, land_only, shp_only, nc_mask)
 
 
 def region_select(ds, *, region, nc_mask=None, land_only=True, shp_only=True, mask=None, dataset_name=None,

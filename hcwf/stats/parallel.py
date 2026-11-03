@@ -46,11 +46,11 @@ _tokens = itertools.count(1)
 _installed = {"token": None}
 
 
-def _mask_modules():
-    """The mask-building modules whose per-grid results are shared with the workers."""
-    from hcwf.utils import mask, region
+def _mask_module():
+    """The mask-building module whose per-grid results are shared with the workers."""
+    from hcwf.utils import mask
 
-    return mask, region
+    return mask
 
 
 def snapshot() -> dict:
@@ -58,10 +58,9 @@ def snapshot() -> dict:
     from hcwf.io import input as io_input
     from hcwf.stats import observed_cache
 
-    mask, region = _mask_modules()
+    mask = _mask_module()
     return {"thresholds": dict(io_input._loaded_thresholds), "observed": observed_cache.export_state(),
-            "masks": (dict(mask._BUILT), dict(mask._RECORDS)), "land": dict(mask._LAND_BOOL),
-            "keep": dict(region._KEEP_CACHE)}
+            "masks": (dict(mask._BUILT), dict(mask._RECORDS)), "land": dict(mask._LAND_BOOL)}
 
 
 def install(state: dict, token: int) -> None:
@@ -71,13 +70,12 @@ def install(state: dict, token: int) -> None:
     from hcwf.io import input as io_input
     from hcwf.stats import observed_cache
 
-    mask, region = _mask_modules()
+    mask = _mask_module()
     io_input._loaded_thresholds.update(state["thresholds"])
     observed_cache.install_state(state["observed"])
     mask._BUILT.update(state["masks"][0])
     mask._RECORDS.update(state["masks"][1])
     mask._LAND_BOOL.update(state["land"])
-    region._KEEP_CACHE.update(state["keep"])
     _installed["token"] = token
 
 
@@ -85,7 +83,7 @@ def collect() -> dict:
     """What this (worker) process found since the last call: new observed onsets and masks, to send back."""
     from hcwf.stats import observed_cache
 
-    mask, _ = _mask_modules()
+    mask = _mask_module()
     return {"observed": observed_cache.drain_new(), "records": dict(mask._RECORDS)}
 
 
@@ -93,7 +91,7 @@ def absorb(found: dict) -> None:
     """Take what a worker found into this process (observed onsets into the cache, new mask records)."""
     from hcwf.stats import observed_cache
 
-    mask, _ = _mask_modules()
+    mask = _mask_module()
     observed_cache.absorb(found["observed"])
     for name, record in found["records"].items():
         mask._RECORDS.setdefault(name, record)
