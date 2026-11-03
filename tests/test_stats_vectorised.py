@@ -995,15 +995,20 @@ def _member_frame(seed=0, members=6):
     return pd.DataFrame(rows)
 
 
+def _dates_as_text(pairs):
+    """The pair table with its observed-onset dates as text, as the loop version wrote them (they are datetime64 now)."""
+    return pairs.assign(obs_onset_date=pairs["obs_onset_date"].dt.strftime("%Y-%m-%d"))
+
+
 def test_forecast_observation_pairs_match_loops():
-    """The vectorised forecast-observation pairs match the loop version."""
+    """The vectorised forecast-observation pairs match the loop version (apart from the dates' type, see _dates_as_text)."""
     members = _member_frame()
     onset_da = _observed_onsets()
     kwargs = dict(day_bins=((1, 5), (6, 10), (11, 15)), max_forecast_day=15, **RUN)
     old = _old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs)
     new = forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False)
     assert len(new) > 0 and (members["onset_day"] <= 0).any()
-    _assert_frames_identical(old, new)
+    _assert_frames_identical(old, _dates_as_text(new))
 
 
 def test_forecast_observation_pairs_skip_cells_off_the_grid():
@@ -1013,7 +1018,7 @@ def test_forecast_observation_pairs_skip_cells_off_the_grid():
     onset_da = _observed_onsets()
     kwargs = dict(day_bins=((1, 7), (8, 14)), max_forecast_day=14, **RUN)
     _assert_frames_identical(_old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs),
-                             forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False))
+                             _dates_as_text(forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False)))
 
 
 # --------------------------------------------------------------------------------------------

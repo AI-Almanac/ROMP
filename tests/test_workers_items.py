@@ -34,6 +34,28 @@ def test_worker_count_with_a_memory_budget():
     assert worker_count(config, 10, item_bytes=[1], budget_bytes=10**9) == 6
 
 
+def test_year_workers_are_cut_to_the_memory_of_a_year(monkeypatch):
+    """spec_workers gives the years as many workers as their peak memory fits in the budget (one year's, the largest)."""
+    from hcwf.config.model import ParallelSpec
+
+    monkeypatch.setattr(parallel, "memory_budget", lambda: 3_000)
+    spec = ParallelSpec(enabled=True, workers=8)
+    assert parallel.spec_workers(spec, 10) == 8
+    assert parallel.spec_workers(spec, 10, item_bytes=1_000) == 3
+    assert parallel.spec_workers(spec, 10, item_bytes=10_000) == 1
+    assert parallel.spec_workers(ParallelSpec(enabled=False, workers=8), 10, item_bytes=1) == 1
+
+
+def test_readers_are_this_process_alone_when_parallel_is_off_or_in_a_worker(monkeypatch):
+    from hcwf.config.model import ParallelSpec
+
+    assert parallel.reader_count(ParallelSpec(enabled=False, workers=None)) == 1
+    assert parallel.reader_count(ParallelSpec(enabled=True, workers=3)) == 3
+    assert parallel.reader_count(ParallelSpec(enabled=True, workers=None)) == cores()
+    monkeypatch.setattr(parallel, "in_worker", lambda: True)
+    assert parallel.reader_count(ParallelSpec(enabled=True, workers=3)) == 1
+
+
 def test_limit_blas_threads():
     pytest.importorskip("threadpoolctl")
     workers.limit_blas_threads(1)
@@ -116,3 +138,12 @@ def test_start_items_prewarm_runs_here_once_and_default_workers_follow_config():
     out = parallel.start_items(_scale, [1, 2, 3], (1,), config={"parallel": True, "parallel_workers": 2},
                                prewarm=lambda: calls.append(os.getpid())).result()
     assert out == [1, 2, 3] and calls == [os.getpid()]
+
+
+def test_start_items_sink_places_results_in_item_order_without_keeping_them():
+    for count in (1, 2):
+        got = []
+        pending = parallel.start_items(_scale, [3, 1, 2, 5], (2,), workers=count,
+                                       sink=lambda position, value: got.append((position, value)))
+        assert pending.result() is None
+        assert got == [(0, 6), (1, 2), (2, 4), (3, 10)]

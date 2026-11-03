@@ -2,7 +2,7 @@
 hcwf.metrics.contingency, is the pure part), cached across the cases that share them."""
 
 from hcwf.cache import memo
-from hcwf.config.model import Selection
+from hcwf.config.model import Case, Selection
 from hcwf.metrics.contingency import onset_metrics
 from hcwf.io import forecasts as forecasts_io
 from hcwf.io import observations as observations_io
@@ -13,9 +13,12 @@ from hcwf.spatial.onto_units import point_dims
 from hcwf.onset.detect import check_alignment, detect_deterministic, detect_ensemble, detect_observed
 from hcwf.onset.observed_cache import threshold_hash
 from hcwf.references.climatology import climatological_onset, compute_climatology_as_forecast
-from hcwf.scoring.pairs import reports_back_dated
 from hcwf.references.climatology import climatological_onset_dataset
-from hcwf.references.conditional import CONDITIONAL_CLIMATOLOGY, compute_conditional_climatology_as_forecast
+from hcwf.references.conditional import (
+    CLIMATOLOGY_REFERENCES,
+    CONDITIONAL_CLIMATOLOGY,
+    compute_conditional_climatology_as_forecast,
+)
 from hcwf.parallel import map_year_args
 
 import logging
@@ -27,6 +30,22 @@ log = logging.getLogger(__name__)
 _ONSET_TABLES = memo("scoring.onset_tables", maxsize=1)
 """The onset tables of the source being scored: {family key: {year: (onset table, observed onsets)}} (see onset_tables);
 one family is held, the next one's tables replace it."""
+
+
+_SHARED = memo("scoring.onset_tables.shared")
+"""Ensemble onset tables the skill pass already detected, for the spatial pass: {family key: {year: (onset table, observed
+onsets)}}. onset_tables takes a family out of here (the first time it needs it), so each is held once."""
+
+
+def reports_back_dated(onset, model_name):
+    """Whether score outputs report back-dated forecast onsets: forecast_history "observed" in `onset` (the OnsetSetup).
+
+    The climatology baselines (whose onsets come from no forecast; `model_name` says which source is scored) return
+    False, so their outputs stay as they are.
+    """
+    if model_name in CLIMATOLOGY_REFERENCES:
+        return False
+    return onset.forecast_history == "observed"
 
 
 def _family_key(rc, case, ens, thresh_da, years, select) -> tuple:
@@ -58,19 +77,17 @@ def _tables_of_years(years, rc, case, select, ens, extra):
         imd = observations_io.observations_of(year, rc, select)
         onset_da = detect_observed(imd, thresh_da, year, rc, select)
         history = observations_io.history_of(year, imd, rc, select)
-        # extract forecast at approporiate init dates
-        p_model = None
+        # the forecast at the appropriate init dates: read inside the detection, which drops it once it is ingested
+        read_forecast = None
         if ref_cond:
             pass
-        elif use_ensemble:
-            log.debug("Extracting ensemble forecast data ...")
-            p_model = forecasts_io.forecast_of(year, rc, model, ensemble=True, select=select)
-        elif not ref_clim and not ens:
-            log.debug("Extracting model forecast data ...")
-            p_model = forecasts_io.forecast_of(year, rc, model, ensemble=False, select=select)
-
-        if p_model is not None and (use_ensemble or not ref_clim):
-            check_alignment(imd, p_model, rc, case)
+        elif use_ensemble or (not ref_clim and not ens):
+            def read_forecast(year=year, imd=imd, ensemble=use_ensemble):
+                """The year's forecast of the cells the masks keep, checked against the observations (once per run)."""
+                log.debug("Extracting ensemble forecast data ..." if ensemble else "Extracting model forecast data ...")
+                cube = forecasts_io.forecast_of(year, rc, model, ensemble=ensemble, select=select, cells=True)
+                check_alignment(imd, cube, rc, case)
+                return cube
 
         # detect onset dates
         if ref_cond:  # conditional climatology as forecast
@@ -80,18 +97,34 @@ def _tables_of_years(years, rc, case, select, ens, extra):
                 max_forecast_day=ev.max_forecast_day, climatology_cv=rc.reference.climatology_cv)
         elif use_ensemble:  # ensemble forecast onset
             log.debug("Computing onset for ensemble forecast ...")
-            _, onset_df = detect_ensemble(p_model, thresh_da, onset_da, rc, case, select, history=history)
+            _, onset_df = detect_ensemble(read_forecast, thresh_da, onset_da, rc, case, select, history=history)
         elif not ref_clim:  # deterministic model onset
             log.debug("Computing onset for model forecast ...")
-            onset_df = detect_deterministic(p_model, thresh_da, onset_da, rc, case, select, history=history)
+            onset_df = detect_deterministic(read_forecast, thresh_da, onset_da, rc, case, select, history=history)
         else:  # climatology as forecast
             log.debug("Computing onset for climatology as forecast ...")
             onset_df = compute_climatology_as_forecast(
                 extra["climatological_onset_doy"], year, initialization_dates(year, ev), onset_da,
                 max_forecast_day=ev.max_forecast_day)
-        del p_model, imd, history
+        del read_forecast, imd, history
         out[year] = (onset_df, onset_da)
     return out
+
+
+def share_ensemble_tables(rc, model, tables, select=Selection()):
+    """Hand the ensemble onset tables a pass over the run's years has already made to `onset_tables`, so the spatial
+    metrics of `model` (ModelSpec) read and detect nothing again.
+
+    `tables` is {year: (detect_ensemble's ensemble table, observed onsets)} made with this run's thresholds, history and
+    members, as _tables_of_years makes them. Only a set that covers every year of the run is kept (a year skipped
+    for a missing file is left to onset_tables, which reports it).
+    """
+    years = tuple(rc.evaluation.years)
+    if set(tables) != set(years):
+        return
+    case = Case(model, rc.evaluation.windows[0])
+    thresh_da = thresholds_io.thresholds_of(rc, model, select)
+    _SHARED[_family_key(rc, case, True, thresh_da, years, select)] = tables
 
 
 def onset_tables(rc, case, select=Selection(), *, ens=False, years=None):
@@ -109,17 +142,23 @@ def onset_tables(rc, case, select=Selection(), *, ens=False, years=None):
     if key not in _ONSET_TABLES:
         _ONSET_TABLES.clear()
         extra = {}
-        if case.model.name == "climatology":
-            log.debug("Generating climatology onset doy for each year as onset_da_dict")
-            extra["climatological_onset_doy"] = climatological_onset(rc, case, select)
-        elif case.model.name == CONDITIONAL_CLIMATOLOGY:
-            log.debug("Computing observed onsets of the climatology years for the conditional climatology")
-            extra["clim_onset"] = climatological_onset_dataset(rc, case, select)
-        chunks = map_year_args(_tables_of_years, years, (rc, case, select, ens, extra), rc.parallel, skip=None,
-                               prewarm=lambda: warmup_io.warm_up_of(rc, case.model, select))
-        tables = {}
-        for chunk in chunks:
-            tables.update(chunk)
+        tables = _SHARED.pop(key, None)   # the skill pass detected these years already
+        if tables is None:
+            if case.model.name == "climatology":
+                log.debug("Generating climatology onset doy for each year as onset_da_dict")
+                extra["climatological_onset_doy"] = climatological_onset(rc, case, select)
+            elif case.model.name == CONDITIONAL_CLIMATOLOGY:
+                log.debug("Computing observed onsets of the climatology years for the conditional climatology")
+                extra["clim_onset"] = climatological_onset_dataset(rc, case, select)
+            reads = case.model.name not in (CONDITIONAL_CLIMATOLOGY, "climatology") and len(years) > 1
+            chunks = map_year_args(_tables_of_years, years, (rc, case, select, ens, extra), rc.parallel, skip=None,
+                                   prewarm=lambda: warmup_io.warm_up_of(rc, case.model, select),
+                                   item_bytes=forecasts_io.forecast_year_bytes(
+                                       years[0], rc, case.model, ensemble=bool(rc.evaluation.probabilistic),
+                                       select=select) if reads else None)
+            tables = {}
+            for chunk in chunks:
+                tables.update(chunk)
         _ONSET_TABLES[key] = {"tables": tables, "extra": extra, "pin": thresh_da}
     held = _ONSET_TABLES[key]
     wanted = set(years)

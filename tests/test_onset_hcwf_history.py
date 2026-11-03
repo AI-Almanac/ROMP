@@ -138,7 +138,7 @@ def test_a_spell_started_in_the_observations_is_back_dated():
     forecast = _forecast("2020-05-25", [1])
     stitched = detect_deterministic(forecast, {}, OBS_ONSET, *typed(DEFINITION), history=history)
     row = stitched.iloc[0]
-    assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (-2, "2020-05-23", "ONSET")
+    assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (-2, pd.Timestamp("2020-05-23"), "ONSET")
     alone = detect_deterministic(forecast, {}, OBS_ONSET, *typed(DEFINITION))
     assert alone["onset_day"].iloc[0] is None and alone["onset_status"].iloc[0] == "NOT_FOUND"
 
@@ -175,7 +175,7 @@ def test_history_from_the_previous_year_serves_a_wrapping_season(tmp_path):
     obs_onset = xr.DataArray([[np.datetime64("2020-02-10", "ns")]], coords=OBS_ONSET.coords)
     row = detect_deterministic(_forecast("2020-01-02", [1]), {}, obs_onset,
                                *typed({**DEFINITION, "onset_definition": str(file)}), history=history).iloc[0]
-    assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (-2, "2019-12-31", "ONSET")
+    assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (-2, pd.Timestamp("2019-12-31"), "ONSET")
 
 
 # --- scoring of back-dated onsets -------------------------------------------------------------------

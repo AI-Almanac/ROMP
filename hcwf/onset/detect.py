@@ -48,10 +48,25 @@ def _on_grid(da, lat, lon):
     return da.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE)
 
 
+def _at_cells(da, lat, lon):
+    """A per-cell DataArray (or dataset) on the listed cells (their `lat` and `lon`, one "cell" dimension) instead of the
+    lat/lon grid: each cell takes the grid cell within tolerance, NaN where there is none (as `_on_grid`)."""
+    if "lat" not in da.dims or "lon" not in da.dims:
+        return da
+    rows = da.indexes["lat"].get_indexer(np.asarray(lat), method="nearest", tolerance=_GRID_TOLERANCE)
+    cols = da.indexes["lon"].get_indexer(np.asarray(lon), method="nearest", tolerance=_GRID_TOLERANCE)
+    out = da.isel(lat=xr.DataArray(np.maximum(rows, 0), dims="cell"), lon=xr.DataArray(np.maximum(cols, 0), dims="cell"))
+    out = out.drop_vars(["lat", "lon"], errors="ignore")
+    missing = (rows < 0) | (cols < 0)
+    return out.where(xr.DataArray(~missing, dims="cell")) if missing.any() else out
+
+
 def _like(da, coords):
     """A per-cell or per-unit DataArray on the spatial axes `coords` (cells within tolerance, or units by id); the rest NaN."""
     if "unit" in coords:
         return da.reindex(unit=np.asarray(coords["unit"]).astype(str))
+    if "cell" in coords:
+        return _at_cells(da, coords["lat"], coords["lon"]).assign_coords(cell=np.asarray(coords["cell"]))
     return _on_grid(da, coords["lat"], coords["lon"])
 
 
@@ -66,7 +81,9 @@ def _field(value, coords, convention=None):
     """One threshold on the rainfall's own spatial axes (cells of the grid, or units)."""
     if "unit" in coords:
         return _on_units(value, coords["unit"], convention)
-    return _on_grid(value, coords["lat"], coords["lon"]) if isinstance(value, xr.DataArray) else value
+    if not isinstance(value, xr.DataArray):
+        return value
+    return _like(value, coords)
 
 
 def _thresholds(setup, thresh_slice, coords, per_window=True, convention=None):
@@ -93,7 +110,7 @@ def _season_climatology(setup, thresh_slice, coords):
                          "pass the thresholds returned by hcwf.io.input.load_thresholds")
     if "lat" not in coords:
         raise ValueError("derived seasons are analysed on a grid; evaluation units do not support them")
-    return _on_grid(climatology, coords["lat"], coords["lon"])
+    return _like(climatology, coords)
 
 
 def _convention(rc):
@@ -178,6 +195,11 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     Dataset these arrays come from (season kept as a length-1 dim, with the ensemble summary for members) and
     "calendar" the calendar of its dates; the NetCDF export (hcwf.runs.export) reads them.
 
+    The cube may hold only some cells of the grid (the loader's `cells`: (init_time, [member], step, cell), with lat and lon as
+    coordinates over "cell"): only those are ingested and detected, and the arrays and the "place" function that names a
+    point's columns (lat and lon) are over them. `p_model` may also be a function that reads the cube; it is called here, and
+    the cube is dropped once ingested (peak memory: the cube and its tenths, not the cube through the detection).
+
     The cube may be over evaluation units instead of lat and lon ((init_time, member, unit, step)). `search_start`
     (variants that start the search later, see hcwf.onset.engine.detect_forecast), `restrict_to_season` (False: one
     season covering every lead) and `onset_count` (the member onset counts of `count_members`) may then be given; with
@@ -187,13 +209,19 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     setup = rc.onset
     max_forecast_day = rc.evaluation.max_forecast_day
     steps_needed = max_forecast_day + forecast_reach(setup) - 1 if isinstance(max_forecast_day, int) else None
-    cube = p_model.sel(step=slice(1, steps_needed))
+    cube = (p_model() if callable(p_model) else p_model).sel(step=slice(1, steps_needed))
+    p_model = None
     if "member" in cube.dims and members and list(cube["member"].values) != list(members):
         cube = cube.sel(member=list(members))  # the loader already took them; selecting again would copy the cube
-    spatial = axes.spatial_dims(cube.dims)
+    cells = "cell" in cube.dims
+    spatial = ("cell",) if cells else axes.spatial_dims(cube.dims)
     order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + spatial + ("step",)
     forecast = ingest_forecast(cube.transpose(*order), setup, case.model, rc.onset_options, select, "forecast")
     coords = {d: forecast.coords[d] for d in spatial}
+    if cells:
+        cell_lat, cell_lon = np.asarray(cube["lat"].values), np.asarray(cube["lon"].values)
+        coords = {**coords, "lat": cell_lat, "lon": cell_lon}
+    cube = None
     stitched = None
     if history is not None and setup.forecast_history == "observed":
         on_grid = _like(history, coords).transpose(*spatial, ...)
@@ -223,8 +251,7 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     dates = result["onset_date"].transpose(*lead_dims).values
     status = result["status"].transpose(*lead_dims).values
     obs = (onset_da.reindex(unit=np.asarray(coords["unit"]).astype(str)) if "unit" in coords else
-           onset_da.reindex(lat=coords["lat"], lon=coords["lon"], method="nearest", tolerance=_GRID_TOLERANCE)
-           ).transpose(*spatial)
+           _like(onset_da, coords)).transpose(*spatial)
     obs_values = obs.values.astype("datetime64[ns]")
     valid = ~np.isnat(obs_values)[None] & (axes.broadcast_rows(init.astype("datetime64[ns]"), obs_values.ndim + 1)
                                            < obs_values[None])
@@ -233,6 +260,8 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     days_after_init = (dates.astype("datetime64[D]") - init_day) / np.timedelta64(1, "D")
     return {"setup": setup, "result": export_result, "calendar": forecast.calendar, "spatial": spatial,
             "init": init, "axes": {d: np.asarray(coords[d]) for d in spatial},
+            "place": (lambda index: {"lat": cell_lat[index[0]], "lon": cell_lon[index[0]]}) if cells else
+            (lambda index: axes.columns_of(spatial, {d: np.asarray(coords[d]) for d in spatial}, index)),
             "member": np.asarray(forecast.coords["member"]) if "member" in forecast.dims else None,
             "day": np.where(found, days_after_init, np.nan), "date": dates, "status": status,
             "valid": valid, "obs": obs_values, "totals": (int(obs.size * len(init)), int((~np.isnat(obs_values)).sum()))}
@@ -251,9 +280,9 @@ def count_members(cube, thresh_slice, rc, case, select=Selection(), *, search_st
     return out["counts"], out["start"], out["init"]
 
 
-def _date_strings(values):
-    """'%Y-%m-%d' text of datetime64 values, as a list."""
-    return pd.DatetimeIndex(np.ravel(values)).strftime("%Y-%m-%d").tolist()
+def _days(values):
+    """datetime64[ns] values cut to whole days (NaT stays NaT): the dates of the onset tables."""
+    return np.asarray(values).astype("datetime64[D]").astype("datetime64[ns]")
 
 
 def _print_back_dated(day, valid):
@@ -285,10 +314,11 @@ def _names(status):
 def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selection(), history=None):
     """Compute onset dates for deterministic model forecast.
 
-    p_model has dims (init_time, lat, lon, step), or (init_time, unit, step) on evaluation units. Returns one row per
+    p_model has dims (init_time, lat, lon, step), or (init_time, unit, step) on evaluation units (or the cells of the loader's
+    `cells`, or a function that reads the cube: see detect_forecast). Returns one row per
     (init, cell or unit) in that order for those with an observed onset and an init before it, with
     columns init_time, lat and lon (or unit), onset_day (lead day, None if no onset), onset_date
-    ('YYYY-MM-DD' or None) and obs_onset_date, plus onset_status for definitions.
+    (datetime64[ns] days, NaT if none) and obs_onset_date, plus onset_status for definitions.
     """
     out = detect_forecast(p_model, thresh_slice, onset_da, rc, case, select, history=history)
     setup, valid = out["setup"], out["valid"]
@@ -298,12 +328,12 @@ def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selec
     at = (i, *where)
     day = out["day"][at]
     has = ~np.isnan(day)
-    onset_date = np.where(has, _date_strings(out["date"][at]), None).tolist() if len(i) else []
+    onset_date = np.where(has, _days(out["date"][at]), np.datetime64("NaT", "ns"))
     columns = {
-        "init_time": out["init"][i], **axes.columns_of(spatial, out["axes"], where),
+        "init_time": out["init"][i], **out["place"](where),
         "onset_day": [int(d) if h else None for d, h in zip(day, has)],
         "onset_date": onset_date,
-        "obs_onset_date": _date_strings(out["obs"][tuple(where)]) if len(i) else [],
+        "obs_onset_date": _days(out["obs"][tuple(where)]),
     }
     columns["onset_status"] = _names(out["status"][at]).tolist()
     onset_df = pd.DataFrame(columns) if len(i) else pd.DataFrame([])
@@ -352,17 +382,17 @@ def ensemble_onset(day, init, threshold):
 def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(), history=None):
     """Compute per-member and ensemble onsets.
 
-    p_model has dims (init_time, member, lat, lon, step), or (init_time, member, unit, step) on evaluation units. The ensemble has an onset
+    p_model has dims (init_time, member, lat, lon, step), or (init_time, member, unit, step) on evaluation units (or the
+    cells of the loader's `cells`, or a function that reads the cube: see detect_forecast). The ensemble has an onset
     when the fraction of members with one is at least onset_percentage_threshold;
     its day is the mean member onset day rounded half to even.
-    Returns (member onset DataFrame, ensemble onset DataFrame).
+    Returns (member onset DataFrame, ensemble onset DataFrame); their date columns are datetime64[ns] days (NaT: none).
     """
     members = rc.evaluation.members
     threshold = rc.onset_options.percentage_threshold
     out = detect_forecast(p_model, thresh_slice, onset_da, rc, case, select, members=members, history=history)
     setup, valid, day = out["setup"], out["valid"], out["day"]
     n_init, n_member = day.shape[0], day.shape[1]
-    spatial = out["spatial"]
     log.debug(f"Processing {n_init} init times x {valid[0].size} unique locations x {n_member} members...")
 
     member_day = day
@@ -380,26 +410,21 @@ def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(
 
     member_values = member_day[member_at]
     onset_df = pd.DataFrame({
-        "init_time": out["init"][mi], **axes.columns_of(spatial, out["axes"], member_where),
+        "init_time": out["init"][mi], **out["place"](member_where),
         "member": out["member"][mm],
         "onset_day": member_values,
-        "obs_onset_date": pd.Series(pd.to_datetime(out["obs"][tuple(member_where)])).dt.strftime("%Y-%m-%d").to_numpy()
-        if len(mi) else [],
+        "obs_onset_date": _days(out["obs"][tuple(member_where)]),
     }, index=member_index)
     chosen = ensemble_day[ens_at]
     has_onset = ~np.isnan(chosen)
-    ens_dates = np.where(has_onset, _date_strings(ensemble_date[ens_at]) if len(ei) else [], None)
     ensemble_df = pd.DataFrame({
-        "init_time": out["init"][ei], **axes.columns_of(spatial, out["axes"], ens_where),
+        "init_time": out["init"][ei], **out["place"](ens_where),
         "onset_day": chosen,
+        "onset_date": np.where(has_onset, _days(ensemble_date[ens_at]), np.datetime64("NaT", "ns")),
         "member_onset_count": count[ens_at], "total_members": n_member,
         "onset_percentage": fraction[ens_at],
-        "obs_onset_date": pd.Series(pd.to_datetime(out["obs"][tuple(ens_where)])).dt.strftime("%Y-%m-%d").to_numpy()
-        if len(ei) else [],
+        "obs_onset_date": _days(out["obs"][tuple(ens_where)]),
     }, index=ens_index)
-    ensemble_df.insert(4 if len(spatial) == 2 else 3, "onset_date", None)
-    if has_onset.any():
-        ensemble_df.loc[has_onset, "onset_date"] = ens_dates[has_onset]
     onset_df["onset_status"] = _names(out["status"][member_at])
     ensemble_df["onset_status"] = _ensemble_status(out["status"][(ei, slice(None), *ens_where)], threshold, has_onset)
 
@@ -412,6 +437,18 @@ def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     _print_status_counts(out["status"], valid)
     _print_back_dated(member_day, valid)
     return onset_df, ensemble_df
+
+
+def _cells_on_grid(cube, lat, lon):
+    """A cube of cells (dims others and "cell", lat and lon over the cells) on the lat/lon grid given: NaN where it has no cell."""
+    rows = pd.Index(lat).get_indexer(np.asarray(cube["lat"].values), method="nearest", tolerance=_GRID_TOLERANCE)
+    cols = pd.Index(lon).get_indexer(np.asarray(cube["lon"].values), method="nearest", tolerance=_GRID_TOLERANCE)
+    found = (rows >= 0) & (cols >= 0)
+    others = [d for d in cube.dims if d != "cell"]
+    data = np.full(tuple(cube.sizes[d] for d in others) + (len(lat), len(lon)), np.nan, dtype=cube.dtype)
+    data[..., rows[found], cols[found]] = cube.transpose(*others, "cell").values[..., found]
+    coords = {d: c for d, c in cube.coords.items() if "cell" not in c.dims}
+    return xr.DataArray(data, dims=(*others, "lat", "lon"), coords={**coords, "lat": lat, "lon": lon}, attrs=cube.attrs)
 
 
 def alignment_report(rain_slice, p_model, rc, case):
@@ -427,6 +464,8 @@ def alignment_report(rain_slice, p_model, rc, case):
         cube = cube.isel(init_time=slice(None, None, stride))
         if "member" in cube.dims:
             cube = cube.isel(member=slice(0, _ALIGNMENT_MAX_MEMBERS))
+        if "cell" in cube.dims:
+            cube = _cells_on_grid(cube, rain_slice["lat"].values, rain_slice["lon"].values)
         obs = ingest(rain_slice, day_boundary=setup.obs_day_boundary, units="mm", source="observations")
         forecast = ingest_forecast(cube, setup, case.model, rc.onset_options, Selection(),
                                    str(case.model.name or "forecast"))

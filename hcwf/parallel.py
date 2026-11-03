@@ -24,6 +24,13 @@ cores available, never more than the years):
   the year in the message; see hcwf.log.forwarding.
 * The results are collected in year order whatever order the workers finish in, so a parallel run gives exactly
   the numbers of a serial one.
+
+Apart from the years' pool, a big NetCDF forecast read in the run's own process is decoded by reader processes
+(`reader_pool`, `reader_count`; see hcwf.spatial.select), because HDF5 decodes one chunk at a time per process; they
+are stopped when the years' pool starts and at the end of the run, and a worker never starts any.
+
+How many year workers there are is also limited by memory: `spec_workers` takes the peak memory of a year (an estimate
+of its forecast, hcwf.io.forecasts.forecast_year_bytes) and keeps the workers within half the memory available.
 """
 from __future__ import annotations
 
@@ -119,13 +126,61 @@ _pool: dict = {"executor": None, "key": None, "stack": None}
 
 
 def shutdown() -> None:
-    """Stop the run's worker pool (if any) and the log forwarding that served it; safe to call at any time."""
+    """Stop the run's worker pool (if any) and the log forwarding that served it, and the readers; safe to call at any time."""
+    shutdown_readers()
     executor, stack = _pool["executor"], _pool["stack"]
     _pool.update(executor=None, key=None, stack=None)
     if executor is not None:
         executor.shutdown(wait=True, cancel_futures=True)
     if stack is not None:
         stack.close()
+
+
+def in_worker() -> bool:
+    """Whether this process is a spawned worker (of the run's pool or of the readers), not the run's own process."""
+    return multiprocessing.parent_process() is not None
+
+
+def reader_pool(size: int) -> ProcessPoolExecutor:
+    """Processes for reading one file's chunks in parallel (a NetCDF/HDF5 file is decoded by one thread per process).
+
+    `size` workers, one numba/BLAS thread each; the pool is kept for the run (see `shutdown`) and made larger when a
+    bigger read asks, apart from the run's year pool (which may have jobs in flight). Only the run's own process asks:
+    a worker that is itself one of the years' workers reads on its own.
+    """
+    executor, held = _pool.get("readers"), _pool.get("readers_size", 0)
+    if executor is not None and held >= size:
+        return executor
+    shutdown_readers()
+    saved = {name: os.environ.get(name) for name in THREAD_LIMITS}
+    os.environ.update({name: "1" for name in THREAD_LIMITS})
+    try:
+        executor = ProcessPoolExecutor(max_workers=size, mp_context=multiprocessing.get_context("spawn"))
+        for _ in range(size):
+            executor.submit(_ready)   # starts a worker process each, while the environment above is in force
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    _pool.update(readers=executor, readers_size=size)
+    return executor
+
+
+def _ready() -> int:
+    """Start a reader process: it imports what a read needs while the first blocks are being asked for."""
+    import hcwf.spatial.select  # noqa: F401
+
+    return os.getpid()
+
+
+def shutdown_readers() -> None:
+    """Stop the reader processes (if any)."""
+    executor = _pool.pop("readers", None)
+    _pool.pop("readers_size", None)
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 atexit.register(shutdown)
@@ -147,7 +202,7 @@ def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
     key = (size, threads, tuple(id(h) for h in logging.getLogger(logs.ROOT).handlers))
     if _pool["executor"] is not None and _pool["key"] == key:
         return _pool["executor"]
-    shutdown()
+    shutdown()   # (the readers too: their memory goes to the years)
     saved = {name: os.environ.get(name) for name in THREAD_LIMITS}
     os.environ.update({name: str(threads) for name in THREAD_LIMITS})
     stack = contextlib.ExitStack()
@@ -197,7 +252,8 @@ class Pending:
                                    "this process") from exc
             except BaseException:
                 for job in self._jobs:
-                    job.cancel()
+                    if job is not None:
+                        job.cancel()
                 raise
             self._done = True
         return self._value
@@ -205,7 +261,7 @@ class Pending:
 
 def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, config: dict | None = None,
                 workers: int | None = None, label: Callable[[Any], Any] | None = None,
-                prewarm: Callable[[], None] | None = None) -> Pending:
+                prewarm: Callable[[], None] | None = None, sink: Callable[[int, Any], None] | None = None) -> Pending:
     """Start func(item, *args, **kwargs) for each item; the Pending gives the results in item order.
 
     Runs in worker processes of the run's pool when there are `workers` > 1 (default: worker_count of `config`, which
@@ -213,11 +269,17 @@ def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, co
     cancels the items still queued. `prewarm()`, if given, is called here once before the jobs are sent, to read or
     build what every item needs. `label(item)` names the item in the log lines a worker forwards. With one worker the
     items run here, one after the other, before this returns. func must be a module-level function (workers are spawned).
+    With `sink`, each result goes to sink(position, result) in item order as soon as it and the ones before it are
+    done, and is not kept (the Pending gives None): results too big to hold together are placed one at a time.
     """
     items, kwargs = list(items), kwargs or {}
     workers = worker_count(config if config is not None else kwargs, len(items)) if workers is None else workers
     if workers <= 1:
-        return Pending.finished([func(item, *args, **kwargs) for item in items])
+        if sink is None:
+            return Pending.finished([func(item, *args, **kwargs) for item in items])
+        for position, item in enumerate(items):
+            sink(position, func(item, *args, **kwargs))
+        return Pending.finished(None)
     executor = _pool_for(workers, max(1, cores() // workers))
     if prewarm is not None:
         prewarm()
@@ -228,13 +290,19 @@ def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, co
     def collect_results():
         """Wait for the jobs in item order, absorbing what each found."""
         results = []
-        for job in jobs:
+        for position, job in enumerate(jobs):
             result, found = job.result()
             absorb(found)
-            results.append(result)
-        return results
+            if sink is None:
+                results.append(result)
+            else:
+                sink(position, result)
+                jobs[position] = pending._jobs[position] = None   # the finished job holds its result: let it go
+            del result, job
+        return None if sink is not None else results
 
-    return Pending(collect_results, jobs)
+    pending = Pending(collect_results, jobs)
+    return pending
 
 
 def map_items(func, items, args: tuple = (), kwargs: dict | None = None, **options) -> list:
@@ -246,29 +314,32 @@ def map_items(func, items, args: tuple = (), kwargs: dict | None = None, **optio
 # the year-keyed forms: `args` and a ParallelSpec; func(year_list, *args)
 # ----------------------------------------------------------------------------------------------------------------------
 
-def spec_workers(parallel, tasks: int) -> int:
-    """The workers for `tasks` items under a ParallelSpec (hcwf.config.model): `worker_count` of its two settings."""
-    return worker_count({"parallel": parallel.enabled, "parallel_workers": parallel.workers}, tasks)
+def spec_workers(parallel, tasks: int, item_bytes: int | None = None) -> int:
+    """The workers for `tasks` items under a ParallelSpec (hcwf.config.model): `worker_count` of its two settings, cut to
+    what fits the memory budget when `item_bytes` (the peak memory of one item) is given."""
+    return worker_count({"parallel": parallel.enabled, "parallel_workers": parallel.workers}, tasks,
+                        None if item_bytes is None else [item_bytes])
 
 
 def start_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA,
-                    prewarm: Callable[[], None] | None = None) -> Pending:
+                    prewarm: Callable[[], None] | None = None, item_bytes: int | None = None) -> Pending:
     """Start func([year], *args) for each year; the Pending gives the results in year order.
 
     start_items over the years in workers when `parallel` (a ParallelSpec) allows and there is more than one year;
     `prewarm()`, if given, is called here once before the jobs are sent. `skip` is the start of the ValueError message
-    that means "this year had no data" (a missing file): that year's result is None. `args` travel to
-    each worker: pass the run and the case, not data.
+    that means "this year had no data" (a missing file): that year's result is None. `item_bytes`, the peak memory of
+    one year, cuts the workers to what fits the memory budget. `args` travel to each worker: pass the run and the case, not
+    data.
     """
     years = list(years)
-    return start_items(_years_call, years, (func, args, skip), workers=spec_workers(parallel, len(years)), label=int,
-                       prewarm=prewarm)
+    return start_items(_years_call, years, (func, args, skip), workers=spec_workers(parallel, len(years), item_bytes),
+                       label=int, prewarm=prewarm)
 
 
 def map_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA,
-                  prewarm: Callable[[], None] | None = None) -> list:
+                  prewarm: Callable[[], None] | None = None, item_bytes: int | None = None) -> list:
     """func([year], *args) for each year, results in year order (None for a skipped year); `start_year_args`, waited for."""
-    return start_year_args(func, years, args, parallel, skip, prewarm).result()
+    return start_year_args(func, years, args, parallel, skip, prewarm, item_bytes).result()
 
 
 def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], None] | None = None) -> Pending:
@@ -354,6 +425,14 @@ def worker_count(config: Mapping, tasks: int, item_bytes: Sequence[int] | None =
         budget = budget_bytes if budget_bytes is not None else config.get("memory_budget") or memory_budget()
         workers = workers_within(item_bytes, workers, budget)
     return workers
+
+
+def reader_count(parallel) -> int:
+    """The processes one file's chunks may be read by, for a run with the ParallelSpec `parallel`: 1 (read in this
+    process) when parallel is off or this process is itself a worker, else its `workers` setting or the cores available."""
+    if in_worker() or (parallel is not None and not parallel.enabled):
+        return 1
+    return max(1, int((parallel.workers if parallel is not None else None) or cores()))
 
 
 _BLAS_LIMIT = None

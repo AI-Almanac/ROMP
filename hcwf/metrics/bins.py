@@ -227,7 +227,7 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
         'members_with_onset': members_with_onset.ravel(),
         'total_members': per_case(total_members[kept]),
         'year': per_case(pd.DatetimeIndex(init_kept).year.to_numpy().astype(np.int64)),
-        'obs_onset_date': per_case(pd.DatetimeIndex(obs_date[kept]).strftime('%Y-%m-%d').to_numpy(dtype=object)),
+        'obs_onset_date': per_case(obs_date[kept].astype('datetime64[D]').astype('datetime64[ns]')),
         'bin_index': np.tile(np.arange(n_bins), len(kept)),
     })
     if back_dated_members is not None:

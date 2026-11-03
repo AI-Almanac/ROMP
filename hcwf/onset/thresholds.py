@@ -13,6 +13,7 @@ file side. The readers port onset_blending's `core/reference.py` (`read_threshol
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -20,6 +21,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from hcwf.cache import memo
 from hcwf.spatial import ids
 
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")
@@ -127,14 +129,45 @@ def _read_csv(path: str, id_col: str | None, value_col: str, lat_col: str, lon_c
     return table[["lat", "lon", "onset_thresh"]].drop_duplicates()
 
 
+_joined = memo("onset.thresholds.joined", maxsize=16, share=True)
+"""The tables and arrays already joined to units this run: {fingerprint: thresholds}. Joining a table keyed by lat/lon
+formats every cell's grid id, which every year and file of a run would repeat; the workers start with the parent's."""
+
+
+def _fingerprint(thresholds, unit_ids, explicit) -> str:
+    """A digest of what a join depends on: the table or array, the units and the explicit convention."""
+    digest = hashlib.blake2b(digest_size=16)
+    if isinstance(thresholds, pd.DataFrame):
+        digest.update(repr(list(thresholds.columns)).encode())
+        digest.update(pd.util.hash_pandas_object(thresholds, index=False).to_numpy().tobytes())
+    else:
+        digest.update(np.asarray(thresholds["unit"].values).astype(str).tobytes())
+        digest.update(np.ascontiguousarray(thresholds.values, dtype=float).tobytes())
+    digest.update(str(unit_ids.shape).encode())
+    digest.update(unit_ids.astype(str).tobytes())
+    digest.update(repr(explicit).encode())
+    return digest.hexdigest()
+
+
 def unit_thresholds(thresholds, unit_ids, explicit: ids.GridIdConvention | None = None) -> np.ndarray:
     """Each unit's threshold (NaN without one): `thresholds` is None, a constant, a table or an array over "unit",
     joined by unit id.
 
     A table keyed by lat/lon is read under the units' grid-id convention and must cover them; ids are normalised
-    (stripped text); one id with two values, or a unit the table lacks, is an error.
+    (stripped text); one id with two values, or a unit the table lacks, is an error. A join is made once per run.
     """
     unit_ids = np.asarray(unit_ids)
+    if isinstance(thresholds, pd.DataFrame) or (isinstance(thresholds, xr.DataArray) and "unit" in thresholds.dims):
+        key = _fingerprint(thresholds, unit_ids, explicit)
+        joined = _joined.get(key)
+        if joined is None:
+            joined = _joined.setdefault(key, _join_units(thresholds, unit_ids, explicit))
+        return joined.copy()
+    return _join_units(thresholds, unit_ids, explicit)
+
+
+def _join_units(thresholds, unit_ids, explicit) -> np.ndarray:
+    """`unit_thresholds` without the memo."""
     if thresholds is None:
         return np.full(len(unit_ids), np.nan)
     if isinstance(thresholds, xr.DataArray) and "unit" in thresholds.dims:

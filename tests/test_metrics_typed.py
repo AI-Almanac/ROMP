@@ -87,6 +87,32 @@ def test_serial_equals_parallel_on_the_typed_path(config, source):
         assert len(serial[2].forecast["year"].unique()) == len(YEARS)
 
 
+@pytest.mark.parametrize("workers", [False, True])
+def test_the_skill_pass_hands_its_ensemble_tables_to_the_spatial_metrics(config, monkeypatch, workers):
+    """prepare_pairs keeps the ensemble onset tables its detection made (from worker processes too); onset_tables takes them
+    instead of reading and detecting the years again, and they equal the tables it would have made."""
+    rc, case, select = typed_io.from_case_kwargs(dict(config, parallel=workers, parallel_workers=2))
+    reads, original = [], benchmark.forecasts_io.forecast_of
+    try:
+        reset_run_state()
+        prepare_pairs(rc, case.model, select)
+        assert len(benchmark._SHARED) == 2   # the model's and its reference model's
+        monkeypatch.setattr(benchmark.forecasts_io, "forecast_of", lambda *a, **k: reads.append(a) or original(*a, **k))
+        shared, _ = benchmark.onset_tables(rc, case, select, ens=True)
+        assert len(benchmark._SHARED) == 1 and not reads   # the model's are taken out, the reference's wait
+        benchmark.onset_tables(rc, rc.reference_cases()[0], select, ens=True)
+        assert len(benchmark._SHARED) == 0 and not reads   # the reference model's too: the key is the case builder's
+        reset_run_state()
+        fresh, _ = benchmark.onset_tables(rc, case, select, ens=True)
+    finally:
+        parallel.shutdown()
+        reset_run_state()
+    assert list(shared) == list(fresh) == list(YEARS)
+    for year in YEARS:
+        pd.testing.assert_frame_equal(shared[year][0].reset_index(drop=True), fresh[year][0].reset_index(drop=True))
+        assert shared[year][1].equals(fresh[year][1])
+
+
 def test_scored_bins_are_the_evaluations(config):
     """create_score_results scores the bins of the evaluation spec it is given (a window's bins, in the ensemble flow)."""
     from dataclasses import replace

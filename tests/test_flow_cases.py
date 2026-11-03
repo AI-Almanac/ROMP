@@ -92,3 +92,19 @@ def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
 def test_ensemble_flow_does_nothing_for_a_deterministic_run(configs):
     _, rc = _run(configs, "two_models_windows", False)
     assert bin_skill_score.skill_score_in_bins(rc) is None
+
+
+@pytest.mark.parametrize("name", REFERENCES)
+def test_one_process_frees_the_reference_rain_before_the_years_are_read(configs, monkeypatch, name):
+    """Without worker processes the years run inside start_pairs, so the thresholds' reference rain is used (by the
+    climatological onsets, or by nothing for a model reference) and released before the first of them starts."""
+    dic, rc = _run(configs, name, True)
+    rc = RunConfig.from_flat({**dic, "parallel": False}, check=False)
+    steps, table = [], pd.DataFrame({"a": [1]})
+    monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: steps.append("pairs") or Pending.finished(table))
+    monkeypatch.setattr(skill.reference_io, "release_reference", lambda: steps.append("release"))
+    monkeypatch.setattr(skill, "climatological_onset_dataset", lambda *a: steps.append("climatology") or "onsets")
+    monkeypatch.setattr(skill.thresholds_io, "thresholds_of", lambda *a: steps.append("thresholds"))
+    monkeypatch.setattr(skill, "_climatology_pairs", lambda *a: table)
+    skill.prepare_pairs(rc, rc.models[0])
+    assert steps.index("release") < steps.index("pairs")

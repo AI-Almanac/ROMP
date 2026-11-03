@@ -103,15 +103,15 @@ def test_deterministic_frame_schema():
     assert list(df.columns) == ["init_time", "lat", "lon", "onset_day", "onset_date", "obs_onset_date", "onset_status"]
     assert df["onset_day"].dtype == np.int64 and df["init_time"].dtype == forecast["init_time"].dtype
     assert df.iloc[0].to_dict() == {"init_time": pd.Timestamp("2020-05-25"), "lat": 0.0, "lon": 0.0, "onset_day": 3,
-                                    "onset_date": "2020-05-28", "obs_onset_date": "2020-06-20",
+                                    "onset_date": pd.Timestamp("2020-05-28"), "obs_onset_date": pd.Timestamp("2020-06-20"),
                                     "onset_status": "ONSET"}
 
 
 def test_no_forecast_onset_is_none():
-    """A forecast without onset keeps its row with onset_day and onset_date None."""
+    """A forecast without onset keeps its row with onset_day None and onset_date NaT."""
     forecast = _forecast([{}]).isel(member=0, drop=True)
     df = detect_deterministic(forecast, {}, OBS_ONSET, *typed(FLAT))
-    assert len(df) == 1 and df["onset_day"].iloc[0] is None and df["onset_date"].iloc[0] is None
+    assert len(df) == 1 and df["onset_day"].iloc[0] is None and pd.isna(df["onset_date"].iloc[0])
 
 
 def test_inits_on_or_after_the_observed_onset_and_cells_without_one_have_no_rows():
@@ -133,7 +133,7 @@ def test_ensemble_frames_round_half_to_even_and_keep_the_columns():
                                       "total_members", "onset_percentage", "obs_onset_date", "onset_status"]
     row = ensemble.iloc[0]
     assert (row["onset_day"], row["onset_date"], row["member_onset_count"], row["total_members"],
-            row["onset_percentage"]) == (4.0, "2020-05-29", 2, 2, 1.0)
+            row["onset_percentage"]) == (4.0, pd.Timestamp("2020-05-29"), 2, 2, 1.0)
 
 
 @pytest.mark.parametrize(("threshold", "expected"), [(0.5, 3.0), (0.75, np.nan)])
@@ -163,7 +163,7 @@ def test_definition_mode_adds_status_and_dates_leads_by_their_start():
     forecast = _forecast([rain]).isel(member=0, drop=True)
     df = detect_deterministic(forecast, {}, OBS_ONSET, *typed(DEFINITION))
     row = df.iloc[0]
-    assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (2, "2020-05-27", "ONSET")
+    assert (row["onset_day"], row["onset_date"], row["onset_status"]) == (2, pd.Timestamp("2020-05-27"), "ONSET")
     members, ensemble = detect_ensemble(_forecast([rain]), {}, OBS_ONSET, *typed(DEFINITION))
     assert members["onset_status"].tolist() == ["ONSET"] and ensemble["onset_status"].tolist() == ["ONSET"]
 

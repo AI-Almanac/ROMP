@@ -45,28 +45,32 @@ def unit_transform(units, lat, lon, positions=None, *, tolerance=None, wrap_long
     return out
 
 
-def _cell_positions(transform, lat, lon):
-    """Each cell of the (lat, lon) grid (latitude-major) as its position among the transform's sources, or None when the
-    sources are the grid's cells themselves."""
+def _cell_positions(transform, lat, lon, flat=None):
+    """Each cell as its position among the transform's sources (-1 for a cell that is none).
+
+    The cells are those of the (lat, lon) grid in latitude-major order, or, with `flat` (each cell's position in the
+    whole grid), the cells given one by one as lat and lon arrays. A coordinate-keyed transform has the grid's cells
+    themselves as its sources, so a cell's position is its place in the grid.
+    """
     if transform.keys == "coordinate":
-        return None
-    cell_lat, cell_lon = np.meshgrid(np.asarray(lat, float), np.asarray(lon, float), indexing="ij")
-    return transform.positions(cell_lat.reshape(-1), cell_lon.reshape(-1))
+        return np.arange(len(lat) * len(lon), dtype=np.int64) if flat is None else np.asarray(flat, dtype=np.int64)
+    if flat is None:
+        lat, lon = (a.reshape(-1) for a in np.meshgrid(np.asarray(lat, float), np.asarray(lon, float), indexing="ij"))
+    return transform.positions(lat, lon)
 
 
 def feeding_cells(transform, lat, lon):
     """Boolean (nlat, nlon): the grid cells that are a source of some unit of the transform (what a read must keep)."""
     sources = np.unique(transform.weighted_matrix.indices)
-    place = _cell_positions(transform, lat, lon)
     keep = np.zeros(len(lat) * len(lon), dtype=bool)
-    if place is None:
+    if transform.keys == "coordinate":
         keep[sources] = True
     else:
-        keep = np.isin(place, sources)
+        keep = np.isin(_cell_positions(transform, lat, lon), sources)
     return keep.reshape(len(lat), len(lon))
 
 
-def unit_series(da, transform, *, missing="flag", post_scale=None, support=False):
+def unit_series(da, transform, *, missing="flag", post_scale=None, support=False, dtype=None):
     """Average a loaded DataArray with lat and lon dims onto the units of `transform`: dims become (the others, "unit").
 
     Each unit is the weighted mean of its observed (finite) source cells, in float64 mm, NaN where none is observed
@@ -76,29 +80,61 @@ def unit_series(da, transform, *, missing="flag", post_scale=None, support=False
     does for a regrid; apply it to `da` first for a cell transform). The array is read in column blocks, so working
     memory stays one block beyond the result. With `support` the result is (series, (unit, year) booleans of which
     units have a source that year, the years).
+
+    The array may hold only some of the grid's cells (`load_blocks(..., compact=True)`: the dims others + "cell", with
+    lat and lon over "cell"); the cells it lacks are not observed. Units that are the cells themselves (one source of
+    weight 1) take their cell's value directly, without the weighted sums. The result is float64, or `dtype` when that
+    changes nothing but the storage (cells' own values, no post_scale).
     """
     if missing not in SOURCE_POLICIES:
         raise ValueError(f"missing must be one of {SOURCE_POLICIES}, got {missing!r}")
-    lat, lon = np.asarray(da["lat"].values), np.asarray(da["lon"].values)
-    others = [d for d in da.dims if d not in ("lat", "lon")]
+    if "cell" in da.dims:
+        spatial, lat, lon, flat = ["cell"], da["lat"].values, da["lon"].values, da["cell"].values
+        place = _cell_positions(transform, lat, lon, flat)
+    else:
+        spatial, lat, lon = ["lat", "lon"], np.asarray(da["lat"].values), np.asarray(da["lon"].values)
+        place = _cell_positions(transform, lat, lon)
+    others = [d for d in da.dims if d not in spatial]
     if missing == "drop" and others != ["time"]:
         raise ValueError("missing 'drop' needs data with the dims (time, lat, lon)")
-    view = np.moveaxis(da.values, [da.dims.index("lat"), da.dims.index("lon")], [-2, -1])
-    rest_shape = view.shape[:-2]
-    cells = view.reshape(-1, len(lat) * len(lon))
-    place = _cell_positions(transform, lat, lon)
+    view = np.moveaxis(da.values, [da.dims.index(d) for d in spatial], list(range(-len(spatial), 0)))
+    rest_shape = view.shape[:-len(spatial)]
+    cells = view.reshape(int(np.prod(rest_shape, dtype=np.int64)), place.size)
     n_unit, n_source = transform.shape
-    used = None if place is None else np.flatnonzero(place >= 0)
-    out = np.empty((cells.shape[0], n_unit))
+    used = np.flatnonzero(place >= 0)
+    whole = len(used) == n_source == len(place) and bool((place == np.arange(n_source)).all())
+    single = None if missing == "drop" else transform.single_sources
+    exact = single is not None and (post_scale is None or post_scale == 1.0)
+    out = np.empty((cells.shape[0], n_unit), dtype=dtype if exact and dtype is not None else float)
 
     def sources(rows):
         """(source, column) float64 values of the given rows of `cells`."""
         block = cells[rows]
-        if place is None:
+        if whole:
             return block.T.astype(float)
         values = np.full((n_source, block.shape[0]), np.nan)
         values[place[used]] = block[:, used].T.astype(float)
         return values
+
+    if single is not None:
+        column = np.full(n_source, -1, dtype=np.int64)
+        column[place[used]] = used
+        wanted = column[single]
+        absent = (wanted < 0) | (not cells.shape[1])
+        wanted = np.where(wanted < 0, 0, wanted)
+
+    def own(rows):
+        """The rows' values at the units' own cells: not observed (NaN) where the cell is missing or not finite."""
+        taken = cells[rows]
+        block = taken[:, wanted] if taken.shape[1] else np.full((taken.shape[0], n_unit), np.nan)
+        if not np.issubdtype(block.dtype, np.floating):
+            block = block.astype(float)
+        if absent.any():
+            block[:, absent] = np.nan
+        if missing == "zero":
+            np.copyto(block, 0.0, where=np.isnan(block))
+        block[~np.isfinite(block)] = np.nan
+        return block
 
     years = present = None
     if missing == "drop":
@@ -116,12 +152,17 @@ def unit_series(da, transform, *, missing="flag", post_scale=None, support=False
     else:
         for start in range(0, cells.shape[0], 256):
             rows = slice(start, min(cells.shape[0], start + 256))
+            if single is not None:
+                out[rows] = own(rows)
+                continue
             values = sources(rows)
             if missing == "zero":
                 values = np.where(np.isnan(values), 0.0, values)
             out[rows] = transform.observed_mean(values).T
     if post_scale is not None and post_scale != 1.0:
         out *= post_scale
+    if dtype is not None and out.dtype != dtype:
+        out = out.astype(dtype)
     coords = {d: da[d].values for d in others if d in da.coords}
     coords["unit"] = np.asarray(transform.target_ids, dtype=str)
     result = xr.DataArray(out.reshape(rest_shape + (n_unit,)), dims=tuple(others) + ("unit",), coords=coords,
@@ -135,14 +176,15 @@ def unit_series(da, transform, *, missing="flag", post_scale=None, support=False
 
 
 def read_on_units(da, units, *, block_dim, region=None, positions=None, tolerance=None, wrap_longitude=False,
-                  convention=None, scale=None, post_scale=None, missing="flag", support=False):
+                  convention=None, scale=None, post_scale=None, missing="flag", support=False, dtype=None):
     """Read a lazy DataArray (dims named as HCWF's, lat and lon among them) onto `units`, reading only what feeds them.
 
     The transform of `units` from the array's own cells is compiled (`unit_transform`; the array's lat and lon are
     matched as they are, so give it the cut or uncut array in the order you want matched), only the storage tiles
     holding a source cell of the wanted `positions` are read (block by block along block_dim, `load_blocks`), `scale`
     multiplies the cells in place before they are averaged (as for a cell transform), and `unit_series` averages them
-    (post_scale, missing and support as there). Returns the unit series, dims (the others, "unit").
+    (post_scale, missing, support and dtype as there). Returns the unit series, dims (the others, "unit"). Only the
+    cells that feed a unit are held in memory, not the whole grid.
 
     With a `region` the array is first cut to the region's box (latitude ascending, longitude in the region's
     convention, so use wrap_longitude with weights written in the other one); no cell mask is applied, the weights
@@ -155,8 +197,8 @@ def read_on_units(da, units, *, block_dim, region=None, positions=None, toleranc
                                convention=convention)
     if scale and da.variable._in_memory:
         da = da.copy(deep=True)  # the caller's array is not scaled in place
-    loaded = scale_in_place(load_blocks(da, block_dim, keep=feeding_cells(transform, lat, lon)), scale)
-    return unit_series(loaded, transform, missing=missing, post_scale=post_scale, support=support)
+    loaded = scale_in_place(load_blocks(da, block_dim, keep=feeding_cells(transform, lat, lon), compact=True), scale)
+    return unit_series(loaded, transform, missing=missing, post_scale=post_scale, support=support, dtype=dtype)
 
 
 def read_unit_dim(da, *, block_dim, ids=None, scale=None):
@@ -251,5 +293,6 @@ def read_units(da, spec: UnitsSpec, units, positions, *, block_dim, scale=None, 
                   support=support)
     if spec.how == "regrid":
         return read_on_units(da, units, post_scale=scale, **common)
-    out = read_on_units(da, units, scale=scale, **common)
-    return out.astype(da.dtype, copy=False) if spec.how == "cells" else out
+    if spec.how == "cells":
+        return read_on_units(da, units, scale=scale, dtype=da.dtype, **common)
+    return read_on_units(da, units, scale=scale, **common)

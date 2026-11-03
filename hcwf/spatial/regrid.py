@@ -253,6 +253,16 @@ class SparseTransform:
         support.data = np.ones_like(support.data)
         return np.asarray(support @ np.asarray(present, dtype=float)) > 0
 
+    @cached_property
+    def single_sources(self) -> np.ndarray | None:
+        """Each target's one source position when every target has exactly one source of weight 1.0 (units that are
+        the cells themselves), else None. Then a target's observed mean is its source's value (x * 1.0 / 1.0 is x), NaN
+        where that is not finite."""
+        matrix = self.weighted_matrix.tocsr()
+        if matrix.shape[0] == 0 or (np.diff(matrix.indptr) != 1).any() or (matrix.data != 1.0).any():
+            return None
+        return np.asarray(matrix.indices, dtype=np.int64)
+
     def observed_mean(self, source_values: np.ndarray, column_chunk_size: int = 256) -> np.ndarray:
         """W @ filled / W @ observed for a (source, column) matrix, NaN where a
         target has no observed source."""

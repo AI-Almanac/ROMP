@@ -18,22 +18,12 @@ from hcwf.io import warmup as warmup_io
 from hcwf.io.forecasts import initialization_dates
 from hcwf.metrics.bins import create_climatological_forecast_obs_pairs, forecast_pairs
 from hcwf.onset.detect import check_alignment, detect_ensemble, detect_observed
-from hcwf.parallel import concat_year_args, start_concat_args
+from hcwf.parallel import NO_DATA, Pending, concat_year_args, spec_workers, start_year_args
 from hcwf.references.climatology import climatological_onset_dataset
 from hcwf.references.conditional import CLIMATOLOGY_REFERENCES, conditional_pairs, is_conditional_climatology
+from hcwf.scoring.onset_tables import reports_back_dated, share_ensemble_tables
 
 log = logging.getLogger(__name__)
-
-
-def reports_back_dated(onset, model_name):
-    """Whether score outputs report back-dated forecast onsets: forecast_history "observed" in `onset` (the OnsetSetup).
-
-    The climatology baselines (whose onsets come from no forecast; `model_name` says which source is scored) return
-    False, so their outputs stay as they are.
-    """
-    if model_name in CLIMATOLOGY_REFERENCES:
-        return False
-    return onset.forecast_history == "observed"
 
 
 def _case_of(rc, model):
@@ -42,10 +32,13 @@ def _case_of(rc, model):
 
 
 def forecast_obs_pairs(rc, model, years, select=Selection()):
-    """Forecast-observation pairs of the ensemble forecast `model` (ModelSpec) over `years`, concatenated, in this process.
+    """(pairs, tables) of the ensemble forecast `model` (ModelSpec) over `years`, in this process: the forecast-observation
+    pairs of the years concatenated, and {year: (ensemble onset table, observed onsets)} for them.
 
-    The run `rc` carries the observations, onset definition, day bins and everything else the pairs depend on. A year
-    whose model or observation file is missing is skipped; ValueError("No data ...") when no year yields data.
+    The run `rc` carries the observations, onset definition, day bins and everything else the pairs depend on. Each year
+    is read and detected once: the ensemble onset table of its detection is what the spatial metrics are made from
+    (see onset_tables.share_ensemble_tables). A year whose model or observation file is missing is skipped;
+    ValueError("No data ...") when no year yields data.
     """
     case = _case_of(rc, model)
     log.debug(f"Processing years: {list(years)}")
@@ -54,33 +47,34 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
 
     # Initialize list to store all forecast-observation pairs
     all_forecast_obs_pairs = []
+    tables = {}
 
     # Process each year
     for year in years:
         log.debug(f"\n{'-'*50}")
         log.debug(f"Processing year {year}")
-        # let go of the previous year's cubes before this year's are read (peak memory: one year, not two)
-        p_model = p_model_slice = rainfall_ds = rainfall_ds_slice = onset_all_members = onset_da = None
+        # let go of the previous year's data before this year's is read (peak memory: one year, not two)
+        rainfall_ds = read_forecast = onset_all_members = ensemble_table = onset_da = None
 
         try:
-            # Load model and observation data
-            log.debug("Loading S2S model data...")
-            p_model = forecasts_io.forecast_of(year, rc, model, ensemble=True, select=select)
-            p_model_slice = p_model # !!!!! region subset
-
             log.debug("Loading observational rainfall data...")
             rainfall_ds = observations_io.observations_of(year, rc, select)
-            rainfall_ds_slice = rainfall_ds #!!!!! region subset
-            check_alignment(rainfall_ds_slice, p_model_slice, rc, case)
 
             log.debug("Detecting observed onset...")
-            onset_da = detect_observed(rainfall_ds_slice, thresh_slice, year, rc, select)
+            onset_da = detect_observed(rainfall_ds, thresh_slice, year, rc, select)
             log.debug(f"Found onset in {(~pd.isna(onset_da.values)).sum()} out of {onset_da.size} grid points")
 
+            def read_forecast(observed=rainfall_ds):
+                """The year's forecast of the cells the masks keep, checked against the observations (once per run)."""
+                log.debug("Loading S2S model data...")
+                cube = forecasts_io.forecast_of(year, rc, model, ensemble=True, select=select, cells=True)
+                check_alignment(observed, cube, rc, case)
+                return cube
+
             log.debug("Computing onset for all ensemble members...")
-            onset_all_members, _ = detect_ensemble(
-                p_model_slice, thresh_slice, onset_da, rc, case, select,
-                history=observations_io.history_of(year, rainfall_ds_slice, rc, select))
+            onset_all_members, ensemble_table = detect_ensemble(
+                read_forecast, thresh_slice, onset_da, rc, case, select,
+                history=observations_io.history_of(year, rainfall_ds, rc, select))
             log.debug(f"Found onset in {onset_all_members['onset_day'].notna().sum()} member cases")
 
             log.debug("Creating forecast-observation pairs...")
@@ -89,7 +83,8 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
 
             # Add to master list
             all_forecast_obs_pairs.append(forecast_obs)
-            del p_model, p_model_slice, rainfall_ds, rainfall_ds_slice, onset_all_members, onset_da
+            tables[year] = (ensemble_table, onset_da)
+            del rainfall_ds, read_forecast, onset_all_members, ensemble_table, onset_da
 
             log.debug(f"Year {year} completed: {len(forecast_obs)} forecast-observation pairs")
 
@@ -111,11 +106,11 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
     # Print final summary statistics
     log.debug(f"\nFinal Summary Statistics:")
     log.debug(f"Years processed: {list(years)}")
-    return combined_forecast_obs
+    return combined_forecast_obs, tables
 
 
 def _pairs_of_years(years, rc, model, select):
-    """forecast_obs_pairs with the years first (the form `parallel.start_concat_args` calls)."""
+    """forecast_obs_pairs with the years first (the form `parallel.start_year_args` calls)."""
     return forecast_obs_pairs(rc, model, years, select)
 
 
@@ -123,10 +118,27 @@ def start_pairs(rc, model, select=Selection()):
     """Start the forecast-observation pairs of `model` over the run's years; the Pending's result() waits for them.
 
     The thresholds and masks every year needs are read here first (warmup_io.warm_up_of); with workers, the years run in
-    them while this process goes on, and each worker gets only `(rc, model, select)`.
+    them while this process goes on, and each worker gets only `(rc, model, select)`. The ensemble onset tables of the
+    years that come back with the pairs are handed to the spatial metrics (share_ensemble_tables).
     """
-    return start_concat_args(_pairs_of_years, rc.evaluation.years, (rc, model, select), rc.parallel,
-                             prewarm=lambda: warmup_io.warm_up_of(rc, model, select))
+    years = list(rc.evaluation.years)
+    pending = start_year_args(_pairs_of_years, years, (rc, model, select), rc.parallel,
+                              prewarm=lambda: warmup_io.warm_up_of(rc, model, select),
+                              item_bytes=forecasts_io.forecast_year_bytes(years[0], rc, model, ensemble=True,
+                                                                          select=select) if len(years) > 1 else None)
+
+    def join():
+        """The year pairs, concatenated in year order; a year without data is left out, none at all is an error."""
+        parts = [part for part in pending.result() if part is not None]
+        if not parts:
+            raise ValueError(f"{NO_DATA} for any year")
+        tables = {}
+        for _, year_tables in parts:
+            tables.update(year_tables)
+        share_ensemble_tables(rc, model, tables, select)
+        return pd.concat([pairs for pairs, _ in parts], ignore_index=True)
+
+    return Pending(join)
 
 
 def climatological_pairs(clim_onset, rc, *, years, day_bins):
@@ -222,21 +234,31 @@ def prepare_pairs(rc, model, select=Selection()):
     conditional_climatology), the climatological onsets and the climatology pairs; create_score_results reuses them.
 
     With worker processes the model's years are sent off first and the climatological onsets are computed here
-    while they run; the climatology pairs then go to the same workers.
+    while they run; the climatology pairs then go to the same workers. Without them the years run inside
+    `start_pairs`, so the reference years' rain (held from the thresholds to the climatological onsets) is used and
+    freed before they are read, not kept alongside them.
     """
     case = Case(model, rc.evaluation.windows[0])
     climatology = rc.reference.model in CLIMATOLOGY_REFERENCES
-
-    pending = start_pairs(rc, model, select)
+    serial = spec_workers(rc.parallel, len(rc.evaluation.years)) <= 1
 
     clim_onset = None
     climatology_obs_df_all = None
     ref_pending = None
 
+    if serial and climatology:
+        clim_onset = climatological_onset_dataset(rc, case, select)
+        reference_io.release_reference()
+    elif serial:
+        thresholds_io.thresholds_of(rc, model, select)
+        reference_io.release_reference()
+
+    pending = start_pairs(rc, model, select)
+
     if not climatology:
         ref_pending = start_pairs(rc, _reference_model(rc, model), select)
         reference_io.release_reference()
-    else:
+    elif clim_onset is None:
         clim_onset = climatological_onset_dataset(rc, case, select)
         reference_io.release_reference()
 

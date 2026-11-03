@@ -44,7 +44,7 @@ from hcwf.parallel import workers_within
 
 log = logging.getLogger(__name__)
 
-_CHUNK_ROWS = 1_000_000
+_CHUNK_ROWS = 262_144
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -136,11 +136,23 @@ def _rain_mean(values: np.ndarray) -> np.ndarray:
     return values[:, 0] if values.shape[1] == 1 else member_mean(values)
 
 
-def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids) -> dict:
-    """The search starts after the base: the fixed cutoff date, and the reference onset ("MM-DD", or dates over
-    init_time and unit)."""
-    starts = {"fixed_cutoff": fixed_cutoff}
-    if reference is not None:
+_DETECT_VALUES = 1 << 24
+"""The most forecast values (members x units x lead days x issues) the onset search of one worker holds at a time: a run is
+read whole, its issues are searched a few at a time (the detection holds several copies of what it searches)."""
+
+_PARALLEL_VALUES = 1 << 25
+"""Forecast values (members x units x lead days x issues) below which a model's files are done in this process (about
+2 s of work, less than starting the workers costs)."""
+
+SERIES = {"base": "base", "fixed_cutoff": "fixed_cutoff", "ref_onset": "ref"}
+"""The count series a probability variant is binned from (`count_<series>` in a forecast's data)."""
+
+
+def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids, series=("fixed_cutoff", "ref")) -> dict:
+    """The search starts after the base, for the `series` asked for: the fixed cutoff date, and the reference onset
+    ("MM-DD", or dates over init_time and unit)."""
+    starts = {"fixed_cutoff": fixed_cutoff} if "fixed_cutoff" in series else {}
+    if reference is not None and "ref" in series:
         if reference.month_day is not None:
             starts["ref"] = reference.month_day
         else:
@@ -150,53 +162,77 @@ def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids)
     return starts
 
 
-def _forecast_file(path, rc, case, select, spec, thresholds, fixed_cutoff, reference, threshold_name):
-    """One forecast file's member onset counts per lead day, a run of issues at a time.
+def _forecast_needs(recipe: Recipe, model, needed_only: bool) -> tuple[tuple[str, ...], int | None]:
+    """(count series, lead days) of a model's forecast onsets to keep: (every series, all days) unless `needed_only`,
+    else the base series and those the recipe bins, and the days its features read: the probability days and the rain
+    predictors' horizon (every day for the random forest, which reads them all; none for a model without rain
+    predictors)."""
+    if not needed_only:
+        return tuple(SERIES.values()), None
+    series = ("base", *(SERIES[v] for v in recipe.probability_variants()))
+    if recipe.evaluation.random_forest is not None:
+        return series, None
+    rain = recipe.rain_horizon_days(model) if model.rain_predictors else 0
+    return series, max(recipe.features.probability_days, rain)
 
-    Returns the data, or None when `issue_dates` is given and the file has none of them: data holds, over (issue, unit, day), count_base / count_fixed_cutoff / count_ref (uint8:
-    members with their onset on each lead day, from the search starting at lead 1, at the fixed cutoff date and at
-    the reference onset), plus members (per issue), onset_threshold (unit) and rain_mean (the members' mean rainfall in
-    the file's dtype).
-    """
+
+def _forecast_file_info(path, case, select, spec):
+    """What the runs of one forecast file need to be placed: its units, lead days, issues and runs; None when none of the
+    issues asked for is in it."""
+    with forecasts_io.UnitForecast(path, case.model, spec, keep_ids=select.keep_unit_ids,
+                                   issue_dates=select.issue_dates, select=select) as file:
+        if not len(file.issues):
+            return None
+        return {"ids": file.ids, "days": np.asarray(file.days), "issues": file.issues, "bounds": file.run_bounds(),
+                "bytes": file.run_bytes(),
+                "values": len(file.issues) * file.n_member * len(file.ids) * len(file.days)}
+
+
+def _forecast_runs(item, rc, case, select, spec, thresholds, fixed_cutoff, reference, series, keep_days):
+    """The member onset counts per lead day of some runs of issues of one forecast file: for each run, (counts over
+    (issue, unit, day) of every series in `series`, uint8: members with their onset on each lead day, from the search
+    starting at lead 1, at the fixed cutoff date and at the reference onset; the number of members; the members' mean
+    rainfall in the file's dtype over the same days)."""
+    path, bounds = item
     with forecasts_io.UnitForecast(path, case.model, spec, keep_ids=select.keep_unit_ids, issue_dates=select.issue_dates,
-                               select=select) as file:
-        ids, days, issues = file.ids, file.days, file.issues
-        if not len(issues):
-            return None   # none of the issues asked for is in this file
-        n_issue, n_unit, n_day = len(issues), len(ids), len(days)
-        variants = ("base", "fixed_cutoff", "ref")
-        counts = {v: np.zeros((n_issue, n_unit, n_day), dtype=np.uint8) for v in variants}
-        members, summary = np.zeros(n_issue, dtype=np.uint8), None
+                                   select=select) as file:
+        ids, issues, n_day = file.ids, file.issues, len(file.days)
+        days = n_day if keep_days is None else min(n_day, keep_days)
         run = replace(rc, evaluation=replace(rc.evaluation, max_forecast_day=n_day))   # each file has its own leads
-        for start, stop, rain in file.runs():
+        out = []
+        for start, stop, rain in file.runs(bounds):
             values = np.asarray(rain.values)
             n_member = values.shape[1]
-            found, order, _ = detect.count_members(
-                rain, thresholds, run, case, select,
-                search_start=forecast_starts(fixed_cutoff, reference, issues[start:stop], ids))
-            found = found.sel(lead=slice(1, None))
-            for v in variants:
-                counts[v][start:stop] = found.isel(start=order.index(v) if v in order else 0).values.astype(np.uint8)
-            members[start:stop] = n_member
-            if summary is None:
-                summary = np.empty((n_issue, n_unit, n_day), dtype=values.dtype)
-            summary[start:stop] = _rain_mean(values)
-        threshold = unit_thresholds(thresholds.get(threshold_name), ids, spec.convention)
-    variables = {"members": (("issue",), members), "onset_threshold": (("unit",), threshold),
-                 "year": (("issue",), pd.DatetimeIndex(issues).year.to_numpy(dtype=np.int64)),
-                 **{f"count_{v}": (("issue", "unit", "day"), counts[v]) for v in variants},
-                 "rain_mean": (("issue", "unit", "day"), summary)}
-    return xr.Dataset(variables, coords={"issue": issues, "unit": ids.astype(object), "day": np.asarray(days)})
+            step = max(1, _DETECT_VALUES // max(1, n_member * len(ids) * n_day))   # issues detected at a time
+            counts = {v: np.zeros((stop - start, len(ids), days), dtype=np.uint8) for v in series}
+            for first in range(0, stop - start, step):
+                last = min(stop - start, first + step)
+                found, order, _ = detect.count_members(
+                    rain.isel(init_time=slice(first, last)), thresholds, run, case, select,
+                    search_start=forecast_starts(fixed_cutoff, reference, issues[start + first:start + last], ids, series))
+                found = found.sel(lead=slice(1, None))
+                for v in series:
+                    counts[v][first:last] = found.isel(start=order.index(v) if v in order else 0).values[..., :days]
+                del found
+            out.append((start, stop, counts, n_member, _rain_mean(values[..., :days])))
+            del values, rain
+    return out
 
 
 def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=None, member_ids=None,
-             units=None, issue_dates=None, workers: int = 1, budget_bytes: int | None = None) -> ForecastOnsets:
-    """A model's forecast onsets for every one of its files, files in parallel as far as memory allows.
+             units=None, issue_dates=None, workers: int = 1, budget_bytes: int | None = None,
+             needed_only: bool = False) -> ForecastOnsets:
+    """A model's forecast onsets for every one of its files, runs of issues in parallel as far as memory allows.
 
     keep_ids limits the units to those (the blendable units under the inner join; their results are unchanged);
     `units` overrides the model's UnitsSpec (a forecast passes the trained blend's); member_ids limits the members
     read (a forecast reads the trained ones); issue_dates reads only the issues on those days (files without any are
-    left out).
+    left out). With `needed_only` only the count series and lead days the recipe's features read are kept (see
+    `_forecast_needs`; the results of those are unchanged).
+
+    The files are read one run of issues at a time (`UnitForecast`), a few runs to a worker task, so that a file is
+    shared by several workers and all of them stay busy to the end; each run's arrays are placed into the result as
+    it arrives.
     """
     spec, setup = recipe.model(model), rc.onset
     source = rc.model(model)
@@ -211,26 +247,70 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
         rain_horizon=(spec.rain_horizon.max_day, spec.rain_horizon.policy), check_units=False,
         keep_unit_ids=None if keep_ids is None else sorted(keep_ids),
         issue_dates=None if issue_dates is None else tuple(issue_dates))
-    item_bytes = [forecasts_io.unit_forecast_bytes(p, source.var) for p in paths]
-    count = max(1, min(workers, len(paths)))
-    count = workers_within(item_bytes, count, budget_bytes) if item_bytes else count
-    name = setup.definition.thresholds[0][0] if setup.definition.thresholds else None
-    results = map_items(_forecast_file, paths, (run, case, select, units, thresholds, recipe.onset.fixed_cutoff,
-                                                reference, name), workers=count)
-    results = [r for r in results if r is not None]
-    names = [tuple(data["unit"].values) for data in results]
-    if len(set(names)) > 1:
+    series, keep_days = _forecast_needs(recipe, spec, needed_only)
+    infos = [_forecast_file_info(path, case, select, units) for path in paths]
+    files = [(path, info) for path, info in zip(paths, infos) if info is not None]
+    if not files:
+        return ForecastOnsets(model=model, data=None)
+    ids, days = files[0][1]["ids"], files[0][1]["days"]
+    if any(not np.array_equal(info["ids"], ids) for _, info in files[1:]):
         raise ValueError(f"model {model}: its files cover different units")
-    data = (xr.concat(results, dim="issue", data_vars="minimal", coords="minimal", compat="equals",
-                      join="exact") if results else None)
-    if data is not None:
-        issues = pd.DatetimeIndex(data["issue"].values)
-        repeated = sorted({d.date().isoformat() for d in issues[issues.duplicated()]})
-        if repeated:
-            raise ValueError(f"model {model}: several issues on the same date ({', '.join(repeated[:5])}"
-                             f"{'…' if len(repeated) > 5 else ''}): one initialisation per date")
-        if not issues.is_monotonic_increasing:
-            data = data.sortby("issue")
+    if any(not np.array_equal(info["days"], days) for _, info in files[1:]):
+        raise ValueError(f"model {model}: its files cover different lead days")
+    issues = np.concatenate([info["issues"] for _, info in files])
+    stamps = pd.DatetimeIndex(issues)
+    repeated = sorted({d.date().isoformat() for d in stamps[stamps.duplicated()]})
+    if repeated:
+        raise ValueError(f"model {model}: several issues on the same date ({', '.join(repeated[:5])}"
+                         f"{'…' if len(repeated) > 5 else ''}): one initialisation per date")
+    offsets = np.cumsum([0] + [len(info["issues"]) for _, info in files])
+
+    # starting a pool of workers costs seconds: a small forecast is done here; a task is a few consecutive runs of one
+    # file, about 6 tasks to a worker
+    if sum(info["values"] for _, info in files) < _PARALLEL_VALUES:
+        workers = 1
+    per_task = max(1, -(-len(issues) // (6 * workers)))
+    tasks = []
+    for number, (path, info) in enumerate(files):
+        group = []
+        for bounds in info["bounds"]:
+            group.append(bounds)
+            if sum(stop - start for start, stop in group) >= per_task:
+                tasks.append((number, (path, group)))
+                group = []
+        if group:
+            tasks.append((number, (path, group)))
+    count = max(1, min(workers, len(tasks)))
+    count = workers_within([info["bytes"] for _, info in files], count, budget_bytes)
+    name = setup.definition.thresholds[0][0] if setup.definition.thresholds else None
+    n_day = len(days) if keep_days is None else min(len(days), keep_days)
+    held = {"counts": {}, "members": np.zeros(len(issues), dtype=np.uint8), "rain": None}
+
+    def place(position, result):
+        number = tasks[position][0]
+        for start, stop, counts, n_member, rain in result:
+            rows = slice(offsets[number] + start, offsets[number] + stop)
+            for v, values in counts.items():
+                if v not in held["counts"]:
+                    held["counts"][v] = np.zeros((len(issues), len(ids), n_day), dtype=np.uint8)
+                held["counts"][v][rows] = values
+            held["members"][rows] = n_member
+            if held["rain"] is None:
+                held["rain"] = np.empty((len(issues), len(ids), n_day), dtype=rain.dtype)
+            held["rain"][rows] = rain
+
+    map_items(_forecast_runs, [item for _, item in tasks],
+              (run, case, select, units, thresholds, recipe.onset.fixed_cutoff, reference, series, keep_days),
+              workers=count, sink=place)
+    order = None if stamps.is_monotonic_increasing else np.argsort(issues, kind="stable")
+    take = (lambda a: a) if order is None else (lambda a: a[order])
+    issues = take(issues)
+    threshold = unit_thresholds(thresholds.get(name), ids, units.convention)
+    variables = {"members": (("issue",), take(held["members"])), "onset_threshold": (("unit",), threshold),
+                 "year": (("issue",), pd.DatetimeIndex(issues).year.to_numpy(dtype=np.int64)),
+                 **{f"count_{v}": (("issue", "unit", "day"), take(held["counts"][v])) for v in series},
+                 "rain_mean": (("issue", "unit", "day"), take(held["rain"]))}
+    data = xr.Dataset(variables, coords={"issue": issues, "unit": ids.astype(object), "day": days[:n_day]})
     return ForecastOnsets(model=model, data=data)
 
 
@@ -402,14 +482,13 @@ def _row_features(recipe, definition, climatology, forecasts, r: Rows, here: sli
         for w, week in enumerate(_week_sums(values[:, 1: day_max + 1], bins), start=1):
             out[f"{feature}_{window_tag(window)}_week{w}"] = _logit_winsor(week)
 
-    series = {"base": "base", "fixed_cutoff": "fixed_cutoff", "ref_onset": "ref"}
     variants = ["base", *recipe.probability_variants()]
     for model in recipe.models:
         data = forecasts[model.name].data
         issue, unit_m = r.model_issue[model.name][here], r.model_unit[model.name][here]
         members = data["members"].values[issue].astype(float)[:, None]
         for variant in variants:
-            daily = data[f"count_{series[variant]}"].values[issue, unit_m, :day_max] / members
+            daily = data[f"count_{SERIES[variant]}"].values[issue, unit_m, :day_max] / members
             prefix = probability_feature_base(model.name, variant)
             for w, week in enumerate(_week_sums(daily, bins), start=1):
                 out[f"{prefix}_week{w}"] = week

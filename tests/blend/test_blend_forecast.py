@@ -154,9 +154,9 @@ def test_a_single_issue_reads_only_that_issue(region, monkeypatch):
     seen = []
     original = forecasts_io.UnitForecast.runs
 
-    def spy(self):
+    def spy(self, bounds=None):
         seen.append([pd.Timestamp(i).date() for i in self.issues])
-        return original(self)
+        return original(self, bounds)
 
     monkeypatch.setattr(forecasts_io.UnitForecast, "runs", spy)
     full = blend.forecast(files, workers=1)

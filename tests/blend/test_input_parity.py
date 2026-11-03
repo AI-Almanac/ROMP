@@ -368,3 +368,45 @@ def test_load_blocks_without_keep_is_what_it_was(chunked):
         load_blocks(dim_fmt_model_ensemble(xr.open_dataset(path))["tp"], "init_time", keep=np.ones((2, 2), dtype=bool))
     da = dim_fmt_model_ensemble(xr.open_dataset(path))["tp"]
     np.testing.assert_array_equal(load_blocks(da, "init_time").values, da.load().values)
+
+
+def test_a_compact_read_holds_only_the_kept_cells(chunked):
+    path, lats, lons = chunked
+    da = dim_fmt_model_ensemble(xr.open_dataset(path))["tp"].transpose("init_time", "member", "step", "lat", "lon")
+    keep = np.zeros((8, 8), dtype=bool)
+    keep[1, 6] = keep[2, 5] = keep[5, 1] = keep[7, 7] = True   # three tiles
+    full = load_blocks(da, "init_time").values
+    got = load_blocks(da, "init_time", keep=keep, compact=True)
+    rows, cols = np.nonzero(keep)
+    assert got.dims == ("init_time", "member", "step", "cell") and got.shape == full.shape[:3] + (4,)
+    np.testing.assert_array_equal(got.values, full[..., rows, cols])
+    np.testing.assert_array_equal(got["lat"].values, lats[rows])
+    np.testing.assert_array_equal(got["lon"].values, lons[cols])
+    np.testing.assert_array_equal(got["cell"].values, rows * 8 + cols)
+    np.testing.assert_array_equal(got["init_time"].values, da["init_time"].values)
+
+
+@pytest.mark.parametrize("policy", ["flag", "zero"])
+def test_units_that_are_cells_take_their_cell_value_without_the_weighted_sums(chunked, policy):
+    path, lats, lons = chunked
+    at = [(1, 6), (2, 5), (7, 0)]
+    weights = pd.DataFrame({"target_id": [f"u{i}" for i in range(3)], "lat": [lats[r] for r, _ in at],
+                            "lon": [lons[c] for _, c in at], "weight": 1.0})
+    units = EvaluationUnits.from_weights(weights)
+    da = dim_fmt_model_ensemble(xr.open_dataset(path))["tp"].transpose("init_time", "member", "step", "lat", "lon")
+    transform = onto_units.unit_transform(units, da["lat"].values, da["lon"].values)
+    assert transform.single_sources is not None
+    loaded = da.load().copy(deep=True)
+    loaded.values[0, 0, 0, 1, 6] = np.nan
+    loaded.values[0, 1, 1, 2, 5] = np.inf
+    cells = loaded.values.astype(float).reshape(-1, 64)
+    if policy == "zero":
+        cells = np.where(np.isnan(cells), 0.0, cells)
+    expect = transform.observed_mean(cells.T).T.reshape(loaded.shape[:3] + (3,))
+    assert np.isnan(expect[0, 0, 0, 0]) != (policy == "zero") and np.isnan(expect[0, 1, 1, 1])
+    got = onto_units.unit_series(loaded, transform, missing=policy)
+    np.testing.assert_array_equal(got.values, expect)
+    lazy = onto_units.read_on_units(da, units, block_dim="init_time", missing=policy, dtype=np.float32)
+    assert lazy.dtype == np.float32
+    own = load_blocks(da, "init_time").values[..., [r for r, _ in at], [c for _, c in at]]
+    np.testing.assert_array_equal(lazy.values, np.where(np.isnan(own), 0.0, own) if policy == "zero" else own)

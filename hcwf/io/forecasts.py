@@ -22,8 +22,9 @@ from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import forecast_reach
 from hcwf.io.stores import forecast_sources, open_forecast
 from hcwf.onset.ingest import IngestInfo, ingest_forecast_info
+from hcwf.parallel import reader_count
 from hcwf.spatial.onto_units import declared_scale, read_units, select_units
-from hcwf.spatial.select import in_memory, region_select, scale_in_place
+from hcwf.spatial.select import implicit_keep, in_memory, region_box, region_select, scale_in_place
 from hcwf.spatial.units import UnitsSpec
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -61,6 +62,10 @@ class ForecastRead:
     onset: OnsetSetup | None
     dir_fig: object
     ensemble: bool
+    readers: int = 1
+    """The most processes one file's chunks may be decoded by (hcwf.parallel.reader_count); 1 reads in this process."""
+    cells: bool = False
+    """Read only the cells the run's masks keep, as one "cell" dimension (see `load_forecast`)."""
 
 
 _reported_ingest = memo("io.forecasts.reported")
@@ -161,7 +166,8 @@ def _load_forecast(year, read: ForecastRead):
                 parts.append(_forecast_on_units(ds[model.var], spec, select.keep_unit_ids, model.unit_cvt))
                 continue
             da = region_select(ds[[model.var]], area=read.area, select=select, read_by="init_time",
-                               dataset_name=str(model.name or "model"), dir_fig=read.dir_fig)[model.var]
+                               dataset_name=str(model.name or "model"), dir_fig=read.dir_fig,
+                               readers=read.readers, skip_masked=True, compact=read.cells)[model.var]
             parts.append(in_memory(da))
         finally:
             close()
@@ -171,7 +177,8 @@ def _load_forecast(year, read: ForecastRead):
     return da if spec is not None else scale_in_place(da, model.unit_cvt)   # units are scaled as they are averaged
 
 
-def load_forecast(year, model, ev, area, options, onset, *, ensemble, select=NO_SELECTION, dir_fig=None):
+def load_forecast(year, model, ev, area, options, onset, *, ensemble, select=NO_SELECTION, dir_fig=None, readers=1,
+                  cells=False):
     """Load a model's forecasts of one year: the twice-weekly initializations between ev.start_date and ev.end_date.
 
     Filters for the init days (0 = Monday) of ev.date_filter_year. The forecast file is expected to be named
@@ -179,18 +186,60 @@ def load_forecast(year, model, ev, area, options, onset, *, ensemble, select=NO_
     lists the files, any number per year) with the variable model.var, daily accumulated rainfall with dimensions
     (init_time, [member], lat, lon, step). With `ensemble` the members ev.members are selected before the read.
     `onset` says which lead days the onset rule reads (the rest are not loaded); `options` is the run's reading options
-    (the ingest takes them: see `ingest_forecast`).
+    (the ingest takes them: see `ingest_forecast`). A big file is decoded by up to `readers` processes at once.
+    With `cells` a gridded read of a region whose masks drop cells keeps only the kept ones: the array then has the dims
+    (init_time, [member], step, cell) with the cells' lat and lon as coordinates over "cell", and `cell` holds their
+    position in the region's box (see hcwf.spatial.select.load_blocks); the onset detection takes either form.
 
     Returns the DataArray of precipitation in mm, read once with the region, inits and leads selected first.
     """
-    return _load_forecast(year, ForecastRead(model, ev, area, options, select, onset, dir_fig, ensemble))
+    return _load_forecast(year, ForecastRead(model, ev, area, options, select, onset, dir_fig, ensemble, readers, cells))
 
 
-def forecast_of(year, rc, model, *, ensemble, select=NO_SELECTION):
-    """`load_forecast` of a run for the source `model`."""
+def forecast_of(year, rc, model, *, ensemble, select=NO_SELECTION, cells=False):
+    """`load_forecast` of a run for the source `model` (`cells`: only the cells its masks keep)."""
     steps = rc.onset if isinstance(rc.evaluation.max_forecast_day, int) else None
     return load_forecast(year, model, rc.evaluation, rc.area, rc.onset_options, steps, ensemble=ensemble,
-                         select=select, dir_fig=rc.output.figure_dir)
+                         select=select, dir_fig=rc.output.figure_dir, readers=reader_count(rc.parallel), cells=cells)
+
+
+_YEAR_FACTOR = 4
+"""Peak memory of detecting a year, as a multiple of its forecast cells' float32 values: the cube, its tenths and flags, the
+engine's tables and the tables of the year (measured on the India and Ethiopia benchmark slices)."""
+_YEAR_BASE = 512 * 2**20
+"""What a worker holds beside the forecast: the interpreter and libraries, the year's observations, the thresholds."""
+
+
+def forecast_year_bytes(year, rc, model, *, ensemble, select=NO_SELECTION) -> int | None:
+    """An estimate of the peak memory of one worker reading and detecting `year` of `model`'s forecasts, or None if the file
+    cannot be looked at (the worker count is then the cores').
+
+    Looks at the selection only (inits, leads, members, the region's box and the cells its masks keep), reads no data.
+    """
+    try:
+        steps = rc.onset if isinstance(rc.evaluation.max_forecast_day, int) else None
+        sources = forecast_sources(year, model.dir, model.file_pattern, select.model_paths, select.model_files_years)
+        ds, close = open_forecast(year, model.dir, model.file_pattern, ensemble, model.dims_map(),
+                                   initialization_dates(year, rc.evaluation), sources[0], multi=len(sources) > 1)
+        if ds is None:
+            return None
+        try:
+            ds = select_leads(ds, None, steps_needed(rc.evaluation.max_forecast_day, steps))
+            if ensemble and rc.evaluation.members:
+                ds = select_members(ds, rc.evaluation.members)
+            da = ds[model.var]
+            if model.units is None:
+                da = region_box(ds[[model.var]], region=rc.area.region)[model.var]
+                keep = implicit_keep(da, rc.area, select)
+                values = da.size * (1.0 if keep is None else float(keep.mean()))
+            else:
+                values = da.size
+        finally:
+            close()
+        return int(values * 4 * _YEAR_FACTOR) + _YEAR_BASE
+    except Exception as exc:  # noqa: BLE001 - only a sizing: the run reads the file and reports what is wrong with it
+        log.debug(f"forecast year size not estimated: {exc}")
+        return None
 
 
 def select_leads(ds, first=None, last=None, *, strict=False, rain_horizon=None, where="forecast"):
@@ -321,9 +370,8 @@ class UnitForecast:
             da = select_leads(da, select.first_lead, select.last_lead, strict=True,
                               rain_horizon=select.rain_horizon, where=f"NetCDF file {name}")
             self.days = np.asarray(da["lead_day"].values)
-            if "member" not in da.dims:
-                da = da.expand_dims(member=[0])
-            elif select.max_member is not None or select.member_ids is not None:
+            self._single = "member" not in da.dims   # one member: its dimension is added to what is read, not to the file
+            if not self._single and (select.max_member is not None or select.member_ids is not None):
                 da = select_members(da, at_most=select.max_member, among=select.member_ids, where=name)
             self.issues = pd.DatetimeIndex(da["init_time"].values).normalize().to_numpy()
             if issue_dates is not None:
@@ -331,11 +379,12 @@ class UnitForecast:
                 rows = np.flatnonzero(np.isin(self.issues.astype("datetime64[D]"), wanted))
                 da, self.issues = da.isel(init_time=rows), self.issues[rows]
             spatial = [d for d in da.dims if d not in ("init_time", "member", "step")]
-            self.da = da.transpose("init_time", "member", "step", *spatial)
+            self.da = da.transpose("init_time", *([] if self._single else ["member"]), "step", *spatial)
+            self.n_member = 1 if self._single else self.da.sizes["member"]
             self.spec = spec
             self.units, self.positions = select_units(self.da, spec, keep_ids)
             self.ids = self.units.ids[self.positions]
-            self.members = np.asarray(self.da["member"].values)
+            self.members = np.array([0]) if self._single else np.asarray(self.da["member"].values)
         except BaseException:
             self._close()
             raise
@@ -346,33 +395,32 @@ class UnitForecast:
     def __exit__(self, *exc):
         self._close()
 
-    def runs(self):
-        """(first, stop, rain) for each run of issues (whole storage chunks along init_time)."""
+    def run_bounds(self) -> list[tuple[int, int]]:
+        """The (first, stop) issue positions of each run: whole storage chunks along init_time, as many as `_RUN_VALUES`
+        values allow."""
         da = self.da
-        per_issue = max(1, da.sizes["member"] * len(self.ids) * len(self.days))
+        per_issue = max(1, self.n_member * len(self.ids) * len(self.days))
         rows = max(1, _RUN_VALUES // per_issue)
         chunks = da.encoding.get("chunksizes") or da.encoding.get("chunks")
         if chunks and len(chunks) == da.ndim:
             stored = int(chunks[da.dims.index("init_time")])
             rows = max(1, -(-rows // stored)) * stored
         n_issue = len(self.issues)
-        for start in range(0, n_issue, max(1, min(rows, n_issue))):
-            stop = min(n_issue, start + rows)
+        return [(start, min(n_issue, start + rows)) for start in range(0, n_issue, max(1, min(rows, n_issue)))]
+
+    def run_bytes(self) -> int:
+        """Peak memory to process one run on units: the run and its working copies."""
+        largest = max((stop - start for start, stop in self.run_bounds()), default=0)
+        values = largest * self.n_member * len(self.ids) * len(self.days)
+        return int(min(values, _RUN_VALUES * 4) * 30) + 512 * 2**20
+
+    def runs(self, bounds=None):
+        """(first, stop, rain) for each run of issues (`run_bounds`, or the (first, stop) pairs given)."""
+        da = self.da
+        for start, stop in self.run_bounds() if bounds is None else bounds:
             rain = read_units(da.isel(init_time=slice(start, stop)), self.spec, self.units, self.positions,
                               block_dim="init_time", scale=self.scale)
+            if self._single:
+                rain = rain.expand_dims(member=[0], axis=1)
             labelled = self.issues[start:stop] + np.timedelta64(int(self.days[0]) - 1, "D")
             yield start, stop, rain.transpose("init_time", "member", "unit", "step").assign_coords(init_time=labelled)
-
-
-def unit_forecast_bytes(path, variable) -> int:
-    """Peak memory to process one forecast file on units: one run of issues and its working copies."""
-    import math
-
-    import netCDF4
-
-    with netCDF4.Dataset(path) as ds:
-        var = ds.variables.get(variable)
-        if var is None:
-            return 512 * 2**20
-        values = math.prod(var.shape)
-    return int(min(values, _RUN_VALUES * 4) * 30) + 512 * 2**20

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from hcwf.blend import evaluation as evaluation_stage
@@ -31,6 +31,7 @@ from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Week
 from hcwf.cache import atomic_write
 from hcwf.config.model import RunConfig
 from hcwf.io import thresholds as thresholds_io
+from hcwf.io.reference import release_reference
 from hcwf.onset.climatology import ReferenceOnset
 from hcwf.references.kde import Climatology
 from hcwf.parallel import spec_workers
@@ -85,7 +86,10 @@ def prepare(rc: RunConfig, *, test_years: tuple[int, int] | None = None,
         log.info("%s in %.1fs", stage, timings[stage])
 
     started = time.perf_counter()
-    thresholds = thresholds_io.thresholds_of(rc, rc.models[0])
+    # The blend reads its observations in the workers: the threshold years are read here without holding them, and their
+    # reference rainfall goes once the thresholds are computed.
+    thresholds = thresholds_io.thresholds_of(replace(rc, evaluation=replace(rc.evaluation, years=())), rc.models[0])
+    release_reference()
     reference = features.reference_onset(recipe)
     observed = features.observed(rc, recipe, thresholds, reference, workers=workers)
     lap("observed onsets", started)
@@ -96,7 +100,8 @@ def prepare(rc: RunConfig, *, test_years: tuple[int, int] | None = None,
     for model in recipe.models:
         started = time.perf_counter()
         forecasts[model.name] = features.forecast(rc, recipe, model.name, thresholds, reference,
-                                                  keep_ids=blendable, workers=workers, budget_bytes=budget)
+                                                  keep_ids=blendable, workers=workers, budget_bytes=budget,
+                                                  needed_only=True)
         lap(f"{model.name} forecast onsets", started)
 
     started = time.perf_counter()
