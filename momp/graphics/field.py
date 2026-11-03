@@ -9,12 +9,31 @@ from __future__ import annotations
 
 import numpy as np
 from matplotlib.collections import PatchCollection
+from matplotlib.colors import BoundaryNorm
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
 
 NO_DATA = "lightgrey"
 """Colour of a polygon without a value."""
 _MARKER_AREA = 60
+
+
+def colorbar_extend(mappable) -> str:
+    """The `extend` of the colorbar of a drawn field: an arrow at each end where values lie beyond the colour limits.
+
+    Values past a limit are drawn in the end colour, so the bar says so with an arrow. A BoundaryNorm that already
+    extends keeps that end (its extension is part of the colour mapping), whether or not a value lies there.
+    Returns "neither", "min", "max" or "both"."""
+    mappable.autoscale_None()
+    norm = mappable.norm
+    if isinstance(norm, BoundaryNorm):
+        low, high, fixed = norm.boundaries[0], norm.boundaries[-1], norm.extend
+    else:
+        low, high, fixed = norm.vmin, norm.vmax, "neither"
+    values = np.ma.masked_invalid(np.ma.asarray(mappable.get_array(), dtype=float)).compressed()
+    below = fixed in ("min", "both") or bool(values.size and values.min() < low)
+    above = fixed in ("max", "both") or bool(values.size and values.max() > high)
+    return "both" if below and above else "min" if below else "max" if above else "neither"
 
 
 def units_of(da, kwargs):

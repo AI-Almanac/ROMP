@@ -13,7 +13,7 @@ from momp.utils.visual import cbar_season, set_basemap
 from momp.utils.land_mask import shp_mask, add_polygon
 from momp.graphics.func_map import spatial_metrics_map
 from momp.utils.visual import box_boundary
-from momp.graphics.field import draw_field, extent, units_of
+from momp.graphics.field import colorbar_extend, draw_field, extent, units_of
 import logging
 
 log = logging.getLogger(__name__)
@@ -93,7 +93,8 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
     im = draw_field(ax, climatological_onset_doy, units, cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree())
 
     # Add colorbar with MMM DD labels for every other tick
-    cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02, shrink=0.6, aspect=20)
+    cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02, shrink=0.6, aspect=20,
+                        extend=colorbar_extend(im))
 
     if cbar_ssn:
         # Create tick positions - use every other bound for labeling

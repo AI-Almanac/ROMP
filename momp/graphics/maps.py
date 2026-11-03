@@ -6,7 +6,7 @@ from matplotlib.patches import Polygon
 from momp.params.region_def import polygon_boundary
 from momp.utils.land_mask import get_india_outline, shp_outline
 from momp.utils.visual import box_boundary
-from momp.graphics.field import draw_field, extent, units_of
+from momp.graphics.field import colorbar_extend, draw_field, extent, units_of
 import logging
 
 log = logging.getLogger(__name__)
@@ -287,7 +287,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
         cax = divider.append_axes("bottom", size="5%", pad=0.3)
 
         # 3. Create the colorbar in that specific cax
-        cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
+        cbar = fig.colorbar(im, cax=cax, orientation='horizontal', extend=colorbar_extend(im))
         # 4. To make it SHORTER (e.g., 60% of the plot width):
         pos = cax.get_position()
         new_width = pos.width * 0.6

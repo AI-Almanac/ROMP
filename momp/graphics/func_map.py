@@ -13,7 +13,7 @@ from matplotlib import colormaps
 from momp.utils.visual import cbar_season, set_basemap
 from momp.utils.land_mask import shp_mask, add_polygon
 from momp.utils.visual import box_boundary
-from momp.graphics.field import draw_field, extent, units_of
+from momp.graphics.field import colorbar_extend, draw_field, extent, units_of
 import logging
 
 log = logging.getLogger(__name__)
@@ -139,7 +139,8 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
 
     # Add colorbar with MMM DD labels for every other tick
     if not panel:
-        cbar = fig.colorbar(im, ax=ax, orientation='vertical', pad=0.02, shrink=0.6, aspect=20)
+        cbar = fig.colorbar(im, ax=ax, orientation='vertical', pad=0.02, shrink=0.6, aspect=20,
+                            extend=colorbar_extend(im))
 
         if cbar_ssn:
             # Create tick positions - use every other bound for labeling

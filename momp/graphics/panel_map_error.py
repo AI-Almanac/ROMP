@@ -7,6 +7,7 @@ from dataclasses import asdict
 from momp.lib.control import make_case
 from momp.lib.control import ref_cfg_layout
 from momp.lib.convention import Case
+from momp.graphics.field import colorbar_extend
 from momp.graphics.func_map import spatial_metrics_map
 from momp.utils.printing import tuple_to_str
 import cartopy.crs as ccrs
@@ -106,7 +107,7 @@ def panel_map_mae_far_mr(model_list, verification_window, var_name, cfg, setting
     cax_ref = fig.add_subplot(gs[1, 0])
     pos = cax_ref.get_position()
     cax_ref.set_position([pos.x0 + 0.2 * pos.width, pos.y0-0.03, pos.width * 0.6, pos.height])
-    cbar_ref = fig.colorbar(ims[0], cax=cax_ref, orientation='horizontal')
+    cbar_ref = fig.colorbar(ims[0], cax=cax_ref, orientation='horizontal', extend=colorbar_extend(ims[0]))
 
     cax_mod = fig.add_subplot(gs[1, 1:])
     pos = cax_mod.get_position()
@@ -229,7 +230,8 @@ if __name__ == "__main__":
     cbar_ref = fig.colorbar(
         ims[0],
         cax=cax_ref,
-        orientation='horizontal'
+        orientation='horizontal',
+        extend=colorbar_extend(ims[0])
     )
 
     gs_cell = gs[1, 1:]  # full width across remaining panels
@@ -240,7 +242,8 @@ if __name__ == "__main__":
     cbar_mod = fig.colorbar(
         ims[1],
         cax=cax_mod,
-        orientation='horizontal'
+        orientation='horizontal',
+        extend=colorbar_extend(ims[1])
     )
 
     for cb in (cbar_ref, cbar_mod):
