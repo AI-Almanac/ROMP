@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from momp.io.output import nested_dict_to_array
 from momp.utils.visual import portrait_plot
 import logging
-from momp.lib.run_folder import file_name
 
 log = logging.getLogger(__name__)
 
@@ -62,57 +61,3 @@ def panel_portrait_mae_far_mr(results, *, dir_fig, show_panel=True, **kwargs):
     log.debug(f"Figure saved as '{figure_filename}'")
 
     return fig, (ax1, ax2, ax3)
-
-
-if __name__ == "__main__":
-
-    from itertools import product
-    from momp.lib.control import iter_list, make_case
-    from momp.utils.printing import tuple_to_str
-    from momp.lib.convention import Case
-    from momp.io.output import set_nested
-    from momp.io.output import nested_dict_to_array
-    import xarray as xr
-    import copy
-
-    cfg, setting = get_cfg(), get_setting()
-
-    result = {}
-    var_list = ["mean_mae", "false_alarm_rate", "miss_rate"]
-
-    layout_pool = iter_list(vars(cfg))
-
-    for combi in product(*layout_pool):
-        case = make_case(Case, combi, vars(cfg))
-
-        window_bin_str = tuple_to_str(case.verification_window) 
-
-        fi = os.path.join(cfg.dir_out, file_name(vars(cfg), "spatial", f"{case.model}_{window_bin_str}"))
-        ds = xr.open_dataset(fi)
-
-        spatial_metrics_dict = {var: ds[var] for var in var_list}
-
-        result = set_nested(result, combi, spatial_metrics_dict)
-
-        ds.close()
-
-    cfg_ref = copy.copy(cfg)
-    cfg_ref.model_list = (cfg.ref_model,)
-    layout_pool = iter_list(vars(cfg_ref))
-
-    for combi in product(*layout_pool):
-        case = make_case(Case, combi, vars(cfg_ref))
-
-        window_bin_str = tuple_to_str(case.verification_window) 
-
-        fi = os.path.join(cfg.dir_out, file_name(vars(cfg), "spatial", f"{case.ref_model}_{window_bin_str}"))
-
-        if result.get(case.ref_model, {}).get(window_bin_str) is None:
-            ds = xr.open_dataset(fi)
-            spatial_metrics_dict = {var: ds[var] for var in var_list}
-
-            result = set_nested(result, combi, spatial_metrics_dict)
-
-            ds.close() 
-
-    panel_portrait_mae_far_mr(result, **vars(cfg))

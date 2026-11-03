@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from momp.io.dict import extract_overall_dict
 from momp.utils.printing import tuple_to_str
 import logging
-from momp.lib.run_folder import file_name
 
 log = logging.getLogger(__name__)
 
@@ -111,27 +110,3 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig,
     log.debug(f"Figure saved as '{figure_filename}'")
 
     return fig, (ax, ax2)
-
-
-if __name__ == "__main__":
-
-    import pandas as pd
-    from collections import defaultdict
-
-    cfg, setting = get_cfg(), get_setting()
-
-    results = defaultdict(dict)
-
-    model_list = cfg.model_list
-    max_forecast_day = cfg.max_forecast_day
-    verification_window = cfg.verification_window_list[0]
-    window_str = tuple_to_str(verification_window)
-
-    for model in model_list:
-        fout = os.path.join(cfg.dir_out, file_name(vars(cfg), "overall", model, window_str))
-        df = pd.read_csv(fout)
-        dic_list = df.to_dict(orient='list') # this option return key values as list, cause error plotting
-        dic = {k: v[0] for k, v in dic_list.items()} # convert list[np.float64] into np.float64
-        results[model] = dic
-
-    panel_bar_bss_rpss_auc(results, verification_window, **vars(cfg))

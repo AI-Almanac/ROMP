@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from momp.utils.land_mask import polygon_mask
 from momp.graphics.maps import calculate_cmz_averages
-from momp.utils.printing import tuple_to_str_range, tuple_to_str
+from momp.utils.printing import tuple_to_str
 import cartopy.crs as ccrs
 from matplotlib import colors as mcolors
 from matplotlib import colormaps
@@ -220,49 +220,8 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
     return fig, ax, im, plot_path
 
 
-def doy_to_date_string(doy, date_filter_year=2024):
-    """Convert day of year to dd/mm format"""
-    # Assuming non-leap year for consistency
-    date = datetime(date_filter_year, 1, 1) + timedelta(days=int(doy) - 1)
-    return date.strftime('%d/%m')
-
 def doy_to_mmm_dd(doy, date_filter_year=2024):
     """Convert day of year to 'MMM DD' format"""
     # Use 2018 (not a leap year) as reference to handle all possible DOYs
     date = pd.to_datetime(f"{date_filter_year}-{int(doy):03d}", format="%Y-%j")
     return date.strftime("%b %d")
-
-
-if __name__ == "__main__":
-    from itertools import product
-    import xarray as xr
-    from momp.lib.control import make_case
-    from momp.lib.control import ref_cfg_layout, ref_model_case
-    from momp.lib.convention import Case
-    from momp.lib.loader import get_cfg, get_setting
-
-    cfg, setting = get_cfg(), get_setting()
-
-    cfg_ref, layout_pool = ref_cfg_layout(cfg, ref_model='climatology', verification_window=(1,15))
-
-    for combi in product(*layout_pool):
-        case = make_case(Case, combi, vars(cfg_ref))
-
-        # replace by ref model case
-        case_ref, case_cfg_ref = ref_model_case(case, setting)
-
-        # ---------------------- get the data via ROMP workflow -----------------------
-        log.debug(f"processing model onset evaluation for {case_ref.case_name}")
-
-        # ----------------------- read the data from saved file ------------------------
-        # ----- get spatial onset data -----
-        fout = os.path.join(case_cfg_ref['dir_out'], "climatology_onset_doy_{}.nc")
-        fout = fout.format(tuple_to_str_range(case_cfg_ref['years_clim']))
-        ds = xr.open_dataset(fout)
-        da = ds["dayofyear"]
-        ds.close()
-
-        spatial_metrics_map(da, case.model,  domain_mask=True, polygon_only=True,
-                        show_ylabel=True, title="spatial metrics", **case_cfg_ref)
-
-        break

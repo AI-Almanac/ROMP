@@ -16,8 +16,6 @@ from types import SimpleNamespace
 # check trailing comma in _list
 
 
-# plot_bar_bss_rpss_auc = True, <- save_csv_score = True
-
 # plot_panel_heatmap_error = True <--- veri window list must have >1 bins
 
 # 'plot_panel_heatmap_skill' <---  veri window list must be single item
@@ -165,25 +163,19 @@ class ROMPValidator:
     def _check_graphics_dependencies(self):
         """Validates that plot settings match data availability and output requirements."""
 
-        # 1. Bar plot requires CSV data for input
-        if getattr(self.cfg, 'plot_bar_bss_rpss_auc', False):
-            if not getattr(self.cfg, 'save_csv_score', False):
-                self._add_error("Graphics Conflict: 'plot_bar_bss_rpss_auc' \
-                        requires 'save_csv_score' to be True.")
-
-        # 2. Panel Error Heatmap requires multiple items to compare (Matrix layout)
+        # 1. Panel Error Heatmap requires multiple items to compare (Matrix layout)
         if getattr(self.cfg, 'plot_panel_heatmap_error', False):
             if len(self.cfg.verification_window_list) <= 1 or len(self.cfg.model_list) <= 1:
                 self._add_error("Graphics Conflict: 'plot_panel_heatmap_error' \
                         requires >1 model AND >1 verification window.")
 
-        # 3. Panel Skill Heatmap logic
+        # 2. Panel Skill Heatmap logic
         if getattr(self.cfg, 'plot_panel_heatmap_skill', False):
             if len(self.cfg.verification_window_list) != 1:
                 self._add_error("Graphics Conflict: 'plot_panel_heatmap_skill' \
                         only supports exactly ONE verification window.")
 
-        # 4. Bar plots for Skill Scores (BSS/RPSS/AUC)
+        # 3. Bar plots for Skill Scores (BSS/RPSS/AUC)
         if getattr(self.cfg, 'plot_bar_bss_rpss_auc', False):
             if len(self.cfg.verification_window_list) != 1:
                 self._add_error("Graphics Conflict: 'plot_bar_bss_rpss_auc' \

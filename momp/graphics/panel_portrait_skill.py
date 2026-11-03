@@ -6,7 +6,6 @@ from momp.utils.visual import portrait_plot
 from momp.io.dict import extract_binned_dict
 from momp.utils.printing import tuple_to_str
 import logging
-from momp.lib.run_folder import file_name
 
 log = logging.getLogger(__name__)
 
@@ -56,25 +55,3 @@ def panel_portrait_bss_auc(result_binned, verification_window, *, dir_fig, show_
     log.debug(f"Figure saved as '{figure_filename}'")
 
     return fig, (ax1, ax2)
-
-
-if __name__ == "__main__":
-
-    import pandas as pd
-
-    cfg, setting = get_cfg(), get_setting()
-
-    results = {}
-
-    model_list = cfg.model_list
-    max_forecast_day = cfg.max_forecast_day
-    verification_window = cfg.verification_window_list[0]
-    window_str = tuple_to_str(verification_window)
-
-    for model in model_list:
-        fout = os.path.join(cfg.dir_out, file_name(vars(cfg), "binned", model, window_str))
-        df = pd.read_csv(fout)
-        dic = df.to_dict(orient='list')
-        results[model] = dic
-
-    panel_portrait_bss_auc(results, verification_window, **vars(cfg))

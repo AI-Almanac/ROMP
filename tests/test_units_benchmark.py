@@ -181,3 +181,26 @@ def test_a_single_field_draws_cells_or_polygons():
     grid = xr.DataArray(np.ones((2, 2)), dims=("lat", "lon"), coords={"lat": [0.0, 1.0], "lon": [0.0, 1.0]})
     draw_field(ax, grid, shading="flat", cmap="Reds", vmin=0, vmax=2)
     plt.close(fig)
+
+
+def test_figures_need_no_data_files_a_run_with_every_save_switch_off_writes_none(world):
+    """Plots take the scores from memory: with the save_* switches off the run still draws its figures and writes no
+    table or NetCDF (only run.yaml, the log and the cross-run onset cache)."""
+    base, _ = world
+    off = {"save_nc_spatial_far_mr_mae": False, "save_csv_score": False, "save_nc_climatology": False,
+           "save_onsets": False}
+    for model, ensemble in (("DET", False), ("ENS", True)):
+        plots = {"plot_panel_heatmap_skill": ensemble, "plot_bar_bss_rpss_auc": ensemble}
+        raw = _raw(base, model, ensemble, **off, **plots)
+        raw["output"]["data_dir"] = str(base / f"quiet_out_{model}")
+        raw["output"]["figure_dir"] = str(base / f"quiet_fig_{model}")
+        run = momp.run(raw, write=True, quiet=True)
+        folder = Path(run.folder)
+        data = [p.name for p in folder.rglob("*") if p.is_file() and not any(part.startswith(".") for part in
+                p.relative_to(folder).parts) and p.suffix in {".csv", ".nc", ".geojson", ".pkl", ".zarr", ".parquet"}]
+        assert data == []
+        figures = {p.name for p in Path(run.config["dir_fig"]).glob("*.png")}
+        if ensemble:
+            assert {"panel_portrait_BSS_AUC_1-10.png", "panel_bar_BSS_RPSS_AUC_1-10.png"} <= figures
+        else:
+            assert {"spatial_metrics_DET_1-10.png", "climatology_onset_2006-2020.png"} <= figures
