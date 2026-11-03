@@ -131,11 +131,12 @@ def model_entries(mapping: dict) -> dict[str, dict]:
 
 
 def frozen_config(mapping: dict, definition_text: str | None = None):
-    """(flat run config, OnsetSetup) of a run mapping, without reading any data: the config's sections are flattened
-    and typed as a run config's are, the model lists are made from the model entries (no files: a forecast names its
-    own), and the onset definition is the frozen one (`definition_text`) when given, else the run's own inline rule."""
+    """The RunConfig of a run mapping, without reading any data: the config's sections are flattened and typed as a run
+    config's are, the model lists are made from the model entries (no files: a forecast names its own), and the onset
+    definition is the frozen one (`definition_text`) when given, else the run's own inline rule. Its `onset` is the
+    OnsetSetup and its `blend` the recipe (the invariants of a run that read data are not checked)."""
+    from hcwf.config.model import RunConfig, complete_flat
     from hcwf.lib import config_schema as schema
-    from hcwf.lib.onset_config import onset_setup
 
     errors: list[str] = []
     flat, origin, special = schema.flatten_sections(mapping, errors)
@@ -157,7 +158,7 @@ def frozen_config(mapping: dict, definition_text: str | None = None):
         cfg["onset_rule"] = yaml.safe_load(definition_text)
         cfg["onset_definition"] = None
         cfg.pop("onset_override", None)
-    return cfg, onset_setup(cfg)
+    return RunConfig.from_flat(complete_flat(cfg), check=False)
 
 
 def _recipe_digest(recipe) -> str:
@@ -224,22 +225,21 @@ def _weights_frame(transform) -> pd.DataFrame:
                          "weight": matrix.data})
 
 
-def _freeze_units(cfg: dict, recipe, index: int, name: str, ids) -> FrozenUnits:
+def _freeze_units(rc, recipe, name: str, ids) -> FrozenUnits:
     """The units of model `name` on its (first) training file's grid, restricted to the trained `ids`."""
+    from hcwf.config.model import Selection
     from hcwf.io import input as io_input
 
-    spec = io_input.units_spec(cfg, name)
+    source = rc.model(name)
+    spec = source.units
     if spec is None:
         raise BlendFileError(f"model {name}: a trained blend reads its models on evaluation units; give a `units:` "
                              "section (mode cells is the file's own cells)")
     if spec.how == "cells":
         return FrozenUnits("cells", None, spec.convention)
     model = recipe.model(name)
-    path = cfg["model_paths_list"][index][0]
-    kwargs = {"model_var": cfg["model_var_list"][index], "model_dims": cfg["model_dims_list"][index],
-              "unit_cvt": cfg["unit_cvt_list"][index], "first_lead": model.lead_days[0],
-              "last_lead": model.lead_days[1]}
-    with io_input.UnitForecast(path, kwargs, spec, keep_ids=ids) as file:
+    select = Selection(first_lead=model.lead_days[0], last_lead=model.lead_days[1])
+    with io_input.UnitForecast(source.paths[0], source, spec, keep_ids=ids, select=select) as file:
         if "unit" in file.da.dims:
             return FrozenUnits(spec.how, None, spec.convention)
         transform = io_input.unit_transform(file.units, np.asarray(file.da["lat"].values),
@@ -316,8 +316,7 @@ class TrainedBlend:
     definition_text: str | None         # the onset definition as used (None: inline in the run config)
     definition_hash: str
     recipe: object                      # hcwf.blend.recipe.Recipe, climatology years frozen
-    cfg: dict                           # the flat run config the mapping makes (no live files)
-    setup: object                       # hcwf.lib.onset_config.OnsetSetup
+    rc: object                          # hcwf.config.model.RunConfig the mapping makes (no live files)
     model: object                       # hcwf.blend.logit.FittedModel
     observed: ObservedOnsets            # what the climatology is fitted on
     units: tuple[str, ...]              # the units the blend was trained and scores on
@@ -331,6 +330,11 @@ class TrainedBlend:
     format: str = FORMAT
 
     @property
+    def setup(self):
+        """The resolved onset setup (hcwf.lib.onset_config.OnsetSetup)."""
+        return self.rc.onset
+
+    @property
     def entries(self) -> dict[str, dict]:
         """The models' dataset entries (variable, dims, units factor, accumulation) the signatures are resolved with."""
         return model_entries(self.mapping)
@@ -341,33 +345,31 @@ class TrainedBlend:
     def from_training(cls, result) -> "TrainedBlend":
         """The blend a training run produced (`hcwf.blend.training.TrainingResult`)."""
         from hcwf.io import input as io_input
-        from hcwf.lib.resolved import resolved_config_text
+        from hcwf.lib.resolved import resolved_config_text_of
         from hcwf.onset import definition as definition_mod
 
-        cfg, recipe, setup, inputs = result.cfg, result.recipe, result.setup, result.inputs
+        rc, recipe, setup, inputs = result.rc, result.recipe, result.setup, result.inputs
         climatology = inputs.climatology
         recipe = _with_years(recipe, climatology.train_years, climatology.test_years)
-        run_yaml = resolved_config_text(cfg)
+        run_yaml = resolved_config_text_of(rc)
         mapping = yaml.safe_load(run_yaml)
         definition_text = setup.definition.source_yaml
         definition_hash = definition_mod.definition_hash(setup.definition)
-        frozen, frozen_setup = frozen_config(mapping, definition_text)
-        if definition_mod.definition_hash(frozen_setup.definition) != definition_hash:
+        frozen = frozen_config(mapping, definition_text)
+        if definition_mod.definition_hash(frozen.onset.definition) != definition_hash:
             raise BlendFileError("the onset definition of the run does not rebuild from its stored text; "
                                  "cannot freeze this run")
-        from hcwf.blend.recipe import recipe_from_config
-
-        if _recipe_digest(_with_years(recipe_from_config(frozen, frozen_setup), climatology.train_years,
+        if _recipe_digest(_with_years(frozen.blend, climatology.train_years,
                                       climatology.test_years)) != _recipe_digest(recipe):
             raise BlendFileError("the blend settings of the run do not rebuild from its stored run config; "
                                  "cannot freeze this run")
         ids = tuple(sorted({str(unit) for unit in inputs.weekly.units}))
-        convention = io_input.units_spec(cfg, "observations").convention
+        convention = rc.observations.units.convention
         entries = model_entries(mapping)
         signatures, units, problems = {}, {}, []
-        for index, model in enumerate(recipe.models):
+        for model in recipe.models:
             seen = {}
-            for path in cfg["model_paths_list"][index]:
+            for path in rc.model(model.name).paths:
                 signature = dataset_detect.forecast_signature(
                     path, entries[model.name], lead_days=model.lead_days, max_member=model.max_member)
                 seen.setdefault(json.dumps(signature, sort_keys=True), []).append(Path(path).name)
@@ -378,18 +380,17 @@ class TrainedBlend:
                                 f"({groups}); a blend needs one forecast structure to forecast with")
                 continue
             signatures[model.name] = json.loads(next(iter(seen)))
-            units[model.name] = _freeze_units(cfg, recipe, index, model.name, ids)
+            units[model.name] = _freeze_units(rc, recipe, model.name, ids)
         if problems:
             raise BlendFileError("cannot make a trained blend:\n" + "\n".join(f"  - {p}" for p in problems))
-        identities = {"observations": [file_identity(p) for p in cfg.get("obs_paths") or ()],
-                      "models": {m.name: [file_identity(p) for p in cfg["model_paths_list"][i]]
-                                 for i, m in enumerate(recipe.models)}}
+        identities = {"observations": [file_identity(p) for p in rc.observations.paths or ()],
+                      "models": {m.name: [file_identity(p) for p in rc.model(m.name).paths] for m in recipe.models}}
         return cls(
             mapping=mapping, run_yaml=run_yaml, definition_text=definition_text, definition_hash=definition_hash,
-            recipe=recipe, cfg=frozen, setup=frozen_setup, model=result.model, observed=inputs.observed, units=ids,
+            recipe=recipe, rc=frozen, model=result.model, observed=inputs.observed, units=ids,
             thresholds=_freeze_thresholds(inputs.thresholds, ids, convention),
             reference=_thaw_reference(_freeze_reference(inputs.reference)), frozen_units=units,
-            signatures=signatures, unit_table=io_input.unit_table(cfg, ids).table,
+            signatures=signatures, unit_table=io_input.unit_table(rc.observations, ids).table,
             provenance={"trained_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                         "training_years": list(recipe.evaluation.years.training), "training_files": identities},
             forest=result.forest)
@@ -501,17 +502,17 @@ class TrainedBlend:
 
     @classmethod
     def _load_hcwf(cls, manifest: dict, members: dict) -> "TrainedBlend":
-        from hcwf.blend.recipe import recipe_from_config
         from hcwf.onset import definition as definition_mod
 
         mapping = yaml.safe_load(members["run.yaml"])
         definition_text = members["definition.yaml"].decode() or None
-        cfg, setup = frozen_config(mapping, definition_text)
+        rc = frozen_config(mapping, definition_text)
+        setup = rc.onset
         if definition_mod.definition_hash(setup.definition) != manifest["definition_hash"]:
             raise BlendFileError("the onset definition stored in the file no longer reads as it did when the blend "
                                  "was trained (its hash differs); retrain the blend")
         stored = json.loads(members["recipe.json"])
-        recipe = _with_years(recipe_from_config(cfg, setup), **stored["climatology"])
+        recipe = _with_years(rc.blend, **stored["climatology"])
         if _recipe_digest(recipe) != stored["digest"]:
             raise BlendFileError("the blend settings stored in the file no longer rebuild as they were when the "
                                  "blend was trained; retrain the blend")
@@ -520,7 +521,7 @@ class TrainedBlend:
         units = json.loads(members["units.json"])
         weights_arrays = _npz_load(members["weights.npz"])
         frozen_units = {}
-        convention = _convention(cfg)
+        convention = _convention(rc)
         for name, item in json.loads(members["weights.json"]).items():
             frozen_units[name] = FrozenUnits(
                 item["how"], None if item["weights"] is None else _get(weights_arrays, item["weights"]), convention)
@@ -532,7 +533,7 @@ class TrainedBlend:
         if isinstance(stored_reference, dict) and "table" in stored_reference:
             stored_reference = _get(reference_arrays, stored_reference["table"])
         return cls(mapping=mapping, run_yaml=members["run.yaml"].decode(), definition_text=definition_text,
-                   definition_hash=manifest["definition_hash"], recipe=recipe, cfg=cfg, setup=setup,
+                   definition_hash=manifest["definition_hash"], recipe=recipe, rc=rc,
                    units=tuple(units["ids"]), thresholds=thresholds, reference=_thaw_reference(stored_reference),
                    frozen_units=frozen_units, signatures=json.loads(members["signatures.json"]),
                    unit_table=None if units["table"] is None else pd.DataFrame(units["table"]),
@@ -542,7 +543,6 @@ class TrainedBlend:
     def _load_old(cls, manifest: dict, members: dict) -> "TrainedBlend":
         """An onset_blending trained blend: its config.yml converted in memory (as `hcwf-run convert` does), its
         arrays as stored."""
-        from hcwf.blend.recipe import recipe_from_config
         from hcwf.lib.convert_specs import ConvertError, convert_blend
         from hcwf.onset import definition as definition_mod
 
@@ -551,8 +551,8 @@ class TrainedBlend:
         except ConvertError as exc:
             raise BlendFileError(f"the config stored in the trained blend cannot be converted: {exc}") from None
         mapping = conversion.mapping
-        cfg, setup = frozen_config(mapping)
-        recipe = recipe_from_config(cfg, setup)
+        rc = frozen_config(mapping)
+        setup, recipe = rc.onset, rc.blend
         season = f"{setup.definition.seasons[0].start.month:02d}-{setup.definition.seasons[0].start.day:02d}"
         common = cls._common(members, observed_season=season)
         reference_meta = json.loads(members["reference.json"])
@@ -568,11 +568,9 @@ class TrainedBlend:
             reference = _get(reference_arrays, reference["table"])
         elif isinstance(reference, dict):
             reference = {"month_day": reference["month_day"]}
-        from hcwf.io import input as io_input
-
         frozen_units = {}
-        for name in cfg["model_list"]:
-            spec = io_input.units_spec(cfg, name)
+        for model in rc.models:
+            name, spec = model.name, model.units
             weights = None
             for key in ("regrid_weights", "cell_transforms"):
                 if name in reference_meta[key]:
@@ -580,7 +578,7 @@ class TrainedBlend:
             frozen_units[name] = FrozenUnits(spec.how, weights, spec.convention)
         return cls(mapping=mapping, run_yaml=conversion.to_yaml({"config": "the trained blend's config.yml"}),
                    definition_text=None, definition_hash=definition_mod.definition_hash(setup.definition),
-                   recipe=recipe, cfg=cfg, setup=setup, units=tuple(json.loads(members["units.json"])),
+                   recipe=recipe, rc=rc, units=tuple(json.loads(members["units.json"])),
                    thresholds={name: thresholds for name in names}, reference=_thaw_reference(reference),
                    frozen_units=frozen_units, signatures=json.loads(members["signatures.json"]),
                    provenance=manifest.get("provenance", {}), format=OLD_FORMAT, **common)
@@ -596,10 +594,8 @@ class TrainedBlend:
                                    workers=workers)
 
 
-def _convention(cfg: dict):
-    from hcwf.io import input as io_input
-
-    spec = io_input.units_spec(cfg, "observations")
+def _convention(rc):
+    spec = rc.observations.units
     return None if spec is None else spec.convention
 
 

@@ -17,6 +17,7 @@ import copy
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
+from hcwf.config.model import complete_flat as _completed
 from hcwf.config.model import (AreaSpec, Case, EvaluationSpec, FigureSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec,
                                ParallelSpec, RunConfig, Selection, Window, _project_area, _project_evaluation,
                                _project_generated, _project_obs, _project_onset_options, _project_parallel)
@@ -91,49 +92,13 @@ def model_kwargs(rc: RunConfig, model: str, *, reference_as: str | None = None, 
 
     With `reference_as` (a source name: "climatology" or "conditional_climatology") the case is the reference's, under
     that name, built with the deterministic rule (`RunConfig.reference_cases()`); `model` is then ignored."""
-    if reference_as is None:
-        case = next(c for c in rc.cases() if c.model.name == model)
-    else:
-        case = rc.reference_cases()[0]
-        case = replace(case, model=replace(case.model, name=reference_as))
-    return case_kwargs(rc, case, "deterministic", selection)
+    return case_kwargs(rc, rc.first_case(model, reference_as=reference_as), "deterministic", selection)
 
 
 def selection_kwargs(selection: Selection) -> dict:
     """The kwargs a Selection sets (the fields that are not None)."""
     return {kwarg: getattr(selection, name) for name, kwarg in SELECTION_KWARGS.items()
             if getattr(selection, name) is not None}
-
-
-def _completed(kw: Mapping[str, Any]) -> dict:
-    """The kwargs with what a partial dict leaves out filled in (blend configs and unit tests pass fewer keys than a run
-    holds): each missing schema key a resolved record always holds takes its default (None when it is required or computed), and the case's keys and the
-    per-model lists a missing source needs take placeholders that no reader of the partial dict looks at."""
-    out = dict(kw)
-    for item in schema.FIELDS:
-        if item.fill and item.key not in out:
-            out[item.key] = None if callable(item.default) or item.default is schema.REQUIRED else copy.deepcopy(item.default)
-    if not out.get("years_clim") and None in (out.get("start_year_clim"), out.get("end_year_clim")):
-        out["start_year_clim"], out["end_year_clim"] = 1, 0   # no climatology years
-    for key, placeholder in (("start_date", (1, 1, 1)), ("end_date", (1, 1, 1)), ("init_days", ()), ("day_bins", ())):
-        if out.get(key) is None:
-            out[key] = placeholder
-    out.setdefault("model", (out.get("model_list") or ["model"])[0])
-    out.setdefault("model_dir", "")
-    for key in ("model_var", "unit_cvt", "file_pattern", "accumulation", "daily_boundary", "model_dims"):
-        out.setdefault(key, None)
-    span = out.get("verification_window") or (1, out.get("max_forecast_day") or 1)
-    out["verification_window"] = span
-    out.setdefault("tolerance_days", 0)
-    out.setdefault("case_name", Case(ModelSpec(out["model"], "", None, None, None, None, None, None, None, None, None),
-                                     Window(*span, out["tolerance_days"])).name)
-    for key, value in (("model_list", [out["model"]]), ("model_dir_list", [out["model_dir"]]),
-                       ("model_var_list", [out["model_var"]]), ("unit_cvt_list", [out["unit_cvt"]]),
-                       ("file_pattern_list", [out["file_pattern"]]), ("verification_window_list", [tuple(span)]),
-                       ("tolerance_days_list", [out["tolerance_days"]])):
-        if out.get(key) is None:
-            out[key] = value
-    return out
 
 
 def _model_of(kw: Mapping[str, Any], units) -> ModelSpec:

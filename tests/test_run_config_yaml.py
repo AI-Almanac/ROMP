@@ -228,14 +228,13 @@ def test_datasets_command_reports_detections_and_problems(synthetic):
 
 def test_write_resolved_records_overrides(tmp_path):
     """An onset override and dry_spell_check = false show up in the printed and recorded override list."""
+    from hcwf.lib.onset_config import onset_setup
     from hcwf.lib.resolved import definition_lines
 
     cfg = {"region": "ethiopia", "onset_definition": "icpac", "obs_day_boundary": None,
            "onset_override": {"wet_day": "at least 2 mm"}, "dry_spell_check": False, "dir_out": str(tmp_path),
            "config_sources": {}}
-    lines = "\n".join(definition_lines(cfg))
+    lines = "\n".join(definition_lines(onset_setup(cfg)))
     assert "overridden: wet_day, reject if (dry_spell_check = false)" in lines and "hash" in lines
-    from hcwf.lib.onset_config import onset_setup
-
     setup = onset_setup(cfg)
     assert setup.definition.wet_day.__repr__().count("20") >= 1

@@ -1,7 +1,6 @@
 """Compute, save and plot spatial MAE, FAR and MR maps for deterministic and ensemble (probabilistic) forecast models."""
-from hcwf.config.flat_bridge import case_kwargs
 from hcwf.metrics.error import create_spatial_far_mr_mae
-from hcwf.stats.benchmark import compute_metrics_multiple_years
+from hcwf.stats.benchmark import compute_metrics
 from hcwf.graphics.maps import plot_spatial_metrics
 from hcwf.graphics.onset_map import plot_spatial_climatology_onset
 from hcwf.graphics.panel_portrait_error import panel_portrait_mae_far_mr
@@ -18,7 +17,7 @@ def spatial_far_mr_mae_map(rc):
 
     Also evaluates the reference model (climatology or a user-specified model)
     when the run has one (rc.reference.model). rc is the resolved RunConfig. Returns a nested dict of spatial metrics
-    keyed by case combination. For an ensemble run the forecast onset is the ensemble onset (compute_metrics_multiple_years
+    keyed by case combination. For an ensemble run the forecast onset is the ensemble onset (compute_metrics
     picks it from probabilistic); the climatology reference never reads a forecast.
     """
 
@@ -33,10 +32,8 @@ def spatial_far_mr_mae_map(rc):
         log.info(f"processing {case.model.name} onset evaluation for verification window "
                 f"{case.window.span}, case: {case.name}")
 
-        case_cfg = case_kwargs(rc, case, "deterministic")
-
         # model-obs onset benchmarking
-        metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg)
+        metrics_df_dict, onset_da_dict = compute_metrics(rc, case)
 
         # Create spatial metrics
         spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)
@@ -77,10 +74,8 @@ def spatial_far_mr_mae_map(rc):
 
         # the reference's own data location, variable, pattern, unit and dims (the reference case holds them, even if
         # the forecast loop never ran)
-        case_cfg_ref = case_kwargs(rc, case, "deterministic")
-
         # model-obs onset benchmarking
-        metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
+        metrics_df_dict, onset_da_dict = compute_metrics(rc, case)
 
         # Create spatial metrics
         spatial_metrics = create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict)

@@ -158,7 +158,7 @@ def run_hcwf_new(root: Path, out: Path) -> None:
     for name, config in training.configs(root).items():
         started = time.time()
         loaded = converted(config)
-        result = train({**loaded.cfg, "parallel_workers": 1}, loaded.recipe, loaded.setup)
+        result = train(loaded.rc(parallel_workers=1))
         folder = out / name
         result.save(folder / "training")
         meta[f"train.{name}"] = round(time.time() - started, 2)

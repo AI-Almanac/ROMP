@@ -16,7 +16,7 @@ import datetime as dt
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -224,8 +224,9 @@ def run(blend, forecasts: dict, *, issue_date=None, fewer_members: bool = False,
     if problems or issue_problems:
         raise IncompatibleForecast(problems + issue_problems)
 
-    cfg = {**blend.cfg, "model_paths_list": tuple(tuple(str(p) for p in live[m.name]) for m in blend.recipe.models)}
-    count, budget = training.resources(cfg)
+    rc = replace(blend.rc, models=tuple(replace(m, paths=tuple(str(p) for p in live[m.name])) if m.name in live else m
+                                        for m in blend.rc.models))   # the live files stand in for the training files
+    count, budget = training.resources(rc)
     workers = workers or count
     recipe, setup = blend.recipe, blend.setup
     thresholds = _thresholds(blend)
@@ -233,7 +234,7 @@ def run(blend, forecasts: dict, *, issue_date=None, fewer_members: bool = False,
     forecast_onsets = {}
     for model in recipe.models:
         forecast_onsets[model.name] = features.forecast(
-            cfg, recipe, setup, model.name, thresholds, blend.reference, keep_ids=keep,
+            rc, recipe, model.name, thresholds, blend.reference, keep_ids=keep,
             member_ids=blend.signatures[model.name].get("members"), units=blend.frozen_units[model.name],
             issue_dates=None if issue_date is None else (issue_date,), workers=workers, budget_bytes=budget)
     # One season: the climatology has nothing to spread over a worker pool (starting it costs more than the fit).

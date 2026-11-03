@@ -39,15 +39,17 @@ def definition_cfg(obs, tmp_path):
 
 @pytest.fixture
 def cfg(obs, tmp_path):
-    """The run configuration."""
-    return definition_cfg(obs, tmp_path)
+    """The run (a RunConfig) of the partial flat config of the apps."""
+    from hcwf.config.model import RunConfig, complete_flat
+
+    return RunConfig.from_flat(complete_flat(definition_cfg(obs, tmp_path)), check=False)
 
 
 def test_spatial_onset_runs(cfg, monkeypatch):
     """spatial_onset returns the day-of-year map (onset on 1 June, day 153) and hands it to the map plot."""
     mapped = []
     monkeypatch.setattr(onset_spatial, "spatial_metrics_map", lambda da, *args, **kwargs: mapped.append(da))
-    doy = onset_spatial.spatial_onset(2020, **cfg)
+    doy = onset_spatial.spatial_onset(2020, cfg)
     assert doy.dims == ("lat", "lon") and mapped
     assert (doy.values == 153).all()
 
@@ -57,7 +59,7 @@ def test_time_series_runs(cfg, monkeypatch):
     plotted = []
     monkeypatch.setattr(onset_time_series, "plot_rainfall_timeseries_with_onset_and_wetspell",
                         lambda *args, **kwargs: plotted.append(kwargs["save_path"]))
-    da_sub, onset = onset_time_series.obs_onset_analysis(2020, lat_select=8.0, lon_select=38.0, incl_clim=False, **cfg)
+    da_sub, onset = onset_time_series.obs_onset_analysis(2020, cfg, lat_select=8.0, lon_select=38.0, incl_clim=False)
     assert plotted and onset.dims == ("lat", "lon")
     assert (onset.values == np.datetime64("2020-06-01")).all()
     assert da_sub.sizes["time"] > 0
@@ -68,5 +70,5 @@ def test_time_series_with_climatology(cfg, monkeypatch):
     plotted = []
     monkeypatch.setattr(onset_time_series, "plot_rainfall_timeseries_with_onset_and_wetspell",
                         lambda *args, **kwargs: plotted.append(kwargs["onset_clim"]))
-    onset_time_series.obs_onset_analysis(2020, lat_select=8.0, lon_select=38.0, incl_clim=True, **cfg)
+    onset_time_series.obs_onset_analysis(2020, cfg, lat_select=8.0, lon_select=38.0, incl_clim=True)
     assert plotted == [pd.Timestamp("2020-06-01")]

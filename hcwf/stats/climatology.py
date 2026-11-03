@@ -6,7 +6,7 @@ kwargs forms (marked R2-bridge) stay until step S11 as wrappers that rebuild the
 
 from hcwf.config import flat_bridge
 from hcwf.config.model import Selection
-from hcwf.io.input import load_thresholds, obs_years, reference_held, reference_year, release_reference
+from hcwf.io.input import observation_years_of, reference_held, reference_rain_year, release_reference, thresholds_of
 from hcwf.stats.detect import detect_observed
 from hcwf.onset.climatology import ReferenceOnset, reduce_onset_days
 from hcwf.spatial import axes
@@ -28,25 +28,20 @@ def reset_memo() -> None:
     _MEMO.clear()
 
 
-def _io_kwargs(rc, case, select) -> dict:   # R2-bridge
-    """The flat keyword arguments the readers (hcwf.io.input) still take, until they take the typed inputs."""
-    return flat_bridge.case_kwargs(rc, case, "deterministic", select)
-
-
-def _read_years(years, rc, kwargs, shared=True):
-    """Yield (rain, None), or (None, error), for each year's observations (hcwf.io.input.obs_years: read in blocks or ahead).
+def _read_years(years, rc, select, shared=True):
+    """Yield (rain, None), or (None, error), for each year's observations (hcwf.io.input.observation_years_of: read in blocks or ahead).
 
     A year the thresholds were just computed from comes as the DailyRain of that already read and ingested reference
-    rainfall (hcwf.io.input.reference_year) instead of being read and converted again; only the other years are read.
-    shared=False reads every year as rainfall. `kwargs` are the readers' flat arguments (_io_kwargs).
+    rainfall (hcwf.io.input.reference_rain_year) instead of being read and converted again; only the other years are read.
+    shared=False reads every year as rainfall.
     """
     years = list(years)
     if not shared or not reference_held():
-        yield from obs_years(years, kwargs)
+        yield from observation_years_of(years, rc, select)
         return
     boundary = rc.onset.obs_day_boundary
-    held = {year: reference_year(year, kwargs, boundary) for year in years}
-    rest = obs_years([year for year in years if held[year] is None], kwargs)
+    held = {year: reference_rain_year(year, rc.observations, rc.area, select, boundary) for year in years}
+    rest = observation_years_of([year for year in years if held[year] is None], rc, select)
     for year in years:
         yield (held[year], None) if held[year] is not None else next(rest)
 
@@ -72,16 +67,14 @@ def climatological_onset(rc, case, select=Selection()):
     """
     years_clim = rc.evaluation.climatology_years
     grid_point = bool(select.grid_point)
-    kwargs = _io_kwargs(rc, case, select)
-
-    thresh_da = load_thresholds(**kwargs)
+    thresh_da = thresholds_of(rc, case.model, select)
 
     log.debug(f"Computing climatological onset from {len(years_clim)} years_clim: {min(years_clim)}-{max(years_clim)}")
 
     all_onset_days = []
     rainfall_all_years = []
 
-    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, kwargs, shared=not grid_point)):
+    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, select, shared=not grid_point)):
         try:
             # Load rainfall data using the existing function that handles both patterns
             if read_error is not None:
@@ -256,8 +249,7 @@ def climatological_onset_dataset(rc, case, select=Selection()):
         3D array with dimensions [year, lat, lon] (or 2D [year, unit] on evaluation units) containing onset dates
     """
     years_clim = rc.evaluation.climatology_years
-    kwargs = _io_kwargs(rc, case, select)
-    thresh_slice = load_thresholds(**kwargs)
+    thresh_slice = thresholds_of(rc, case.model, select)
     key = repr((id(thresh_slice), id(rc.onset), rc.observations, rc.area, rc.onset_options, years_clim, select))
     if key in _MEMO:
         log.debug("Climatological onset dataset: reusing the one computed earlier in this run")
@@ -270,7 +262,7 @@ def climatological_onset_dataset(rc, case, select=Selection()):
     valid_years = []
 
     # Process each year
-    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, kwargs)):
+    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, select)):
         log.debug(f"\nProcessing year {year}...")
 
         try:

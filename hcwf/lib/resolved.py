@@ -18,9 +18,8 @@ from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
 
 
-def definition_lines(cfg: dict) -> list[str]:
-    """Printable lines about the onset definition in use: its plain-words sentence, overrides and hash."""
-    setup = onset_setup(cfg)
+def definition_lines(setup) -> list[str]:
+    """Printable lines about the onset definition in use (an OnsetSetup): its plain-words sentence, overrides and hash."""
     d = setup.definition
     changed = f", overridden: {', '.join(setup.overrides)}" if setup.overrides else ""
     return [f"Definition      : {d.id} v{d.version}{changed}",
@@ -74,14 +73,17 @@ def resolved_config_text(cfg: dict) -> str:
     return render_yaml(mapping, comments, header=header)
 
 
+def resolved_config_text_of(rc) -> str:
+    """`resolved_config_text` of a RunConfig."""
+    return resolved_config_text(dict(rc.values))
+
+
 def write_resolved(rc, directory=None) -> tuple[Path, Path]:
     """Write the resolved config and definition of a RunConfig into directory (default: the run folder, else dir_out).
 
     The files are resolved_config.yaml and resolved_definition.yaml, or run.yaml and definition.yaml in a run folder.
     """
-    from hcwf.config.flat_bridge import to_flat
-
-    cfg = to_flat(rc)
+    cfg = dict(rc.values)
     paths = cfg.get("run_paths")
     directory = Path(directory or (paths.root if paths is not None else cfg["dir_out"]))
     directory.mkdir(parents=True, exist_ok=True)

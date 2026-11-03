@@ -211,7 +211,7 @@ def test_export_on_a_dict_validates_and_plans(configs):
     with pytest.raises(HCWFConfigError):
         export.export_onsets(bad)
     dic = resolve_flat(raw)
-    assert dic["run_paths"] is not None and export.onsets_folder(dic) == dic["run_paths"].onsets
+    assert dic["run_paths"] is not None and export.onsets_folder(RunConfig.from_flat(dic)) == dic["run_paths"].onsets
 
 
 def test_driver_variant_finishes_like_the_loader(configs):

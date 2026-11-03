@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-from hcwf.io.input import load_imd_rainfall, load_thresholds
-from hcwf.config.model import evaluation_years
-from hcwf.lib.onset_config import onset_setup
+from hcwf.io.input import observations_of, thresholds_of
 from hcwf.onset import explain
 from hcwf.onset.ingest import ingest
 import logging
@@ -39,21 +36,18 @@ def write_explain_cells(rc) -> list[Path]:
     """
     from hcwf.onset.viz.anatomy import anatomy_plot
 
-    from hcwf.config.flat_bridge import to_flat
-
     cells = rc.onset_options.explain_cells
     if not cells:
         return []
-    kwargs = to_flat(rc)
-    setup = onset_setup(kwargs)
-    out_dir = Path(kwargs["dir_fig"]) / "explain"
+    setup = rc.onset
+    out_dir = Path(rc.output.figure_dir) / "explain"
     out_dir.mkdir(parents=True, exist_ok=True)
-    thresholds = load_thresholds(**kwargs)
+    thresholds = thresholds_of(rc, rc.models[0])
     clim = getattr(thresholds, "season_climatology", None)
     written = []
-    for year in evaluation_years(kwargs):
+    for year in rc.evaluation.years:
         try:
-            da = load_imd_rainfall(year, **kwargs)
+            da = observations_of(year, rc)
         except FileNotFoundError as exc:
             log.info(f"explain_cells: skipping {year} ({exc})")
             continue

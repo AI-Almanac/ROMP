@@ -31,6 +31,12 @@ class Loaded:
     setup: object
     conversion: Conversion
 
+    def rc(self, **flat):
+        """The run's RunConfig, from its flat config with the keys of `flat` replaced."""
+        from hcwf.config.model import RunConfig
+
+        return RunConfig.from_flat({**self.cfg, **flat})
+
 
 def oracle():
     """The onset_blending package (from its checkout), imported once: only for tests that need its own objects (its specs

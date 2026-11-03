@@ -1,6 +1,7 @@
 """Entry point computing binned and overall BSS, RPSS and AUC skill scores and their plots for ensemble forecasts."""
-from hcwf.config.flat_bridge import case_kwargs
-from hcwf.metrics.skill import create_score_results, prepare_score_cache
+from dataclasses import replace
+
+from hcwf.metrics.skill import create_score_results, prepare_pairs
 from hcwf.graphics.heatmap import create_heatmap
 from hcwf.graphics.reliability import plot_reliability_diagram
 from hcwf.graphics.panel_portrait_skill import panel_portrait_bss_auc
@@ -41,18 +42,17 @@ def skill_score_in_bins(rc):
                 f"{window}, case: {case.name}")
 
         # the pair tables hold every day bin; each window then reads the bins inside it
-        prep_cfg = case_kwargs(rc, case, "ensemble")
-
         if model not in prepared:
-            prepared[model] = prepare_score_cache(**prep_cfg)
+            prepared[model] = prepare_pairs(rc, case.model)
 
-        case_cfg = {**prep_cfg, "day_bins": case.window.bins(prep_cfg["day_bins"]), **prepared[model]}
+        day_bins = case.window.bins(rc.evaluation.day_bins)
 
         import time
         start = time.perf_counter()
 
         # Create bin skill score metrics
-        score_results = create_score_results(**case_cfg)
+        score_results = create_score_results(case, prepared[model], rc.metrics,
+                                             replace(rc.evaluation, day_bins=day_bins))
 
         end = time.perf_counter()
         log.debug(f"\n\n\n skill score Execution time: {end - start:.4f} seconds\n\n\n")
@@ -75,7 +75,7 @@ def skill_score_in_bins(rc):
 
         # reliability plot
         if output.plot_reliability:
-            plot_reliability_diagram(score_results["forecast_obs_df"], case, spec, case_cfg["day_bins"])
+            plot_reliability_diagram(score_results["forecast_obs_df"], case, spec, day_bins)
 
 
     import pprint

@@ -468,7 +468,6 @@ def _alignment(dic: dict, report: CheckReport) -> None:
     if not setup.check_alignment:
         report.add("onset.check_alignment is false: skipped")
         return
-    from hcwf.config.flat_bridge import model_kwargs
     from hcwf.config.model import RunConfig
     from hcwf.lib import align_sample
     from hcwf.lib.onset_config import FORECAST_BOUNDARY
@@ -477,7 +476,7 @@ def _alignment(dic: dict, report: CheckReport) -> None:
     rc = RunConfig.from_flat(dic, check=False)
     for model in dic["model_list"]:
         try:
-            kw = {**model_kwargs(rc, model), "dir_fig": None}
+            kw = align_sample.sample_spec(rc, model)
         except Exception as exc:  # noqa: BLE001
             report.add(f"{model}: skipped ({exc})")
             continue
@@ -556,15 +555,17 @@ def _cache(dic: dict, report: CheckReport) -> None:
                    "definition, cells and years is a hit")
         return
     try:
-        from hcwf.config.flat_bridge import model_kwargs
+        from dataclasses import replace
+
         from hcwf.config.model import RunConfig
-        from hcwf.io.input import load_imd_rainfall, load_thresholds
+        from hcwf.io.input import observations_of, thresholds_of
 
         rc = RunConfig.from_flat(dic, check=False)
-        kw = {**model_kwargs(rc, dic["model_list"][0]), "dir_fig": None}
-        year = next(y for y in kw["years"] if _find(kw["obs_dir"], tuple(kw["obs_file_pattern"]), y))
-        rain = load_imd_rainfall(year, **kw)
-        parts = observed_cache.parts_for(rain, load_thresholds(**kw), rc)
+        read = replace(rc, output=replace(rc.output, figure_dir=None))   # a check draws no mask figure
+        obs = rc.observations
+        year = next(y for y in rc.evaluation.years if _find(obs.dir, tuple(obs.file_pattern), y))
+        rain = observations_of(year, read)
+        parts = observed_cache.parts_for(rain, thresholds_of(read, rc.models[0]), rc)
         fp = observed_cache.fingerprint(parts)
         if (folder / observed_cache.SUBFOLDER / fp / "onsets.nc").exists():
             report.add(f"observed onsets: expected cache hit {fp}")
@@ -582,9 +583,7 @@ def build_report(rc, found=None, overwrite: bool = False, alignment: bool = Fals
     not given. overwrite says whether --overwrite is given (an existing run folder is then not an error). alignment
     runs the alignment check once (`--check --alignment`).
     """
-    from hcwf.config.flat_bridge import to_flat
-
-    dic = to_flat(rc)
+    dic = dict(rc.values)   # the report reads the flat record (it also edits a copy: check_alignment)
     if alignment:
         dic["check_alignment"] = True
     if found is None:

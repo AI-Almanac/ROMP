@@ -6,6 +6,7 @@ from the candidate the definition reads; the last usable lead is n_leads - R + 1
 from __future__ import annotations
 
 import os
+import re
 
 import xarray as xr
 
@@ -20,19 +21,43 @@ def usable_last_lead(n_leads: int, reach: int) -> int:
     return n_leads - reach + 1
 
 
+def available_years(folder: str, pattern: str) -> list[int]:
+    """The years that have a file in `folder` named by `pattern` (a format string with the year): [] when none are found."""
+    if not os.path.isdir(folder):
+        return []
+    found = re.compile("^" + re.sub(r"\\\{[^}]*\\\}", lambda _: r"(\d{4})", re.escape(pattern)) + "$")
+    return sorted({int(m.group(1)) for name in os.listdir(folder) if (m := found.match(name))})
+
+
+def _years_text(years: list[int]) -> str:
+    """The years as text for a message: "2006-2020" for a run of years, else the list."""
+    if not years:
+        return "none found"
+    return f"{years[0]}-{years[-1]}" if years == list(range(years[0], years[-1] + 1)) else ", ".join(map(str, years))
+
+
 def count_leads(dic: dict, index: int) -> int:
     """Number of forecast leads (steps of at least 1) of model_list[index]: from the first year's file, or from the zarr store."""
     from hcwf.io.input import is_zarr, open_store
 
-    year = evaluation_years(dic)[0]
     folder = set_dir(str(dic["model_dir_list"][index]))
+    years = evaluation_years(dic)
+    if not years:
+        have = available_years(folder, str(dic["file_pattern_list"][index]))
+        raise OnsetConfigError(
+            f"no year to evaluate: start_date {tuple(dic['start_date'])} and end_date {tuple(dic['end_date'])} give no "
+            f"year (the first year must not be after the last). The {dic['model_list'][index]} files in {folder} "
+            f"cover the years {_years_text(have)}. Fix: set start_date and end_date inside those years")
+    year = years[0]
     dims_list = dic.get("model_dims_list")
     dims = dims_list[index] if dims_list else None
     if is_zarr(folder):
         return int((dim_fmt_model(open_store(folder), dims)["step"].values >= 1).sum())
     path = os.path.join(folder, dic["file_pattern_list"][index].format(year))
     if not os.path.exists(path):
-        raise OnsetConfigError(f"cannot count the forecast leads of {dic['model_list'][index]}: {path} not found")
+        have = available_years(folder, str(dic["file_pattern_list"][index]))
+        raise OnsetConfigError(f"cannot count the forecast leads of {dic['model_list'][index]}: {path} not found "
+                               f"(its files cover the years {_years_text(have)}; start_date starts at {year})")
     with xr.open_dataset(path) as ds:
         ds = dim_fmt_model(ds, dims)
         return int((ds["step"].values >= 1).sum())

@@ -168,9 +168,12 @@ _MASK_GIVEN = ("land", "country", "file", "variable", "keep_value", "condition",
 """The keys of a config's `mask:` section (the other MaskSpec fields are set by the implicit masks only)."""
 
 
-def _mask_mapping(mask):
-    """The `mask:` mapping of the config, as far as the MaskSpec tells it: the section's keys that differ from their
-    defaults (a key written with its default value gives the same mask, and the same fingerprint)."""
+def _mask_mapping(area):
+    """The `mask:` mapping of the config as it was given (`AreaSpec.mask_given`, so a key written with its default value
+    still hashes as written, as before). An area built by hand has none: the section's keys that differ from their defaults."""
+    if area.mask_given is not None:
+        return area.mask_given
+    mask = area.mask
     if mask is None:
         return None
     default = type(mask)()
@@ -216,7 +219,7 @@ def fingerprint_parts(rain, thresh, obs, area, onset, options, select, years) ->
     if spec is None:
         lat, lon = (np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
                     for name in ("lat", "lon"))   # rain is a DataArray, or an ingested DailyRain
-        parts["cells"] = part_hash(area.region, json.dumps(_mask_mapping(area.mask), sort_keys=True, default=str),
+        parts["cells"] = part_hash(area.region, json.dumps(_mask_mapping(area), sort_keys=True, default=str),
                                    _mask_files(area), bool(area.polygon), bool(select.grid_point),
                                    select.lat if select.grid_point else None,
                                    select.lon if select.grid_point else None, lat, lon)

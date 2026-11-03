@@ -44,8 +44,8 @@ def _base_config(configs):
 @pytest.fixture
 def data(monkeypatch):
     """Serve synthetic observations and no thresholds instead of reading files."""
-    monkeypatch.setattr(explain_cells, "load_imd_rainfall", lambda year, **kw: rain_year(year))
-    monkeypatch.setattr(explain_cells, "load_thresholds", lambda **kw: {})
+    monkeypatch.setattr(explain_cells, "observations_of", lambda year, rc, select=None: rain_year(year))
+    monkeypatch.setattr(explain_cells, "thresholds_of", lambda rc, model, select=None: {})
 
 
 def test_writes_a_png_and_log_per_cell_and_year(tmp_path, data):

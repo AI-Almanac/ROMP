@@ -17,9 +17,9 @@ RUN = {**old_rule(), "max_forecast_day": 20, "years_clim": [2001, 2002]}
 @pytest.fixture
 def failing_reads(monkeypatch):
     """Every climatology year fails to read."""
-    monkeypatch.setattr(climatology, "load_thresholds", lambda **kw: 1.0)
+    monkeypatch.setattr(climatology, "thresholds_of", lambda rc, model, select=None: 1.0)
     monkeypatch.setattr(climatology, "_read_years",
-                        lambda years, rc, kwargs, shared=True: iter([(None, OSError("no file")) for _ in years]))
+                        lambda years, rc, select, shared=True: iter([(None, OSError("no file")) for _ in years]))
 
 
 def test_a_failing_year_stops_the_climatology_and_is_named_once(failing_reads, caplog):

@@ -625,6 +625,13 @@ def observations_of(year, rc, select=_NO_SELECTION):
                              run_years=rc.evaluation.years, dir_fig=rc.output.figure_dir)
 
 
+def observation_years_of(years, rc, select=_NO_SELECTION, hold=True):
+    """`read_obs_years` of a run."""
+    return read_obs_years(years, rc.observations, rc.area, rc.onset_options, select,
+                          onset=rc.onset if rc.observations.units is not None else None,
+                          run_years=rc.evaluation.years, dir_fig=rc.output.figure_dir, parallel=rc.parallel, hold=hold)
+
+
 def forecast_of(year, rc, model, *, ensemble, select=_NO_SELECTION):
     """`load_forecast` of a run for the source `model`."""
     steps = rc.onset if isinstance(rc.evaluation.max_forecast_day, int) else None

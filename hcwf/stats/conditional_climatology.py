@@ -202,16 +202,16 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
     otherwise they are detected from the year's rainfall as for the forecasts.
     The run `rc` carries the init dates, the onset definition and climatology_cv.
     """
-    from hcwf.io.input import get_initialization_dates
+    from hcwf.io.input import initialization_dates, thresholds_of
 
-    kwargs = flat_bridge.case_kwargs(rc, case, "deterministic", select)   # R2-bridge: what the readers still take
+    thresholds = thresholds_of(rc, case.model, select)
     cv = cv_mode(rc.reference.climatology_cv)
     tables = []
     for year in years:
         log.debug(f"Conditional climatology pairs for target year {year}")
-        observed = None if year in clim_onset.year.values else _detect_observed(year, rc, select, kwargs)
+        observed = None if year in clim_onset.year.values else _detect_observed(year, rc, select, thresholds)
         table = create_conditional_climatological_forecast_obs_pairs(
-            clim_onset, year, get_initialization_dates(year, **kwargs), observed, day_bins=day_bins,
+            clim_onset, year, initialization_dates(year, rc.evaluation), observed, day_bins=day_bins,
             climatology_cv=cv)
         if len(table):
             tables.append(table)
@@ -225,12 +225,12 @@ def multi_year_conditional_climatological_forecast_obs_pairs(clim_onset, *, year
     return conditional_pairs(clim_onset, *flat_bridge.from_case_kwargs(kwargs), years=years, day_bins=day_bins)
 
 
-def _detect_observed(year, rc, select, kwargs):
+def _detect_observed(year, rc, select, thresholds):
     """The observed onsets (lat, lon) of a year outside the climatology years."""
-    from hcwf.io.input import load_imd_rainfall, load_thresholds
+    from hcwf.io.input import observations_of
     from hcwf.stats.detect import detect_observed
 
-    return detect_observed(load_imd_rainfall(year, **kwargs), load_thresholds(**kwargs), year, rc, select)
+    return detect_observed(observations_of(year, rc, select), thresholds, year, rc, select)
 
 
 def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, observed_onset_da, *,

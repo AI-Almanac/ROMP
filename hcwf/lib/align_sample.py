@@ -16,10 +16,11 @@ cached next to the detection cache (a ``hcwf.cache.Store`` of kind "alignment") 
 files), the lead label, the day boundaries and the sample specification; ``check_models`` runs several models in
 parallel threads. Files are found as the run finds them (``hcwf.io.input``), so datasets given by ``paths`` are read.
 
-The keyword arguments are those of ``hcwf.export.case_kwargs`` (obs_dir, obs_file_pattern, obs_var,
-obs_unit_cvt, model_dir, model_var, unit_cvt, file_pattern, model_dims, probabilistic, members, accumulation,
-daily_boundary, region, start_date, end_date, init_days, years) and, for datasets given as lists of files,
-obs_paths, obs_files_years, model_paths and model_files_years.
+The keyword arguments (obs_dir, obs_file_pattern, obs_var, obs_unit_cvt, model_dir, model_var, unit_cvt,
+file_pattern, model_dims, probabilistic, members, accumulation, daily_boundary, region, start_date, end_date,
+init_days, years) and, for datasets given as lists of files, obs_paths, obs_files_years, model_paths and
+model_files_years, are those of ``sample_spec`` (a run's model, from its typed specs); the lead-label detection of
+zarr datasets (``hcwf.lib.dataset_detect``) writes them before a run exists.
 """
 from __future__ import annotations
 
@@ -100,6 +101,17 @@ def _listed_years(paths, base, years_filter) -> tuple:
 _SIDES = {"obs": ("obs_dir", "obs_paths", "obs_files_years", "obs_file_pattern"),
           "model": ("model_dir", "model_paths", "model_files_years", "file_pattern")}
 """The kwargs of each side: folder, listed files, years filter of the listed files, file pattern."""
+
+
+def sample_spec(rc, model: str) -> dict:
+    """The keyword arguments of the sampled check for one model of a run (RunConfig), from its typed specs."""
+    obs, ev, source = rc.observations, rc.evaluation, rc.model(model)
+    return {"obs_dir": obs.dir, "obs_file_pattern": obs.file_pattern, "obs_var": obs.var, "obs_unit_cvt": obs.unit_cvt,
+            "obs_paths": obs.paths, "model_dir": source.dir, "file_pattern": source.file_pattern,
+            "model_var": source.var, "unit_cvt": source.unit_cvt, "model_dims": source.dims_map(),
+            "accumulation": source.accumulation, "daily_boundary": source.daily_boundary,
+            "probabilistic": ev.probabilistic, "members": ev.members, "region": rc.area.region,
+            "start_date": ev.start_date, "end_date": ev.end_date, "init_days": ev.init_days, "years": ev.years}
 
 
 def _is_store(kw: dict, side: str) -> bool:

@@ -1,10 +1,10 @@
 """Training a blend: every stage in memory, from input files to the fitted model.
 
-`train(cfg, recipe, setup)` runs the stages in order: the thresholds (`hcwf.io.input.load_thresholds`), the observed
-onsets, the forecast onsets of each model (units the climatology keeps), the climatology and the weekly features
-(`hcwf.blend.features`, on HCWF's one detection adapter), then the cross-validated evaluation and the final fit
-(`hcwf.blend.evaluation`), and returns a `TrainingResult`. `cfg` is HCWF's flat run configuration, `recipe` the
-blend-only settings (`hcwf.blend.recipe.Recipe`) and `setup` the resolved onset setup (`OnsetSetup`).
+`train(rc)` runs the stages in order: the thresholds (`hcwf.io.input.thresholds_of`), the observed onsets, the forecast
+onsets of each model (units the climatology keeps), the climatology and the weekly features (`hcwf.blend.features`, on
+HCWF's one detection adapter), then the cross-validated evaluation and the final fit (`hcwf.blend.evaluation`), and
+returns a `TrainingResult`. `rc` is the run's RunConfig: it holds the blend-only settings (`rc.blend`, a
+`hcwf.blend.recipe.Recipe`) and the resolved onset setup (`rc.onset`).
 
 `TrainingResult.save` writes blending's output contract (docs/pipeline-redesign.md in onset_blending): the evaluation's
 artifacts under the contract's own names (not HCWF's short ones), plus the chosen intermediates. The trained blend
@@ -12,8 +12,8 @@ artifacts under the contract's own names (not HCWF's short ones), plus the chose
 config, the recipe, the fitted model and forest, the observed onsets, the units, the thresholds and reference onsets,
 and the climatology's years, which is all a forecast needs.
 
-Workers and the memory budget are the run's: `parallel` / `parallel_workers` / `memory_budget` of `cfg`
-(`hcwf.utils.workers`); every stage runs on the run's worker pool.
+Workers are the run's (`rc.parallel`; `hcwf.utils.workers`), the memory budget is half of the memory available now;
+every stage runs on the run's worker pool.
 """
 
 from __future__ import annotations
@@ -30,9 +30,11 @@ from hcwf.blend.evaluation import Evaluation
 from hcwf.blend.recipe import Recipe
 from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Weekly
 from hcwf.cache import atomic_write
+from hcwf.config.model import RunConfig
 from hcwf.io import input as io_input
 from hcwf.onset.climatology import ReferenceOnset
 from hcwf.onset.climatology_kde import Climatology
+from hcwf.stats.parallel import spec_workers
 from hcwf.utils import workers as pool
 
 log = logging.getLogger(__name__)
@@ -40,19 +42,17 @@ log = logging.getLogger(__name__)
 __all__ = ["Inputs", "STAGE_TABLES", "TrainingResult", "prepare", "resources", "train"]
 
 
-def resources(cfg: dict) -> tuple[int, int | None]:
+def resources(rc: RunConfig, memory_budget: int | None = None) -> tuple[int, int | None]:
     """(workers, memory budget in bytes) the run allows: one worker with `parallel: false`, else `parallel_workers`
     or the cores available; the budget is `memory_budget` or half of the memory available now."""
-    workers = pool.worker_count(cfg, tasks=1 << 20)
-    budget = cfg.get("memory_budget") or pool.memory_budget()
-    return workers, budget
+    return spec_workers(rc.parallel, 1 << 20), memory_budget or pool.memory_budget()
 
 
 @dataclass
 class Inputs:
     """Everything the blend is fitted on, stage by stage."""
 
-    thresholds: object                      # hcwf.io.input.load_thresholds(**cfg)
+    thresholds: object                      # hcwf.io.input.thresholds_of(rc, model)
     reference: ReferenceOnset | None        # the reference onset (cutoff_mode ref_onset), if the recipe has one
     observed: ObservedOnsets
     forecasts: dict[str, ForecastOnsets]
@@ -70,14 +70,15 @@ class Inputs:
 STAGE_TABLES = ("observed", "forecasts", "climatology", "weekly")
 
 
-def prepare(cfg: dict, recipe: Recipe, setup, *, test_years: tuple[int, int] | None = None,
+def prepare(rc: RunConfig, *, test_years: tuple[int, int] | None = None,
             keep: tuple[str, ...] = STAGE_TABLES) -> Inputs:
     """Observed and forecast onsets, the climatology and the weekly features of a run (and the random forest's
     inputs when it has one).
 
     Forecast and climatology arrays not in `keep` are released once the features are built; the observed onsets and
     weekly features are always kept. test_years overrides the climatology's test window (a live season)."""
-    workers, budget = resources(cfg)
+    recipe, setup = _recipe(rc), rc.onset
+    workers, budget = resources(rc)
     timings: dict[str, float] = {}
 
     def lap(stage: str, started: float) -> None:
@@ -85,9 +86,9 @@ def prepare(cfg: dict, recipe: Recipe, setup, *, test_years: tuple[int, int] | N
         log.info("%s in %.1fs", stage, timings[stage])
 
     started = time.perf_counter()
-    thresholds = io_input.load_thresholds(**cfg)
+    thresholds = io_input.thresholds_of(rc, rc.models[0])
     reference = features.reference_onset(recipe)
-    observed = features.observed(cfg, recipe, setup, thresholds, reference, workers=workers)
+    observed = features.observed(rc, recipe, thresholds, reference, workers=workers)
     lap("observed onsets", started)
 
     # Only units the climatology keeps make samples, so the forecasts are read for those alone.
@@ -95,7 +96,7 @@ def prepare(cfg: dict, recipe: Recipe, setup, *, test_years: tuple[int, int] | N
     forecasts = {}
     for model in recipe.models:
         started = time.perf_counter()
-        forecasts[model.name] = features.forecast(cfg, recipe, setup, model.name, thresholds, reference,
+        forecasts[model.name] = features.forecast(rc, recipe, model.name, thresholds, reference,
                                                   keep_ids=blendable, workers=workers, budget_bytes=budget)
         lap(f"{model.name} forecast onsets", started)
 
@@ -127,11 +128,19 @@ def prepare(cfg: dict, recipe: Recipe, setup, *, test_years: tuple[int, int] | N
 class TrainingResult:
     """A training run: its settings, the stages' arrays and the evaluation (with the fitted model and forest)."""
 
-    cfg: dict
-    recipe: Recipe
-    setup: object           # hcwf.lib.onset_config.OnsetSetup
+    rc: RunConfig
     inputs: Inputs
     evaluation: Evaluation
+
+    @property
+    def recipe(self) -> Recipe:
+        """The blend's settings (the run's `blend:` section)."""
+        return self.rc.blend
+
+    @property
+    def setup(self):
+        """The resolved onset setup (hcwf.lib.onset_config.OnsetSetup)."""
+        return self.rc.onset
 
     @property
     def model(self):
@@ -172,22 +181,30 @@ class TrainingResult:
         return directory
 
 
-def train(cfg: dict, recipe: Recipe, setup) -> TrainingResult:
+def _recipe(rc: RunConfig) -> Recipe:
+    """The run's blend settings; a run without a `blend:` section trains nothing."""
+    if rc.blend is None:
+        raise ValueError("the run has no `blend:` section, so there is no blend to train")
+    return rc.blend
+
+
+def train(rc: RunConfig) -> TrainingResult:
     """Every stage of a blend, in memory: inputs, cross-validated evaluation, and the operational model (and the
     random forest, when configured) fitted on every training year."""
-    workers, budget = resources(cfg)
-    inputs = prepare(cfg, recipe, setup, keep=("observed", "weekly"))
+    recipe = _recipe(rc)
+    workers, budget = resources(rc)
+    inputs = prepare(rc, keep=("observed", "weekly"))
 
     # The final fit runs alongside the global CV folds, on their design matrix.
     started = time.perf_counter()
-    dissemination = evaluation_stage.dissemination_ids(io_input.units_spec(cfg, "observations"), inputs.weekly)
+    dissemination = evaluation_stage.dissemination_ids(rc.observations.units, inputs.weekly)
     evaluation = evaluation_stage.evaluate(
         inputs.weekly, recipe, dissemination, workers=workers, budget_bytes=_budget_now(budget), final=True,
         forest_inputs=inputs.forest_inputs,
     )
     inputs.timings["evaluation and final fit"] = time.perf_counter() - started
     log.info("evaluation and final fit in %.1fs", inputs.timings["evaluation and final fit"])
-    return TrainingResult(cfg=cfg, recipe=recipe, setup=setup, inputs=inputs, evaluation=evaluation)
+    return TrainingResult(rc=rc, inputs=inputs, evaluation=evaluation)
 
 
 def _budget_now(budget: int | None) -> int | None:

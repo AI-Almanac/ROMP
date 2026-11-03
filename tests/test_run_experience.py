@@ -586,6 +586,22 @@ def test_check_fails_on_missing_files_a_refused_rerun_and_unresolvable_configs(w
     assert done.returncode == 1 and "nothing was run" in done.stdout
 
 
+def test_a_start_date_beyond_the_data_is_a_config_error_naming_the_years(world, tmp_path):
+    """`--start_date 2030 1 1` on forecasts of 2019-2020 is a config error that names the years the files cover (it was
+    an IndexError while the lead window was being counted), through hcwf.run and through the command line; a period past
+    the data that still has years names them too."""
+    from hcwf.lib.assertion import HCWFConfigError
+
+    path = _fresh(world, tmp_path)
+    with pytest.raises(HCWFConfigError, match=r"no year to evaluate.*DET files.*cover the years 2019-2020"):
+        hcwf.run(path, start_date=(2030, 1, 1))
+    done = _cli(tmp_path, "-p", str(path), "--start_date", "2030", "1", "1")
+    assert done.returncode == 1 and "Traceback" not in done.stdout + done.stderr
+    assert "no year to evaluate" in done.stdout + done.stderr and "2019-2020" in done.stdout + done.stderr
+    with pytest.raises(HCWFConfigError, match=r"DET.*not found.*cover the years 2019-2020"):
+        hcwf.run(path, start_date=(2030, 1, 1), end_date=(2031, 5, 31))
+
+
 def test_check_through_python(world, tmp_path):
     """hcwf.check returns the report object."""
     report = hcwf.check(_fresh(world, tmp_path))

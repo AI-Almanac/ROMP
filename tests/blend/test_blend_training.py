@@ -80,7 +80,7 @@ def region(tmp_path_factory):
     write_observations(root / "obs")
     write_forecasts(root / "ens")
     translation = converted(config_dict(root), cache_dir=root / "cache")
-    return root, translation, train(translation.cfg, translation.recipe, translation.setup)
+    return root, translation, train(translation.rc())
 
 
 def test_training_scores_the_blend_against_climatology(region):
@@ -95,7 +95,7 @@ def test_training_scores_the_blend_against_climatology(region):
 def test_the_result_keeps_what_a_trained_blend_is_made_from(region):
     _, t, result = region
 
-    assert result.recipe is t.recipe and result.cfg is t.cfg and result.setup is t.setup
+    assert result.recipe == t.recipe and dict(result.rc.values) == t.cfg and result.setup is t.setup
     assert result.model is result.evaluation.final_model and result.model.formula.startswith("outcome ~")
     assert result.forest is None
     assert result.inputs.units == ("10.00_70.00", "10.00_70.25", "10.25_70.00", "10.25_70.25")
@@ -111,7 +111,7 @@ def test_stage_tables_are_kept_only_when_asked(region):
 
     assert all(f.data is None for f in result.inputs.forecasts.values())  # train releases them
     assert result.inputs.climatology.data is None
-    kept = prepare(t.cfg, t.recipe, t.setup, keep=STAGE_TABLES)
+    kept = prepare(t.rc(), keep=STAGE_TABLES)
     assert all(f.data is not None for f in kept.forecasts.values())
     assert kept.climatology.data is not None
 
@@ -164,7 +164,7 @@ def test_the_random_forest_blend_is_scored_and_fitted(region):
     root, _, _ = region
     translation = converted(config_dict(root, random_forest={"trees": 5, "min_samples_leaf": 5}), cache_dir=root / "cache")
 
-    result = train(translation.cfg, translation.recipe, translation.setup)
+    result = train(translation.rc())
 
     pooled = result.evaluation.pooled.set_index("model")
     assert {"blended_model", "blended_forest"} <= set(pooled.index)
@@ -175,6 +175,13 @@ def test_the_random_forest_blend_is_scored_and_fitted(region):
 
 
 def test_resources_follow_the_runs_parallel_settings():
-    assert resources({"parallel": False})[0] == 1
-    assert resources({"parallel_workers": 3, "memory_budget": 10})[0] == 3
-    assert resources({"memory_budget": 10})[1] == 10
+    from types import SimpleNamespace
+
+    from hcwf.config.model import ParallelSpec
+
+    def run(enabled, workers):
+        return SimpleNamespace(parallel=ParallelSpec(enabled, workers))
+
+    assert resources(run(False, None))[0] == 1
+    assert resources(run(True, 3), 10)[0] == 3
+    assert resources(run(True, None), 10)[1] == 10

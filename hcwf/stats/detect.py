@@ -17,7 +17,7 @@ import xarray as xr
 
 from hcwf.config import flat_bridge
 from hcwf.config.model import Selection
-from hcwf.io.input import ingest_model_forecast
+from hcwf.io.input import ingest_forecast
 from hcwf.lib.onset_config import forecast_reach
 from hcwf.onset import engine
 from hcwf.stats import observed_cache
@@ -187,14 +187,6 @@ def detect_observed_onset(rain_slice, thresh_slice, year, **kwargs):  # R2-bridg
     return detect_observed(rain_slice, thresh_slice, year, rc, select)
 
 
-def _model_args(rc, case, select) -> dict:
-    """What hcwf.io.input.ingest_model_forecast reads of the case: the model's name, accumulation and daily boundary, and
-    the forecast ingest options."""
-    return {"model": case.model.name, "accumulation": case.model.accumulation,
-            "daily_boundary": case.model.daily_boundary,
-            **rc.onset_options.ingest(True, None, check_units=select.check_units)}
-
-
 def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(), *, members=None, history=None,
                     search_start=None, restrict_to_season=True, onset_count=False):
     """Run the engine on a forecast cube and line it up with the observed onsets.
@@ -219,7 +211,7 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
         cube = cube.sel(member=list(members))  # the loader already took them; selecting again would copy the cube
     spatial = axes.spatial_dims(cube.dims)
     order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + spatial + ("step",)
-    forecast = ingest_model_forecast(cube.transpose(*order), setup, _model_args(rc, case, select), "forecast")
+    forecast = ingest_forecast(cube.transpose(*order), setup, case.model, rc.onset_options, select, "forecast")
     coords = {d: forecast.coords[d] for d in spatial}
     stitched = None
     if history is not None and setup.forecast_history == "observed":
@@ -477,7 +469,8 @@ def alignment_report(rain_slice, p_model, rc, case):
         if "member" in cube.dims:
             cube = cube.isel(member=slice(0, _ALIGNMENT_MAX_MEMBERS))
         obs = ingest(rain_slice, day_boundary=setup.obs_day_boundary, units="mm", source="observations")
-        forecast = ingest_model_forecast(cube, setup, _model_args(rc, case, Selection()), str(case.model.name or "forecast"))
+        forecast = ingest_forecast(cube, setup, case.model, rc.onset_options, Selection(),
+                                   str(case.model.name or "forecast"))
         return check_forecast_alignment(obs, forecast, leads=(1, 2, 3)), ""
     except Exception as exc:  # noqa: BLE001 - a failed check is reported, not raised
         return None, f"could not run: {exc}"

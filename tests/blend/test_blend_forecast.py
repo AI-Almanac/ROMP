@@ -92,7 +92,7 @@ def blending_config(root, forest=False) -> dict:
 
 def trained(root, forest=False):
     loaded = converted(blending_config(root, forest))
-    return train({**loaded.cfg, "parallel_workers": 1}, loaded.recipe, loaded.setup)
+    return train(loaded.rc(parallel_workers=1))
 
 
 @pytest.fixture(scope="module")
@@ -547,7 +547,7 @@ def test_a_blend_on_weights_and_threshold_files_needs_none_of_them_to_forecast(t
     root.mkdir()
     synthetic.write_data(root)
     loaded = converted(synthetic.configs(root)[name])
-    result = train({**loaded.cfg, "parallel_workers": 1}, loaded.recipe, loaded.setup)
+    result = train(loaded.rc(parallel_workers=1))
     path = result.save(tmp_path / "trained") / "trained.blend"
     expected = TrainedBlend.load(path).forecast({"ens": root / "ens" / "2013.nc"})
     kept = tmp_path / "live.nc"
@@ -574,7 +574,8 @@ def test_a_registry_definition_is_frozen_as_text(region):
     mapping["onset"].pop("thresholds")
     registry = definition_mod.load("icpac_blend")
 
-    cfg, setup = frozen_config(mapping, registry.source_yaml)
+    frozen = frozen_config(mapping, registry.source_yaml)
+    cfg, setup = frozen.values, frozen.onset
 
     assert cfg["onset_definition"] is None and cfg["onset_rule"] is not None
     assert definition_mod.definition_hash(setup.definition) == definition_mod.definition_hash(registry)

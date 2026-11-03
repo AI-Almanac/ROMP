@@ -146,14 +146,14 @@ def run_hcwf(config_dict) -> dict:
     from _recipes import converted
 
     from hcwf.blend import features
-    from hcwf.io.input import load_thresholds
+    from hcwf.io.input import thresholds_of
 
     t = converted(config_dict)
-    cfg, recipe, setup = t.cfg, t.recipe, t.setup
-    thresholds = load_thresholds(**cfg)
+    rc, recipe, setup = t.rc(), t.recipe, t.setup
+    thresholds = thresholds_of(rc, rc.models[0])
     reference = features.reference_onset(recipe)
-    observed = features.observed(cfg, recipe, setup, thresholds, reference)
-    forecasts = {m.name: features.forecast(cfg, recipe, setup, m.name, thresholds, reference) for m in recipe.models}
+    observed = features.observed(rc, recipe, thresholds, reference)
+    forecasts = {m.name: features.forecast(rc, recipe, m.name, thresholds, reference) for m in recipe.models}
     years = sorted({y for f in forecasts.values() for y in f.years})
     clim = features.climatology(recipe, setup, observed, years)
     weekly = features.weekly(recipe, setup.definition, clim, observed, forecasts)

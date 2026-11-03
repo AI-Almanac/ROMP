@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -30,6 +30,7 @@ from scipy.special import logit
 
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, Recipe, probability_feature_base, window_tag
 from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Weekly
+from hcwf.config.model import Case, Selection, Window
 from hcwf.io import input as io_input
 from hcwf.lib.dataset_schema import file_year
 from hcwf.onset.climatology import ReferenceOnset
@@ -49,9 +50,10 @@ _CHUNK_ROWS = 1_000_000
 # Onsets collected over files
 # ---------------------------------------------------------------------------------------------------------------
 #
-# The run config (`cfg`, HCWF's flat keys) says where the files are, how they become units (`units_*`), the onset rule,
-# its thresholds and the reading options; the thresholds come from `hcwf.io.input.load_thresholds(**cfg)`. What follows
-# only adds what blending needs of that: the reference onset, the fixed cutoff, a year or a file at a time.
+# The run (`rc`, a RunConfig) says where the files are, how they become units (`units:`), the onset rule, its thresholds
+# and the reading options; the thresholds come from `hcwf.io.input.thresholds_of`. What follows only adds what blending
+# needs of that: the reference onset, the fixed cutoff, a year or a file at a time (a per-call `Selection`, and the
+# run's specs replaced where blending reads differently: the horizon, the missing-rain policy, the lead window).
 
 
 def reference_onset(recipe: Recipe) -> ReferenceOnset | None:
@@ -72,18 +74,19 @@ def _season_start(setup) -> str:
     return f"{start.month:02d}-{start.day:02d}"
 
 
-def observation_years(cfg: dict) -> list[int]:
+def observation_years(rc) -> list[int]:
     """The years of the observation files (the season a file holds is the year in its name)."""
-    years = [file_year(p) for p in cfg["obs_paths"]]
+    paths = rc.observations.paths
+    years = [file_year(p) for p in paths]
     if None in years:
         raise ValueError("an observation file name has no year (19xx or 20xx); observations are read a year at a "
-                         "time: " + ", ".join(p for p, y in zip(cfg["obs_paths"], years) if y is None))
+                         "time: " + ", ".join(p for p, y in zip(paths, years) if y is None))
     return sorted(set(years))
 
 
-def _observed_year(year, cfg, thresholds, season_start):
+def _observed_year(year, rc, select, thresholds, season_start):
     """One year's observed onsets as a file summary: {ids, years, onset_day, onset_idx, present} over (unit, year)."""
-    onset = detect.detect_observed_onset(lambda: io_input.load_imd_rainfall(year, **cfg), thresholds, year, **cfg)
+    onset = detect.detect_observed(lambda: io_input.observations_of(year, rc, select), thresholds, year, rc, select)
     ids = np.asarray(onset["unit"].values).astype(str)
     dates = onset.values.astype("datetime64[D]")
     cutoff = np.datetime64(f"{year}-{season_start}", "D")
@@ -92,17 +95,16 @@ def _observed_year(year, cfg, thresholds, season_start):
             "onset_idx": onset["onset_index"].values[:, None], "present": onset["present"].values[:, None]}
 
 
-def observed(cfg: dict, recipe: Recipe, setup, thresholds, reference, *, workers: int = 1,
-             keep_ids=None) -> ObservedOnsets:
+def observed(rc, recipe: Recipe, thresholds, reference, *, workers: int = 1, keep_ids=None) -> ObservedOnsets:
     """Observed onsets for every observation year, years in parallel: the search starts at max(season start,
     reference onset); each year's onsets are kept in the observed-onset cache while it is active."""
-    years = observation_years(cfg)
-    kwargs = {"region": None, "obs_unit_cvt": None, **cfg, "years": [], "years_clim": years,
-              "reference_onset": reference, "onset_horizon": recipe.onset.observed_horizon,
-              "keep_unit_ids": None if keep_ids is None else sorted(keep_ids)}
-    parts = map_items(_observed_year, years, (kwargs, thresholds, _season_start(setup)),
+    years = observation_years(rc)
+    run = replace(rc, evaluation=replace(rc.evaluation, years=(), climatology_years=tuple(years)),
+                  onset_options=replace(rc.onset_options, horizon=recipe.onset.observed_horizon))
+    select = Selection(reference_onset=reference, keep_unit_ids=None if keep_ids is None else sorted(keep_ids))
+    parts = map_items(_observed_year, years, (run, select, thresholds, _season_start(rc.onset)),
                       workers=max(1, min(workers, len(years))))
-    return ObservedOnsets.from_parts(parts, _season_start(setup))
+    return ObservedOnsets.from_parts(parts, _season_start(rc.onset))
 
 
 def member_mean(rain: np.ndarray) -> np.ndarray:
@@ -147,7 +149,7 @@ def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids)
     return starts
 
 
-def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, threshold_name):
+def _forecast_file(path, rc, case, select, spec, thresholds, fixed_cutoff, reference, threshold_name):
     """One forecast file's member onset counts per lead day, a run of issues at a time.
 
     Returns the data, or None when `issue_dates` is given and the file has none of them: data holds, over (issue, unit, day), count_base / count_fixed_cutoff / count_ref (uint8:
@@ -155,8 +157,8 @@ def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, thre
     the reference onset), plus members (per issue), onset_threshold (unit) and rain_mean (the members' mean rainfall in
     the file's dtype).
     """
-    with io_input.UnitForecast(path, kwargs, spec, keep_ids=kwargs.get("keep_unit_ids"),
-                               issue_dates=kwargs.get("issue_dates")) as file:
+    with io_input.UnitForecast(path, case.model, spec, keep_ids=select.keep_unit_ids, issue_dates=select.issue_dates,
+                               select=select) as file:
         ids, days, issues = file.ids, file.days, file.issues
         if not len(issues):
             return None   # none of the issues asked for is in this file
@@ -164,12 +166,12 @@ def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, thre
         variants = ("base", "fixed_cutoff", "ref")
         counts = {v: np.zeros((n_issue, n_unit, n_day), dtype=np.uint8) for v in variants}
         members, summary = np.zeros(n_issue, dtype=np.uint8), None
-        run_kwargs = {**kwargs, "max_forecast_day": n_day}
+        run = replace(rc, evaluation=replace(rc.evaluation, max_forecast_day=n_day))   # each file has its own leads
         for start, stop, rain in file.runs():
             values = np.asarray(rain.values)
             n_member = values.shape[1]
-            found, order, _ = detect.member_onset_counts(
-                rain, thresholds, **run_kwargs,
+            found, order, _ = detect.count_members(
+                rain, thresholds, run, case, select,
                 search_start=forecast_starts(fixed_cutoff, reference, issues[start:stop], ids))
             found = found.sel(lead=slice(1, None))
             for v in variants:
@@ -186,7 +188,7 @@ def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, thre
     return xr.Dataset(variables, coords={"issue": issues, "unit": ids.astype(object), "day": np.asarray(days)})
 
 
-def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference, *, keep_ids=None, member_ids=None,
+def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=None, member_ids=None,
              units=None, issue_dates=None, workers: int = 1, budget_bytes: int | None = None) -> ForecastOnsets:
     """A model's forecast onsets for every one of its files, files in parallel as far as memory allows.
 
@@ -195,25 +197,25 @@ def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference
     read (a forecast reads the trained ones); issue_dates reads only the issues on those days (files without any are
     left out).
     """
-    index = cfg["model_list"].index(model)
-    spec = recipe.model(model)
-    paths = cfg["model_paths_list"][index]
-    units = units if units is not None else io_input.units_spec(cfg, model)
-    kwargs = {"region": None, "obs_unit_cvt": None, **cfg, "model": model, "model_var": cfg["model_var_list"][index],
-              "unit_cvt": cfg["unit_cvt_list"][index], "model_dims": cfg["model_dims_list"][index],
-              "first_lead": spec.lead_days[0], "last_lead": spec.lead_days[1], "max_member": spec.max_member,
-              "member_ids": None if member_ids is None else [int(m) for m in member_ids],
-              "rain_horizon": (spec.rain_horizon.max_day, spec.rain_horizon.policy),
-              "missing": recipe.onset.forecast_missing, "check_units": False,
-              "onset_horizon": cfg.get("onset_horizon") or "truncate", "keep_unit_ids":
-              None if keep_ids is None else sorted(keep_ids),
-              "issue_dates": None if issue_dates is None else tuple(issue_dates)}
-    item_bytes = [io_input.unit_forecast_bytes(p, kwargs["model_var"]) for p in paths]
+    spec, setup = recipe.model(model), rc.onset
+    source = rc.model(model)
+    case = Case(source, rc.evaluation.windows[0] if rc.evaluation.windows else Window(1, rc.evaluation.max_forecast_day, 0))
+    paths = source.paths
+    units = units if units is not None else source.units
+    run = replace(rc, onset_options=replace(rc.onset_options, missing=recipe.onset.forecast_missing,
+                                            horizon=rc.onset_options.horizon or "truncate"))
+    select = Selection(
+        first_lead=spec.lead_days[0], last_lead=spec.lead_days[1], max_member=spec.max_member,
+        member_ids=None if member_ids is None else [int(m) for m in member_ids],
+        rain_horizon=(spec.rain_horizon.max_day, spec.rain_horizon.policy), check_units=False,
+        keep_unit_ids=None if keep_ids is None else sorted(keep_ids),
+        issue_dates=None if issue_dates is None else tuple(issue_dates))
+    item_bytes = [io_input.unit_forecast_bytes(p, source.var) for p in paths]
     count = max(1, min(workers, len(paths)))
     count = workers_within(item_bytes, count, budget_bytes) if item_bytes else count
     name = setup.definition.thresholds[0][0] if setup.definition.thresholds else None
-    results = map_items(_forecast_file, paths, (kwargs, units, thresholds, recipe.onset.fixed_cutoff, reference, name),
-                        workers=count)
+    results = map_items(_forecast_file, paths, (run, case, select, units, thresholds, recipe.onset.fixed_cutoff,
+                                                reference, name), workers=count)
     results = [r for r in results if r is not None]
     names = [tuple(data["unit"].values) for data in results]
     if len(set(names)) > 1:

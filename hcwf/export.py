@@ -31,26 +31,23 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
-                           get_initialization_dates, load_history, load_imd_rainfall, load_thresholds)
-from hcwf.config.flat_bridge import model_kwargs, to_flat
-from hcwf.config.model import RunConfig
-from hcwf.lib.onset_config import onset_setup
+from hcwf.io.input import forecast_of, history_of, initialization_dates, observations_of, thresholds_of
+from hcwf.config.model import AreaSpec, Case, RunConfig
 from hcwf.lib.run_folder import file_name
-from hcwf.lib.resolved import resolved_config_text
+from hcwf.lib.resolved import resolved_config_text_of
 from hcwf.io.output import with_unit_labels
 from hcwf.spatial import axes
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
 from hcwf.onset.model import Status
-from hcwf.stats.climatology import compute_climatological_onset, compute_climatological_onset_dataset
+from hcwf.stats.climatology import climatological_onset, climatological_onset_dataset
 from hcwf.stats.climatology import compute_climatology_as_forecast
 from hcwf.stats.observed_cache import threshold_hash
-from hcwf.stats.conditional_climatology import (CONDITIONAL_CLIMATOLOGY, climatology_cv_mode,
+from hcwf.stats.conditional_climatology import (CONDITIONAL_CLIMATOLOGY, cv_mode,
                                                 compute_conditional_climatology_as_forecast,
                                                 conditional_lead_probabilities)
-from hcwf.stats.detect import (_detect_forecast, detect_observed_onset, detect_observed_result, ensemble_onset,
-                               _ensemble_status)
+from hcwf.stats.detect import (_ensemble_status, detect_forecast, detect_observed, detect_observed_dataset,
+                               ensemble_onset)
 import logging
 
 log = logging.getLogger(__name__)
@@ -68,28 +65,27 @@ _COMPRESSION = {"zlib": True, "complevel": 4, "shuffle": True}
 
 # --- configuration ----------------------------------------------------------------------------------
 
-def onsets_folder(dic: dict) -> Path:
+def onsets_folder(rc: RunConfig) -> Path:
     """The folder of the onset files: the run's ``onsets`` folder, or dir_out/onsets."""
-    paths = dic.get("run_paths")
-    return Path(paths.onsets) if paths is not None else Path(dic["dir_out"]) / "onsets"
+    return Path(rc.paths.onsets) if rc.paths is not None else Path(rc.output.data_dir) / "onsets"
 
 
-def default_sources(dic: dict) -> list[str]:
+def default_sources(rc: RunConfig) -> list[str]:
     """The sources a run uses: observed, every model and the climatology reference when it is one."""
-    names = [OBSERVED, *dic["model_list"]]
-    if dic.get("ref_model") in (CLIMATOLOGY, CONDITIONAL_CLIMATOLOGY):
-        names.append(dic["ref_model"])
+    names = [OBSERVED, *(m.name for m in rc.models)]
+    if rc.reference.model in (CLIMATOLOGY, CONDITIONAL_CLIMATOLOGY):
+        names.append(rc.reference.model)
     return names
 
 
-def _check_sources(dic: dict, sources) -> list[str]:
+def _check_sources(rc: RunConfig, sources) -> list[str]:
     """The requested sources (a list or comma-separated text) checked against the ones the config can export."""
     if sources is None:
-        return default_sources(dic)
+        return default_sources(rc)
     if isinstance(sources, str):
         sources = [s for s in sources.split(",") if s.strip()]
     names = [s.strip() for s in sources]
-    allowed = [OBSERVED, *dic["model_list"], CLIMATOLOGY, CONDITIONAL_CLIMATOLOGY]
+    allowed = [OBSERVED, *(m.name for m in rc.models), CLIMATOLOGY, CONDITIONAL_CLIMATOLOGY]
     bad = [n for n in names if n not in allowed]
     if bad:
         raise ValueError(f"unknown source(s) {bad}; choose from {allowed}")
@@ -221,13 +217,13 @@ def _clean(attrs: dict) -> dict:
     return out
 
 
-def _mask_summary(dic: dict, sample: xr.DataArray) -> dict:
+def _mask_summary(area: AreaSpec, sample: xr.DataArray) -> dict:
     """The mask settings and how many cells (or units) of the loaded grid have no data at all in the sample variable."""
     spatial = [d for d in sample.dims if d in ("lat", "lon", "unit")]
     other = [d for d in sample.dims if d not in spatial]
     empty = sample.isnull().all(other) if other else sample.isnull()
-    return {"region": dic.get("region"), "nc_mask": dic.get("nc_mask"), "shpfile_dir": dic.get("shpfile_dir"),
-            "polygon": bool(dic.get("polygon")), "n_cells": int(empty.size), "n_cells_without_data": int(empty.sum())}
+    return {"region": area.region, "nc_mask": area.nc_mask, "shpfile_dir": area.shpfile_dir,
+            "polygon": bool(area.polygon), "n_cells": int(empty.size), "n_cells_without_data": int(empty.sum())}
 
 
 def _version() -> str:
@@ -240,20 +236,18 @@ def _version() -> str:
         return "unknown"
 
 
-def _provenance(dic: dict, kw: dict, source: str, kind: str, thresholds, mask: dict, years, extra: dict) -> dict:
+def _provenance(rc: RunConfig, case: Case, source: str, kind: str, thresholds, mask: dict, years, extra: dict) -> dict:
     """Global attributes of an export file: CF convention, definition, thresholds, mask, settings, paths, versions, config."""
-    setup = onset_setup(kw)
+    setup, ev, obs, model = rc.onset, rc.evaluation, rc.observations, case.model
     d = setup.definition
-    window = dic.get("lead_window") or (1, kw.get("max_forecast_day"))
+    window = ev.lead_window or (1, ev.max_forecast_day)
     try:
-        config_yaml = resolved_config_text(dic)
+        config_yaml = resolved_config_text_of(rc)
     except Exception as exc:  # noqa: BLE001 - a config that cannot be rendered must not stop the export
         config_yaml = f"unavailable: {exc}"
-    paths = {"observations": {"dir": str(kw.get("obs_dir")), "file_pattern": kw.get("obs_file_pattern"),
-                              "variable": kw.get("obs_var")}}
+    paths = {"observations": {"dir": str(obs.dir), "file_pattern": obs.file_pattern, "variable": obs.var}}
     if kind != "observed":
-        paths["forecast"] = {"dir": str(kw.get("model_dir")), "file_pattern": kw.get("file_pattern"),
-                             "variable": kw.get("model_var")}
+        paths["forecast"] = {"dir": str(model.dir), "file_pattern": model.file_pattern, "variable": model.var}
     if setup.threshold_files:
         paths["threshold_files"] = [list(f) for f in setup.threshold_files]
     attrs = {
@@ -274,10 +268,10 @@ def _provenance(dic: dict, kw: dict, source: str, kind: str, thresholds, mask: d
         ) else threshold_hash(thresholds),
         "mask_summary": _json(mask),
         "forecast_history": setup.forecast_history, "lead_label": setup.lead_label,
-        "lead_window": f"{window[0]}-{window[1]}", "max_forecast_day": kw.get("max_forecast_day"),
+        "lead_window": f"{window[0]}-{window[1]}", "max_forecast_day": ev.max_forecast_day,
         "obs_day_boundary": setup.obs_day_boundary, "forecast_day_boundary": setup.forecast_boundary,
-        "years": [int(y) for y in years], "years_clim": [int(y) for y in kw.get("years_clim") or ()],
-        "init_days": list(kw.get("init_days") or ()), "region": kw.get("region"),
+        "years": [int(y) for y in years], "years_clim": [int(y) for y in ev.climatology_years],
+        "init_days": list(ev.init_days), "region": rc.area.region,
         "dataset_paths": _json(paths), "resolved_config_yaml": config_yaml,
     }
     attrs.update(extra)
@@ -336,9 +330,9 @@ def open_onsets(path) -> xr.Dataset:
 
 # --- observed -----------------------------------------------------------------------------------------
 
-def _years_loop(kw: dict, load):
+def _years_loop(rc: RunConfig, load):
     """Yield (year, loaded) for every evaluated year, skipping (with a warning) years whose files are missing."""
-    for year in kw["years"]:
+    for year in rc.evaluation.years:
         try:
             yield year, load(year)
         except FileNotFoundError as exc:
@@ -350,12 +344,11 @@ def collect_observed(rc: RunConfig) -> xr.Dataset:
 
     Dims (year, season, lat, lon), or (year, season, unit) on evaluation units: onset_date, onset_doy and status.
     """
-    dic = to_flat(rc)
-    kw = model_kwargs(rc, rc.models[0].name)
-    thresholds = load_thresholds(**kw)
+    case = rc.first_case(rc.models[0].name)
+    thresholds = thresholds_of(rc, case.model)
     parts, sample, setup = [], None, None
-    for year, rain in _years_loop(kw, lambda y: load_imd_rainfall(y, **kw)):
-        result, setup = detect_observed_result(rain, thresholds, year, **kw)
+    for year, rain in _years_loop(rc, lambda y: observations_of(y, rc)):
+        result, setup = detect_observed_dataset(rain, thresholds, year, rc)
         parts.append(result)
         if sample is None:
             sample = rain.isel(time=slice(0, 400))
@@ -374,11 +367,11 @@ def collect_observed(rc: RunConfig) -> xr.Dataset:
          "status": status_var(result["status"].transpose(*dims).values, dims)},
         coords={"year": result["year"].values, "season": result["season"].values,
                 **{d: result[d].values for d in spatial}})
-    ds = with_unit_labels(ds, kw)
+    ds = with_unit_labels(ds, rc.observations.units)
     _coord_attrs(ds, None, "")
     years = [int(y) for y in ds["year"].values]
-    mask = _mask_summary(dic, sample)
-    ds.attrs = _provenance(dic, kw, OBSERVED, "observed", thresholds, mask, years, {
+    mask = _mask_summary(rc.area, sample)
+    ds.attrs = _provenance(rc, case, OBSERVED, "observed", thresholds, mask, years, {
         "calendar": calendar, "comment": "onset_date is NaT (masked) and onset_doy NaN where status is not ONSET"})
     return ds
 
@@ -394,44 +387,42 @@ def collect_model(rc: RunConfig, model: str) -> xr.Dataset:
     members_by_status, onset_probability and the ensemble onset the scoring uses: ensemble_onset_date,
     ensemble_onset_doy, ensemble_onset_day and ensemble_status.
     """
-    dic = to_flat(rc)
-    kw = model_kwargs(rc, model)
-    ensemble = bool(kw["probabilistic"])
-    thresholds = load_thresholds(**kw)
+    case = rc.first_case(model)
+    ev, threshold = rc.evaluation, rc.onset_options.percentage_threshold
+    ensemble = bool(ev.probabilistic)
+    thresholds = thresholds_of(rc, case.model)
     parts, sample, calendar, setup = [], None, "standard", None
 
     def load(year):
         """The year's rain, forecast and observed onsets, as the scoring loads them."""
-        rain = load_imd_rainfall(year, **kw)
-        fetch = get_forecast_probabilistic_twice_weekly if ensemble else get_forecast_deterministic_twice_weekly
-        return rain, fetch(year, **kw)
+        return observations_of(year, rc), forecast_of(year, rc, case.model, ensemble=ensemble)
 
-    for year, (rain, p_model) in _years_loop(kw, load):
-        onset_da = detect_observed_onset(rain, thresholds, year, **kw)
-        out = _detect_forecast(p_model, thresholds, onset_da, kw, members=kw.get("members") if ensemble else None,
-                               history=load_history(year, rain, **kw))
+    for year, (rain, p_model) in _years_loop(rc, load):
+        onset_da = detect_observed(rain, thresholds, year, rc)
+        out = detect_forecast(p_model, thresholds, onset_da, rc, case, members=ev.members if ensemble else None,
+                              history=history_of(year, rain, rc))
         setup, calendar = out["setup"], out["calendar"]
-        parts.append(_model_year(out, ensemble, kw["onset_percentage_threshold"]))
+        parts.append(_model_year(out, ensemble, threshold))
         if sample is None:
             sample = p_model.isel({d: 0 for d in p_model.dims if d not in ("lat", "lon", "unit")})
     if not parts:
         raise ValueError(f"no forecast year of {model} could be read; nothing to export")
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
-    ds = with_unit_labels(ds, kw)
+    ds = with_unit_labels(ds, rc.observations.units)
     _coord_attrs(ds, setup.lead_label, _lead_comment(setup.lead_label))
     years = sorted({int(t.year) for t in pd.DatetimeIndex(ds["init_time"].values)})
     extra = {"calendar": calendar, "model": model, "ensemble": ensemble,
-             "onset_percentage_threshold": kw["onset_percentage_threshold"] if ensemble else None,
-             "members": kw.get("members"),
+             "onset_percentage_threshold": threshold if ensemble else None,
+             "members": ev.members,
              "comment": "scored is 1 where HCWF scores the case: the cell has an observed onset and the init is "
                         "before it; values are given for every init and cell"}
-    ds.attrs = _provenance(dic, kw, model, "ensemble forecast" if ensemble else "deterministic forecast",
-                           thresholds, _mask_summary(dic, sample), years, extra)
+    ds.attrs = _provenance(rc, case, model, "ensemble forecast" if ensemble else "deterministic forecast",
+                           thresholds, _mask_summary(rc.area, sample), years, extra)
     return ds
 
 
 def _model_year(out: dict, ensemble: bool, threshold: float) -> xr.Dataset:
-    """One year of a model as a Dataset from the dict _detect_forecast returns."""
+    """One year of a model as a Dataset from the dict detect_forecast returns."""
     res, calendar = out["result"], out["calendar"]
     dims = tuple(res["status"].dims)
     spatial = out["spatial"]
@@ -499,16 +490,15 @@ def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: 
 # --- climatology references -----------------------------------------------------------------------------
 
 def _reference_inputs(rc: RunConfig, model: str):
-    """The case kwargs, thresholds and per-year (year, observed onsets, init dates, rain sample) of a climatology reference."""
-    kw = model_kwargs(rc, model, reference_as=model)
-    thresholds = load_thresholds(**kw)
+    """The reference's case, thresholds and per-year (year, observed onsets, init dates, rain sample) of a climatology reference."""
+    case = rc.first_case(model, reference_as=model)
+    thresholds = thresholds_of(rc, case.model)
     years = []
-    for year, rain in _years_loop(kw, lambda y: load_imd_rainfall(y, **kw)):
-        years.append((year, detect_observed_onset(rain, thresholds, year, **kw),
-                      get_initialization_dates(year, **kw), rain))
+    for year, rain in _years_loop(rc, lambda y: observations_of(y, rc)):
+        years.append((year, detect_observed(rain, thresholds, year, rc), initialization_dates(year, rc.evaluation), rain))
     if not years:
         raise ValueError("no observation year could be read; nothing to export")
-    return kw, thresholds, years
+    return case, thresholds, years
 
 
 def _scored(init_dates, obs_da: xr.DataArray) -> np.ndarray:
@@ -552,19 +542,19 @@ def collect_climatology(rc: RunConfig) -> xr.Dataset:
     """The traditional climatology: its onset per cell and, per init, the forecast HCWF scores from it.
 
     climatological_onset_doy and climatological_onset_date (season, lat, lon) come from
-    hcwf.stats.climatology.compute_climatological_onset (the rounded mean day of the climatology years);
+    hcwf.stats.climatology.climatological_onset (the rounded mean day of the climatology years);
     the per-init onset_date, onset_doy, onset_lead, onset_day, status and scored (init_time, season, lat, lon)
     from compute_climatology_as_forecast (a date within the lead window, else no onset).
     """
-    dic = to_flat(rc)
-    kw, thresholds, years = _reference_inputs(rc, CLIMATOLOGY)
-    setup = onset_setup(kw)
-    clim_doy = compute_climatological_onset(**kw)
+    case, thresholds, years = _reference_inputs(rc, CLIMATOLOGY)
+    setup, ev = rc.onset, rc.evaluation
+    clim_doy = climatological_onset(rc, case)
     parts = []
     for year, obs_da, init_dates, _ in years:
         if not len(init_dates):
             continue
-        table = compute_climatology_as_forecast(clim_doy, year, init_dates, _stand_in(obs_da), **kw)
+        table = compute_climatology_as_forecast(clim_doy, year, init_dates, _stand_in(obs_da),
+                                                max_forecast_day=ev.max_forecast_day)
         parts.append(_reference_year(table, init_dates, obs_da, _scored(init_dates, obs_da), setup.season))
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
     spatial = axes.spatial_dims(clim_doy.dims)
@@ -572,20 +562,20 @@ def collect_climatology(rc: RunConfig) -> xr.Dataset:
     reference_year = int(years[0][0])
     nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - _EPOCH)
                        / np.timedelta64(1, "D") + doy - 1)
-    ds = with_unit_labels(ds, kw)
+    ds = with_unit_labels(ds, rc.observations.units)
     if "unit" in spatial:   # units are matched by id
         doy = clim_doy.reindex(unit=ds["unit"].values).transpose(*spatial).values.astype(float)[None]
         nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - _EPOCH)
                            / np.timedelta64(1, "D") + doy - 1)
     ds["climatological_onset_doy"] = _float_var(doy, ("season", *spatial), "climatological onset, day of year",
                                                "1", "rounded mean day of the calendar year of the observed onsets "
-                                               f"of years_clim {kw['years_clim'][0]}-{kw['years_clim'][-1]}")
+                                               f"of years_clim {ev.climatology_years[0]}-{ev.climatology_years[-1]}")
     ds["climatological_onset_date"] = _date_var(nominal, ("season", *spatial), "standard",
                                                 "climatological onset date",
                                                 f"the day of year placed in the nominal year {reference_year}")
     _coord_attrs(ds, setup.lead_label, "days after the init date: the climatology forecast onset lies at lead k = init + k")
-    ds.attrs = _provenance(dic, kw, CLIMATOLOGY, "climatology reference", thresholds,
-                           _mask_summary(dic, years[0][3].isel(time=slice(0, 400))), [y[0] for y in years],
+    ds.attrs = _provenance(rc, case, CLIMATOLOGY, "climatology reference", thresholds,
+                           _mask_summary(rc.area, years[0][3].isel(time=slice(0, 400))), [y[0] for y in years],
                            {"calendar": "standard", "climatology_reference_year": reference_year,
                             "comment": "per-init variables are the climatology as a forecast, as scored; "
                                        "status is ONSET when the climatological date lies within the lead window, "
@@ -602,19 +592,20 @@ def collect_conditional_climatology(rc: RunConfig) -> xr.Dataset:
     (init_time, season, lead, lat, lon) is that conditional CDF, P(onset on or before the lead | no onset by
     the init), for leads 0 to max_forecast_day (0 at lead 0), NaN for cells without a KDE.
     """
-    dic = to_flat(rc)
-    kw, thresholds, years = _reference_inputs(rc, CONDITIONAL_CLIMATOLOGY)
-    setup = onset_setup(kw)
-    clim_onset = compute_climatological_onset_dataset(**kw)
-    horizon = int(kw["max_forecast_day"])
+    case, thresholds, years = _reference_inputs(rc, CONDITIONAL_CLIMATOLOGY)
+    setup, ev = rc.onset, rc.evaluation
+    clim_onset = climatological_onset_dataset(rc, case)
+    horizon = int(ev.max_forecast_day)
+    climatology_cv = rc.reference.climatology_cv
     parts = []
     for year, obs_da, init_dates, _ in years:
         if not len(init_dates):
             continue
-        table = compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, _stand_in(obs_da), **kw)
+        table = compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, _stand_in(obs_da),
+                                                            max_forecast_day=ev.max_forecast_day,
+                                                            climatology_cv=climatology_cv)
         part = _reference_year(table, init_dates, obs_da, _scored(init_dates, obs_da), setup.season)
-        probability = conditional_lead_probabilities(clim_onset, year, init_dates, obs_da, horizon,
-                                                     kw.get("climatology_cv"))
+        probability = conditional_lead_probabilities(clim_onset, year, init_dates, obs_da, horizon, climatology_cv)
         cdf = np.cumsum(probability, axis=-1)
         cdf = np.concatenate([np.where(np.isnan(cdf[..., :1]), np.nan, 0.0), cdf], axis=-1)
         spatial = axes.spatial_dims(obs_da.dims)
@@ -626,13 +617,12 @@ def collect_conditional_climatology(rc: RunConfig) -> xr.Dataset:
                               "lead 0; NaN for cells with fewer than 10 onset years"})
         parts.append(part)
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
-    ds = with_unit_labels(ds, kw)
+    ds = with_unit_labels(ds, rc.observations.units)
     _coord_attrs(ds, setup.lead_label, "days after the init date: the conditional onset lies at lead k = init + k")
-    configured = dic.get("climatology_cv")
-    ds.attrs = _provenance(dic, kw, CONDITIONAL_CLIMATOLOGY, "conditional climatology reference", thresholds,
-                           _mask_summary(dic, years[0][3].isel(time=slice(0, 400))), [y[0] for y in years],
-                           {"calendar": "standard", "climatology_cv": climatology_cv_mode(kw),
-                            "climatology_cv_configured": configured,
+    ds.attrs = _provenance(rc, case, CONDITIONAL_CLIMATOLOGY, "conditional climatology reference", thresholds,
+                           _mask_summary(rc.area, years[0][3].isel(time=slice(0, 400))), [y[0] for y in years],
+                           {"calendar": "standard", "climatology_cv": cv_mode(climatology_cv),
+                            "climatology_cv_configured": climatology_cv,
                             "comment": "per-init variables are the conditional climatology as scored (median "
                                        "onset = first lead with CDF >= 0.5); climatology_cv is the mode the "
                                        "scoring used; scored is 1 where HCWF scores the case"})
@@ -665,14 +655,13 @@ def export_onsets(cfg, sources=None, out=None) -> dict:
     """
     from hcwf.config.build import resolve
     rc = resolve(cfg)
-    dic = to_flat(rc)
-    names = _check_sources(dic, sources)
-    folder = Path(out) if out is not None else onsets_folder(dic)
+    names = _check_sources(rc, sources)
+    folder = Path(out) if out is not None else onsets_folder(rc)
     paths = {}
     for source in names:
         log.info(f"Exporting onset dates of {source} ...")
         ds = _collect(rc, source)
-        path = write_netcdf(ds, folder / file_name(dic, "onset", source.replace(" ", "_")))
+        path = write_netcdf(ds, folder / file_name(rc.paths, "onset", source.replace(" ", "_")))
         log.info(f"  wrote {path}")
         paths[source] = path
     return paths

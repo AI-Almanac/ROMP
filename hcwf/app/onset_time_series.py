@@ -1,42 +1,40 @@
 """Plot observed rainfall time series with detected onset (and optional climatological onset) at a grid point."""
 import os
-from hcwf.io.input import load_imd_rainfall, load_thresholds
-from hcwf.stats.detect import detect_observed_onset
+from hcwf.config.model import Selection
+from hcwf.io.input import observations_of, thresholds_of
+from hcwf.stats.detect import detect_observed
 from hcwf.graphics.rainfall_time_series import plot_rainfall_timeseries_with_onset_and_wetspell
-from hcwf.stats.climatology import compute_climatological_onset
-from hcwf.config.model import climatology_years
+from hcwf.stats.climatology import climatological_onset
 import pandas as pd
-from hcwf.lib.onset_config import onset_setup
 import logging
 
 log = logging.getLogger(__name__)
 
 
-def _season_window(kwargs):
+def _season_window(rc):
     """The ((month, day), (month, day)) window to plot: the chosen season's fixed bounds; None (the whole record) for derived seasons."""
-    setup = onset_setup(kwargs)
+    setup = rc.onset
     if setup.derived_seasons:
         return None
     season = next(s for s in setup.definition.seasons if s.name == setup.season)
     return (season.start.month, season.start.day), (season.end.month, season.end.day)
 
 
-def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwargs):
-    """Detect observed onset for a year, plot the rainfall time series at the grid point nearest lat_select/lon_select, and return (rainfall within the season window, onset dates)."""
-    years_clim = climatology_years(kwargs)
-    kwargs["years_clim"] = years_clim
+def obs_onset_analysis(year, rc, lat_select=11, lon_select=39, incl_clim=True):
+    """Detect observed onset for a year, plot the rainfall time series at the grid point nearest lat_select/lon_select, and return (rainfall within the season window, onset dates).
 
+    rc is the run (a RunConfig); its climatology years give the climatological onset."""
     # load onset precip threshold, 2-D or scalar
-    thresh_da = load_thresholds(**kwargs)
+    thresh_da = thresholds_of(rc, rc.models[0])
 
     log.debug(f"\n{'-'*50}")
     log.debug(f"Processing year {year}")
 
     # obs onset
-    da = load_imd_rainfall(year, **kwargs)
-    onset_da = detect_observed_onset(da, thresh_da, year, **kwargs)
+    da = observations_of(year, rc)
+    onset_da = detect_observed(da, thresh_da, year, rc)
 
-    window = _season_window(kwargs)
+    window = _season_window(rc)
     if window is None:
         da_sub = da
     else:
@@ -57,8 +55,8 @@ def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwa
     climatological_onset_datetime = None
 
     if incl_clim:
-        climatological_onset_doy, da_pr_clim = compute_climatological_onset(grid_point=True,
-                                                lat_select=lat_select, lon_select=lon_select, **kwargs)
+        climatological_onset_doy, da_pr_clim = climatological_onset(
+            rc, rc.first_case(rc.models[0].name), Selection(grid_point=True, lat=lat_select, lon=lon_select))
 
         doy = int(climatological_onset_doy.squeeze())
 
@@ -76,7 +74,7 @@ def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwa
         # assign the actual time from da_sub
         da_pr_clim_sub = da_pr_clim_sub.assign_coords(time=da_sub['time']).squeeze()
 
-    save_path = os.path.join(kwargs["dir_fig"], f"onset_time_series_lat{lat_select}_lon{lon_select}_{year}.png")
+    save_path = os.path.join(rc.output.figure_dir, f"onset_time_series_lat{lat_select}_lon{lon_select}_{year}.png")
 
     plot_rainfall_timeseries_with_onset_and_wetspell(da_sub, onset_da, None,
                                                      lat_select=lat_select, lon_select=lon_select,

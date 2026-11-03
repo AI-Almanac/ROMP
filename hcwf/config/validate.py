@@ -202,11 +202,10 @@ def _mask(cfg) -> list[str]:
 def _units(values) -> tuple[dict, tuple[str, ...]]:
     """({source: UnitsSpec or None} of the observations and every model, the problems): the `units:` section as each
     source reads it."""
-    from hcwf.io.input import units_spec
-    from hcwf.spatial.units import UnitsSpecError
+    from hcwf.spatial.units import UnitsSpec, UnitsSpecError
 
     try:
-        return {name: units_spec(values, name) for name in ["observations", *values["model_list"]]}, ()
+        return {name: UnitsSpec.from_flat(values, name) for name in ["observations", *values["model_list"]]}, ()
     except UnitsSpecError as exc:
         return {}, (f"units: {exc}",)
 

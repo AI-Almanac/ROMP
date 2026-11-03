@@ -89,6 +89,24 @@ def test_mask_parts_equal_the_kwargs_version(runs, rain, mask):
     assert parts["cells"] != bare["cells"]
 
 
+EXPLICIT_DEFAULTS = [{"land": True, "cell_rule": "centre"}, {"land": True, "keep_value": 1, "resolution": "50m"},
+                     {"country": ["Kenya"], "land": False, "overlap_fraction": 0.5}]
+
+
+@pytest.mark.parametrize("mask", EXPLICIT_DEFAULTS, ids=["cell_rule", "keep_value", "land_false"])
+def test_a_default_written_explicitly_in_the_mask_keeps_the_kwargs_key(runs, rain, mask):
+    """The key hashes the `mask:` mapping as given, so a key written with its default value is a different key from the
+    mapping without it, exactly as before the typed AreaSpec (the AreaSpec keeps the mapping as given)."""
+    rc = runs["det_climatology"]
+    kwargs = {**flat_bridge.case_kwargs(rc, rc.cases()[0], "deterministic"), "mask": mask}
+    parts = assert_same(rain, kwargs)
+    without = {key: value for key, value in mask.items() if key in ("land", "country") and value}
+    assert without != mask and parts["cells"] != assert_same(rain, {**kwargs, "mask": without})["cells"]
+    run = flat_bridge.from_case_kwargs(kwargs)[0]
+    assert run.area.mask_given == mask
+    assert observed_cache.parts_for(rain, THRESHOLDS, run)["cells"] == parts["cells"]
+
+
 def test_option_parts_equal_the_kwargs_version(runs, rain):
     rc = runs["det_climatology"]
     kwargs = flat_bridge.case_kwargs(rc, rc.cases()[0], "deterministic")

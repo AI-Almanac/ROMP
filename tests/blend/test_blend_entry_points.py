@@ -38,8 +38,8 @@ def trained(monkeypatch):
     """hcwf.blend.training with a stub `train` that records what a run hands it."""
     calls = []
 
-    def train(cfg, recipe, setup):
-        calls.append((cfg, recipe, setup))
+    def train(rc):
+        calls.append(rc)
         return Result(calls)
 
     module = types.ModuleType("hcwf.blend.training")
@@ -72,7 +72,8 @@ def test_hcwf_run_trains_the_blend_and_writes_into_the_run_folder(tmp_path, data
     run = write_run(tmp_path, data)
     code, out = run_cli(["-p", str(run), "--quiet"], monkeypatch, capsys)
     assert code == 0, out
-    [(cfg, recipe, setup)] = trained
+    [rc] = trained
+    cfg, recipe, setup = dict(rc.values), rc.blend, rc.onset
     assert recipe.model_names == ("ens",) and cfg["rain_resolution"] == "exact" and setup.definition.id.endswith("_rule")
     [folder] = (tmp_path / "runs").glob("*_*")
     assert sorted(p.name for p in folder.iterdir()) == ["blend", "definition.yaml", "run.log", "run.yaml"]
@@ -160,7 +161,7 @@ def test_run_files_are_run_one_after_another(tmp_path, data, trained, monkeypatc
     b = write_run(tmp_path, data, "table", "b.yaml")
     code, out = run_cli(["-p", str(a), "-p", str(b), "--quiet"], monkeypatch, capsys)
     assert code == 0 and "2 of 2 run files finished" in out.out and len(trained) == 2
-    assert [Path(c[0]["config_file"]).name for c in trained] == ["a.yaml", "b.yaml"]
+    assert [Path(rc.config_file).name for rc in trained] == ["a.yaml", "b.yaml"]
     # a glob names every file it matches, and --check goes through each
     code, out = run_cli(["-p", str(tmp_path / "[ab].yaml"), "--check", "--overwrite"], monkeypatch, capsys)
     assert code == 0 and "2 of 2 run files checked" in out.out and out.out.count("== Blend ==") == 2
