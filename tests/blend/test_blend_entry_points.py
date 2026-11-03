@@ -90,13 +90,6 @@ def test_hcwf_run_trains_the_blend_and_writes_into_the_run_folder(tmp_path, data
     assert run_cli(["-p", str(run), "--quiet", "--overwrite"], monkeypatch, capsys)[0] == 0
 
 
-def test_a_missing_training_module_is_a_clear_error(tmp_path, data, monkeypatch, capsys):
-    monkeypatch.setitem(sys.modules, "hcwf.blend.training", None)   # an import of it fails
-    run = write_run(tmp_path, data)
-    code, out = run_cli(["-p", str(run), "--quiet"], monkeypatch, capsys)
-    assert code == 1 and "blend training is not available" in out.out
-
-
 def test_hcwf_run_returns_the_blend_result(tmp_path, data, trained):
     import hcwf
 

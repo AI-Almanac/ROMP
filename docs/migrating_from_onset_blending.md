@@ -28,14 +28,14 @@ Existing `trained.blend` files keep working: `hcwf-run forecast old/trained.blen
 | `python -m onset_blending convert-specs ...` | `hcwf-run convert --specs --name N --ground-truth GT --forecast MODEL=SPEC --combine C --connect K --cv-models M [--regrid R] [--data-root DIR] -o run.yaml` |
 | `train --workers N` | `parallel: {workers: N}` in the run file |
 | `train --cache-dir DIR` | gone; HCWF's caches are `runs/.cache` beside the run file and `$HCWF_CACHE_DIR` (default `~/.cache/hcwf`); see `hcwf-run cache info` |
-| `train --intermediate observed\|weekly` | `blend.outputs.intermediates: [observations, features]` (writes `observed_onsets.nc`, `weekly_features.nc`) |
+| `train --intermediate observed\|weekly` | `blend.outputs.intermediates: [observations, features]` (writes `observed_onsets.nc`, `weekly_features.nc`). Only those two exist; `hcwf-run convert` leaves out `forecasts` and `climatology` with a note, and a run file naming them is refused |
 | `-v` | `--verbose` (`--quiet` for warnings only) |
 | `momp-run -p run.yaml` | `hcwf-run -p run.yaml` |
 | `momp-run forecast ...`, `momp-run convert ...` | `hcwf-run forecast ...`, `hcwf-run convert ...` |
 
 New: `hcwf-run -p run.yaml --check` validates and prints the plan (including a `== Blend ==` block) without running; several `-p` (or a glob) run several files, one region per file; several blend files can be given to `hcwf-run forecast` to apply each to the same live files (each in its own subfolder of `-o`, named after the folder that holds the file).
 
-`hcwf-run convert` takes a BlendConfig YAML (`configs/*.yml`; `--region ID` names an HCWF region, default none, the data's whole domain, as blending read it). Old-style flat run YAMLs with `wet_init`, `wet_spell`, ... are also converted by it (to an `onset.rule`). It writes a run YAML with `region: null`, absolute paths (a `data_root` is resolved), `observations` and `models` with `paths`, an inline `onset.rule` with the parity options, `units:` and the `blend:` section, and lists what it did not carry over in comments at the top. Review it, then `--check`.
+`hcwf-run convert` takes a BlendConfig YAML (`configs/*.yml`; `--region ID` names an HCWF region, default none, the data's whole domain, as blending read it). Old-style flat run YAMLs with `wet_init`, `wet_spell`, ... are also converted by it (to an `onset.rule`). It writes a run YAML with `region: null`, absolute paths (a `data_root` is resolved), `observations` and `models` with `paths`, an inline `onset.rule` with the parity options, `units:` (grid cells unless the config has a `domain`; a blend run file without `units:` gets the same grid-cell default) and the `blend:` section, and lists what it did not carry over in comments at the top. Review it, then `--check`.
 
 ### Forecast contract
 

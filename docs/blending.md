@@ -47,7 +47,7 @@ hcwf-run -p blend.yaml             # train, cross-validate, fit the final model,
 hcwf-run init --blend --obs /path/to/obs --model /path/to/aifs -o blend.yaml   # a skeleton to edit
 ```
 
-`hcwf-run init --blend` writes a skeleton with `TODO` marks. Add the `units:` section to it: a blend trains on units, and a blend file without a `units:` section currently stops with a bare `KeyError: 'unit'`.
+`hcwf-run init --blend` writes a skeleton with `TODO` marks; fill them in and it runs. A blend file without a `units:` section evaluates on the grid cells of every source (the default `hcwf-run convert` writes for a gridded config: `mode: cells`, trimmed grid ids, `dissemination_scope: inputs`); `--check` shows it under Units. Add a `units:` section only to change that.
 
 ## The `blend:` keys
 
@@ -64,7 +64,7 @@ hcwf-run init --blend --obs /path/to/obs --model /path/to/aifs -o blend.yaml   #
 | `climatology` | The KDE climatology: `issue_end`, `forecast_window` or `horizons`, `cv_by_year`, `min_onset_years`, `windows`. |
 | `baselines`, `forecasts`, `mme`, `external_predictions`, `random_forest`, `window_variants` | Extra scored models: climatology baselines, each model's own probabilities (raw and Platt-calibrated), a multi-model ensemble with RPS-optimised weights, predictions made elsewhere, the CRPS random forest (which also gives daily probabilities), windowed-climatology variants. |
 | `bins`, `probability_days`, `trim_after_true_onset`, `rain_transform` | The outcome bins (default week1..week4 and `later`), lead days summed into them (28), dropping issues after the observed onset, the rain feature transform. |
-| `outputs` | `intermediates` (`observations`, `features`: written as `observed_onsets.nc`, `weekly_features.nc`), `pickles`, `dir` (where `external_predictions` files are read from). |
+| `outputs` | `intermediates` (`observations`, `features`: written as `observed_onsets.nc`, `weekly_features.nc`; any other name is refused when the file is read), `pickles`, `dir` (where `external_predictions` files are read from). |
 
 The onset itself comes from the `onset:` section: a registry definition or an inline `rule`, plus the options that make an onset search match another tool's exactly (`rain_resolution: exact`, `missing`, `negatives`, `gaps`, `horizon`), and thresholds from the observations, a table or a file (`threshold_years`, `thresholds`, `threshold_table`, `threshold_scale`).
 
@@ -127,7 +127,7 @@ hcwf-run forecast runs/<run>/blend/trained.blend \
 * `--forecast MODEL=PATH`: one per trained model (the model's name in `models:`); PATH is a file or glob, and a model may be given several times for several files.
 * The live files may hold more than the blend was trained on (lead days, members, a larger domain) but not less, and must have its units, accumulation, grid spacing and issue hour. Every difference is reported before anything is read, and the command exits with 1. `--fewer-members` lets an ensemble hold only some of the trained members.
 * The issue date is the one the files hold, else the latest; it must lie in the blend's issue window. `--issue-date` picks one issue of files holding several.
-* Output goes to `-o DIR`, which must be new or empty; default `forecasts/<issue date>/` beside the blend file. With several blend files (one per region) each gets a subfolder of `-o` named after the folder that holds its file, so the files need differently named folders (a `runs/<run>/blend/trained.blend` of each run would all be called `blend`: copy them to `<region>/trained.blend` first); they are applied in turn to the same live files.
+* Output goes to `-o DIR`, which must be new or empty; default `forecasts/<issue date>/` beside the blend file. With several blend files (one per region) each gets a subfolder of `-o` named after the folder that holds its file, or after the run folder when that folder is `blend` (so `runs/<run>/blend/trained.blend` gives `-o/<run>/`); they are applied in turn to the same live files. If two blends would get the same name the command stops before writing anything and names them; give them separate calls with their own `-o`.
 
 Files written:
 

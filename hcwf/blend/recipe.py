@@ -289,7 +289,7 @@ class Outputs:
     """outputs."""
 
     dir: str | None = None
-    intermediates: tuple[Literal["observations", "forecasts", "climatology", "features"], ...] = ()
+    intermediates: tuple[Literal["observations", "features"], ...] = ()
     pickles: bool = False
 
 
@@ -956,8 +956,7 @@ def recipe_from_config(cfg: dict, setup=None) -> Recipe:
     outputs = _strict(cfg.get("blend_outputs"), ("dir", "intermediates", "pickles"), "blend.outputs", problems)
     intermediates = tuple(_list(outputs.get("intermediates"), "blend.outputs.intermediates", problems))
     for item in intermediates:
-        _choice(item, ("observations", "forecasts", "climatology", "features"), "blend.outputs.intermediates",
-                problems)
+        _choice(item, ("observations", "features"), "blend.outputs.intermediates", problems)
     reference = _reference(cfg.get("blend_reference_onset"), problems)
     climatology = _climatology(cfg.get("blend_climatology"), problems)
     if problems:

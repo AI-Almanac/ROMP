@@ -111,7 +111,7 @@ Rain is read on each dataset's own grid, averaged onto the polygons with overlap
 
 ## Blending
 
-A run file with a `blend:` section trains an onset blend: cross-validated logit (and optionally CRPS random forest) over the climatology's and each forecast model's weekly onset features, scored against climatology baselines. The artifacts, including `trained.blend`, go into the run folder's `blend/` subfolder under their own names. `hcwf-run forecast` then applies a trained blend to live forecast files. See [docs/blending.md](docs/blending.md) for the keys, outputs and the forecast contract; `hcwf-run init --blend` writes a skeleton.
+A run file with a `blend:` section trains an onset blend: cross-validated logit (and optionally CRPS random forest) over the climatology's and each forecast model's weekly onset features, scored against climatology baselines. The artifacts, including `trained.blend`, go into the run folder's `blend/` subfolder under their own names. `hcwf-run forecast` then applies a trained blend to live forecast files. See [docs/blending.md](docs/blending.md) for the keys, outputs and the forecast contract; `hcwf-run init --blend` writes a skeleton. Without a `units:` section a blend evaluates on the grid cells.
 
 ```bash
 hcwf-run -p blend.yaml                                  # train and evaluate

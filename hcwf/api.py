@@ -148,19 +148,6 @@ def _scores(results, probabilistic_tables) -> dict:
     return out
 
 
-def _trainer():
-    """`hcwf.blend.training.train`, or a clear error when the training module is not in this checkout."""
-    from hcwf.errors import HCWFConfigError
-
-    try:
-        from hcwf.blend.training import train
-    except ImportError as exc:
-        raise HCWFConfigError(f"this config has a `blend:` section, but blend training is not available "
-                              f"(hcwf.blend.training could not be imported: {exc}). Fix: install the packages of the "
-                              "blend extras, or update hcwf") from None
-    return train
-
-
 def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
     """Train the blend a config's `blend:` section describes (`hcwf.blend.training.train(cfg, recipe, setup)`).
 
@@ -171,7 +158,8 @@ def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: in
     from hcwf.runs.resolved import definition_lines, write_resolved
     from hcwf.log import print_hcwf_banner
 
-    train = _trainer()
+    from hcwf.blend.training import train
+
     paths, recipe = rc.paths, rc.blend
     if write:
         run_folder.prepare(paths, overwrite)

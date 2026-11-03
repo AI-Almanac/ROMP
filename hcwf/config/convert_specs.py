@@ -639,6 +639,15 @@ class _Convert:
         outputs = dict(self.get("outputs", {}))
         if outputs.get("dir") is not None:
             outputs["dir"] = self.path(outputs["dir"])
+        wanted = outputs.get("intermediates")
+        if wanted:   # HCWF writes only these two intermediates; the others are left out of the run file
+            written = [name for name in wanted if name in ("observations", "features")]
+            if len(written) != len(wanted):
+                self.note(f"outputs.intermediates {[n for n in wanted if n not in written]} are not written by HCWF "
+                          "(only observations and features are): left out")
+            outputs["intermediates"] = written
+            if not written:
+                del outputs["intermediates"]
         if outputs:
             out["outputs"] = outputs
         if features.get("join", "inner") != "inner":

@@ -219,6 +219,26 @@ def _converted(target) -> int:
     return 0
 
 
+def _forecast_targets(blends, output):
+    """The output folder of each blend (None: beside the blend), or the text of the problem. With several blends and -o,
+    each gets a subfolder named after its folder, or after the run folder when that is `blend` (runs/<run>/blend/trained.blend);
+    two blends of one name are refused up front, before anything is written."""
+    if not output:
+        return [None] * len(blends)
+    if len(blends) == 1:
+        return [output]
+    names = []
+    for index, path in enumerate(blends):
+        folder = Path(path).resolve().parent
+        names.append((folder.parent.name if folder.name == "blend" else folder.name) or f"blend{index + 1}")
+    clashes = {name: [b for b, n in zip(blends, names) if n == name] for name in names if names.count(name) > 1}
+    if clashes:
+        return "several blends would write to the same subfolder of -o: " + "; ".join(
+            f"'{name}' for {', '.join(files)}" for name, files in clashes.items()) + \
+            ". Fix: give them to separate calls, each with its own -o"
+    return [str(Path(output) / name) for name in names]
+
+
 def _forecast(argv) -> int:
     """`hcwf-run forecast BLEND... --forecast MODEL=PATH [...]`: apply trained blends to live forecast files."""
     p = argparse.ArgumentParser(prog="hcwf-run forecast", description="Apply trained blends (trained.blend files) to "
@@ -242,12 +262,12 @@ def _forecast(argv) -> int:
         files = parse_forecast_arguments(args.forecast)
     except ValueError as exc:
         p.error(str(exc))
+    targets = _forecast_targets(args.blend, args.output)
+    if isinstance(targets, str):
+        p.error(targets)
     failed = 0
-    for index, path in enumerate(args.blend):
-        target = None
-        if args.output:
-            target = Path(args.output) if len(args.blend) == 1 else \
-                Path(args.output) / (Path(path).resolve().parent.name or f"blend{index + 1}")
+    for path, target in zip(args.blend, targets):
+        target = None if target is None else Path(target)
         try:
             written = forecast(path, files, issue_date=args.issue_date, fewer_members=args.fewer_members, output=target,
                                write=True, netcdf=args.netcdf).folder

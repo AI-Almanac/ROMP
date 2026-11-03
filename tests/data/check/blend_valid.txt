@@ -29,7 +29,7 @@ Forecast history : none  [config forecast_history]
 Threshold source : observations  [default]
 Backend          : numba  [config onset_backend]
 region box      : none (no region: the whole domain of the data)
-mask            : none (the region's box with the land and country masks of the old behaviour)
+mask            : none (the region's box with implicit land and region masks)
 
 == Datasets ==
 observations:

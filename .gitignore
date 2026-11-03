@@ -1,5 +1,4 @@
 *.pyc
-*.ipynb
 book/
 #docs/
 bk_docs/

@@ -660,8 +660,8 @@ def _fields() -> tuple[Field, ...]:
               "[{agg: diff|max|min, window: days or a token of the definition}], rain_transform}", None, "blend",
               "models", nullable=True, fill=False),
         Field("blend_outputs", "any", "what a blend run writes besides its artifacts: {dir (where "
-              "external_predictions files are read from), intermediates: [observations, forecasts, climatology, "
-              "features], pickles: false}", None, "blend", "outputs", nullable=True, fill=False),
+              "external_predictions files are read from), intermediates: [observations, features] (written as "
+              "observed_onsets.nc and weekly_features.nc), pickles: false}", None, "blend", "outputs", nullable=True, fill=False),
     ]
     evaluation = [
         Field("start_date", "date", "first date; its month/day start the forecast init dates", REQUIRED,

@@ -163,6 +163,7 @@ def finish(values: dict, config_file: str | None, write: bool = True) -> dict:
     from hcwf.runs import folder as run_folder
 
     _resolve_paths(values)
+    _default_blend_units(values)
     if "lead_window" not in values:
         if schema.has_blend(values):   # a blend reads each model's leads itself (lead_days), not HCWF's benchmark window
             values["lead_window"], values["onset_lead_lines"] = (1, values["max_forecast_day"]), ()
@@ -171,6 +172,19 @@ def finish(values: dict, config_file: str | None, write: bool = True) -> dict:
 
             apply_lead_window(values)
     return run_folder.apply(values, run_folder.plan(values, config_file, write))
+
+
+def _default_blend_units(values: dict) -> None:
+    """A blend run without a `units:` section evaluates on the grid cells of every source, as `hcwf-run convert` writes it
+    for a gridded blend config (mode cells, trimmed grid ids, dissemination scope inputs). A blend reads its onsets per
+    unit, so it cannot go without units. Any `units:` key given is the user's own and nothing is added."""
+    if not schema.has_blend(values) or any(values.get(f.key) is not None for f in schema.FIELDS if f.section == "units"):
+        return
+    values.update(units_mode={"*": "cells"}, units_id_format="trimmed", units_dissemination_scope="inputs")
+    sources = dict(values.get("config_sources") or {})
+    sources.update({key: "default (blend: grid cells)" for key in ("units_mode", "units_id_format",
+                                                                   "units_dissemination_scope")})
+    values["config_sources"] = sources
 
 
 def _resolve_paths(dic):

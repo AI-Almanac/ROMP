@@ -135,7 +135,7 @@ def _batch(paths, argv, flags) -> int:
     return 1 if failed else 0
 
 
-def run_hcwf(cfg=None, setting=None):
+def run_hcwf(cfg=None):
     """
     Executes the standard HCWF evaluation workflow.
 
@@ -147,7 +147,6 @@ def run_hcwf(cfg=None, setting=None):
 
     Args:
         cfg: A loaded configuration (dict or namespace) to run instead of reading one from the command line.
-        setting: Unused; kept for compatibility (the Setting is built from the config).
     """
     flags = _flags(sys.argv[1:])
     if cfg is None:

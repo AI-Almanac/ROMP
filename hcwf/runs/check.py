@@ -130,7 +130,7 @@ def _settings(dic: dict, report: CheckReport) -> None:
     elif dic.get("nc_mask"):
         report.add(f"mask            : nc_mask {dic['nc_mask']} (old key; land and country masks also apply)")
     else:
-        report.add("mask            : none (the region's box with the land and country masks of the old behaviour)")
+        report.add("mask            : none (the region's box with implicit land and region masks)")
 
 
 def _box_text(dic: dict) -> str:

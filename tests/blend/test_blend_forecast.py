@@ -645,7 +645,7 @@ def test_a_refused_forecast_is_reported_and_the_others_still_run(region, tmp_pat
     blend.write_bytes(path.read_bytes())
     write_forecasts(tmp_path / "live", years=[2014], members=2)
 
-    code = run_cli([blend, tmp_path / "missing.blend", "--forecast", f"ens={tmp_path / 'live' / '2014.nc'}",
+    code = run_cli([blend, tmp_path / "other" / "missing.blend", "--forecast", f"ens={tmp_path / 'live' / '2014.nc'}",
                     "-o", tmp_path / "out"])
 
     error = capsys.readouterr().err

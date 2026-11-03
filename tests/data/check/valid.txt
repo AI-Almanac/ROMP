@@ -28,7 +28,7 @@ Forecast history : observed  [default]
 Threshold source : observations  [default]
 Backend          : numba  [config onset_backend]
 region box      : lat 3 to 15, lon 33 to 48  [the domain of region ethiopia]
-mask            : none (the region's box with the land and country masks of the old behaviour)
+mask            : none (the region's box with implicit land and region masks)
 
 == Datasets ==
 observations:
