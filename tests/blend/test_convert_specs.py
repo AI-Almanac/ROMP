@@ -137,6 +137,32 @@ def converted_minimal(tmp_path):
     return converted(data)
 
 
+def test_a_converted_run_has_no_benchmark_settings_and_still_loads(tmp_path):
+    """A blend-only run file writes no `evaluation:` block: the dates and climatology years a run folder and `--check`
+    name come from blend.years (and the onset's threshold years)."""
+    loaded = converted_minimal(tmp_path)
+    assert "evaluation" not in loaded.conversion.mapping
+    assert "evaluation" not in yaml.safe_load(loaded.conversion.to_yaml())
+    cfg = loaded.cfg
+    assert (cfg["start_date"], cfg["end_date"]) == ((2001, 1, 1), (2003, 12, 31))
+    assert (cfg["start_year_clim"], cfg["end_year_clim"]) == (2001, 2003)
+    assert cfg["config_sources"]["start_date"] == "blend.years"
+
+
+def test_benchmark_keys_a_blend_run_does_state_are_kept(tmp_path):
+    """Given dates are not replaced by the ones derived from blend.years; a run without a blend still needs them."""
+    from momp import api
+    from momp.lib.config_schema import ConfigSchemaError
+
+    mapping = with_stub_data(C.convert_blend(minimal(tmp_path)).mapping, tmp_path / "stub")
+    stated = api._prepare({**mapping, "evaluation": {"start_date": [2002, 5, 1], "end_date": [2003, 6, 1],
+                                                     "start_year_clim": 2001, "end_year_clim": 2002}}, {}, False, tmp_path)
+    assert stated["start_date"] == (2002, 5, 1) and stated["config_sources"]["start_date"] == "run config"
+    benchmark = {k: v for k, v in mapping.items() if k != "blend"}
+    with pytest.raises(ConfigSchemaError, match="start_date"):
+        api._prepare(benchmark, {}, False, tmp_path)
+
+
 def test_unknown_keys_and_missing_parts_are_reported_together_with_suggestions(tmp_path):
     data = minimal(tmp_path)
     data["onset"]["definiton"] = {}

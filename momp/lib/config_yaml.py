@@ -281,6 +281,25 @@ def _check_blend(config, errors):
         errors.extend(f"blend: {problem}" for problem in exc.problems)
 
 
+def _derive_blend_years(config, sources):
+    """A blend run names its years in `blend.years`, so the benchmark's dates and climatology years it does not use are
+    taken from them when not given: the dates span the first to the last year, and so do the climatology years."""
+    if not schema.has_blend(config):
+        return
+    from momp.blend.recipe import years_of
+
+    given = config.get("blend_years")
+    values = given.values() if isinstance(given, dict) else [given]
+    years = sorted({y for value in values if value is not None for y in years_of(value, "blend.years", [])})
+    if not years:
+        return
+    for key, value in (("start_date", (years[0], 1, 1)), ("end_date", (years[-1], 12, 31)),
+                       ("start_year_clim", years[0]), ("end_year_clim", years[-1])):
+        if key not in config:
+            config[key] = value
+            sources[key] = "blend.years"
+
+
 def _derive(config, sources, errors):
     """Fill what follows from other values: climatology years, date_filter_year, reference data."""
     if "start_year_clim" not in config and "end_year_clim" not in config:
@@ -291,6 +310,7 @@ def _derive(config, sources, errors):
         if years:
             config["start_year_clim"], config["end_year_clim"] = years
             sources["start_year_clim"] = sources["end_year_clim"] = origin
+    _derive_blend_years(config, sources)
     if config.get("date_filter_year") is None and config.get("start_date"):
         config["date_filter_year"] = config["start_date"][0]
         sources["date_filter_year"] = "year of start_date"

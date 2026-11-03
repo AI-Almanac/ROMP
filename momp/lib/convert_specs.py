@@ -668,17 +668,6 @@ class _Convert:
         mapping["onset"] = onset
         mapping["units"] = self.units(models)
         mapping["blend"] = self.blend(models, rule)
-        lead_max = max((m.get("lead_days", {}) or {}).get("max", 45) for m in models) if models else 45
-        bins = self.get("features.bins", {})
-        count, days = bins.get("count", 4), bins.get("days", 7)
-        season = str(self.get("onset.season_start", "05-01")).split("-")
-        mapping["evaluation"] = {
-            "start_date": [min(evaluation_years or [2000]), int(season[0]), int(season[1])],
-            "end_date": [max(evaluation_years or [2000]), 12, 31],
-            "start_year_clim": years[0] if years else min(evaluation_years or [2000]),
-            "end_year_clim": years[1] if years else max(evaluation_years or [2000]),
-            "max_forecast_day": lead_max, "day_bins": [[k * days + 1, (k + 1) * days] for k in range(count)],
-            "verification_windows": [[1, lead_max]], "tolerances": [3]}
         if self.get("outputs.dir") is not None:
             self.note("outputs.dir is kept as blend.outputs.dir (where external predictions are read from); a run writes "
                       "its artifacts to the run folder's blend/ subfolder (output.data_dir chooses the folder)")
@@ -695,8 +684,6 @@ class _Convert:
                                "and icpac_blend are its readings of the two papers",
             ("onset", "rain_resolution"): "the parity options: exact rain, the missing-rain policy of observations, "
                                           "negatives and gaps as read, follow-ups past the data truncated",
-            ("evaluation", "start_date"): "ROMP benchmark settings a blend run does not use; they only make the config "
-                                          "valid (the years of the blend are blend.years)",
         })
         return Conversion(mapping, tuple(self.notes), self.comments)
 
