@@ -1,0 +1,52 @@
+# HCWF run config on polygon units instead of grid cells. Run it from the repository root with:
+#   hcwf-run -p examples/units.yaml
+# Onsets are detected, scored and written per polygon (CSV, GeoJSON and NetCDF per model and window).
+# The polygons here are the demo's 137 India shapes; use your admin units (ADM1, ADM2, ADM3 ...) the same way.
+project_name: Demo run on polygon units
+
+region: india
+
+units:
+  # Relative paths in `units:` start at this file's folder (dataset paths start at the current folder).
+  shapefile: ../demo/data/shpfile/india_shapefile.shp
+  unit_id_col: ID                # one id per polygon; unit_name_col and parent_col are optional
+  # weights: weights.csv         # or a table of source cell, unit and weight, instead of overlap areas from the shapes
+
+observations:
+  path: demo/data/obs
+  file_pattern: "{}.nc"
+  variable: RAINFALL
+  units: mm
+
+models:
+  - name: AIFS
+    path: demo/data/aifs
+    variable: tp
+    units: mm
+    lead_label: end
+
+onset:
+  threshold_years: [2013, 2020]
+  forecast_history: none
+
+evaluation:
+  start_date: [2015, 5, 1]
+  end_date: [2015, 6, 30]
+  start_year_clim: 2013          # the demo has observations for 2013-2020 only
+  end_year_clim: 2020
+  init_days: [2, 5]
+  verification_windows: [[1, 15]]
+  tolerances: [3]
+  max_forecast_day: 15
+  day_bins: [[1, 5], [6, 10], [11, 15]]
+
+output:
+  data_dir: demo/output_units
+  figure_dir: demo/figure_units
+  plot_spatial_far_mr_mae: false
+  plot_heatmap_bss_auc: false
+  plot_reliability: false
+  plot_climatology_onset: false
+  plot_panel_heatmap_error: false
+  plot_panel_heatmap_skill: false
+  plot_bar_bss_rpss_auc: false

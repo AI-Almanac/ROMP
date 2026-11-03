@@ -424,7 +424,7 @@ keeping its sum; a cell with fewer than 10 onsets has no forecast.
 `conditional_probabilities(onset_days_by_cell, issue_days, horizon, *,
 cv_years=None)` returns (cell, [year,] issue, lead) for leads 1..horizon;
 `unconditional_probabilities` adds lead 0 (onset already happened). With
-`cv_years` (HCWF: `climatology_cv = "leave_one_year_out"`) each test year's KDE
+`cv_years` (HCWF: `reference.climatology_cv: leave_one_year_out`) each test year's KDE
 is refitted without its own onset. HCWF trains on the observed onsets of
 `start_year_clim..end_year_clim` (the evaluation's own detection), with days
 counted from 1 January and no leap-day shift. Probabilistic pairs hold the
@@ -511,16 +511,22 @@ hcwf/onset/
   describe.py     the generated sentence
   registry/       the definition YAML files
   ingest.py       DailyRain / ForecastRain ingestion contract
+  tenths_kernel.py  the numba kernel of the ingest's rounding to tenths of a millimetre (imported on first use)
   alignment.py    temporal misalignment checks
+  sample_alignment.py  the fast alignment check on a sample of the evaluated data
   climatology.py  thresholds, harmonic seasons, cache, climatological onset
   plan.py         compile + resolve_amounts
   backends/       reference.py, numba_cpu.py, gpu.py, windowed.py (per-window amounts)
   engine.py       jobs from seasons and leads, detect_observed / detect_forecast, output, save
   calendar.py     date keys and season bounds
+  detect.py       HCWF's adapter: runs one definition on the observations and each forecast for the metrics
+  observed_cache.py  the cross-run cache of observed onsets (fingerprints, hit and miss reports)
   regions.py      region registry (section 12); regions/*.yaml
   explain.py      trace_observed / trace_forecast and explain(): why a cell got its onset
+  explain_cells.py  the run's explain log and anatomy plots for `onset.explain_cells`
   viz/            anatomy_plot, schematic, compare_definitions, forecast_vs_truth, drill_down
-  cli.py          hcwf-run onset (python -m hcwf.onset delegates): list, describe, regions, check-alignment, explain, schematic
+  (the `hcwf-run onset` commands list, describe, regions, check-alignment, explain, schematic are in hcwf/cli/onset.py;
+   `python -m hcwf.onset` delegates to them)
 ```
 
 ## 12. Regions and countries
@@ -600,7 +606,7 @@ support it. With the default observed climatology one amount applies per job,
 whether a window lies in the history, in the forecast, or across both.
 
 **Per-window thresholds.** With a model climatology, each verification window
-(HCWF's `verification_window_list`, after any lead-window shortening) gets its
+(HCWF's `evaluation.verification_windows`, after any lead-window shortening) gets its
 own threshold per cell, pooled from the model's forecast days at leads inside
 that window (same pooling over inits, members and `during` as above).
 `compute_thresholds_from_forecasts(..., windows=[(1, 15), (16, 30)])` returns

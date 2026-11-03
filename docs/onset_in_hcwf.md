@@ -4,7 +4,7 @@ HCWF detects onset with the `hcwf.onset` component (contract: `docs/onset_spec.m
 
 ## Quick start
 
-For a known region you need no onset settings at all. With `region: Ethiopia` in your run YAML (`examples/config.yaml`), HCWF uses ICPAC's definition, CHIRPS's day boundary and the region's threshold years, and prints each choice and where it came from at the start of the run.
+For a known region you need no onset settings at all. With `region: Ethiopia` in your run YAML, HCWF uses ICPAC's definition, CHIRPS's day boundary and the region's threshold years, and prints each choice and where it came from at the start of the run.
 
 ```
 hcwf-run -p run.yaml
@@ -19,7 +19,7 @@ onset:
   override: {wet_day: at least 2 mm}   # optional; merged like `extends`, same strict errors
 ```
 
-or a complete definition inline under `onset: {rule: {...}}`. The run prints the definition's description, `icpac v1, overridden: wet_day` and the hash, and writes the resolved definition and config to the run folder (`definition.yaml`, `run.yaml`; `resolved_definition.yaml`, `resolved_config.yaml` in an explicit `dir_out`).
+or a complete definition inline under `onset: {rule: {...}}`. The run prints the definition's description, `icpac v1, overridden: wet_day` and the hash, and writes the resolved definition and config to the run folder (`definition.yaml`, `run.yaml`; `resolved_definition.yaml`, `resolved_config.yaml` in an explicit `output.data_dir`).
 
 Look definitions up with the CLI:
 
@@ -30,30 +30,31 @@ hcwf-run onset regions              # regions with their defaults
 hcwf-run onset schematic icpac --png icpac.png
 ```
 
-A rule that differs a little goes in `onset.override`, or in a shared YAML file with `extends: <id>` (set `definition` to its path). A region you add as a YAML file in `hcwf/onset/regions/` without `definitions` has no defaults: set `onset_definition` and `obs_day_boundary`.
+A rule that differs a little goes in `onset.override`, or in a shared YAML file with `extends: <id>` (set `definition` to its path). A region you add as a YAML file in `hcwf/onset/regions/` takes the defaults of the regions it is `part_of` (see `sub_ethiopia.yaml`); one with no `definitions` of its own or inherited has none: set `onset.definition` and `observations.day_boundary`.
 
-## Onset keys (the `onset:` section; flat names in brackets)
+## Onset keys (the `onset:` section)
 
-Every key can stay unset. Names below are the flat keys; in YAML write them inside `onset:` without the `onset_` prefix (`definition`, `override`, `rule`, `season`, `backend`, `percentage_threshold`, `lead_label`), `obs_day_boundary` is `observations.day_boundary`, `model_lead_label` is `onset.lead_label`. Order of use: the config value, then the region's default, then an error naming the key. Region names are case-insensitive and may be aliases (`India`, `ethiopia`); a country inherits the defaults of the regions that contain it.
+Every key can stay unset. Order of use: the config value, then the region's default, then an error naming the key. Region names are case-insensitive and may be aliases (`India`, `ethiopia`); a country inherits the defaults of the regions that contain it. Two settings live outside `onset:`: the observation day boundary is `observations.day_boundary`, and the lead windows are `evaluation.verification_windows`, `evaluation.tolerances`, `evaluation.max_forecast_day` and `evaluation.day_bins`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `onset_definition` | region default | Registry id or YAML path. |
-| `onset_override` / `onset_rule` | none | Changes merged into the definition, or a complete inline definition (not both with `onset_definition` for `rule`). |
-| `onset_season` | first | Season name for definitions with several; `"1"` or `"2"` for derived seasons (`dunning`). |
-| `threshold_years` | region default | `(first, last)` years of observations that thresholds are computed from. |
-| `thresholds` | `None` | `{name: "path.nc:variable"}`: precomputed thresholds instead of computing them. |
-| `threshold_source` | `"observations"` | `"observations"` or `"model"` (see below). |
-| `obs_day_boundary` | region default | E.g. `"00 UTC, labelled by start"`. |
-| `model_lead_label` | from the boundary | `"start"`: lead k is dated init + k - 1. `"end"`: init + k. |
-| `check_alignment` | `True` | Check for day shifts at the start of a run. |
-| `dry_spell_check` | `True` | `False` drops the definition's `reject if` vetoes. |
-| `forecast_history` | `"observed"` | `"observed"` or `"none"` (see below). |
-| `onset_backend` | `"numba"` | `"numba"`, `"reference"` or `"gpu"`; all give identical results. Falls back to `"reference"` with a warning if numba or a GPU is missing. |
-| `onset_percentage_threshold` | `0.5` | Share of ensemble members that must have an onset for the ensemble to have one. |
-| `explain_cells` | `None` | List of `(lat, lon)`. For each cell and year, writes an anatomy PNG and a `.txt` explain log of the observed onset to `dir_fig/explain/`. |
+| `definition` | region default | Registry id or YAML path. |
+| `override` / `rule` | none | Changes merged into the definition, or a complete inline definition (`rule` and `definition` are not combined). |
+| `season` | first | Season name for definitions with several; `"1"` or `"2"` for derived seasons (`dunning`). |
+| `threshold_years` | region default | `[first, last]` years of observations that thresholds are computed from. |
+| `thresholds` | none | `{name: "path.nc:variable"}`: precomputed thresholds instead of computing them. |
+| `threshold_source` | `observations` | `observations` or `model` (see below). |
+| `threshold_scale`, `threshold_table`, `threshold_max_missing`, `threshold_partial_years` | none | How thresholds are scaled (`clip(t * factor + offset, min, max)`), how a threshold table is read, the share of missing reference days above which a series has no threshold, and whether a year only partly in the data counts. For matching onset_blending; see `hcwf/config/schema.py`. |
+| `lead_label` | from the day boundary | `start`: lead k is dated init + k - 1. `end`: init + k. |
+| `check_alignment` | `false` | Check for day shifts at the start of a run (reads a year of data, so off by default; `hcwf-run -p run.yaml --check --alignment` runs it once). |
+| `dry_spell_check` | `true` | `false` drops the definition's `reject if` vetoes. |
+| `forecast_history` | `observed` | `observed` or `none` (see below). |
+| `rain_resolution`, `missing`, `negatives`, `gaps`, `horizon` | HCWF's own | Parity options: `tenths` or `exact` rain, the missing-rain policy, negative values, gaps in the observations, follow-ups past the end of the data. They make HCWF read the data as onset_blending did; `hcwf-run convert` sets them. |
+| `backend` | `numba` | `numba`, `reference` or `gpu`; all give identical results. Falls back to `reference` with a warning if numba or a GPU is missing. |
+| `percentage_threshold` | `0.5` | Share of ensemble members that must have an onset for the ensemble to have one. |
+| `explain_cells` | none | `[[lat, lon], ...]`. For each cell and year, writes an anatomy PNG and a `.txt` explain log of the observed onset to `output.figure_dir/explain/`. |
 
-Thresholds (for example the local mean 5-day total) are computed from the observations of `threshold_years` and cached in `runs/.cache` (`dir_out/.onset_cache` with an explicit `dir_out`). Derived seasons (`dunning`) also compute a harmonic season analysis from those years.
+Thresholds (for example the local mean 5-day total) are computed from the observations of `threshold_years` and cached (`runs/.cache`, or `<output.data_dir>/.onset_cache` with an explicit `data_dir`). Derived seasons (`dunning`) also compute a harmonic season analysis from those years.
 
 The old flat keys (`wet_init`, `wet_threshold`, `wet_spell`, `dry_threshold`, `dry_spell`, `dry_extent`, `thresh_file`, `thresh_var`, `earliest_onset_date`) are no longer read; a config that has one is an error that points to `hcwf-run convert` (see "Converting the old flat keys"). Put the change in a definition with `extends:`.
 
@@ -63,44 +64,44 @@ Results carry an `onset_status` column (`ONSET`, `NOT_FOUND`, `CENSORED`, `INSUF
 
 A candidate on lead k needs leads up to k + R - 1, where R is how many days from the onset day the definition reads (ICPAC 22; Moron-Robertson 35; without vetoes, the window length). At the start of a run HCWF counts the leads in each model's first-year file and searches candidates on leads up to n_leads - R + 1.
 
-If that is below `max_forecast_day`, then `max_forecast_day`, `verification_window_list`, `tolerance_days_list` and `day_bins` are clipped (windows and bins that start later are dropped), and HCWF prints, for example:
+If that is below `max_forecast_day`, then `max_forecast_day`, `verification_windows`, `tolerances` and `day_bins` (all under `evaluation:`) are clipped (windows and bins that start later are dropped), and HCWF prints, for example:
 
 ```
 Lead window      : 1-29 for AIFS (icpac reads 22 days from the onset day; forecasts have 50 leads)  [shortened from max_forecast_day 30]
 ```
 
-The run uses the shortest window over its models; it is stored as the `lead_window` attribute of the spatial-metric NetCDFs. If no lead is usable HCWF stops and suggests `dry_spell_check = False`, which shrinks R.
+The run uses the shortest window over its models; it is stored as the `lead_window` attribute of the spatial-metric NetCDFs. If no lead is usable HCWF stops and suggests `onset.dry_spell_check: false`, which shrinks R.
 
 ## Dry-spell check
 
-`dry_spell_check = False` drops the `reject if` vetoes, such as Moron-Robertson's 10-day dry window or ICPAC's 7-day dry run. It suits demos and forecasts too short for the veto window. The run prints `Dry-spell check  : off`, and the title, notes, YAML, sentence and hash in the outputs are those of the variant. A definition without vetoes (or a curve rule) is left alone (`none in this definition`).
+`onset.dry_spell_check: false` drops the `reject if` vetoes, such as Moron-Robertson's 10-day dry window or ICPAC's 7-day dry run. It suits demos and forecasts too short for the veto window. The run prints `Dry-spell check  : off`, and the title, notes, YAML, sentence and hash in the outputs are those of the variant. A definition without vetoes (or a curve rule) is left alone (`none in this definition`).
 
 In code: `hcwf.onset.definition.without_dry_spell_check(defn)`. On the CLI: `hcwf-run onset describe <id> --no-dry-spell-check`. Generated configs: `HCWF_DRY_SPELL_CHECK`.
 
 ## Forecast history
 
-`forecast_history = "observed"` (the default for definitions) searches each forecast together with the observed rain up to the day before its first lead. A wet spell that began in the observations can be completed by the forecast, and a season that started before the init is searched from its start. Nothing observed on or after lead 1's date is read. HCWF also loads the previous year's observations when the season wraps over New Year or the rule looks back past 1 January.
+`forecast_history: observed` (the default for definitions) searches each forecast together with the observed rain up to the day before its first lead. A wet spell that began in the observations can be completed by the forecast, and a season that started before the init is searched from its start. Nothing observed on or after lead 1's date is read. HCWF also loads the previous year's observations when the season wraps over New Year or the rule looks back past 1 January.
 
-`"none"` searches the forecast leads alone, as earlier (flat-key) runs did; `hcwf-run convert` writes it.
+`none` searches the forecast leads alone, as earlier (flat-key) runs did; `hcwf-run convert` writes it.
 
 * `PRIOR`: the observations alone already confirm the onset. Nothing is scored for those inits: inits on or after the cell's observed onset produce no rows (a `PRIOR` result in a scored row is counted, warned about and reported as no onset).
 * A forecast may complete an onset that began before the init. The row then has `onset_day <= 0` (days after the init; the date lies in the observed history) and status `ONSET`. These are *back-dated* onsets.
 
 ### Scoring back-dated onsets
 
-* **Deterministic and ensemble-mean tables** (`compute_onset_metrics_with_windows`): the onset counts as falling on the first lead for window membership. In a window starting at lead 1 it is a hit if its real date is within the tolerance of the observed onset, otherwise a false alarm. In windows starting later it is ignored, like any forecast onset before the window. MAE uses the real date. (Earlier versions dropped such onsets from every window; this slightly changes `"none"` runs with lead label "start".)
+* **Deterministic and ensemble-mean tables** (`compute_onset_metrics_with_windows`): the onset counts as falling on the first lead for window membership. In a window starting at lead 1 it is a hit if its real date is within the tolerance of the observed onset, otherwise a false alarm. In windows starting later it is ignored, like any forecast onset before the window. MAE uses the real date. (Earlier versions dropped such onsets from every window; this slightly changes `none` runs with lead label `start`.)
 * **Ensemble probability bins**: members with `onset_day < 1` fall in the "Before day 1" bin, where the observed onset (always after the init in scored rows) is 0, so the Brier score penalises them.
 
-How many were back-dated is reported (definition mode with `"observed"` only):
+How many were back-dated is reported (definition mode with `observed` only):
 
 * Spatial-metric NetCDFs: the per-cell variable `n_back_dated` counts scored init cases with a back-dated forecast onset, summed over years with an observed onset. The global attribute `n_back_dated_total` sums it over the grid. Only windows starting at lead 1 count; others hold 0. For ensembles it is the ensemble-mean onset. The climatology baseline has none.
 * `overall_skill_scores_<model>_<window>.csv` has a column `back_dated_member_share`: the share of scored member onsets (members with an onset, in cases initialised before the observed onset) dated on or before the init. NaN when no member found an onset.
 
 ## Threshold source
 
-`threshold_source = "observations"` computes thresholds from the reference observations. `"model"` computes them from the model's own forecasts: the mean over leads 1 to `max_forecast_day`, over forecast days whose date lies in the threshold's `during` period in `threshold_years`, using HCWF's forecast loader (init days, unit conversion). Each verification window gets its own threshold, pooled from the forecast days at leads inside that window.
+`threshold_source: observations` computes thresholds from the reference observations. `model` computes them from the model's own forecasts: the mean over leads 1 to `max_forecast_day`, over forecast days whose date lies in the threshold's `during` period in `threshold_years`, using HCWF's forecast loader (init days, unit conversion). Each verification window gets its own threshold, pooled from the forecast days at leads inside that window.
 
-Only mean-based thresholds (`mean total over`, `mean daily rain`) support `"model"`; others are an error naming them. Results are cached in the same cache folder by model, years, lead window and definition hash. The old flat-key runs used observations only; `hcwf-run convert` leaves `threshold_source` unset, which is the same.
+Only mean-based thresholds (`mean total over`, `mean daily rain`) support `model`; others are an error naming them. Results are cached in the same cache folder by model, years, lead window and definition hash. The old flat-key runs used observations only; `hcwf-run convert` leaves `threshold_source` unset, which is the same.
 
 ## Forecast accumulation, steps and day boundary
 
@@ -110,13 +111,13 @@ A reference that is a model (`reference.model`, not a climatology) is read with 
 
 ## Alignment check
 
-Once per model at the start of a run, HCWF compares the first year's forecasts (leads 1-3) with the observations at lags -3 to +3 and prints the result. If the forecasts look shifted by a day it warns; the usual cause is a wrong `model_lead_label` or `obs_day_boundary`. The check never stops a run; `check_alignment = False` skips it. The same check is available as `hcwf-run onset check-alignment` (see `--help`).
+When `onset.check_alignment` is true (it is off by default), HCWF compares, once per model at the start of a run, the first year's forecasts (leads 1-3) with the observations at lags -3 to +3 and prints the result. If the forecasts look shifted by a day it warns; the usual cause is a wrong `onset.lead_label` or `observations.day_boundary`. The check never stops a run. `hcwf-run -p run.yaml --check --alignment` runs it once without a run, and `hcwf-run onset check-alignment` does it on files (see `--help`). The container's generated configs switch it on.
 
-Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `"start"` (lead k is init + k - 1); IMD (day ending at 03 UTC, labelled by end) lines up with `"end"`. HCWF used to assume `"end"` always, so Ethiopia forecast onsets were one day late against CHIRPS.
+Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `start` (lead k is init + k - 1); IMD (day ending at 03 UTC, labelled by end) lines up with `end`. HCWF used to assume `end` always, so Ethiopia forecast onsets were one day late against CHIRPS.
 
 ## Exporting onset dates
 
-`hcwf-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to the run's `onsets/` folder (`dir_out/onsets/` with an explicit `dir_out`) before a normal run scores (the detection runs twice). In Python: `hcwf.runs.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}` (files `<source>.nc` in a run folder, `onsets_<source>.nc` with an explicit `dir_out`); `hcwf.io.output.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
+`hcwf-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to the run's `onsets/` folder (`<output.data_dir>/onsets/` with an explicit `data_dir`) before a normal run scores (the detection runs twice). In Python: `hcwf.runs.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}` (files `<source>.nc` in a run folder, `onsets_<source>.nc` with an explicit `data_dir`); `hcwf.io.output.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
 
 The values are the ones HCWF scores: the export calls the scoring's own functions with the keyword arguments the scoring builds (masks, shortened lead window, `forecast_history`, thresholds, definition). Unlike the scored tables, which keep only cases with an observed onset and an init before it, the files hold every init and cell; the flag `scored` (1 for those cases) marks what HCWF scores. Dates are CF times (int32 days since 1970-01-01, with the data's calendar; cftime for non-standard calendars); no onset is the fill value (NaT) and NaN in the float variables. Onset date, day of year and lead are set only where `status` is `ONSET`: a `PRIOR` search is reported as no onset, as scored. Files are zlib-compressed NetCDF4, CF-1.8, with global attributes holding the definition (id, version, hash, sentence, YAML, overrides), thresholds (source, years, files, values hash), mask summary, forecast history, lead label and window, day boundaries, dataset paths, HCWF version, creation time and the resolved run config (`resolved_config_yaml`).
 

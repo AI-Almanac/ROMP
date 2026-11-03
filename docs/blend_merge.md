@@ -1,6 +1,8 @@
 # Merging onset_blending into ROMP
 
-Status: plan (2026-11-02). Branch `monorepo`.
+Status: the merge is complete. This file is the historical plan and uses the old names (`momp`, ROMP, `momp-run`); for the current package see README.md, docs/blending.md and docs/migrating_from_onset_blending.md.
+
+Written 2026-11-02 on branch `monorepo`.
 
 onset_blending (`/home/hcwf/code/onset_blending`, pinned oracle commit `1e6d696`) moves into
 `momp`. Afterwards ROMP trains, cross-validates and applies onset blends, and benchmarks and blends

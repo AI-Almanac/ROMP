@@ -38,11 +38,13 @@ evaluation:
   start_date: [2015, 5, 1]       # the years evaluated; month/day bound the forecast init dates
   end_date: [2015, 6, 30]
   # years: 2015                 # optional: only these years (a list or '2010:2013,2015'; may skip years)
-  # climatology_years: '2000:2014'   # optional: the same for the climatology; both must lie within the date ranges
+  # climatology_years: "2000:2014"   # optional: only these climatology years (a list or text; may skip years)
   init_days: [2, 5]              # weekdays, 0 = Monday
   verification_windows: [[1, 15]]
   tolerances: [3]
   max_forecast_day: 15
+  start_year_clim: 2013          # climatology years: the region's (1991-2020) if left out; the demo has 2013-2020
+  end_year_clim: 2020
   day_bins: [[1, 5], [6, 10], [11, 15]]
 
 output:
