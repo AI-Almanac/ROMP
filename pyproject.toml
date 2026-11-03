@@ -51,6 +51,8 @@ where = ["."]
 dev = [
   "dask",
   "pytest",
+  "pytest-xdist",
+  "pytest-testmon",
   "jupyterlab",
   "black",
   "ruff",
@@ -64,3 +66,8 @@ gpu = [
 [project.scripts]
 momp-run = "momp.cli:main"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# loadgroup only matters with -n: it keeps tests marked xdist_group (the GPU ones) together on one worker.
+# -n is not forced here so that a single test or --testmon (which cannot combine with xdist) still works.
+addopts = "--dist loadgroup"

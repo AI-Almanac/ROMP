@@ -157,8 +157,13 @@ tests/
 
 ```bash
 pip install -e ".[dev]"
-pytest -q tests/
+pytest -n auto        # full suite in parallel (GPU tests are grouped on one worker: --dist loadgroup is set in pyproject.toml)
+pytest --testmon      # iterate: re-run only tests affected by your edits (cannot be combined with -n)
+pytest --lf           # re-run the last failures
+pytest tests/test_cache.py   # a single file needs no extra options
 ```
+
+The pytest cache (`.pytest_cache/`) and testmon data (`.testmondata*`) are ignored by Git.
 
 Current version 0.0.1; APIs may change. MIT License.
 
