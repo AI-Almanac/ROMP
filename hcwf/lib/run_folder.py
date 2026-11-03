@@ -239,13 +239,19 @@ def prepare(paths: RunPaths, overwrite: bool = False) -> None:
         paths.cache_dir.mkdir(parents=True, exist_ok=True)
 
 
-def file_name(dic: dict, kind: str, *parts) -> str:
+def file_name(paths, kind: str, *parts) -> str:
     """The name of an output file of the given kind: short in run folders, historical for an explicit dir_out.
 
-    kinds: ``overall`` and ``binned`` (score CSVs; parts model, window), ``spatial`` (spatial metrics NetCDF;
-    case name), ``climatology`` (climatological onset NetCDF; years text), ``onset`` (onset export; source).
+    `paths` is the run's RunPaths (None: the historical names). R2-bridge: a flat config (its ``short_names``) is read
+    the same way, for export.py until S10.
+
+    data kinds: ``overall`` and ``binned`` (score CSVs; parts model, window), ``spatial`` (spatial metrics NetCDF; case
+    name), ``climatology`` (climatological onset NetCDF; years text), ``onset`` (onset export; source).
+    figure kinds (the same in every layout): ``heatmap`` and ``reliability`` (model, window), ``spatial_map`` (case name),
+    ``climatology_map`` (years text), ``field_map`` (source name, variable, window), ``panel_error`` (first model,
+    max forecast day), ``panel_skill`` and ``panel_bar`` (window).
     """
-    short = bool(dic.get("short_names"))
+    short = paths.short_names if isinstance(paths, RunPaths) else bool(paths and paths.get("short_names"))
     if kind == "overall":
         model, window = parts
         return f"overall_{model}_{window}.csv" if short else f"overall_skill_scores_{model}_{window}.csv"
@@ -258,4 +264,20 @@ def file_name(dic: dict, kind: str, *parts) -> str:
         return "climatology_onset.nc" if short else f"climatology_onset_doy_{parts[0]}.nc"
     if kind == "onset":
         return f"{parts[0]}.nc" if short else f"onsets_{parts[0]}.nc"
+    if kind == "heatmap":
+        return "skill_scores_heatmap_{}_{}.png".format(*parts)
+    if kind == "reliability":
+        return "reliability_{}_{}.png".format(*parts)
+    if kind == "spatial_map":
+        return f"spatial_metrics_{parts[0]}.png"
+    if kind == "climatology_map":
+        return f"climatology_onset_{parts[0]}.png"
+    if kind == "field_map":
+        return "map_{}_{}_{}.png".format(*parts)
+    if kind == "panel_error":
+        return "panel_portrait_mae_far_mr_{}_{}day.png".format(*parts)
+    if kind == "panel_skill":
+        return f"panel_portrait_BSS_AUC_{parts[0]}.png"
+    if kind == "panel_bar":
+        return f"panel_bar_BSS_RPSS_AUC_{parts[0]}.png"
     raise ValueError(f"unknown file kind {kind!r}")

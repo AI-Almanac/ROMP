@@ -49,8 +49,8 @@ def test_spatial_map_and_global_attribute(tmp_path):
     spatial = {"mean_mae": xr.DataArray([[1.0]], coords=OBS_ONSET.coords)}
     add_back_dated_map(spatial, {2020: table, 2021: table}, {2020: OBS_ONSET, 2021: OBS_ONSET})
     assert spatial["n_back_dated"].values.tolist() == [[2.0]]
-    save_metrics_to_netcdf(spatial, {"dir_out": str(tmp_path), "case_name": "c"})
-    ds = xr.open_dataset(tmp_path / "spatial_metrics_c.nc")
+    save_metrics_to_netcdf(spatial, _case("c"), None, _inputs(tmp_path).output, _inputs(tmp_path).ev, None)
+    ds = xr.open_dataset(tmp_path / "spatial_metrics_c_1-10.nc")
     assert ds.attrs["n_back_dated_total"] == 2 and "n_back_dated" in ds
 
     plain_table, _ = compute_onset_metrics_with_windows(_frame(), tolerance_days=3, verification_window=(1, 15),
@@ -64,6 +64,22 @@ def _members():
     """One case with members at onset day -2, 3 and none."""
     return pd.DataFrame({"init_time": pd.Timestamp("2020-05-25"), "lat": 0.0, "lon": 0.0, "member": [0, 1, 2],
                          "onset_day": [-2.0, 3.0, np.nan], "obs_onset_date": "2020-06-20"})
+
+
+def _case(model):
+    """A typed case of the model over the window 1-10 (the file names and attributes read the model and window)."""
+    from hcwf.config.model import Case, ModelSpec, Window
+
+    spec = ModelSpec(name=model, dir="", var=None, unit_cvt=None, file_pattern=None, accumulation=None,
+                     accumulation_detected=None, daily_boundary=None, dims=None, paths=None, units=None)
+    return Case(spec, Window(1, 10, 0))
+
+
+def _inputs(tmp_path):
+    """The typed output and evaluation specs of a flat config writing to tmp_path."""
+    from hcwf.config.flat_bridge import reader_inputs
+
+    return reader_inputs({"dir_out": str(tmp_path), "max_forecast_day": 10, "years": (2020,)})
 
 
 def _scores():
@@ -81,12 +97,10 @@ def test_member_share_column_in_the_overall_csv(tmp_path):
     kwargs = dict(day_bins=((1, 5), (6, 10)), max_forecast_day=10)
     pairs = create_forecast_observation_pairs_with_bins(_members(), OBS_ONSET, **kwargs, **OBSERVED)
     assert pairs["back_dated_members"].iloc[0] == 1 and pairs["onset_members"].iloc[0] == 2
-    save_score_results({**_scores(), "forecast_obs_df": pairs}, model="M", verification_window=(1, 10),
-                       dir_out=str(tmp_path))
+    save_score_results({**_scores(), "forecast_obs_df": pairs}, _case("M"), None, _inputs(tmp_path).output)
     assert pd.read_csv(tmp_path / "overall_skill_scores_M_1-10.csv")["back_dated_member_share"].tolist() == [0.5]
 
     old = create_forecast_observation_pairs_with_bins(_members(), OBS_ONSET, **kwargs, **NONE)
     assert "back_dated_members" not in old.columns
-    save_score_results({**_scores(), "forecast_obs_df": old}, model="L", verification_window=(1, 10),
-                       dir_out=str(tmp_path))
+    save_score_results({**_scores(), "forecast_obs_df": old}, _case("L"), None, _inputs(tmp_path).output)
     assert "back_dated_member_share" not in pd.read_csv(tmp_path / "overall_skill_scores_L_1-10.csv").columns

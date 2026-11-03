@@ -274,6 +274,9 @@ class FigureSpec:
     date_filter_year: int | None
     short_names: bool
     models: tuple[str, ...]
+    max_forecast_day: int
+    units: UnitsSpec | None
+    """The observations' evaluation units: the maps draw a field over "unit" on their polygons or centroids."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -585,7 +588,8 @@ class RunConfig:
         return FigureSpec(dir_fig=self.output.figure_dir, region=self.area.region, shpfile_dir=self.area.shpfile_dir,
                           polygon=self.area.polygon, save_fig=self.output.save_fig, show_plot=self.output.show_plot,
                           show_panel=self.output.show_panel, date_filter_year=self.evaluation.date_filter_year,
-                          short_names=self.short_names, models=tuple(m.name for m in self.models))
+                          short_names=self.short_names, models=tuple(m.name for m in self.models),
+                          max_forecast_day=self.evaluation.max_forecast_day, units=self.observations.units)
 
     def without_files(self, tmp: Path | None = None) -> RunConfig:
         """The same run writing no files (write=False): every output off, with tmp as the output folders and no disk cache."""

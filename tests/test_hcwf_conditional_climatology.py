@@ -8,9 +8,9 @@ import xarray as xr
 import hcwf.io.input as model_input
 from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
-from hcwf.metrics.skill import create_score_results, prepare_score_cache
-from hcwf.stats.benchmark import compute_metrics_multiple_years
-from hcwf.stats.bins import multi_year_climatological_forecast_obs_pairs
+from hcwf.metrics.skill import create_score_results, prepare_pairs
+from hcwf.stats.benchmark import compute_metrics
+from hcwf.stats.bins import climatological_pairs
 from hcwf.config import flat_bridge
 from hcwf.stats.climatology import climatological_onset_dataset, compute_climatology_as_forecast
 from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
@@ -26,6 +26,12 @@ DAY_BINS = ((1, 5), (6, 10))
 def typed(kwargs):
     """(rc, case, select): the typed inputs of a test's flat kwargs."""
     return flat_bridge.from_case_kwargs(kwargs)
+
+
+def scores(config):
+    """create_score_results of a test's flat config, from the pair tables prepare_pairs builds."""
+    rc, case, select = typed(config)
+    return create_score_results(case, prepare_pairs(rc, case.model, select), rc.metrics, rc.evaluation)
 
 
 def _write_obs(path):
@@ -76,7 +82,7 @@ def config(tmp_path, monkeypatch):
 
 def test_probabilistic_reference_gives_skill_scores(config):
     """The conditional reference yields BS/RPS/AUC for the reference and skill scores against it."""
-    results = create_score_results(**config)
+    results = scores(config)
 
     table = results["climatology_obs_df"]
     assert len(table) and set(table["bin_label"]) == {"Days 1-5", "Days 6-10"}
@@ -85,7 +91,8 @@ def test_probabilistic_reference_gives_skill_scores(config):
     assert np.isfinite(results["AUC_ref"]["auc"])
     skill = results["skill_results"]
     assert np.isfinite(skill["fair_brier_skill_score"]) and np.isfinite(skill["fair_rps_skill_score"])
-    assert prepare_score_cache(**config)["_ref_obs_df_all"] is None
+    rc, case, select = typed(config)
+    assert prepare_pairs(rc, case.model, select).reference is None
 
 
 def test_pair_table_probabilities_are_conditional(config):
@@ -122,7 +129,7 @@ def test_leave_one_year_out_excludes_the_test_year(config):
 def test_deterministic_reference_is_the_conditional_median(config):
     """The deterministic forecast is the first lead whose conditional CDF reaches 0.5, scored by the FAR/MR/MAE code."""
     config = dict(config, probabilistic=False, model="conditional_climatology")
-    metrics, onsets = compute_metrics_multiple_years(**config)
+    metrics, onsets = compute_metrics(*typed(config))
     frame = metrics[TARGET]
     assert len(frame) and {"true_positive", "false_positive", "false_negative", "mae_combined"} <= set(frame.columns)
     assert TARGET in onsets and onsets[TARGET].dtype.kind == "M"
@@ -147,19 +154,20 @@ def test_deterministic_reference_is_the_conditional_median(config):
 def test_climatology_reference_is_unchanged(config):
     """ref_model "climatology" gives the same tables and scores as the climatology functions directly, with or without a climatology_cv."""
     config = dict(config, ref_model="climatology")
-    results = create_score_results(**config)
+    results = scores(config)
     clim_onset = climatological_onset_dataset(*typed(config))
-    pairs = extract_pd_bins(multi_year_climatological_forecast_obs_pairs(clim_onset, **config), DAY_BINS)
+    rc, _, _ = typed(config)
+    pairs = extract_pd_bins(climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS), DAY_BINS)
 
     assert results["climatology_obs_df"].to_csv() == pairs.to_csv()
     assert repr(results["BS_ref"]) == repr(calculate_brier_score_climatology(pairs))
     assert repr(results["RPS_ref"]) == repr(calculate_rps(pairs))
     assert repr(results["AUC_ref"]) == repr(calculate_auc_climatology(pairs))
-    again = create_score_results(**dict(config, climatology_cv="none"))
+    again = scores(dict(config, climatology_cv="none"))
     assert again["climatology_obs_df"].to_csv() == results["climatology_obs_df"].to_csv()
 
     det = dict(config, probabilistic=False, model="climatology")
-    metrics, onsets = compute_metrics_multiple_years(**det)
+    metrics, onsets = compute_metrics(*typed(det))
     init_dates = model_input.get_initialization_dates(TARGET, **det)
     direct = compute_climatology_as_forecast(onsets[TARGET], TARGET, init_dates,
                                              _observed(det), max_forecast_day=10)
@@ -176,8 +184,8 @@ def _observed(config):
 
 def test_conditional_reference_scores_better_than_unconditional(config):
     """Conditioning on no onset yet gives a lower Brier and RPS than the unconditional climatology on the same cases."""
-    cond = create_score_results(**config)
-    plain = create_score_results(**dict(config, ref_model="climatology"))
+    cond = scores(config)
+    plain = scores(dict(config, ref_model="climatology"))
     print(cond["BS_ref"]["fair_brier_score"], plain["BS_ref"]["fair_brier_score"],
           cond["RPS_ref"]["fair_rps"], plain["RPS_ref"]["fair_rps"])
     assert cond["BS_ref"]["fair_brier_score"] < plain["BS_ref"]["fair_brier_score"]

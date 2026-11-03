@@ -15,21 +15,24 @@ from hcwf.utils.mask import shp_mask
 from hcwf.utils.visual import add_polygon
 from hcwf.utils.visual import box_boundary
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
+from hcwf.lib.run_folder import file_name
 import logging
 
 log = logging.getLogger(__name__)
 
 
-def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig, region, 
+def spatial_metrics_map(da, model_name, spec, *, window=None,
                     fig=None, ax=None, figsize=(8, 6), cmap='YlOrRd', n_colors=10, int_bin=True,
                     onset_plot=False, cbar_ssn=False, domain_mask=False, polygon_only=False,
                     show_ylabel=True, title=None, panel=False, text_scale=1.0, 
-                    vmin=None, vmax=None, rect_box=False, **kwargs):
+                    vmin=None, vmax=None, rect_box=False):
     """
     Plot a spatial map of a gridded 2D field (e.g. onset day of year or a spatial metric).
 
     Draws the map on the given or a new figure, optionally prints values in cells and the
     CMZ mean onset, and shows it unless ``panel`` is True. The figure is not saved.
+
+    spec is the run's FigureSpec; window the verification window (named in the would-be file).
 
     Returns
     -------
@@ -37,8 +40,10 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
         Figure, axes, the pcolormesh handle and the would-be output file path.
     """
 
+    polygon, region = spec.polygon, spec.region
+
     # Get coordinates (the bounds of the polygons on evaluation units)
-    units = units_of(da, kwargs)
+    units = units_of(da, spec)
     lats, lons = extent(da, units)
     var_name = da.name
 
@@ -99,7 +104,7 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
         ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
 
     # set map extent, country boundary, gridline
-    ax, gl = set_basemap(ax, region, shpfile_dir, polygon, **kwargs)
+    ax, gl = set_basemap(ax, spec)
 
     # Define Core Monsoon Zone bounding polygon coordinates based on resolution 
 
@@ -201,9 +206,9 @@ def spatial_metrics_map(da, model_name, *, years, shpfile_dir, polygon, dir_fig,
         plt.tight_layout()
         plt.show()
 
-    window_str = tuple_to_str(kwargs.get('verification_window'))
-    plot_filename = f"map_{model_name}_{var_name}_{window_str}.png"
-    plot_path = os.path.join(dir_fig, plot_filename)
+    window_str = tuple_to_str(window)
+    plot_filename = file_name(None, "field_map", model_name, var_name, window_str)
+    plot_path = os.path.join(spec.dir_fig, plot_filename)
 
     return fig, ax, im, plot_path
 

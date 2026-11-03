@@ -13,22 +13,23 @@ from hcwf.utils.visual import add_polygon
 from hcwf.graphics.func_map import doy_to_mmm_dd
 from hcwf.utils.visual import box_boundary
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
+from hcwf.lib.run_folder import file_name
 import logging
 
 log = logging.getLogger(__name__)
 
-def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, polygon, dir_fig, 
-                                   region, figsize=(18, 6), cbar_ssn=False, domain_mask=False, 
-                                   show_plot=True, rect_box=False, **kwargs):
+def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, figsize=(18, 6), cbar_ssn=False,
+                                   domain_mask=False, rect_box=False):
     """
-    Plot spatial maps of climatology onset day of year
+    Plot spatial maps of climatology onset day of year (saved to spec.dir_fig, shown if spec.show_plot)
     """
+    polygon, dir_fig, region = spec.polygon, spec.dir_fig, spec.region
 
     # Extract data
     climatological_onset_doy = next(iter(onset_da_dict.values()))
 
     # Get coordinates (the bounds of the polygons on evaluation units)
-    units = units_of(climatological_onset_doy, kwargs)
+    units = units_of(climatological_onset_doy, spec)
     lats, lons = extent(climatological_onset_doy, units)
 
     # Detect resolution from latitude spacing
@@ -55,7 +56,7 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
     ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
 
     # set map extent, country boundary, gridline
-    set_basemap(ax, region, shpfile_dir, polygon, **kwargs)
+    set_basemap(ax, spec)
 
     # Define Core Monsoon Zone bounding polygon coordinates based on resolution 
     polygon_defined = False
@@ -141,12 +142,12 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
 
     # Save if path provided
     if dir_fig:
-        plot_filename = f"climatology_onset_{tuple_to_str_range(years_clim)}.png"
+        plot_filename = file_name(None, "climatology_map", tuple_to_str_range(years_clim))
         plot_path = os.path.join(dir_fig, plot_filename)
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         log.debug(f"Figure saved to: {plot_path}")
 
-    if show_plot:
+    if spec.show_plot:
         plt.show()
 
     return fig, ax, plot_path

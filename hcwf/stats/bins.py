@@ -4,28 +4,35 @@ from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np
-from hcwf.io.input import load_thresholds, load_history, get_initialization_dates
-from hcwf.io.input import get_forecast_probabilistic_twice_weekly
-from hcwf.io.input import load_imd_rainfall
+from hcwf.config import flat_bridge
+from hcwf.config.model import Case, Selection
+from hcwf.io import input as io_input
+from hcwf.io.input import initialization_dates
 from hcwf.lib.onset_config import onset_setup
-from hcwf.stats.detect import detect_observed_onset, compute_onset_for_all_members, check_alignment_once
+from hcwf.stats.detect import check_alignment, detect_ensemble, detect_observed
 from hcwf.stats.conditional_climatology import CLIMATOLOGY_REFERENCES
 from hcwf.spatial import axes
 from hcwf.spatial.axes import first_close as _first_close
-from hcwf.utils.practical import restore_args
+from hcwf.stats.parallel import start_concat_args
 import logging
 
 log = logging.getLogger(__name__)
 
 
-def counts_back_dated(cfg):
-    """Whether score outputs report back-dated forecast onsets: forecast_history "observed".
+def reports_back_dated(onset, model_name):
+    """Whether score outputs report back-dated forecast onsets: forecast_history "observed" in `onset` (the OnsetSetup).
 
-    The climatology baselines (whose onsets come from no forecast) return False, so their outputs stay as they are.
+    The climatology baselines (whose onsets come from no forecast; `model_name` says which source is scored) return
+    False, so their outputs stay as they are.
     """
-    if cfg.get("model") in CLIMATOLOGY_REFERENCES:
+    if model_name in CLIMATOLOGY_REFERENCES:
         return False
-    return onset_setup(cfg).forecast_history == "observed"
+    return onset.forecast_history == "observed"
+
+
+def counts_back_dated(cfg):
+    """`reports_back_dated` of a flat config."""  # R2-bridge
+    return reports_back_dated(onset_setup(cfg), cfg.get("model"))
 
 
 @dataclass(frozen=True)
@@ -172,7 +179,12 @@ def get_target_bins(brier_forecast, brier_climatology):
 
 
 # Function to create forecast-observation pairs with specified day bins for probabilistic verification
-def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, day_bins, max_forecast_day, **kwargs):
+def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, day_bins, max_forecast_day, **kwargs):  # R2-bridge
+    """forecast_pairs of a flat config's day_bins and back-dated setting."""
+    return forecast_pairs(onset_all_members, onset_da, day_bins, back_dated=counts_back_dated(kwargs))
+
+
+def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
     """
     Create forecast-observation pairs using specified day bins, including a final bin for "after max_forecast_day".
 
@@ -185,15 +197,14 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     day_bins : list of tuples
         List of (start_day, end_day) tuples for bins within forecast window
         e.g., [(1, 5), (6, 10), (11, 15)]
-    max_forecast_day : int, default=15
-        Maximum forecast day. Members without onset get assigned to "after day X" bin
+    back_dated : bool
+        Whether the table also counts the members whose onset is dated on or before the init (reports_back_dated)
 
     Returns one row per forecast case (init_time, lat, lon, or init_time, unit; in sorted order) and bin; cases without an
     observed onset, or initialized on or after it, are left out.
     """
 
     bins = LeadBins.from_day_bins(day_bins)
-    max_forecast_day = bins.last_day
     extended_bins = bins.extended
 
     # Unique combinations of init_time and location from the filtered forecast data
@@ -201,7 +212,7 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
     forecast_groups = onset_all_members.groupby(['init_time', *spatial])
 
     log.debug(f"Processing {len(forecast_groups)} forecast cases with day bins: {day_bins}")
-    log.debug(f"Including 'after day {max_forecast_day}' bin for members without onset in forecast window")
+    log.debug(f"Including 'after day {bins.last_day}' bin for members without onset in forecast window")
 
     member_case = forecast_groups.ngroup().to_numpy()
     case_size = forecast_groups.size()
@@ -236,7 +247,7 @@ def create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, *, 
             np.bincount(member_case, weights=member_in_bin, minlength=len(cases)).astype(np.int64)[kept])
         observed_onset.append(observed.astype(np.int64))
     members_with_onset = np.stack(members_in_bin, axis=1)
-    if counts_back_dated(kwargs):
+    if back_dated:
         # members of the scored cases whose onset is dated on or before the init (and all members with an onset)
         in_kept = np.zeros(len(cases), dtype=bool)
         in_kept[kept] = True
@@ -497,18 +508,21 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     return forecast_obs_df
 
 
-# This function creates the observed forecast pairs for multiple years (core monsoon zone grids) and combines them
-def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
-                                  date_filter_year, init_days, start_date, end_date,
-                                  model_dir, model_var, unit_cvt, file_pattern,
-                                  members, onset_percentage_threshold, max_forecast_day, day_bins, **kwargs):
-    """Main function to perform multi-year reliability analysis."""
+def _case_of(rc, model):
+    """The case that reads `model` in the run's first window (the pair tables do not depend on the window)."""
+    return Case(model, rc.evaluation.windows[0])
 
-    kwargs = restore_args(multi_year_forecast_obs_pairs, kwargs, locals())
 
-    log.debug(f"Processing years: {years}")
+def forecast_obs_pairs(rc, model, years, select=Selection()):
+    """Forecast-observation pairs of the ensemble forecast `model` (ModelSpec) over `years`, concatenated, in this process.
 
-    thresh_slice = load_thresholds(**kwargs)
+    The run `rc` carries the observations, onset definition, day bins and everything else the pairs depend on. A year
+    whose model or observation file is missing is skipped; ValueError("No data ...") when no year yields data.
+    """
+    case = _case_of(rc, model)
+    log.debug(f"Processing years: {list(years)}")
+
+    thresh_slice = io_input.thresholds_of(rc, model, select)
 
     # Initialize list to store all forecast-observation pairs
     all_forecast_obs_pairs = []
@@ -523,31 +537,33 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
         try:
             # Load model and observation data
             log.debug("Loading S2S model data...")
-            p_model = get_forecast_probabilistic_twice_weekly(year, **kwargs)
+            p_model = io_input.forecast_of(year, rc, model, ensemble=True, select=select)
             p_model_slice = p_model # !!!!! region subset
 
             log.debug("Loading observational rainfall data...")
-            rainfall_ds = load_imd_rainfall(year, **kwargs)
+            rainfall_ds = io_input.observations_of(year, rc, select)
             rainfall_ds_slice = rainfall_ds #!!!!! region subset
-            check_alignment_once(rainfall_ds_slice, p_model_slice, **kwargs)
+            check_alignment(rainfall_ds_slice, p_model_slice, rc, case)
 
             log.debug("Detecting observed onset...")
-            onset_da = detect_observed_onset(rainfall_ds_slice, thresh_slice, year, **kwargs)
+            onset_da = detect_observed(rainfall_ds_slice, thresh_slice, year, rc, select)
             log.debug(f"Found onset in {(~pd.isna(onset_da.values)).sum()} out of {onset_da.size} grid points")
 
             log.debug("Computing onset for all ensemble members...")
-            onset_all_members, _ = compute_onset_for_all_members(p_model_slice, thresh_slice, onset_da,
-                                                           history=load_history(year, rainfall_ds_slice, **kwargs), **kwargs)
+            onset_all_members, _ = detect_ensemble(
+                p_model_slice, thresh_slice, onset_da, rc, case, select,
+                history=io_input.history_of(year, rainfall_ds_slice, rc, select))
             log.debug(f"Found onset in {onset_all_members['onset_day'].notna().sum()} member cases")
 
             log.debug("Creating forecast-observation pairs...")
-            forecast_obs_pairs = create_forecast_observation_pairs_with_bins(onset_all_members, onset_da, **kwargs)
+            forecast_obs = forecast_pairs(onset_all_members, onset_da, rc.evaluation.day_bins,
+                                          back_dated=reports_back_dated(rc.onset, model.name))
 
             # Add to master list
-            all_forecast_obs_pairs.append(forecast_obs_pairs)
+            all_forecast_obs_pairs.append(forecast_obs)
             del p_model, p_model_slice, rainfall_ds, rainfall_ds_slice, onset_all_members, onset_da
 
-            log.debug(f"Year {year} completed: {len(forecast_obs_pairs)} forecast-observation pairs")
+            log.debug(f"Year {year} completed: {len(forecast_obs)} forecast-observation pairs")
 
         except FileNotFoundError as e:
             # Reforecast archives commonly have year gaps; skip years whose
@@ -566,32 +582,37 @@ def multi_year_forecast_obs_pairs(*, years, obs_dir, obs_file_pattern, obs_var,
 
     # Print final summary statistics
     log.debug(f"\nFinal Summary Statistics:")
-    log.debug(f"Years processed: {years}")
+    log.debug(f"Years processed: {list(years)}")
     return combined_forecast_obs
 
 
-def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins, max_forecast_day, date_filter_year, init_days, start_date, end_date, **kwargs):
+def _pairs_of_years(years, rc, model, select):
+    """forecast_obs_pairs with the years first (the form `parallel.start_concat_args` calls)."""
+    return forecast_obs_pairs(rc, model, years, select)
+
+
+def start_pairs(rc, model, select=Selection()):
+    """Start the forecast-observation pairs of `model` over the run's years; the Pending's result() waits for them.
+
+    The thresholds and masks every year needs are read here first (io_input.warm_up_of); with workers, the years run in
+    them while this process goes on, and each worker gets only `(rc, model, select)`.
     """
-    Create climatological forecast-observation pairs for multiple target years.
+    return start_concat_args(_pairs_of_years, rc.evaluation.years, (rc, model, select), rc.parallel,
+                             prewarm=lambda: io_input.warm_up_of(rc, model, select))
 
-    Parameters:
-    -----------
-    clim_onset : xarray.DataArray
-        3D array with dimensions [year, lat, lon] containing onset dates
-    years : list
-        Years to use as truth for observations
-    day_bins : list of tuples
-        List of (start_day, end_day) tuples for bins
-    max_forecast_day : int, default=15
-        Maximum forecast day
 
-    Returns:
-    --------
-    DataFrame with combined forecast-observation pairs from all target years
+def multi_year_forecast_obs_pairs(**kwargs):  # R2-bridge
+    """forecast_obs_pairs of a flat config (its model, over its years)."""
+    rc, case, select = flat_bridge.from_case_kwargs(kwargs)
+    return forecast_obs_pairs(rc, case.model, kwargs["years"], select)
+
+
+def climatological_pairs(clim_onset, rc, *, years, day_bins):
+    """Climatological forecast-observation pairs of all target years in years, concatenated.
+
+    clim_onset is the [year, lat, lon] array of the climatology years' onsets; the run `rc` carries the init dates.
+    A year that fails is logged and left out; ValueError when none gives pairs.
     """
-
-    kwargs = restore_args(multi_year_climatological_forecast_obs_pairs, kwargs, locals())
-
     clim_onset_slice = clim_onset #!!!!! region subset
 
     all_forecast_obs_pairs = []
@@ -602,19 +623,20 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
 
         try:
             # Get initialization dates for this year
-            init_dates = get_initialization_dates(target_year, **kwargs)
+            init_dates = initialization_dates(target_year, rc.evaluation)
 
             # Create forecast-observation pairs for this year
-            forecast_obs_pairs = create_climatological_forecast_obs_pairs(
+            forecast_obs = create_climatological_forecast_obs_pairs(
                 clim_onset_slice,
                 target_year,
                 init_dates,
-                **kwargs
+                day_bins=day_bins,
+                max_forecast_day=rc.evaluation.max_forecast_day
             )
 
-            if len(forecast_obs_pairs) > 0:
-                all_forecast_obs_pairs.append(forecast_obs_pairs)
-                log.debug(f"Target year {target_year} completed: {len(forecast_obs_pairs)} pairs")
+            if len(forecast_obs) > 0:
+                all_forecast_obs_pairs.append(forecast_obs)
+                log.debug(f"Target year {target_year} completed: {len(forecast_obs)} pairs")
             else:
                 log.debug(f"No pairs generated for target year {target_year}")
 
@@ -631,9 +653,15 @@ def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins,
     log.debug(f"\n{'='*50}")
     log.debug("CLIMATOLOGICAL FORECAST SUMMARY")
     log.debug(f"{'='*50}")
-    log.debug(f"Target years processed: {years}")
+    log.debug(f"Target years processed: {list(years)}")
     log.debug(f"Total forecast-observation pairs: {len(combined_forecast_obs)}")
     log.debug(f"Probability range: {combined_forecast_obs['predicted_prob'].min():.3f} - {combined_forecast_obs['predicted_prob'].max():.3f}")
     log.debug(f"Overall observed onset rate: {combined_forecast_obs['observed_onset'].mean():.3f}")
 
     return combined_forecast_obs
+
+
+def multi_year_climatological_forecast_obs_pairs(clim_onset, *, years, day_bins, **kwargs):  # R2-bridge
+    """climatological_pairs of a flat config."""
+    rc, _, _ = flat_bridge.from_case_kwargs({**kwargs, "years": years, "day_bins": day_bins})
+    return climatological_pairs(clim_onset, rc, years=years, day_bins=day_bins)

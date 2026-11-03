@@ -53,8 +53,11 @@ def cbar_season():
     return cmap_jjas, norm_jjas, bounds
 
 
-def set_basemap(ax, region, shpfile_dir, polygon, linewidth=1.25, grid=True, line=False, **kwargs):
-    """Draw the region outline and set the map extent on a Cartopy axis; return (ax, gridliner or None)."""
+def set_basemap(ax, spec, grid=True, line=False):
+    """Draw the region outline and set the map extent on a Cartopy axis; return (ax, gridliner or None).
+
+    `spec` is the run's FigureSpec: its region and shpfile_dir give the outline and the extent."""
+    region, shpfile_dir = spec.region, spec.shpfile_dir
     from hcwf.params.region_def import domain
     import cartopy.crs as ccrs
     import matplotlib.ticker as mticker

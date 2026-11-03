@@ -1,127 +1,122 @@
 """Compute forecast and reference-model BS, RPS, AUC and derived skill scores from forecast-observation pairs."""
-from hcwf.stats.climatology import compute_climatological_onset_dataset
-from hcwf.stats.bins import multi_year_forecast_obs_pairs, multi_year_climatological_forecast_obs_pairs
-from hcwf.stats.conditional_climatology import CLIMATOLOGY_REFERENCES, is_conditional_climatology
-from hcwf.stats.conditional_climatology import multi_year_conditional_climatological_forecast_obs_pairs
+from typing import Any, NamedTuple
+
+import pandas as pd
+
+from hcwf.config import flat_bridge
+from hcwf.config.model import Case, Selection
+from hcwf.stats.climatology import climatological_onset_dataset
+from hcwf.stats.bins import climatological_pairs, start_pairs
+from hcwf.stats.conditional_climatology import CLIMATOLOGY_REFERENCES, conditional_pairs, is_conditional_climatology
 from hcwf.stats.score import calculate_brier_score, calculate_auc, calculate_rps, calculate_brier_score_climatology, calculate_auc_climatology, calculate_skill_scores
-from hcwf.utils.practical import restore_args
 from hcwf.io.dict import extract_pd_bins
 from hcwf.io import input as io_input
-from hcwf.stats.parallel import concat_years, start_concat
+from hcwf.stats.parallel import concat_year_args
 import logging
 
 log = logging.getLogger(__name__)
 
-
-def reference_model_kwargs(kwargs):
-    """Copy kwargs with the reference model's name, directory, variable, file pattern, unit conversion and dims.
-
-    The forecast model's own model_dims are dropped (the reference archive is
-    read by name inference) unless kwargs carries ref_model_dims.
-    """
-    return {**kwargs,
-            'model': kwargs['ref_model'],
-            'model_dir': kwargs['ref_model_dir'],
-            'model_var': kwargs['ref_model_var'],
-            'file_pattern': kwargs['ref_model_file_pattern'],
-            'unit_cvt': kwargs['ref_model_unit_cvt'],
-            'model_dims': kwargs.get('ref_model_dims')}
+CACHE_KEYS = ("_forecast_obs_df_all", "_ref_obs_df_all", "_clim_onset", "_climatology_obs_df_all")
+"""The keys of the flat form of PreparedPairs (what the kwargs of the old create_score_results carried)."""
 
 
-def _climatology_pairs(clim_onset, **kwargs):
+class PreparedPairs(NamedTuple):
+    """The pair tables a model's scores are made from, built once per model (`prepare_pairs`)."""
+
+    forecast: pd.DataFrame
+    """The model's forecast-observation pairs, every day bin."""
+    reference: pd.DataFrame | None
+    """The reference model's pairs, from the reference model's own data; None for a climatology reference."""
+    clim_onset: Any
+    """The climatology years' onsets (a climatology reference), else None."""
+    climatology: pd.DataFrame | None
+    """The climatology reference's pairs (conditional or not); None for a model reference."""
+
+
+def _climatology_years(years, clim_onset, rc, case, select, day_bins):
+    """The climatology reference's pair tables of `years` (the form `parallel.concat_year_args` calls)."""
+    if is_conditional_climatology(rc.reference.model):
+        return conditional_pairs(clim_onset, rc, case, select, years=years, day_bins=day_bins)
+    return climatological_pairs(clim_onset, rc, years=years, day_bins=day_bins)
+
+
+def _climatology_pairs(clim_onset, rc, case, select):
     """Pair tables of the climatology reference (conditional or not) for all years, in worker processes unless parallel is off."""
-    func = (multi_year_conditional_climatological_forecast_obs_pairs if is_conditional_climatology(kwargs["ref_model"])
-            else multi_year_climatological_forecast_obs_pairs)
-    return concat_years(func, kwargs, args=(clim_onset,))
+    return concat_year_args(_climatology_years, rc.evaluation.years,
+                            (clim_onset, rc, case, select, rc.evaluation.day_bins), rc.parallel)
 
 
-def _pairs(**kwargs):
-    """Forecast-observation pairs for all years, in worker processes unless parallel is off."""
-    return _start_pairs(**kwargs).result()
+def _reference_model(rc, model):
+    """The reference as a source to read when `model` is the forecast model it is scored against (the ensemble flow's rule,
+    written once in RunConfig.reference_cases)."""
+    return rc.reference_cases(like=model)[0].model
 
 
-def _start_pairs(**kwargs):
-    """Start the forecast-observation pairs for all years; the Pending's result() waits for them.
+def prepare_pairs(rc, model, select=Selection()):
+    """Build the forecast-observation pair tables (and the reference's) of `model` (ModelSpec) shared across its cases.
 
-    The thresholds and masks every year needs are read here first (io_input.prewarm); with workers, the years run
-    in them while this process goes on.
-    """
-    return start_concat(multi_year_forecast_obs_pairs, kwargs, prewarm=io_input.prewarm)
-
-
-def prepare_score_cache(**kwargs):
-    """Build the forecast-observation pair tables (and the reference's) shared across cases.
-
-    Returns a dict with keys _forecast_obs_df_all, _ref_obs_df_all (reference
-    model pairs, built from the reference model's own data; None for
-    climatology and conditional_climatology), _clim_onset and _climatology_obs_df_all, which
-    create_score_results reuses instead of recomputing.
+    Returns PreparedPairs: the model's pairs, the reference model's own pairs (None for climatology and
+    conditional_climatology), the climatological onsets and the climatology pairs; create_score_results reuses them.
 
     With worker processes the model's years are sent off first and the climatological onsets are computed here
     while they run; the climatology pairs then go to the same workers.
     """
-    ref_model = kwargs["ref_model"]
+    case = Case(model, rc.evaluation.windows[0])
+    climatology = rc.reference.model in CLIMATOLOGY_REFERENCES
 
-    pending = _start_pairs(**kwargs)
+    pending = start_pairs(rc, model, select)
 
     clim_onset = None
     climatology_obs_df_all = None
     ref_pending = None
 
-    if ref_model not in CLIMATOLOGY_REFERENCES:
-        ref_pending = _start_pairs(**reference_model_kwargs(kwargs))
+    if not climatology:
+        ref_pending = start_pairs(rc, _reference_model(rc, model), select)
         io_input.release_reference()
-
-    if ref_model in CLIMATOLOGY_REFERENCES:
-        clim_onset = compute_climatological_onset_dataset(**kwargs)
+    else:
+        clim_onset = climatological_onset_dataset(rc, case, select)
         io_input.release_reference()
 
     forecast_obs_df_all = pending.result()
     ref_obs_df_all = ref_pending.result() if ref_pending is not None else None
 
-    if ref_model in CLIMATOLOGY_REFERENCES:
-        climatology_obs_df_all = _climatology_pairs(clim_onset, **kwargs)
+    if climatology:
+        climatology_obs_df_all = _climatology_pairs(clim_onset, rc, case, select)
 
-    return {
-        "_forecast_obs_df_all": forecast_obs_df_all,
-        "_ref_obs_df_all": ref_obs_df_all,
-        "_clim_onset": clim_onset,
-        "_climatology_obs_df_all": climatology_obs_df_all,
-    }
+    return PreparedPairs(forecast_obs_df_all, ref_obs_df_all, clim_onset, climatology_obs_df_all)
 
 
-def create_score_results(*, BS, RPS, AUC, skill_score,
-                         ref_model, ref_model_dir, ref_model_var, ref_model_file_pattern, ref_model_unit_cvt,
-                         years, years_clim, obs_dir, obs_file_pattern, obs_var,
-                         date_filter_year, init_days, start_date, end_date,
-                         model_dir, model_var, unit_cvt, file_pattern,
-                         members, onset_percentage_threshold, max_forecast_day, day_bins, **kwargs):
-    """Compute Brier score, RPS and AUC (as flagged by BS, RPS, AUC) for the forecast model and its reference, plus skill scores if skill_score is set.
+def prepare_score_cache(**kwargs):  # R2-bridge
+    """prepare_pairs of a flat config, as the dict of its tables (CACHE_KEYS)."""
+    rc, case, select = flat_bridge.from_case_kwargs(kwargs)
+    return dict(zip(CACHE_KEYS, prepare_pairs(rc, case.model, select)))
 
-    Uses cached pair tables from prepare_score_cache when present in kwargs. The
-    reference is climatology if ref_model is "climatology", conditional climatology
-    (P(onset on lead k | no onset by the init), kwargs "climatology_cv") if it is
-    "conditional_climatology", otherwise another model.
+
+def create_score_results(case=None, prepared=None, metrics=None, ev=None, **kwargs):
+    """Compute Brier score, RPS and AUC (as flagged by metrics.BS, .RPS, .AUC) for the forecast model and its reference,
+    plus skill scores if metrics.skill_score is set, from the pair tables `prepared` (PreparedPairs).
+
+    The scored day bins are ev.day_bins (a window's bins: Window.bins). The reference is climatology or conditional
+    climatology (P(onset on lead k | no onset by the init)) when prepared.climatology is set, otherwise another model.
     Returns a dict with forecast_obs_df, climatology_obs_df, BS, RPS, AUC, their
     *_ref counterparts, skill_score and (if skill_score) skill_results.
-    """
-    kwargs = restore_args(create_score_results, kwargs, locals())
 
+    R2-bridge: called with only keywords (`create_score_results(**config)`, the pair tables of CACHE_KEYS among them or
+    else built here) it rebuilds these inputs from the flat config.
+    """
+    if case is None:   # R2-bridge
+        cache = {key: kwargs.pop(key, None) for key in CACHE_KEYS}
+        rc, case, select = flat_bridge.from_case_kwargs(kwargs)
+        prepared = (PreparedPairs(*cache.values()) if cache["_forecast_obs_df_all"] is not None
+                    else prepare_pairs(rc, case.model, select))
+        return create_score_results(case, prepared, rc.metrics, rc.evaluation)
+    BS, RPS, AUC, day_bins = metrics.BS, metrics.RPS, metrics.AUC, ev.day_bins
     results = {}
 
     log.debug("\n1. Processing forecast model...")
 
-    import time
-    start = time.perf_counter()
-
     # select bins without "Day before" and "Day After"
-    forecast_obs_df_all = kwargs.get("_forecast_obs_df_all")
-    if forecast_obs_df_all is None:
-        forecast_obs_df_all = _pairs(**kwargs)
-    forecast_obs_df = extract_pd_bins(forecast_obs_df_all, day_bins)
-
-    end = time.perf_counter()
-    log.debug(f"Execution time: {end - start:.4f} seconds")
+    forecast_obs_df = extract_pd_bins(prepared.forecast, day_bins)
 
     results["forecast_obs_df"] = forecast_obs_df
 
@@ -135,76 +130,32 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
     results["BS_ref"], results["RPS_ref"], results["AUC_ref"] = None, None, None
     results['skill_score'] = None
 
-    if ref_model in CLIMATOLOGY_REFERENCES:
+    if prepared.climatology is not None:
 
-        clim_onset = kwargs.get("_clim_onset")
-        if clim_onset is None:
-            clim_onset = compute_climatological_onset_dataset(**kwargs)
-
-        import time
-        start = time.perf_counter()
-
-        climatology_obs_df_all = kwargs.get("_climatology_obs_df_all")
-        if climatology_obs_df_all is None:
-            climatology_obs_df_all = _climatology_pairs(clim_onset, **{**kwargs, "ref_model": ref_model})
-        climatology_obs_df = extract_pd_bins(climatology_obs_df_all, day_bins)
-
-        end = time.perf_counter()
-        log.debug(f"clim_forecast_obs_paris Execution time: {end - start:.4f} seconds")
+        climatology_obs_df = extract_pd_bins(prepared.climatology, day_bins)
 
         results["climatology_obs_df"] = climatology_obs_df
 
-        if BS:
-            brier_ref = calculate_brier_score_climatology(climatology_obs_df)
-            results["BS_ref"] = brier_ref
-        else:
-            results["BS_ref"] = None
-
-        if RPS:
-            rps_ref = calculate_rps(climatology_obs_df)
-            results["RPS_ref"] = rps_ref
-        else:
-            results["RPS_ref"] = None
-
-        if AUC:
-            auc_ref = calculate_auc_climatology(climatology_obs_df)
-            results["AUC_ref"] = auc_ref
-        else:
-            results["AUC_ref"] = None
+        results["BS_ref"] = calculate_brier_score_climatology(climatology_obs_df) if BS else None
+        results["RPS_ref"] = calculate_rps(climatology_obs_df) if RPS else None
+        results["AUC_ref"] = calculate_auc_climatology(climatology_obs_df) if AUC else None
 
     else:
         results["climatology_obs_df"] = None
 
         # the reference model's own data and settings, never the forecast model's
-        ref_obs_df_all = kwargs.get("_ref_obs_df_all")
-        if ref_obs_df_all is None:
-            ref_obs_df_all = _pairs(**reference_model_kwargs(kwargs))
-        ref_obs_df = extract_pd_bins(ref_obs_df_all, day_bins)
+        ref_obs_df = extract_pd_bins(prepared.reference, day_bins)
 
-        if BS:
-            brier_ref = calculate_brier_score(ref_obs_df)
-            results["BS_ref"] = brier_ref
-        else:
-            results["BS_ref"] = None
-
-        if RPS:
-            rps_ref = calculate_rps(ref_obs_df)
-            results["RPS_ref"] = rps_ref
-        else:
-            results["RPS_ref"] = None
-
-        if AUC:
-            auc_ref = calculate_auc(ref_obs_df)
-            results["AUC_ref"] = auc_ref
-        else:
-            results["AUC_ref"] = None
+        results["BS_ref"] = calculate_brier_score(ref_obs_df) if BS else None
+        results["RPS_ref"] = calculate_rps(ref_obs_df) if RPS else None
+        results["AUC_ref"] = calculate_auc(ref_obs_df) if AUC else None
 
 
     log.debug("%s %s", "results[BS]  =  ", results["BS"])
     log.debug("%s %s", "results[BS_ref]  =  ", results["BS_ref"])
     log.debug("%s %s", "results[RPS]  =  ", results["RPS"])
     log.debug("%s %s", "results[RPS_ref]  =  ", results["RPS_ref"])
-    if skill_score:
+    if metrics.skill_score:
 
         skill_results = calculate_skill_scores(
         results["BS"], results["RPS"],
@@ -214,3 +165,4 @@ def create_score_results(*, BS, RPS, AUC, skill_score,
         results["skill_results"] = skill_results
 
     return results
+

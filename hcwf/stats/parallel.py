@@ -113,6 +113,16 @@ def _run_item(func, item, args, kwargs, state, token, label):
     return func(item, *args, **kwargs), collect()
 
 
+def _years_call(year, func, args, skip):
+    """func([year], *args); None where it raises the "no data" ValueError of a skipped year."""
+    try:
+        return func([year], *args)
+    except ValueError as exc:
+        if not skip or not str(exc).startswith(skip):
+            raise
+        return None
+
+
 def _year_call(year, func, args, kwargs, skip):
     """func(*args, **kwargs with years=[year]); None where it raises the "no data" ValueError of a skipped year."""
     try:
@@ -292,3 +302,58 @@ def start_concat(func, kwargs: dict, args: tuple = (), prewarm: Callable[[dict],
 def concat_years(func, kwargs: dict, args: tuple = (), prewarm: Callable[[dict], None] | None = None):
     """The pair tables of func(*args, **kwargs) over kwargs["years"], concatenated in year order (start_concat, waited for)."""
     return start_concat(func, kwargs, args, prewarm).result()
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# the typed forms: `args` instead of kwargs, the workers from a ParallelSpec; func(year_list, *args)
+# ----------------------------------------------------------------------------------------------------------------------
+
+def spec_workers(parallel, tasks: int) -> int:
+    """The workers for `tasks` items under a ParallelSpec (hcwf.config.model): `worker_count` of its two settings."""
+    return worker_count({"parallel": parallel.enabled, "parallel_workers": parallel.workers}, tasks)
+
+
+def start_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA,
+                    prewarm: Callable[[], None] | None = None) -> Pending:
+    """Start func([year], *args) for each year; the Pending gives the results in year order.
+
+    start_items over the years in workers when `parallel` (a ParallelSpec) allows and there is more than one year;
+    `prewarm()`, if given, is called here once before the jobs are sent. `skip` is as in `start_years`. `args` travel to
+    each worker: pass the run and the case, not data.
+    """
+    years = list(years)
+    return start_items(_years_call, years, (func, args, skip), workers=spec_workers(parallel, len(years)), label=int,
+                       prewarm=prewarm)
+
+
+def map_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA,
+                  prewarm: Callable[[], None] | None = None) -> list:
+    """func([year], *args) for each year, results in year order (None for a skipped year); `start_year_args`, waited for."""
+    return start_year_args(func, years, args, parallel, skip, prewarm).result()
+
+
+def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], None] | None = None) -> Pending:
+    """Start the pair tables of func(years, *args); the Pending gives them concatenated.
+
+    With one worker func runs once on all the years before this returns. Otherwise each year is computed by
+    `start_year_args` and the tables joined in year order; a year without data is left out, and ValueError("No data ...")
+    is raised when none has any.
+    """
+    years = list(years)
+    if spec_workers(parallel, len(years)) <= 1:
+        return Pending.finished(func(years, *args))
+    pending = start_year_args(func, years, args, parallel, prewarm=prewarm)
+
+    def join():
+        """The year tables, concatenated."""
+        parts = [part for part in pending.result() if part is not None]
+        if not parts:
+            raise ValueError(f"{NO_DATA} for any year")
+        return pd.concat(parts, ignore_index=True)
+
+    return Pending(join)
+
+
+def concat_year_args(func, years, args: tuple, parallel, prewarm: Callable[[], None] | None = None):
+    """The pair tables of func(years, *args), concatenated in year order (`start_concat_args`, waited for)."""
+    return start_concat_args(func, years, args, parallel, prewarm).result()

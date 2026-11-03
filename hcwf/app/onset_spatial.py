@@ -1,4 +1,5 @@
 """Plot the spatial map of observed onset day of year for a single year."""
+from hcwf.config.flat_bridge import figure_spec   # R2-bridge
 from hcwf.io.input import load_imd_rainfall
 from hcwf.io.input import load_thresholds
 from hcwf.stats.detect import detect_observed_onset
@@ -25,11 +26,9 @@ def spatial_onset(year, **kwargs):
     onset_doy = onset_doy.where(~onset_da.isnull())
 
 
-    kwargs.update({'verification_window': kwargs['verification_window_list'][0]})
-
-    spatial_metrics_map(onset_doy, "observation year "+str(year),
-                    fig=None, ax=None, figsize=(8, 6), cmap='YlOrRd', n_colors=10,
+    spatial_metrics_map(onset_doy, "observation year "+str(year), figure_spec(kwargs),
+                    window=kwargs['verification_window_list'][0], fig=None, ax=None, figsize=(8, 6), cmap='YlOrRd', n_colors=10,
                     onset_plot=True, cbar_ssn=True, domain_mask=True, polygon_only=False,
-                    show_ylabel=True, title="onset day", rect_box=True, **kwargs)
+                    show_ylabel=True, title="onset day", rect_box=True)
 
     return onset_doy

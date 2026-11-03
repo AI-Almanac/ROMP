@@ -606,6 +606,38 @@ def prewarm(kwargs):
                    select=got.select, parallel=got.parallel, cache_dir=got.cache_dir)
 
 
+def thresholds_of(rc, model, select=_NO_SELECTION):
+    """`load_thresholds` of a run (`rc`: RunConfig) for the source `model` (ModelSpec)."""
+    return load_thresholds(rc.onset, rc.observations, rc.area, rc.onset_options, rc.evaluation, rc.output, model=model,
+                           select=select, parallel=rc.parallel, cache_dir=rc.cache_dir)
+
+
+def warm_up_of(rc, model, select=_NO_SELECTION):
+    """`warm_up` of a run for the source `model`."""
+    return warm_up(rc.onset, rc.observations, rc.area, rc.onset_options, rc.evaluation, rc.output, model=model,
+                   select=select, parallel=rc.parallel, cache_dir=rc.cache_dir)
+
+
+def observations_of(year, rc, select=_NO_SELECTION):
+    """`load_observations` of a run."""
+    return load_observations(year, rc.observations, rc.area, rc.onset_options, select,
+                             onset=rc.onset if rc.observations.units is not None else None,
+                             run_years=rc.evaluation.years, dir_fig=rc.output.figure_dir)
+
+
+def forecast_of(year, rc, model, *, ensemble, select=_NO_SELECTION):
+    """`load_forecast` of a run for the source `model`."""
+    steps = rc.onset if isinstance(rc.evaluation.max_forecast_day, int) else None
+    return load_forecast(year, model, rc.evaluation, rc.area, rc.onset_options, steps, ensemble=ensemble,
+                         select=select, dir_fig=rc.output.figure_dir)
+
+
+def history_of(year, current, rc, select=_NO_SELECTION):
+    """`observed_history` of a run."""
+    return observed_history(year, current, rc.onset, rc.observations, rc.area, rc.onset_options, select,
+                            run_years=rc.evaluation.years, dir_fig=rc.output.figure_dir)
+
+
 def _init_dates(year, date_filter_year, init_days, start_date, end_date):
     """
     Get initialization dates for a given year: the days between start_date and end_date

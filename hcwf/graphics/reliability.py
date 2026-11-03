@@ -4,14 +4,17 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 from hcwf.io.dict import extract_pd_bins
+from hcwf.lib.run_folder import file_name
 from hcwf.utils.printing import tuple_to_str
 import logging
 
 log = logging.getLogger(__name__)
 
-def plot_reliability_diagram(combined_forecast_obs, *, model, verification_window, day_bins,
-                             save_fig, dir_fig, extract_bins=True, show_plot=True, **kwargs):
-    """Plot reliability diagram from forecast-observation pairs."""
+def plot_reliability_diagram(combined_forecast_obs, case, spec, day_bins, *, extract_bins=True):
+    """Plot reliability diagram of one case from forecast-observation pairs.
+
+    day_bins are the case window's bins. Saved to spec.dir_fig if spec.save_fig; shown if spec.show_plot."""
+    model, verification_window = case.model.name, case.window.span
 
     if extract_bins:
         combined_forecast_obs = extract_pd_bins(combined_forecast_obs, day_bins)
@@ -96,15 +99,15 @@ def plot_reliability_diagram(combined_forecast_obs, *, model, verification_windo
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
-    if save_fig:
-        os.makedirs(dir_fig, exist_ok=True)
+    if spec.save_fig:
+        os.makedirs(spec.dir_fig, exist_ok=True)
         window_str = tuple_to_str(verification_window)
-        fig_fn = os.path.join(dir_fig, f'reliability_{model}_{window_str}.png')
+        fig_fn = os.path.join(spec.dir_fig, file_name(None, "reliability", model, window_str))
         fig.savefig(fig_fn, dpi=300, bbox_inches='tight')
         log.debug(f"Figure saved to: {fig_fn}")
 
     plt.tight_layout()
-    if show_plot:
+    if spec.show_plot:
         plt.show()
 
     return fig, ax, results_df

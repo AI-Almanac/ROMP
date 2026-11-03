@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
+from hcwf.lib.run_folder import file_name
 from hcwf.stats.bins import get_target_bins
 from hcwf.utils.printing import tuple_to_str
 import logging
@@ -11,8 +12,8 @@ import logging
 log = logging.getLogger(__name__)
 
 
-def create_heatmap(score_results, *, model, verification_window, day_bins, dir_fig, show_plot=True, **kwargs):
-    """Create and save skill score heatmap"""
+def create_heatmap(score_results, case, spec):
+    """Create and save the skill score heatmap of one case (always saved to spec.dir_fig; shown if spec.show_plot)."""
     auc_forecast =score_results['AUC']
     auc_climatology = score_results['AUC_ref']
     brier_forecast =score_results['BS']
@@ -79,12 +80,12 @@ def create_heatmap(score_results, *, model, verification_window, day_bins, dir_f
     plt.tight_layout()
 
     # Save with model name and forecast days
-    window_str = tuple_to_str(verification_window)
-    figure_filename = f'skill_scores_heatmap_{model}_{window_str}.png'
-    figure_filename = os.path.join(dir_fig, figure_filename)
+    window_str = tuple_to_str(case.window.span)
+    figure_filename = file_name(None, "heatmap", case.model.name, window_str)
+    figure_filename = os.path.join(spec.dir_fig, figure_filename)
     plt.savefig(figure_filename, dpi=300, bbox_inches='tight')
 
-    if show_plot:
+    if spec.show_plot:
         plt.show()
 
     plt.close()

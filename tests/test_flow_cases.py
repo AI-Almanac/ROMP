@@ -12,6 +12,7 @@ from hcwf.config import flat_bridge
 from hcwf.config.build import resolve_flat
 from hcwf.config.model import RunConfig
 from hcwf.metrics import skill
+from hcwf.stats.parallel import Pending
 from test_oracle_config import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
 
 REFERENCES = ("two_models_windows", "model_reference")   # climatology reference, model reference; 2 models x 2 windows
@@ -61,10 +62,27 @@ def test_ensemble_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
         firsts.setdefault(combi[0], prep)
     assert [kw["model"] for kw in prepared] == list(firsts) == [m.name for m in rc.models]
     assert prepared == list(firsts.values())
-    # and the reference each model is scored against is the case builder's, with the ensemble rule
-    for kw, model in zip(prepared, rc.models):
-        reference = flat_bridge.case_kwargs(rc, rc.reference_cases(like=model)[0], "ensemble")
-        assert skill.reference_model_kwargs(kw) == reference
+
+
+def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
+    """The reference each model is scored against is RunConfig.reference_cases(like=model), with the ensemble rule:
+    the rule lives there only (metrics/skill.py asks for it)."""
+    dic, rc = _run(configs, "model_reference", True)
+    read = []
+    monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: read.append(model) or Pending.finished(table))
+    monkeypatch.setattr(skill.io_input, "release_reference", lambda: None)
+    table = pd.DataFrame({"a": [1]})
+    for model in rc.models:
+        read.clear()
+        prepared = skill.prepare_pairs(rc, model)
+        assert read == [model, rc.reference_cases(like=model)[0].model]
+        assert prepared.reference is table and prepared.climatology is None
+    # ... and it is what the oracle's frozen reference_model_kwargs gives for each model's first window
+    firsts = {}
+    for combi, kw in old.ensemble_reference_cases(dic):
+        firsts.setdefault(combi[0], kw)
+    for model in rc.models:
+        assert flat_bridge.case_kwargs(rc, rc.reference_cases(like=model)[0], "ensemble") == firsts[model.name]
 
 
 def test_ensemble_flow_does_nothing_for_a_deterministic_run(configs):

@@ -8,8 +8,9 @@ import xarray as xr
 
 from hcwf.io import input as hcwf_input
 from hcwf.lib.onset_config import OnsetConfigError, history_needs_previous_year, onset_setup
-from hcwf.stats.benchmark import compute_onset_metrics_with_windows
-from hcwf.stats.bins import create_forecast_observation_pairs_with_bins
+from hcwf.config.model import Window
+from hcwf.stats.benchmark import onset_metrics
+from hcwf.stats.bins import forecast_pairs
 from hcwf.config import flat_bridge
 from hcwf.stats.detect import detect_deterministic
 
@@ -188,14 +189,14 @@ def _frame(model_onset, obs_onset, init="2020-05-25"):
 
 def test_back_dated_onsets_are_scored_in_the_first_window_only():
     """An onset on or before the init counts as a first-lead onset in a window starting at lead 1, and is ignored later."""
-    first, _ = compute_onset_metrics_with_windows(_frame("2020-05-23", "2020-05-30"), tolerance_days=3,
-                                                  verification_window=(1, 15), **NONE)
+    first, _ = onset_metrics(_frame("2020-05-23", "2020-05-30"), Window(1, 15, 3), back_dated=False,
+                           default_dims=("lat", "lon"))
     assert (first["false_positive"].iloc[0], first["true_positive"].iloc[0], first["false_negative"].iloc[0]) == (1, 0, 0)
-    near, _ = compute_onset_metrics_with_windows(_frame("2020-05-24", "2020-05-26"), tolerance_days=3,
-                                                 verification_window=(1, 15), **NONE)
+    near, _ = onset_metrics(_frame("2020-05-24", "2020-05-26"), Window(1, 15, 3), back_dated=False,
+                          default_dims=("lat", "lon"))
     assert (near["true_positive"].iloc[0], near["false_positive"].iloc[0]) == (1, 0)
-    later, _ = compute_onset_metrics_with_windows(_frame("2020-05-23", "2020-06-20"), tolerance_days=5,
-                                                  verification_window=(16, 30), **NONE)
+    later, _ = onset_metrics(_frame("2020-05-23", "2020-06-20"), Window(16, 30, 5), back_dated=False,
+                           default_dims=("lat", "lon"))
     counted = later[["true_positive", "false_positive", "false_negative", "true_negative"]].iloc[0].sum()
     assert counted == 0
 
@@ -204,8 +205,7 @@ def test_back_dated_members_fall_in_the_before_day_one_bin():
     """Ensemble members with onset_day <= 0 put their probability in "Before day 1", where nothing was observed."""
     members = pd.DataFrame({"init_time": pd.Timestamp("2020-05-25"), "lat": 0.0, "lon": 0.0, "member": [0, 1],
                             "onset_day": [-2.0, 3.0], "obs_onset_date": "2020-06-20"})
-    pairs = create_forecast_observation_pairs_with_bins(members, OBS_ONSET, day_bins=((1, 5), (6, 10)),
-                                                        max_forecast_day=10, **NONE)
+    pairs = forecast_pairs(members, OBS_ONSET, ((1, 5), (6, 10)), back_dated=False)
     before = pairs[pairs["bin_label"] == "Before day 1"].iloc[0]
     assert (before["predicted_prob"], before["observed_onset"]) == (0.5, 0)
     assert pairs[pairs["bin_label"] == "Days 1-5"]["predicted_prob"].iloc[0] == 0.5

@@ -36,13 +36,15 @@ def colorbar_extend(mappable) -> str:
     return "both" if below and above else "min" if below else "max" if above else "neither"
 
 
-def units_of(da, kwargs):
-    """The run's units (names, centroids, polygons) of a DataArray over "unit", or None for a grid field."""
+def units_of(da, spec):
+    """The run's units (names, centroids, polygons) of a DataArray over "unit", or None for a grid field.
+
+    `spec` is the run's FigureSpec (or the observations' UnitsSpec or ObsSpec; R2-bridge: a flat config)."""
     if "unit" not in da.dims:
         return None
     from hcwf.io.input import unit_table
 
-    return unit_table(kwargs, da["unit"].values)
+    return unit_table(getattr(spec, "units", spec), da["unit"].values)
 
 
 def extent(da, units=None):

@@ -1,5 +1,5 @@
 """Entry point computing binned and overall BSS, RPSS and AUC skill scores and their plots for ensemble forecasts."""
-from hcwf.config.flat_bridge import case_kwargs, to_flat
+from hcwf.config.flat_bridge import case_kwargs
 from hcwf.metrics.skill import create_score_results, prepare_score_cache
 from hcwf.graphics.heatmap import create_heatmap
 from hcwf.graphics.reliability import plot_reliability_diagram
@@ -27,7 +27,7 @@ def skill_score_in_bins(rc):
     if not rc.evaluation.probabilistic:
         return
 
-    flat = to_flat(rc)
+    spec, output = rc.figure_spec(), rc.output
     result_overall = defaultdict(dict)
     result_binned = defaultdict(dict)
     overall_frames, binned_frames = [], []
@@ -63,40 +63,40 @@ def skill_score_in_bins(rc):
         binned_frames.append(binned_df.assign(model=model, window=window_str))
 
         # save score results as csv file
-        if case_cfg['save_csv_score']:
-            save_score_results(score_results, **case_cfg)
+        if output.save_csv_score:
+            save_score_results(score_results, case, rc.paths, output)
 
         result_binned[model][window_str] = binned_data
         result_overall[model][window_str] = overall_scores
 
         # heatmap plot
-        if case_cfg['plot_heatmap_bss_auc']:
-            create_heatmap(score_results, **case_cfg)
+        if output.plot_heatmap_bss_auc:
+            create_heatmap(score_results, case, spec)
 
         # reliability plot
-        if case_cfg['plot_reliability']:
-            plot_reliability_diagram(score_results["forecast_obs_df"], **case_cfg)
+        if output.plot_reliability:
+            plot_reliability_diagram(score_results["forecast_obs_df"], case, spec, case_cfg["day_bins"])
 
 
     import pprint
 
     # panel heatmap plot for binned BSS and AUC
-    if case_cfg['plot_panel_heatmap_skill']:
+    if output.plot_panel_heatmap_skill:
         for verification_window in (w.span for w in rc.evaluation.windows):
             window_str = tuple_to_str(verification_window)
             # extract dict for specific window only
             result_binned_window = select_key_at_level(result_binned, 2, window_str)
             log.debug("%s %s", "\n\n\n result_binned_window = ", result_binned_window)
             log.debug("%s", pprint.pformat(result_binned_window))
-            panel_portrait_bss_auc(result_binned_window, verification_window, **flat)
+            panel_portrait_bss_auc(result_binned_window, verification_window, spec)
 
     # bar plot for BSS, RPSS, AUC in window
-    if case_cfg['plot_bar_bss_rpss_auc']:
+    if output.plot_bar_bss_rpss_auc:
         for verification_window in (w.span for w in rc.evaluation.windows):
             window_str = tuple_to_str(verification_window)
             result_overall_window = select_key_at_level(result_overall, 2, window_str)
             log.debug("%s %s", "\n\n\n result_overall_window = ", result_overall_window)
-            panel_bar_bss_rpss_auc(result_overall_window, verification_window, **flat)
+            panel_bar_bss_rpss_auc(result_overall_window, verification_window, spec)
 
     import pandas as pd
 

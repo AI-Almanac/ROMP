@@ -8,6 +8,7 @@ Design: docs/review/runconfig_design.md section 3 ("Transitional adapter"). Step
     model_kwargs(rc, model, ...)      the same for a model's first window (export, --check)
     from_case_kwargs(kw)              (rc, case, selection): the typed inputs a migrated function used to read from kw
     reader_inputs(kw)                 the typed inputs of the io readers, from a full or partial flat config
+    figure_spec(kw)                   the FigureSpec of a flat config (the apps that draw a map)
 """
 # R2-bridge
 from __future__ import annotations
@@ -16,7 +17,7 @@ import copy
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
-from hcwf.config.model import (AreaSpec, Case, EvaluationSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec,
+from hcwf.config.model import (AreaSpec, Case, EvaluationSpec, FigureSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec,
                                ParallelSpec, RunConfig, Selection, Window, _project_area, _project_evaluation,
                                _project_generated, _project_obs, _project_onset_options, _project_parallel)
 from hcwf.lib import config_schema as schema
@@ -207,6 +208,16 @@ class ReaderInputs:
     def onset_if_steps(self):
         """The onset setup when the config has a max_forecast_day (it sets how many leads are read), else None."""
         return self.onset() if isinstance(self.ev.max_forecast_day, int) else None
+
+
+def figure_spec(kw: Mapping[str, Any]) -> FigureSpec:
+    """The FigureSpec a flat config gives (the keys it lacks are what the old figure code's defaults were: show and save on)."""
+    inputs = reader_inputs(kw)
+    return FigureSpec(dir_fig=kw.get("dir_fig"), region=inputs.area.region, shpfile_dir=inputs.area.shpfile_dir,
+                      polygon=inputs.area.polygon, save_fig=kw.get("save_fig", True), show_plot=kw.get("show_plot", True),
+                      show_panel=kw.get("show_panel", True), date_filter_year=kw.get("date_filter_year"),
+                      short_names=bool(kw.get("short_names")), models=tuple(kw.get("model_list") or ()),
+                      max_forecast_day=inputs.ev.max_forecast_day, units=inputs.obs.units)
 
 
 def reader_inputs(kw: Mapping[str, Any]) -> ReaderInputs:

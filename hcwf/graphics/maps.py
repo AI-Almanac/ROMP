@@ -6,6 +6,7 @@ from matplotlib.patches import Polygon
 from hcwf.params.region_def import polygon_boundary
 from hcwf.utils.visual import box_boundary, get_india_outline, shp_outline
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
+from hcwf.lib.run_folder import file_name
 import logging
 
 log = logging.getLogger(__name__)
@@ -34,15 +35,15 @@ def calculate_cmz_averages(da, polygon_lon, polygon_lat):
         return np.nan
 
 
-def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, dir_fig, region, 
-                         figsize=(18, 6), show_plot=True, rect_box=True, **kwargs):
+def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_box=True):
     """
     Plot spatial maps of Mean MAE, False Alarm Rate, and Miss Rate for one model in a 1x3 subplot
     with region boundary, CMZ polygon, grid values displayed, and CMZ averages.
 
-    Saves the figure to ``dir_fig`` (if given), prints the CMZ averages, and shows the
-    figure if ``show_plot`` is True. Returns ``(fig, axes)``.
+    Saves the figure to ``spec.dir_fig`` (if given), prints the CMZ averages, and shows the
+    figure if ``spec.show_plot`` is True. Returns ``(fig, axes)``.
     """
+    polygon, dir_fig, region, shpfile_dir = spec.polygon, spec.dir_fig, spec.region, spec.shpfile_dir
 
     # Extract data
     mean_mae = spatial_metrics['mean_mae']
@@ -50,7 +51,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
     miss_rate = spatial_metrics['miss_rate'] * 100   # Convert to percentage
 
     # Get coordinates (the bounds of the polygons on evaluation units)
-    units = units_of(mean_mae, kwargs)
+    units = units_of(mean_mae, spec)
     lats, lons = extent(mean_mae, units)
 
     # Detect resolution from latitude spacing
@@ -320,7 +321,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
 
     # Save if path provided
     if dir_fig:
-        plot_filename = f"spatial_metrics_{case_name}.png"
+        plot_filename = file_name(None, "spatial_map", case.name)
         plot_path = os.path.join(dir_fig, plot_filename)
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         log.debug(f"Figure saved to: {plot_path}")
@@ -339,7 +340,7 @@ def plot_spatial_metrics(spatial_metrics, *, case_name, shpfile_dir, polygon, di
     else:
         log.debug(f"\nNote: CMZ averages not calculated (resolution {lat_diff:.1f}° not supported)")
 
-    if show_plot:
+    if spec.show_plot:
         plt.show()
 
     return fig, axes

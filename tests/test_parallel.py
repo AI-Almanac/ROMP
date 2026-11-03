@@ -13,6 +13,7 @@ from hcwf.lib.config_yaml import build_config
 from hcwf.stats import parallel
 from hcwf.utils.workers import cores, ordered_prefetch, worker_count
 from tests.test_config_schema import _raw, data  # noqa: F401 - the synthetic-data fixture
+from tests.test_oracle_config import configs, world  # noqa: F401 - the fixture world and its configs
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "data" / "phase7" / "baseline"
@@ -153,23 +154,27 @@ def test_worker_warnings_and_logs_reach_run_log_and_console(tmp_path, capsys, qu
         assert (f"[year {year}] hello from {year}" in out) == (not quiet)
 
 
-def test_legacy_threshold_reloaded_each_window_detects_once(monkeypatch):
-    """Equal thresholds loaded afresh per window share onset tables; a different threshold does not."""
+def test_equal_thresholds_reloaded_each_window_detect_once(configs, monkeypatch):
+    """Equal thresholds loaded afresh per window share onset tables (the typed path); a different threshold does not."""
+    from hcwf.config.build import resolve_flat
+    from hcwf.config.model import RunConfig
     from hcwf.stats import benchmark
 
+    rc = RunConfig.from_flat(resolve_flat(configs["two_models_windows"]), check=False)
+    first, second, *_ = [c for c in rc.cases() if c.model == rc.models[0]]
+    assert first.window != second.window
     calls = []
-    monkeypatch.setattr(benchmark, "map_years", lambda *a, **k: calls.append(1) or [{}])
+    monkeypatch.setattr(benchmark, "map_year_args", lambda *a, **k: calls.append(1) or [{}])
     fresh = {"value": 20.0}
-    monkeypatch.setattr(benchmark, "load_thresholds",
-                        lambda **kw: xr.DataArray(np.full((2, 2), fresh["value"]), dims=("lat", "lon"),
-                                                  coords={"lat": [1.0, 2.0], "lon": [3.0, 4.0]}))
+    monkeypatch.setattr(benchmark.io_input, "thresholds_of",
+                        lambda *a, **k: xr.DataArray(np.full((2, 2), fresh["value"]), dims=("lat", "lon"),
+                                                     coords={"lat": [1.0, 2.0], "lon": [3.0, 4.0]}))
     benchmark.reset_onset_tables()
-    common = {"years": [2001, 2002], "model": "m", "probabilistic": False}
-    benchmark.onset_tables(verification_window=5, **common)
-    benchmark.onset_tables(verification_window=10, **common)
+    benchmark.onset_tables(rc, first)
+    benchmark.onset_tables(rc, second)
     assert len(calls) == 1
     fresh["value"] = 25.0
-    benchmark.onset_tables(verification_window=5, **common)
+    benchmark.onset_tables(rc, first)
     assert len(calls) == 2
     benchmark.reset_onset_tables()
 
@@ -249,3 +254,24 @@ def test_worker_error_is_raised_by_result_and_the_pool_stays_usable():
         assert list(again["year"]) == [2001, 2002, 2003]
     finally:
         parallel.shutdown()
+
+
+def squares_of(years, offset):
+    """A picklable stand-in with the typed form: func(year_list, *args)."""
+    return pd.DataFrame({"year": list(years), "square": [y * y + offset for y in years]})
+
+
+def test_year_args_parallel_equals_serial():
+    """The args-based helpers: worker processes return the same tables in year order as the serial path."""
+    from hcwf.config.model import ParallelSpec
+
+    years = [2001, 2002, 2003, 2004]
+    try:
+        serial = parallel.concat_year_args(squares_of, years, (1,), ParallelSpec(enabled=False, workers=None))
+        par = parallel.concat_year_args(squares_of, years, (1,), ParallelSpec(enabled=True, workers=3))
+    finally:
+        parallel.shutdown()
+    pd.testing.assert_frame_equal(serial, par)
+    assert list(par["year"]) == years
+    assert parallel.spec_workers(ParallelSpec(enabled=False, workers=8), 10) == 1
+    assert parallel.spec_workers(ParallelSpec(enabled=True, workers=2), 10) == 2

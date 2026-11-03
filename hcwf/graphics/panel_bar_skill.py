@@ -3,19 +3,19 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from hcwf.io.dict import extract_overall_dict
+from hcwf.lib.run_folder import file_name
 from hcwf.utils.printing import tuple_to_str
 import logging
 
 log = logging.getLogger(__name__)
 
 
-def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig, 
-                           legend=True, show_panel=True, **kwargs):
+def panel_bar_bss_rpss_auc(result_overall, verification_window, spec, *, legend=True):
     """
     Draw horizontal bars of BSS, RPSS (bottom axis, %) and AUC (top axis) for each model.
 
-    Climatology AUC is drawn as a vertical line. The figure is shown if ``show_panel`` is
-    True and always saved to ``dir_fig``. Returns ``(fig, (ax, ax2))``.
+    Climatology AUC is drawn as a vertical line. The figure is shown if ``spec.show_panel`` is
+    True and always saved to ``spec.dir_fig``. Returns ``(fig, (ax, ax2))``.
     """
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -98,13 +98,12 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, *, dir_fig,
                           loc='lower right', frameon=False)
 
     fig.tight_layout()
-    if show_panel:
+    if spec.show_panel:
         plt.show()
 
     # save figure
     window_str = tuple_to_str(verification_window)
-    figure_filename = f"panel_bar_BSS_RPSS_AUC_{window_str}.png"
-    figure_filename = os.path.join(dir_fig, figure_filename)
+    figure_filename = os.path.join(spec.dir_fig, file_name(None, "panel_bar", window_str))
     fig.savefig(figure_filename, dpi=300, bbox_inches='tight')
     log.debug(f"Figure saved as '{figure_filename}'")
 

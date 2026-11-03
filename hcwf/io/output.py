@@ -65,16 +65,19 @@ def score_tables(score_results, model, verification_window):
     return overall_df, binned_df, binned_data, overall_scores_nested
 
 
-def save_score_results(score_results, *, model, verification_window, dir_out, **kwargs):
-    """Save overall and binned skill scores to CSV files; return (binned_data, overall_scores_nested)."""
+def save_score_results(score_results, case, paths, output):
+    """Save overall and binned skill scores of one case to CSV files in output.data_dir (named by `paths`); return
+    (binned_data, overall_scores_nested)."""
+    model, verification_window = case.model.name, case.window.span
     overall_df, binned_df, binned_data, overall_scores_nested = score_tables(score_results, model,
                                                                              verification_window)
     window_str = tuple_to_str(verification_window)
-    overall_filename = os.path.join(dir_out, file_name(kwargs, "overall", model, window_str))
+    dir_out = output.data_dir
+    overall_filename = os.path.join(dir_out, file_name(paths, "overall", model, window_str))
     overall_df.to_csv(overall_filename, index=False)
     log.info(f"Saved overall scores to '{overall_filename}'")
     log.info(overall_df)
-    binned_filename = os.path.join(dir_out, file_name(kwargs, "binned", model, window_str))
+    binned_filename = os.path.join(dir_out, file_name(paths, "binned", model, window_str))
     binned_df.to_csv(binned_filename, index=False)
     log.info(f"Saved binned scores to '{binned_filename}'")
     log.info(binned_df)
@@ -120,23 +123,24 @@ def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
     return spatial_metrics
 
 
-def with_unit_labels(obj, kwargs):
+def with_unit_labels(obj, units):
     """A DataArray or Dataset over "unit" with each unit's name and centroid (unit_name, lat, lon) as coordinates.
 
-    Returned as it is when there is no "unit" dimension. The names, centroids and polygons are the run's own
+    Returned as it is when there is no "unit" dimension. `units` is the observations' UnitsSpec (or their ObsSpec;
+    R2-bridge: a flat config, for export.py and api.py until S10). The names, centroids and polygons are the run's own
     (hcwf.io.input.unit_table); a unit without a name is called by its id.
     """
     if "unit" not in obj.dims:
         return obj
     from hcwf.io.input import unit_table
 
-    units = unit_table(kwargs, obj["unit"].values)
-    names = units.column("name")
-    return obj.assign_coords(unit_name=("unit", units.ids if names is None else np.asarray(names).astype(str)),
-                             lat=("unit", units.lat), lon=("unit", units.lon))
+    table = unit_table(units, obj["unit"].values)
+    names = table.column("name")
+    return obj.assign_coords(unit_name=("unit", table.ids if names is None else np.asarray(names).astype(str)),
+                             lat=("unit", table.lat), lon=("unit", table.lon))
 
 
-def save_unit_tables(ds, kwargs, stem):
+def save_unit_tables(ds, units, stem):
     """Write a per-unit Dataset as the table `stem`.csv (unit_id, name, centroid lat and lon, one column per variable)
     and, for polygon units, as the GeoJSON `stem`.geojson (the same values on the polygons). Returns the paths."""
     table = ds.to_dataframe().reset_index().rename(columns={"unit": "unit_id", "unit_name": "name"})
@@ -145,19 +149,19 @@ def save_unit_tables(ds, kwargs, stem):
     table.to_csv(written[0], index=False)
     from hcwf.io.input import unit_table
 
-    units = unit_table(kwargs, ds["unit"].values)
-    if units.geometry is not None:
+    polygons = unit_table(units, ds["unit"].values)
+    if polygons.geometry is not None:
         import geopandas as gpd
 
-        frame = gpd.GeoDataFrame(table, geometry=units.geometry, crs="EPSG:4326")
+        frame = gpd.GeoDataFrame(table, geometry=polygons.geometry, crs="EPSG:4326")
         written.append(f"{stem}.geojson")
         frame.to_file(written[1], driver="GeoJSON")
     return written
 
 
-def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='spatial_metrics',
-                           allowed_attrs = ['model', 'years', 'tolerance_days', 'verification_window',
-                                            'max_forecast_day', 'lead_window']):
+def save_metrics_to_netcdf(spatial_metrics, case, paths, output, ev, units, desc_dict=None, fname='spatial_metrics',
+                           allowed_attrs=('model', 'years', 'tolerance_days', 'verification_window',
+                                          'max_forecast_day', 'lead_window')):
     """
     Create an xarray Dataset from spatial_metrics, attach global attributes,
     and save to a NetCDF file.
@@ -166,32 +170,38 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
     ----------
     spatial_metrics : dict
         Dictionary of data variables for xr.Dataset
-    attrs_dict : dict
-        Global attributes (values may be str, int, float, bool, list, tuple)
+    case : Case
+        The case the metrics are of: its model, window and name are the file's attributes and name
+    paths : RunPaths or None
+        Names the file (short or historical)
+    output : OutputSpec
+        The file is saved in output.data_dir
+    ev : EvaluationSpec
+        Source of the years, max_forecast_day and lead_window attributes
+    units : UnitsSpec or None
+        The observations' evaluation units (labels and polygons of a field over "unit")
     desc_dict : dict, optional
-        Extra global attributes added after attrs_dict-derived ones
+        Extra global attributes added after the case-derived ones
     fname : str
-        File name prefix; the file is saved as dir_out/{fname}_{case_name}.nc
-        (dir_out and case_name are read from attrs_dict)
+        File name prefix: "spatial_metrics" is named by run_folder.file_name, any other as dir/{fname}_{case_name}.nc
     """
 
-    ds = with_unit_labels(xr.Dataset(spatial_metrics), attrs_dict)
+    ds = with_unit_labels(xr.Dataset(spatial_metrics), units)
 
-    case_name = attrs_dict.get('case_name', 'missing_case_name')
+    attrs = {'model': case.model.name, 'years': ev.years, 'tolerance_days': case.window.tolerance,
+             'verification_window': case.window.span, 'max_forecast_day': ev.max_forecast_day,
+             'lead_window': ev.lead_window}
     if fname == 'spatial_metrics':
-        fout = os.path.join(attrs_dict['dir_out'], file_name(attrs_dict, "spatial", case_name))
+        fout = os.path.join(output.data_dir, file_name(paths, "spatial", case.name))
     else:
-        fout = os.path.join(attrs_dict['dir_out'], f"{fname}_{case_name}.nc")
+        fout = os.path.join(output.data_dir, f"{fname}_{case.name}.nc")
 
     # Normalize attributes for NetCDF compatibility
     clean_attrs = {}
 
     for key in allowed_attrs:
 
-        try:
-            val = attrs_dict.get(key, None)
-        except:
-            val = attrs_dict.get(key, "")
+        val = attrs.get(key)
 
         if isinstance(val, (list, tuple)):
             clean_attrs[key] = ','.join(map(str, val))
@@ -217,11 +227,11 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
 
     log.info(f"{fname} saved to: {fout}")
     if "unit" in ds.dims:   # per evaluation unit: also a table keyed by unit id, and the polygons with the values
-        for path in save_unit_tables(ds, attrs_dict, os.path.splitext(fout)[0]):
+        for path in save_unit_tables(ds, units, os.path.splitext(fout)[0]):
             log.info(f"{fname} (per unit) saved to: {path}")
 
 
-def save_climatology_onset(onset_da_dict, kwargs, years_clim):
+def save_climatology_onset(onset_da_dict, paths, output, units, years_clim):
     """Write the climatological onset (day of year) of the reference run to NetCDF, over lat and lon or over the units.
 
     onset_da_dict is the reference case's {year: onset}: every year holds the same climatological field.
@@ -229,8 +239,8 @@ def save_climatology_onset(onset_da_dict, kwargs, years_clim):
     from hcwf.utils.mask import mask_attrs
     from hcwf.utils.printing import tuple_to_str_range
 
-    fout = os.path.join(kwargs['dir_out'], file_name(kwargs, "climatology", tuple_to_str_range(kwargs['years_clim'])))
-    climatological_onset_doy = with_unit_labels(next(iter(onset_da_dict.values())), kwargs)
+    fout = os.path.join(output.data_dir, file_name(paths, "climatology", tuple_to_str_range(years_clim)))
+    climatological_onset_doy = with_unit_labels(next(iter(onset_da_dict.values())), units)
     climatological_onset_doy.attrs["years"] = years_clim
     climatological_onset_doy.attrs.update(mask_attrs())   # nothing unless a region mask is in use
     climatological_onset_doy.to_netcdf(fout)

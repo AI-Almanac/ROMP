@@ -4,17 +4,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 from hcwf.utils.visual import portrait_plot
 from hcwf.io.dict import extract_binned_dict
+from hcwf.lib.run_folder import file_name
 from hcwf.utils.printing import tuple_to_str
 import logging
 
 log = logging.getLogger(__name__)
 
 
-def panel_portrait_bss_auc(result_binned, verification_window, *, dir_fig, show_panel=True, **kwargs):
+def panel_portrait_bss_auc(result_binned, verification_window, spec):
     """
     Draw portrait plots of binned BSS (%) and AUC, with a climatology row, for each model.
 
-    The figure is shown if ``show_panel`` is True and always saved to ``dir_fig``.
+    The figure is shown if ``spec.show_panel`` is True and always saved to ``spec.dir_fig``.
     Returns ``(fig, (ax1, ax2))``.
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 3))
@@ -44,13 +45,12 @@ def panel_portrait_bss_auc(result_binned, verification_window, *, dir_fig, show_
     ax2.set_xlabel('Forecast window (days)')
 
     fig.tight_layout()
-    if show_panel:
+    if spec.show_panel:
         plt.show()
 
     # save figure
     window_str = tuple_to_str(verification_window)
-    figure_filename = f"panel_portrait_BSS_AUC_{window_str}.png"
-    figure_filename = os.path.join(dir_fig, figure_filename)
+    figure_filename = os.path.join(spec.dir_fig, file_name(None, "panel_skill", window_str))
     fig.savefig(figure_filename, dpi=300, bbox_inches='tight')
     log.debug(f"Figure saved as '{figure_filename}'")
 

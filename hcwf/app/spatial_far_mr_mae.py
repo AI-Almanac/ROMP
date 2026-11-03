@@ -23,6 +23,8 @@ def spatial_far_mr_mae_map(rc):
     """
 
     results = {}
+    spec, output = rc.figure_spec(), rc.output
+    ev, units = rc.evaluation, rc.observations.units
 
     for case in progress(list(rc.cases()), desc="cases"):
         combi = case.key
@@ -45,7 +47,7 @@ def spatial_far_mr_mae_map(rc):
 
 
         # Save spatial metrics to NetCDF
-        if case_cfg["save_nc_spatial_far_mr_mae"]:
+        if output.save_nc_spatial_far_mr_mae:
 
             desc_dict = {
                     'title': 'Monsoon Onset MAE, FAR, MR Analysis',
@@ -53,12 +55,12 @@ def spatial_far_mr_mae_map(rc):
                     for monsoon onset predictions""",
             }
 
-            save_metrics_to_netcdf(spatial_metrics, case_cfg, desc_dict=desc_dict)
+            save_metrics_to_netcdf(spatial_metrics, case, rc.paths, output, ev, units, desc_dict=desc_dict)
 
 
         # make spatial metrics plot
-        if case_cfg['plot_spatial_far_mr_mae']:
-            plot_spatial_metrics(spatial_metrics, **case_cfg)
+        if output.plot_spatial_far_mr_mae:
+            plot_spatial_metrics(spatial_metrics, case, spec)
 
 
     # ------------------------------------------------------------------------
@@ -88,30 +90,30 @@ def spatial_far_mr_mae_map(rc):
         results = set_nested(results, combi, spatial_metrics)
 
         # Save spatial metrics to NetCDF
-        if case_cfg_ref["save_nc_spatial_far_mr_mae"]:
+        if output.save_nc_spatial_far_mr_mae:
             desc_dict = {
                     'title': 'Monsoon Onset MAE, FAR, MR Analysis',
                     'description': """Spatial maps of Mean Absolute Error, False Alarm Rate, and Miss Rate 
                     for monsoon onset predictions""",
             }
-            save_metrics_to_netcdf(spatial_metrics, case_cfg_ref, desc_dict=desc_dict)
+            save_metrics_to_netcdf(spatial_metrics, case, rc.paths, output, ev, units, desc_dict=desc_dict)
 
 
         # make spatial metrics plot
-        if case_cfg_ref['plot_spatial_far_mr_mae']:
-            plot_spatial_metrics(spatial_metrics, **case_cfg_ref)
+        if output.plot_spatial_far_mr_mae:
+            plot_spatial_metrics(spatial_metrics, case, spec)
 
 
     # save climatological onset to netcdf
-    if case.model.name == 'climatology' and case_cfg_ref['save_nc_climatology']:
-        save_climatology_onset(onset_da_dict, case_cfg_ref, rc.evaluation.climatology_years)
+    if case.model.name == 'climatology' and output.save_nc_climatology:
+        save_climatology_onset(onset_da_dict, rc.paths, output, units, ev.climatology_years)
 
     # spatial map of climatology onset day
-    if case_cfg_ref['plot_climatology_onset']:
-        plot_spatial_climatology_onset(onset_da_dict, **case_cfg_ref)
+    if output.plot_climatology_onset:
+        plot_spatial_climatology_onset(onset_da_dict, spec, ev.climatology_years)
 
     # panel portrait plot of mae, far, mr
-    if case_cfg_ref['plot_panel_heatmap_error']:
-       panel_portrait_mae_far_mr(results, **case_cfg_ref)
+    if output.plot_panel_heatmap_error:
+        panel_portrait_mae_far_mr(results, spec)
 
     return results

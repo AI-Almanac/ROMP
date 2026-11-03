@@ -8,8 +8,8 @@ import xarray as xr
 import hcwf.io.input as model_input
 from old_flat_rule import old_rule
 from hcwf.io.dict import extract_pd_bins
-from hcwf.metrics.skill import create_score_results, prepare_score_cache
-from hcwf.stats.bins import multi_year_climatological_forecast_obs_pairs
+from hcwf.metrics.skill import create_score_results, prepare_pairs
+from hcwf.stats.bins import climatological_pairs
 from hcwf.config import flat_bridge
 from hcwf.stats.climatology import climatological_onset_dataset
 from hcwf.stats.score import calculate_auc_climatology, calculate_brier_score_climatology, calculate_rps
@@ -65,6 +65,18 @@ def config(tmp_path, monkeypatch):
     )
 
 
+def _typed(config):
+    """(rc, case, select) of a test's flat config."""
+    return flat_bridge.from_case_kwargs(config)
+
+
+def _results(config, prepared=None):
+    """create_score_results of a flat config, from the given pair tables or those prepare_pairs builds."""
+    rc, case, select = _typed(config)
+    prepared = prepare_pairs(rc, case.model, select) if prepared is None else prepared
+    return create_score_results(case, prepared, rc.metrics, rc.evaluation)
+
+
 def _as_forecast(config, model):
     """The config with model "B" (or "A") as the forecast, so its own scores can be compared with a reference run."""
     if model == "A":
@@ -84,8 +96,8 @@ def _scores(results, suffix=""):
 
 def test_reference_scores_come_from_the_reference_model(config):
     """BS/RPS/AUC_ref differ from the forecast's own and equal the scores of the reference run as the forecast."""
-    results = create_score_results(**config)
-    as_forecast = create_score_results(**_as_forecast(config, "B"))
+    results = _results(config)
+    as_forecast = _results(_as_forecast(config, "B"))
 
     assert _scores(results, "_ref") == _scores(as_forecast)
     assert _scores(results, "_ref") != _scores(results)
@@ -93,12 +105,12 @@ def test_reference_scores_come_from_the_reference_model(config):
 
 
 def test_cached_reference_pairs_are_the_reference_models(config):
-    """prepare_score_cache stores the reference's own pairs, and create_score_results gives the same scores from it."""
-    cache = prepare_score_cache(**config)
+    """prepare_pairs holds the reference's own pairs, and create_score_results gives the same scores from them."""
+    rc, case, select = _typed(config)
+    prepared = prepare_pairs(rc, case.model, select)
 
-    assert not cache["_ref_obs_df_all"].equals(cache["_forecast_obs_df_all"])
-    cached = create_score_results(**config, **cache)
-    assert _scores(cached, "_ref") == _scores(create_score_results(**config), "_ref")
+    assert not prepared.reference.equals(prepared.forecast)
+    assert _scores(_results(config, prepared), "_ref") == _scores(_results(config), "_ref")
 
 
 def test_forecast_model_dims_are_not_applied_to_the_reference(config, tmp_path):
@@ -108,22 +120,23 @@ def test_forecast_model_dims_are_not_applied_to_the_reference(config, tmp_path):
     for year in YEARS:
         with xr.open_dataset(tmp_path / "b" / f"m_{year}.nc") as ds:
             ds.rename({"time": "issued", "number": "realization"}).to_netcdf(renamed / f"m_{year}.nc")
-    plain = create_score_results(**config)
-    with_dims = create_score_results(**dict(config, ref_model_dir=str(renamed),
-                                            ref_model_dims={"init_time": "issued", "member": "realization"}))
+    plain = _results(config)
+    with_dims = _results(dict(config, ref_model_dir=str(renamed),
+                              ref_model_dims={"init_time": "issued", "member": "realization"}))
     assert _scores(with_dims, "_ref") == _scores(plain, "_ref")
 
 
 def test_climatology_reference_is_unchanged(config):
     """The climatology reference equals the scores computed straight from the climatology pair tables."""
     config = dict(config, ref_model="climatology")
-    results = create_score_results(**config)
+    results = _results(config)
 
-    clim_onset = climatological_onset_dataset(*flat_bridge.from_case_kwargs(config))
-    pairs = extract_pd_bins(multi_year_climatological_forecast_obs_pairs(clim_onset, **config), DAY_BINS)
+    rc, case, select = _typed(config)
+    clim_onset = climatological_onset_dataset(rc, case, select)
+    pairs = extract_pd_bins(climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS), DAY_BINS)
 
     assert results["climatology_obs_df"].to_csv() == pairs.to_csv()
     assert _text(results["BS_ref"]) == _text(calculate_brier_score_climatology(pairs))
     assert _text(results["RPS_ref"]) == _text(calculate_rps(pairs))
     assert _text(results["AUC_ref"]) == _text(calculate_auc_climatology(pairs))
-    assert prepare_score_cache(**config)["_ref_obs_df_all"] is None
+    assert prepare_pairs(rc, case.model, select).reference is None
