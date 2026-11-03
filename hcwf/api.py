@@ -77,10 +77,14 @@ class RunResult:
 def check(cfg, overwrite: bool = False, **overrides):
     """The plan of a run as a hcwf.lib.check.CheckReport (``.text()``, ``.errors``, ``.warnings``, ``.ok``); runs nothing."""
     from hcwf.config.build import resolve_flat
+    from hcwf.lib.assertion import HCWFConfigError
     from hcwf.lib.check import build_report
 
+    dic, found = resolve_flat(cfg, overrides, check=True)
+    if dic is None:
+        raise HCWFConfigError(found.message())
     with logs.session(logs.QUIET):
-        return build_report(resolve_flat(cfg, overrides), overwrite=overwrite)
+        return build_report(dic, overwrite=overwrite, found=found)
 
 
 def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = False, verbose: bool = False,

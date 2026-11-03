@@ -1,0 +1,82 @@
+HCWF check of HCWF run: nothing will be run
+
+== Settings ==
+config file     : <base>/cfgs/det_climatology.yaml
+region          : ethiopia  [run config]
+first date      : (2019, 5, 1)  [run config]
+last date       : (2020, 5, 31)  [run config]
+init weekdays   : (0, 1, 2, 3, 4, 5, 6)  [run config]
+climatology from: 2006  [run config]
+climatology to  : 2020  [run config]
+lead windows    : ((1, 10),)  [run config]
+tolerances (days): (3,)  [run config]
+max forecast day: 10  [run config]
+day bins        : ((1, 5), (6, 10))  [run config]
+ensemble        : False  [default]
+members         : All  [default]
+reference       : climatology  [default]
+climatology_cv  : leave_one_year_out  [default]
+ensemble onset share: 0.5  [default]
+models          : DET
+Onset definition : icpac v1 (draft), overridden: reject if (dry_spell_check = false)  [region default (ethiopia)]
+Season           : main  [the definition's only season]
+Threshold years  : 1998-2024  [region default (ethiopia)]
+Day boundary     : 00 UTC, labelled by start  [config obs_day_boundary]
+Lead label       : start  [derived from obs_day_boundary]
+Dry-spell check  : off  [config dry_spell_check]
+Forecast history : observed  [default]
+Threshold source : observations  [default]
+Backend          : numba  [config onset_backend]
+region box      : lat 3 to 15, lon 33 to 48  [the domain of region ethiopia]
+mask            : none (the region's box with the land and country masks of the old behaviour)
+
+== Datasets ==
+observations:
+  path: <base>/obs  [run config]
+  file_pattern: {}.nc  [detected: 15 file(s) named like '{}.nc', e.g. 2006.nc]
+  variable: precip  [detected: only gridded variable in 2006.nc]
+  dims: {'time': 'time', 'lat': 'lat', 'lon': 'lon'}  [detected: known dimension names in 2006.nc: time=time, lat=lat, lon=lon]
+  units: mm  [run config]
+  day_boundary: 00 UTC, labelled by start  [run config]
+models[0] DET:
+  path: <base>/DET  [run config]
+  file_pattern: {}.nc  [detected: 2 file(s) named like '{}.nc', e.g. 2019.nc]
+  variable: tp  [detected: only gridded variable in 2019.nc]
+  dims: {'init_time': 'time', 'step': 'step', 'lat': 'lat', 'lon': 'lon'}  [detected: known dimension names in 2019.nc: init_time=time, step=step, lat=lat, lon=lon]
+  members: 1  [detected: no member dimension in 2019.nc: deterministic]
+  accumulation: daily  [detected: non-decreasing along lead in 0.0 % of series; mean 3.26 -> 3.78]
+  units: mm  [run config]
+  lead_label: start  [run config]
+
+== Files ==
+observations: 15 of 15 yearly files found in <base>/obs (years 2006-2020)
+DET: 2 of 2 yearly files found in <base>/DET
+
+== Units ==
+ERROR: units: units mode must be one of ('cells', 'regrid', 'cell_transform'), got 'bogus'
+
+== Grids ==
+observations: 3 lats x 3 lons in the file, 3 x 3 inside the region box
+DET: 3 lats x 3 lons in the file, 3 x 3 inside the region box
+
+== Lead windows ==
+Lead window      : 1-10 for DET (icpac reads 3 days from the onset day; forecasts have 14 leads)  [max_forecast_day]
+windows ((1, 10),) with tolerances (3,) days; max forecast day 10; day bins ((1, 5), (6, 10))
+DET: 14 leads, daily steps, last at 14 days
+
+== Alignment ==
+onset.check_alignment is false: skipped
+
+== Run folder ==
+run folder: <base>/cfgs/runs/ethiopia_icpac+mod_2019-2020_277f
+  scores <base>/cfgs/runs/ethiopia_icpac+mod_2019-2020_277f/scores; figures <base>/cfgs/runs/ethiopia_icpac+mod_2019-2020_277f; onsets <base>/cfgs/runs/ethiopia_icpac+mod_2019-2020_277f/onsets; cache <base>/cfgs/runs/.cache
+  new: a run would create it
+log: <base>/cfgs/runs/ethiopia_icpac+mod_2019-2020_277f/run.log
+
+== Cache ==
+cache folder: <base>/cfgs/runs/.cache (0 observed-onset entries)
+observed onsets: expectation not available (units mode must be one of ('cells', 'regrid', 'cell_transform'), got 'bogus')
+
+== Summary ==
+1 error(s), 0 warning(s)
+  ERROR units: units mode must be one of ('cells', 'regrid', 'cell_transform'), got 'bogus'

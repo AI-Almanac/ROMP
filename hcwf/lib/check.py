@@ -342,19 +342,15 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
         mask_mod.reset()
 
 
-def _units(dic: dict, report: CheckReport) -> None:
+def _units(dic: dict, report: CheckReport, found) -> None:
     """The evaluation units each source is read onto (the `units:` section and the region's): mode, tables, restriction;
-    a named file that is not there is an error."""
-    from hcwf.io.input import units_spec
-    from hcwf.spatial.units import UnitsSpecError
-
-    sources = ["observations", *dic["model_list"]]
-    try:
-        specs = {name: units_spec(dic, name) for name in sources}
-    except UnitsSpecError as exc:
+    an invalid section (a problem of hcwf.config.validate) and a named file that is not there are errors."""
+    if found.units:
         report.section("Units")
-        report.error(f"units: {exc}")
+        for text in found.units:
+            report.error(text)
         return
+    specs = found.specs
     if all(spec is None for spec in specs.values()):
         return
     report.section("Units")
@@ -381,20 +377,14 @@ def _units(dic: dict, report: CheckReport) -> None:
         report.add(f"{name}: " + "; ".join(parts))
 
 
-def _blend(dic: dict, report: CheckReport) -> None:
+def _blend(dic: dict, report: CheckReport, found) -> None:
     """The `blend:` section as the run reads it: models, years, bins, formulas, scoring, and the artifacts' folder; every
     problem of the section (and the rules that need the onset definition) is an error."""
-    from hcwf.blend.recipe import RecipeError, recipe_from_config
-
     report.section("Blend")
-    try:
-        recipe = recipe_from_config(dic, onset_setup(dic))
-    except RecipeError as exc:
-        for problem in exc.problems:
-            report.error(f"blend: {problem}")
-        return
-    except Exception as exc:  # noqa: BLE001 - the onset settings failing is reported with the rest of the check
-        report.error(f"blend: {exc}")
+    for text in found.blend:
+        report.error(text)
+    recipe = found.recipe
+    if recipe is None:
         return
     ev, ft = recipe.evaluation, recipe.features
     report.add(f"blend           : {recipe.name}; outcomes {', '.join(recipe.outcome_labels())}; "
@@ -579,24 +569,29 @@ def _cache(dic: dict, report: CheckReport) -> None:
         report.add(f"observed onsets: expectation not available ({exc})")
 
 
-def build_report(dic: dict, overwrite: bool = False) -> CheckReport:
+def build_report(dic: dict, overwrite: bool = False, found=None) -> CheckReport:
     """Check a resolved flat config (see the module text); reads samples of the files and writes nothing.
 
-    overwrite says whether --overwrite is given (an existing run folder is then not an error).
+    overwrite says whether --overwrite is given (an existing run folder is then not an error). found is the
+    hcwf.config.validate.Problems of the config (resolve_flat(check=True) returns them); they are computed when not given.
     """
+    if found is None:
+        from hcwf.config.validate import problems
+
+        found = problems(dic)
     report = CheckReport()
     report.add(f"HCWF check of {dic.get('project_name', 'run')}: nothing will be run")
     _settings(dic, report)
     _datasets(dic, report)
     samples = _files(dic, report)
-    _units(dic, report)
+    _units(dic, report, found)
     _grids(dic, report, samples)
     _mask_summary(dic, report, samples)
     _leads(dic, report, samples)
     _alignment(dic, report)
     _short_climatology(dic, report)
     if has_blend(dic):
-        _blend(dic, report)
+        _blend(dic, report, found)
     _run_folder(dic, report, overwrite)
     _cache(dic, report)
     report.section("Summary")

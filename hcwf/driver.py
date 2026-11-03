@@ -71,7 +71,9 @@ def _check(flags, cli_args=None) -> int:
     from hcwf.lib.check import build_report
 
     try:
-        dic = resolve_cli(cli_args)
+        dic, found = resolve_cli(cli_args, check=True)
+        if dic is None:
+            raise HCWFConfigError(found.message())
     except ConfigSchemaError as exc:
         print("\n".join(getattr(exc, "report", ())) or "(no datasets described)")
         print(f"\n{exc}\n\ncheck: the config cannot be resolved; nothing was run")
@@ -82,7 +84,7 @@ def _check(flags, cli_args=None) -> int:
     if flags.alignment:
         dic["check_alignment"] = True
     with logs.session(logs.QUIET):
-        report = build_report(dic, overwrite=flags.overwrite)
+        report = build_report(dic, overwrite=flags.overwrite, found=found)
     print(report.text())
     return 0 if report.ok else 1
 

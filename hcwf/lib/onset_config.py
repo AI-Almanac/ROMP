@@ -373,17 +373,6 @@ def _definition_setup(cfg) -> OnsetSetup:
                       constants)
 
 
-def check_config(dic: dict) -> None:
-    """Validate a raw config dict: keys earlier versions read (the flat onset keys and the other removed ones) are
-    refused with the message a YAML config gets, then the onset part is fully resolved."""
-    from hcwf.lib import config_schema as schema
-
-    removed = [key for key in schema.REMOVED_KEYS if dic.get(key) is not None]
-    if removed:
-        raise OnsetConfigError("\n".join(schema.unknown_key_message(key) for key in removed))
-    onset_setup({"onset_definition": None, **dic})
-
-
 def forecast_reach(setup: OnsetSetup) -> int:
     """The largest number of days after the candidate (candidate included) any requirement or veto reads."""
     compiled = plan_mod.compile(setup.definition)

@@ -1,0 +1,90 @@
+HCWF check of t: nothing will be run
+
+== Settings ==
+config file     : <base>/b.yaml
+region          : None  [run config]
+first date      : (2010, 1, 1)  [blend.years]
+last date       : (2013, 12, 31)  [blend.years]
+init weekdays   : (0, 3)  [default]
+climatology from: 2010  [onset.threshold_years]
+climatology to  : 2012  [onset.threshold_years]
+lead windows    : ((1, 15), (16, 30))  [default]
+tolerances (days): (3, 5)  [default]
+max forecast day: 30  [default]
+day bins        : ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30))  [default]
+ensemble        : False  [default]
+members         : All  [default]
+reference       : climatology  [default]
+climatology_cv  : leave_one_year_out  [default]
+ensemble onset share: 0.5  [default]
+forecast history: none  [run config]
+models          : ens
+Onset definition : t_rule v1 (draft)  [config onset.rule (inline definition)]
+Season           : main  [the definition's only season]
+Threshold years  : 2010-2012  [config threshold_years]
+Day boundary     : 00 UTC, labelled by end  [config obs_day_boundary]
+Lead label       : end  [config model_lead_label]
+Dry-spell check  : on  [config dry_spell_check]
+Forecast history : none  [config forecast_history]
+Threshold source : observations  [default]
+Backend          : numba  [config onset_backend]
+region box      : none (no region: the whole domain of the data)
+mask            : none (the region's box with the land and country masks of the old behaviour)
+
+== Datasets ==
+observations:
+  paths: ['<base>/bdata/obs/*.nc']  [run config]
+  file_pattern: not needed  [detected: 14 file(s) listed in paths]
+  variable: precip  [run config]
+  dims: {'time': 'time', 'lat': 'lat', 'lon': 'lon'}  [detected: known dimension names in 2000.nc: time=time, lat=lat, lon=lon]
+  unit_cvt: 1.0  [run config]
+  day_boundary: 00 UTC, labelled by end  [run config]
+models[0] ens:
+  paths: ['<base>/bdata/ens/*.nc']  [run config]
+  file_pattern: not needed  [detected: 4 file(s) listed in paths]
+  variable: tp  [run config]
+  dims: {'init_time': 'time', 'step': 'day', 'member': 'number', 'lat': 'lat', 'lon': 'lon'}  [detected: known dimension names in 2010.nc: init_time=time, step=day, member=number, lat=lat, lon=lon]
+  members: 3  [detected: member dim 'number' has 3 values in 2010.nc]
+  accumulation: daily  [run config]
+  units: mm  [detected: 'units' attribute 'mm' of tp in 2010.nc (unit_cvt is only for files that declare no units)]
+  lead_label: end  [onset.lead_label]
+
+== Files ==
+observations: 14 of 14 listed file(s) found, years 2000-2013
+ens: 4 of 4 listed file(s) found, years 2010-2013
+
+== Units ==
+observations: cells; grid ids fixed with 2 decimals
+ens: cells; grid ids fixed with 2 decimals
+
+== Grids ==
+observations: 3 lats x 2 lons in the file, 3 x 2 inside the region box
+ens: 3 lats x 2 lons in the file, 3 x 2 inside the region box
+
+== Lead windows ==
+windows ((1, 15), (16, 30)) with tolerances (3, 5) days; max forecast day 30; day bins ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30))
+ens: 40 leads, daily steps, last at 40 days
+
+== Alignment ==
+onset.check_alignment is false: skipped
+HINT [evaluation.start_year_clim]: the climatology has only 3 years (2010-2012); the climatology reference and thresholds need about 15 or more. Set start_year_clim and end_year_clim
+HINT [onset.threshold_years]: the thresholds come from only 3 years (2010-2012)
+
+== Blend ==
+ERROR: blend: features.rain_transform: 'cube' is not identity, sqrt, fourth_root, log1p or power:<p>
+
+== Run folder ==
+run folder: <base>/runs/t_t-rule+mod_2010-2013_1303
+  scores <base>/runs/t_t-rule+mod_2010-2013_1303; figures <base>/runs/t_t-rule+mod_2010-2013_1303; onsets <base>/runs/t_t-rule+mod_2010-2013_1303; cache <base>/runs/.cache
+  new: a run would create it
+log: <base>/runs/t_t-rule+mod_2010-2013_1303/run.log
+
+== Cache ==
+cache folder: <base>/runs/.cache (0 observed-onset entries)
+observed onsets: a blend run detects them itself (search starts, thresholds and units are its own)
+
+== Summary ==
+1 error(s), 2 warning(s)
+  ERROR blend: features.rain_transform: 'cube' is not identity, sqrt, fourth_root, log1p or power:<p>
+  HINT [evaluation.start_year_clim] the climatology has only 3 years (2010-2012); the climatology reference and thresholds need about 15 or more. Set start_year_clim and end_year_clim
+  HINT [onset.threshold_years] the thresholds come from only 3 years (2010-2012)

@@ -8,7 +8,8 @@ import pytest
 import xarray as xr
 
 from hcwf.lib import explain_cells
-from hcwf.lib.assertion import HCWFConfigError, HCWFValidator
+from hcwf.config import validate
+from hcwf.lib.assertion import HCWFConfigError
 
 
 def rain_year(year):
@@ -53,14 +54,10 @@ def test_unset_writes_nothing(tmp_path, data):
 @pytest.mark.parametrize("value", [(9.0, 38.0), [(9.0,)], [(9.0, "a")], [(9.0, 38.0, 1.0)], "x"])
 def test_validation_rejects_malformed_cells(value):
     """Anything but None or a list of numeric pairs is a config error."""
-    validator = HCWFValidator({"explain_cells": value})
-    validator._check_explain_cells()
-    assert validator.errors
+    assert validate._explain_cells(SimpleNamespace(explain_cells=value))
 
 
 @pytest.mark.parametrize("value", [None, [], [(9.0, 38.75), [8, 39]]])
 def test_validation_accepts_good_cells(value):
     """None, an empty list and numeric pairs pass."""
-    validator = HCWFValidator({"explain_cells": value})
-    validator._check_explain_cells()
-    assert not validator.errors
+    assert not validate._explain_cells(SimpleNamespace(explain_cells=value))

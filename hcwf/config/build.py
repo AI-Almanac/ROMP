@@ -30,7 +30,7 @@ _MODEL_KEYS = tuple(f.key for f in schema.FIELDS if f.internal and f.key.endswit
 
 
 def resolve_flat(source, overrides: Mapping[str, Any] | None = None, *, write: bool = True, tmp: Path | None = None,
-                 override_source: str = "override") -> dict:
+                 override_source: str = "override", check: bool = False):
     """The validated flat config of a run, finished (paths, lead window, run folder plan); raises HCWFConfigError.
 
     source is the path of a run YAML, a hcwf.config.Config, a nested mapping (as the YAML), a SimpleNamespace or a
@@ -38,14 +38,21 @@ def resolve_flat(source, overrides: Mapping[str, Any] | None = None, *, write: b
     (`model_list` selects some of the configured models); each is normalised like a YAML value and recorded in
     ``config_sources`` as override_source. write=False (a run that writes no files) switches every writing step off
     and, with tmp, puts the outputs in that folder and keeps the observed-onset cache in memory.
+
+    Validation is hcwf.config.validate.problems: any problem (the units' and the blend's too) raises one HCWFConfigError
+    before a run folder exists. check=True returns (values, problems) instead of raising, for `--check`: values is None
+    when a fatal problem means the config cannot be resolved, and a units or blend problem is left for the report.
     """
-    from hcwf.lib.assertion import HCWFValidator
+    from hcwf.config import validate
 
     values, config_file = _read(source)
     _apply_overrides(values, overrides or {}, override_source)
     values["config_file"] = config_file
     finish(values, config_file, write)
-    HCWFValidator(values).validate()
+    found = validate.problems(values)
+    if check:
+        return (None if found.fatal else values), found
+    found.raise_if_any()
     if not write:
         for key, value in _NO_FILES.items():
             if key in values or key == "explain_cells":

@@ -1,5 +1,7 @@
 """The YAML run config: schema errors, flattening, normalisation, defaults and the Config objects."""
 
+import re
+
 import pytest
 
 from hcwf.config import Config, Dataset, Evaluation, Onset
@@ -171,15 +173,14 @@ def test_bad_explicit_years_are_an_error(data, bad):
 
 
 def test_explicit_years_outside_the_date_ranges_are_refused(data):
-    from hcwf.lib.assertion import HCWFConfigError, HCWFValidator
+    from hcwf.config.validate import problems
 
     evaluation = {"start_date": [2018, 5, 1], "end_date": [2022, 7, 31], "start_year_clim": 2010,
                   "end_year_clim": 2020, "years": [2017, 2019], "climatology_years": [2009, 2012]}
     flat = build_config(_raw(data, evaluation=evaluation))
-    with pytest.raises(HCWFConfigError) as raised:
-        HCWFValidator(flat).validate()
-    assert "evaluation.years [2017] lie outside 2018-2022" in str(raised.value)
-    assert "evaluation.climatology_years [2009] lie outside 2010-2020" in str(raised.value)
+    message = problems(flat).message()
+    assert "evaluation.years [2017] lie outside 2018-2022" in message
+    assert "evaluation.climatology_years [2009] lie outside 2010-2020" in message
 
 
 def test_the_years_a_case_evaluates_are_the_explicit_ones_or_the_ranges(data):
@@ -193,12 +194,12 @@ def test_the_years_a_case_evaluates_are_the_explicit_ones_or_the_ranges(data):
 
 def test_removed_flat_keys_in_a_dict_are_refused_like_in_a_yaml(data):
     """R-4: a flat dict given to run_hcwf or hcwf.run with an old onset key (or another removed key) is not ignored."""
-    from hcwf.lib.assertion import HCWFValidator, HCWFConfigError
+    from hcwf.config.validate import problems
 
     flat = build_config(_raw(data))
-    HCWFValidator(flat).validate()
+    assert not problems(flat)
     for key, text in (("wet_init", "hcwf-run convert"), ("earliest_onset_date", "hcwf-run convert"),
                       ("layout", "This key was removed")):
-        with pytest.raises(HCWFConfigError, match=f"unknown key '{key}'. .*{text}"):
-            HCWFValidator({**flat, key: [6, 1] if key == "earliest_onset_date" else 1}).validate()
-    HCWFValidator({**flat, "wet_init": None}).validate()   # null is the same as not set
+        found = problems({**flat, key: [6, 1] if key == "earliest_onset_date" else 1})
+        assert re.search(f"unknown key '{key}'. .*{text}", found.message(), re.S)
+    assert not problems({**flat, "wet_init": None})   # null is the same as not set

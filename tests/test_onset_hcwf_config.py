@@ -3,7 +3,7 @@
 
 import pytest
 
-from hcwf.lib.assertion import HCWFValidator
+from hcwf.config.validate import problems
 from hcwf.lib.onset_config import OnsetConfigError, onset_setup
 
 BOUNDARY = "00 UTC, labelled by start"
@@ -128,11 +128,10 @@ def test_definition_outside_its_region_warns():
 
 
 def test_the_validator_reports_onset_errors():
-    """HCWFValidator collects the onset errors with the other config errors."""
+    """validate.problems collects the onset errors with the other config errors."""
     base = dict(start_date=(2019, 5, 1), end_date=(2019, 7, 31), start_year_clim=1998, end_year_clim=2024,
                 model_list=("AIFS",), verification_window_list=((1, 15),), tolerance_days_list=(3,),
                 day_bins=((1, 5),), max_forecast_day=30, probabilistic=False)
-    validator = HCWFValidator({**base, "onset_definition": "no_such_definition", "region": "ethiopia"})
-    with pytest.raises(Exception, match="no_such_definition"):
-        validator.validate()
-    assert HCWFValidator({**base, "onset_definition": None, "region": "ethiopia"}).validate()
+    found = problems({**base, "onset_definition": "no_such_definition", "region": "ethiopia"})
+    assert len(found.fatal) == 1 and "no_such_definition" in found.fatal[0]
+    assert not problems({**base, "onset_definition": None, "region": "ethiopia"})
