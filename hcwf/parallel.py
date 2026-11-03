@@ -11,7 +11,7 @@ onset tables, climatology pairs) are spread over `worker_count` processes (``par
 cores available, never more than the years):
 
 * Every year goes to a worker. While the workers boot (they are started first, with the "spawn" method: a fork
-  after numba's threads ran is unsafe; each gets cores // workers numba threads) this process pre-warms what all the
+  after numba's threads ran is unsafe; each gets cores // workers numba and BLAS threads, THREAD_LIMITS) this process pre-warms what all the
   years share (thresholds, masks; see the `prewarm` argument), so each is read, built and logged once, here, and
   then travels to the workers as one small snapshot. The pool is kept for the run (see `shutdown`), so the next
   stage (the climatology pairs after the model pairs) reuses the booted workers, and this process is free to do
@@ -132,6 +132,12 @@ atexit.register(shutdown)
 cache.on_run_end(shutdown)
 
 
+THREAD_LIMITS = ("NUMBA_NUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+"""The environment variables that cap a worker's thread pools (numba, OpenBLAS, OpenMP, MKL). They are set while the
+workers spawn, so that every library reads them when it loads: threadpoolctl in an initializer would miss the ones
+imported later (scipy's own OpenBLAS), and N workers on N BLAS threads each is slower than N workers on one."""
+
+
 def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
     """The run's pool of `size` booted workers with `threads` numba threads each, started now if there is none like it.
 
@@ -142,8 +148,8 @@ def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
     if _pool["executor"] is not None and _pool["key"] == key:
         return _pool["executor"]
     shutdown()
-    saved = os.environ.get("NUMBA_NUM_THREADS")
-    os.environ["NUMBA_NUM_THREADS"] = str(threads)
+    saved = {name: os.environ.get(name) for name in THREAD_LIMITS}
+    os.environ.update({name: str(threads) for name in THREAD_LIMITS})
     stack = contextlib.ExitStack()
     try:
         queue = stack.enter_context(logs.forwarding())
@@ -157,10 +163,11 @@ def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
         stack.close()
         raise
     finally:
-        if saved is None:
-            os.environ.pop("NUMBA_NUM_THREADS", None)
-        else:
-            os.environ["NUMBA_NUM_THREADS"] = saved
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
     _pool.update(executor=executor, key=key, stack=stack)
     return executor
 

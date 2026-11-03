@@ -33,7 +33,6 @@ bit, while holding one copy of its rows rather than two or three:
 from __future__ import annotations
 
 import logging
-import math
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -386,8 +385,8 @@ def global_cv(plan: Plan, values, rows: np.ndarray, trainable: np.ndarray, year:
     (classifier, scaler, rows used, rows) for the final_years fit, or None
     without final_years."""
     tasks = [("fold", int(y)) for y in holdout_years]
-    if final_years is not None:
-        tasks.append(("final", tuple(int(y) for y in final_years)))
+    if final_years is not None:   # the largest task first, so that it does not start in the last round
+        tasks.insert(0, ("final", tuple(int(y) for y in final_years)))
     context = {
         "formula_str": plan.formula,
         "columns": list(plan.columns),
@@ -408,7 +407,7 @@ def global_cv(plan: Plan, values, rows: np.ndarray, trainable: np.ndarray, year:
         else:
             results = _run_pool(tasks, context, count)
         del design
-    final = results.pop() if final_years is not None else None
+    final = results.pop(0) if final_years is not None else None
     return results, final
 
 
@@ -457,30 +456,18 @@ def _check_fold(test_year, train, test, outcome, training_years, required_classe
 
 
 def _workers(n_tasks: int, workers: int, shape, train_rows: int, budget_bytes) -> int:
-    """Workers within the memory budget (after the shared design), then the
-    fewest that keep the same number of rounds of tasks."""
+    """Workers within the memory budget (after the shared design), one per task at most."""
     n_rows, n_columns = shape
     # The row-major fit matrix, the solver's per-row class arrays, the interpreter.
     per_worker = train_rows * 8 * (n_columns + 24) + _WORKER_BASE_BYTES
     budget = None if budget_bytes is None else max(budget_bytes - n_rows * n_columns * 8, 0)
     count = min(pool.workers_within([per_worker], workers, budget), n_tasks)
-    if count <= 1:
-        return 1
-    rounds = math.ceil(n_tasks / count)
-    return math.ceil(n_tasks / rounds)
+    return max(count, 1)
 
 
 def _run_pool(tasks, context, count):
     log.info("  Fitting %d global CV tasks with %d workers.", len(tasks), count)
-    return map_items(_run_in_worker, tasks, (context, max(1, pool.cores() // count)), workers=count)
-
-
-def _run_in_worker(task, context, blas_threads: int):
-    """One task in a pool worker, on the BLAS threads it is allotted."""
-    from threadpoolctl import threadpool_limits
-
-    with threadpool_limits(limits=blas_threads):
-        return _run(task, context)
+    return map_items(_run, tasks, (context,), workers=count)
 
 
 def _run(task, context, design=None):

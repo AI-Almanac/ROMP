@@ -381,3 +381,18 @@ def test_hcwf_climatology_brier_skips_the_nan_of_one_member_cases(n_bins):
     df.loc[df["lon"] % 3 == 0, "predicted_prob"] = (df["bin_index"] == 2).astype(float)
     assert np.isnan(((df["predicted_prob"] * (1 - df["predicted_prob"])) / (df["total_members_with_onset"] - 1))).any()
     same(score.calculate_brier_score_climatology(df.copy()), hcwf_old.calculate_brier_score_climatology(df.copy()))
+
+
+def test_grouped_auc_matches_auc_per_group_with_ties_and_empty_classes():
+    rng = np.random.default_rng(3)
+    n, groups = 4000, 60
+    group = rng.integers(0, groups, n)
+    score = np.round(rng.random(n), 1)  # many ties
+    y = (rng.random(n) < 0.3).astype(float)
+    y[group == 5] = 0.0   # a group without positives
+    y[group == 6] = 1.0   # and one without negatives
+    got = prob.grouped_auc(y, score, group, groups + 1)   # the last group is empty
+    for k in range(groups):
+        want = prob.auc(y[group == k].astype(int), score[group == k])
+        assert (np.isnan(want) and np.isnan(got[k])) or got[k] == want
+    assert np.isnan(got[groups]) and np.isnan(got[5]) and np.isnan(got[6])

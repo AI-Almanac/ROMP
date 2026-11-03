@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import re
+import time
 import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -40,6 +41,7 @@ import numpy as np
 import pandas as pd
 from scipy.special import expit
 
+from hcwf import parallel as pool
 from hcwf.blend import calibration, design, logit, mme, random_forest
 from hcwf.blend.predictions import Predictions
 from hcwf.blend.recipe import (CLIMATOLOGY_FEATURE, ExternalPrediction, Recipe, probability_feature_base,
@@ -268,6 +270,7 @@ def evaluate(
     calibrated_preds = _forecast_baselines(ctx, result, scores)
     _mme(ctx, clim_preds, calibrated_preds, result, scores)
 
+    scores.finish()
     if scores.cells:
         result.cell_metrics = pd.concat(scores.cells, ignore_index=True)
         try:
@@ -333,8 +336,14 @@ class _Context:
 
     def allowed_ids(self, ids: np.ndarray) -> np.ndarray:
         """Per id: a dissemination unit."""
-        cells = set(self.cells.tolist())
-        return np.fromiter((i in cells for i in ids.tolist()), dtype=bool, count=len(ids))
+        return _allowed_ids(ids, self.cells)
+
+
+def _allowed_ids(ids: np.ndarray, cells: np.ndarray) -> np.ndarray:
+    """Per id: one of `cells`, tested once per distinct id (by unit code)."""
+    codes, units = pd.factorize(np.asarray(ids))
+    wanted = set(cells.tolist())
+    return np.fromiter((unit in wanted for unit in units.tolist()), dtype=bool, count=len(units))[codes]
 
 
 def final_rows(ctx: _Context) -> np.ndarray:
@@ -356,25 +365,58 @@ def final_rows(ctx: _Context) -> np.ndarray:
 
 @dataclass
 class _Scores:
-    """Per-unit metric frames and yearly metric rows, in the order models are scored."""
+    """Per-unit metric frames and yearly metric rows, in the order models are scored.
+
+    `add` only queues a model; `finish` scores them all, in the run's worker pool when there are workers (each model
+    is independent), and fills `cells` and `yearly` in queue order."""
 
     ctx: _Context
     cells: list = field(default_factory=list)
     yearly: list = field(default_factory=list)
+    queued: list = field(default_factory=list)
 
-    def add(self, preds: Predictions, model: str, method: str, *, yearly: bool) -> None:
-        """Per-unit metrics over the dissemination units; with yearly (CV predictions), per-year metrics over every
-        unit."""
+    def add(self, preds: Predictions, model: str, method: str, *, yearly: bool, warn_as: str | None = None,
+            raise_as: str | None = None) -> None:
+        """Queue a model: per-unit metrics over the dissemination units; with yearly (CV predictions), per-year metrics
+        over every unit. A failure to score it raises (as RuntimeError "<raise_as>: ..." if that is given) or, with
+        `warn_as`, warns "<warn_as>: ..." and leaves the model out."""
+        self.queued.append((preds, model, method, yearly, warn_as, raise_as))
+
+    def finish(self) -> None:
+        """Score the queued models (see `add`)."""
+        queued, self.queued = self.queued, []
+        if not queued:
+            return
+        jobs = [(preds, model, method, yearly) for preds, model, method, yearly, _, _ in queued]
+        start = time.perf_counter()
+        results = pool.map_items(_score, jobs, (self.ctx.cells,), workers=min(self.ctx.workers, len(jobs)))
+        log.info("\nScored %d models in %.1fs", len(jobs), time.perf_counter() - start)
+        for (_, _, _, _, warn_as, raise_as), result in zip(queued, results):
+            if isinstance(result, Exception):
+                if warn_as is not None:
+                    warnings.warn(f"{warn_as}: {result}")
+                    continue
+                if raise_as is not None:
+                    raise RuntimeError(f"{raise_as}: {result}") from result
+                raise result
+            cells, yearly = result
+            self.cells.append(cells)
+            self.yearly.extend(yearly)
+
+
+def _score(job, cells: np.ndarray):
+    """One model's (per-unit metrics, yearly metric rows), or the exception that scoring raised."""
+    preds, model, method, yearly = job
+    try:
         P, outcome = preds.probabilities, preds.outcome
-        cells = metrics.cell_metrics(
-            P, outcome, preds.ids, preds.labels, allowed=self.ctx.allowed_ids(preds.ids), earlier=preds.earlier
-        )
-        cells["model"] = model
-        cells["cv_method"] = method
-        self.cells.append(cells)
-        if yearly:
-            self.yearly.extend(metrics.yearly_metrics(P, outcome, preds.year, model, method,
-                                                       auc_method="sklearn"))
+        table = metrics.cell_metrics(P, outcome, preds.ids, preds.labels, allowed=_allowed_ids(preds.ids, cells),
+                                     earlier=preds.earlier)
+        table["model"] = model
+        table["cv_method"] = method
+        rows = metrics.yearly_metrics(P, outcome, preds.year, model, method, auc_method="sklearn") if yearly else []
+        return table, rows
+    except Exception as exc:
+        return exc
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +467,7 @@ def _cross_validate(ctx: _Context, formulas: dict[str, str], result: Evaluation,
                     continue
                 if preds is None or not len(preds):
                     raise ValueError(f"No predictions for {model}/{method}.")
-                scores.add(preds, model, method, yearly=True)
+                scores.add(preds, model, method, yearly=True, raise_as=f"Error in {model}/{method}")
                 result.cv_preds[(model, method)] = preds
                 if folds:
                     result.coefficients[(model, method)] = folds
@@ -631,7 +673,7 @@ def _climatology_baselines(ctx: _Context, scores: _Scores) -> dict[str, Predicti
             preds = Predictions.of_samples(ctx.weekly, rows, np.column_stack([*weeks, later]), labels + ["later"],
                                            earlier=earlier)
             out[model] = preds
-            scores.add(preds, model, "raw", yearly=False)
+            scores.add(preds, model, "raw", yearly=False, warn_as=f"Error in clim logit '{model}'")
         except Exception as e:
             warnings.warn(f"Error in clim logit '{model}': {e}")
     return out
@@ -655,7 +697,8 @@ def _forecast_baselines(ctx: _Context, result: Evaluation, scores: _Scores) -> d
                 elif len(rows):
                     later = np.clip(1.0 - _row_sum(weeks), 0.0, 1.0)
                     preds = Predictions.of_samples(ctx.weekly, rows, np.column_stack([*weeks, later]), labels + ["later"])
-                    scores.add(preds, f"{label}_raw", "raw", yearly=False)
+                    scores.add(preds, f"{label}_raw", "raw", yearly=False,
+                               warn_as=f"Error in raw forecast '{name}'")
             except Exception as e:
                 warnings.warn(f"Error in raw forecast '{name}': {e}")
 
@@ -665,7 +708,8 @@ def _forecast_baselines(ctx: _Context, result: Evaluation, scores: _Scores) -> d
                 if preds is not None and len(preds):
                     key = name if variant == "base" else f"{name}_calibrated_{variant}"
                     calibrated_by_key[key] = preds
-                    scores.add(preds, f"{name}_calibrated" if variant == "base" else key, "calibrated", yearly=False)
+                    scores.add(preds, f"{name}_calibrated" if variant == "base" else key, "calibrated", yearly=False,
+                               warn_as=f"Error in calibrated forecast '{name}'")
                     if weights is not None:
                         result.platt_weights[f"platt_weights_{label}_calibrated_df{run.output_tag}"] = weights
             except Exception as e:

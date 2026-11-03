@@ -185,6 +185,40 @@ def auc(y01: np.ndarray, score: np.ndarray) -> float:
     return (np.sum(ranks[y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
 
 
+def grouped_auc(y01: np.ndarray, score: np.ndarray, group: np.ndarray, n_groups: int) -> np.ndarray:
+    """`auc` of each group (codes 0..n_groups-1) of finite scores and 0/1 outcomes, from one sort of all the scores.
+
+    The ranks within a group, ties averaged, and so the rank sums are those of `auc` on that group's values alone;
+    NaN for a group without positives or without negatives.
+    """
+    y01 = np.asarray(y01)
+    group = np.asarray(group)
+    n = len(score)
+    if n == 0:
+        return np.full(n_groups, np.nan)
+    order = np.argsort(score)    # ties land in any order: their ranks are averaged
+    if n_groups > 1:
+        by_group = group[order].astype(np.uint16 if n_groups <= 2**16 else np.int64)
+        order = order[np.argsort(by_group, kind="stable")]    # radix sort for 16-bit codes
+    s, g = score[order], group[order]
+    new = np.ones(n, dtype=bool)
+    new[1:] = (s[1:] != s[:-1]) | (g[1:] != g[:-1])
+    starts = np.flatnonzero(new)
+    ends = np.append(starts[1:], n)
+    size = np.bincount(group, minlength=n_groups)
+    first = np.cumsum(size) - size                       # where each group begins in the sorted order
+    average = (starts + ends - 2 * first[g[starts]] + 1) / 2.0    # of the 1-based ranks a run covers
+    ranks = np.repeat(average, ends - starts)
+    positive = y01[order] == 1
+    rank_sum = np.bincount(g[positive], weights=ranks[positive], minlength=n_groups)
+    n1 = np.bincount(g[positive], minlength=n_groups).astype(float)
+    n0 = size - n1
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = (rank_sum - n1 * (n1 + 1) / 2) / (n1 * n0)
+    out[(n1 == 0) | (n0 == 0)] = np.nan
+    return out
+
+
 def pietra(P: np.ndarray, Y: np.ndarray) -> float:
     """Pietra index: the Kolmogorov-Smirnov statistic between the probabilities of the bins that happened and of
     those that did not."""
@@ -230,9 +264,13 @@ def cell_metrics(P: np.ndarray, outcome: np.ndarray, ids: np.ndarray, labels, *,
     else:
         P_rps, Y_rps = P.copy(), Y.copy()
 
-    units, unit = np.unique(ids.astype(str), return_inverse=True)
+    unit, units = pd.factorize(ids.astype(str), sort=True)
     order = np.argsort(unit, kind="stable")
     bounds = np.searchsorted(unit[order], np.arange(len(units) + 1))
+    if np.isfinite(P).all():
+        unit_auc = grouped_auc(Y.ravel(), P.ravel(), np.repeat(unit, n_bins), len(units))   # one ranking of all scores
+    else:
+        unit_auc = None
     rows = []
     for k, name in enumerate(units):
         pos = order[bounds[k]:bounds[k + 1]]
@@ -241,7 +279,7 @@ def cell_metrics(P: np.ndarray, outcome: np.ndarray, ids: np.ndarray, labels, *,
             "id": name,
             "brier": brier(g_P, g_Y),
             "rps": rps(P_rps[pos], Y_rps[pos]),
-            "auc": auc(g_Y.flatten().astype(int), g_P.flatten()),
+            "auc": auc(g_Y.flatten().astype(int), g_P.flatten()) if unit_auc is None else float(unit_auc[k]),
             "n": len(pos),
         })
     cells = pd.DataFrame(rows)
