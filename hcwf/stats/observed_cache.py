@@ -85,7 +85,7 @@ def reset() -> None:
     clear_obs_cache()
 
 
-def _threshold_hash(thresh) -> str:
+def threshold_hash(thresh) -> str:
     """Hash of the threshold values: the named arrays, the season climatology, or the legacy scalar or map."""
     cached = _memo.get(("thresh", id(thresh)))
     if cached is not None and cached[0] is thresh:
@@ -95,6 +95,8 @@ def _threshold_hash(thresh) -> str:
         named = {name: value.to_dict("list") if isinstance(value, pd.DataFrame) else value
                  for name, value in thresh.items()}   # a table is hashed by its contents
         result = part_hash(named, None if season is None else {n: season[n] for n in season.data_vars})
+    elif isinstance(thresh, xr.DataArray):   # the values and the grid they sit on
+        result = part_hash(thresh, {str(name): thresh.coords[name] for name in thresh.coords})
     else:
         result = part_hash(thresh)
     _memo[("thresh", id(thresh))] = (thresh, result)
@@ -192,7 +194,7 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
                                 kwargs.get("obs_file_pattern")),
         "definition": part_hash(definition_mod.definition_hash(setup.definition), setup.season, setup.dry_check,
                                 setup.legacy),
-        "thresholds": _threshold_hash(thresh),
+        "thresholds": threshold_hash(thresh),
         "years": part_hash(years),
     }
     if spec is None:

@@ -23,6 +23,7 @@ from hcwf.onset import definition as definition_mod
 from hcwf.onset.model import Status
 from hcwf.stats.climatology import compute_climatological_onset, compute_climatological_onset_dataset
 from hcwf.stats.climatology import compute_climatology_as_forecast
+from hcwf.stats.observed_cache import threshold_hash
 from hcwf.stats.conditional_climatology import (compute_conditional_climatology_as_forecast,
                                                 create_conditional_climatological_forecast_obs_pairs)
 from hcwf.stats.detect import (compute_onset_for_all_members, compute_onset_for_deterministic_model,
@@ -173,8 +174,16 @@ def test_overrides_and_threshold_hash_are_recorded(world):
     assert attrs["definition_overrides"] == "wet_day,reject if (dry_spell_check = false)"
     assert attrs["definition_hash"] != _open(world.paths["DET"]["observed"]).attrs["definition_hash"]
     assert "at least 2 mm" in attrs["definition_yaml"]
-    hashed = export._threshold_hash({"amount": xr.DataArray(np.arange(6.0).reshape(2, 3), dims=("lat", "lon"))})
-    assert len(hashed) == 64 and hashed != "none"
+    hashed = threshold_hash({"amount": xr.DataArray(np.arange(6.0).reshape(2, 3), dims=("lat", "lon"))})
+    assert hashed and hashed != "none"
+
+
+def test_a_threshold_table_is_hashed_and_exported():
+    """A table of thresholds by unit id (a text column) hashes by its contents, as the cache and the export need."""
+    table = pd.DataFrame({"id": ["a", "b"], "amount": [1.0, 2.0]})
+    other = pd.DataFrame({"id": ["a", "b"], "amount": [1.0, 3.0]})
+    assert threshold_hash({"onset": table}) == threshold_hash({"onset": table.copy()}) != threshold_hash({"onset": other})
+    assert not hasattr(export, "_threshold_hash")
 
 
 def test_deterministic_model_layout(world):

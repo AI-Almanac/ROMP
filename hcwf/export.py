@@ -23,7 +23,6 @@ paths, versions and the resolved run config (see docs/onset_in_hcwf.md, "Exporti
 from __future__ import annotations
 
 import datetime
-import hashlib
 import json
 import warnings
 from dataclasses import asdict
@@ -48,6 +47,7 @@ from hcwf.onset.describe import describe
 from hcwf.onset.model import Status
 from hcwf.stats.climatology import compute_climatological_onset, compute_climatological_onset_dataset
 from hcwf.stats.climatology import compute_climatology_as_forecast
+from hcwf.stats.observed_cache import threshold_hash
 from hcwf.stats.conditional_climatology import (CONDITIONAL_CLIMATOLOGY, climatology_cv_mode,
                                                 compute_conditional_climatology_as_forecast,
                                                 conditional_lead_probabilities)
@@ -283,23 +283,6 @@ def _clean(attrs: dict) -> dict:
     return out
 
 
-def _threshold_hash(thresholds) -> str:
-    """sha256 of the threshold values (names, shapes and numbers), or "none" when the definition has none."""
-    if thresholds is None or (isinstance(thresholds, dict) and not thresholds and
-                              getattr(thresholds, "season_climatology", None) is None):
-        return "none"
-    items = sorted(thresholds.items()) if isinstance(thresholds, dict) else [("legacy_threshold", thresholds)]
-    climatology = getattr(thresholds, "season_climatology", None)
-    if climatology is not None:
-        items += [(f"season_climatology.{name}", climatology[name]) for name in sorted(climatology.data_vars)]
-    digest = hashlib.sha256()
-    for name, value in items:
-        array = np.ascontiguousarray(np.asarray(getattr(value, "values", value), dtype=float))
-        digest.update(f"{name}|{array.shape}|".encode())
-        digest.update(array.tobytes())
-    return digest.hexdigest()
-
-
 def _mask_summary(dic: dict, sample: xr.DataArray) -> dict:
     """The mask settings and how many cells (or units) of the loaded grid have no data at all in the sample variable."""
     spatial = [d for d in sample.dims if d in ("lat", "lon", "unit")]
@@ -348,7 +331,9 @@ def _provenance(dic: dict, kw: dict, source: str, kind: str, thresholds, mask: d
         "threshold_source": setup.threshold_source,
         "threshold_years": f"{setup.threshold_years[0]}-{setup.threshold_years[1]}" if setup.threshold_years and setup.uses_thresholds else "",
         "threshold_files": _json([list(f) for f in setup.threshold_files]),
-        "threshold_values_hash": _threshold_hash(thresholds),
+        "threshold_values_hash": "none" if thresholds is None or (
+            isinstance(thresholds, dict) and not thresholds and getattr(thresholds, "season_climatology", None) is None
+        ) else threshold_hash(thresholds),
         "mask_summary": _json(mask),
         "forecast_history": setup.forecast_history, "lead_label": setup.lead_label,
         "lead_window": f"{window[0]}-{window[1]}", "max_forecast_day": kw.get("max_forecast_day"),
