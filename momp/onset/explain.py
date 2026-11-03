@@ -648,7 +648,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     amounts, invalid = P.resolve_amounts(plan, per_cell, n_series=1, exact=resolution_of(forecast.tenths) == "exact")
     n_leads = forecast.tenths.shape[-1]
     fc_row = (ii, *(() if mi is None else (mi,)), *cell, slice(None))
-    fc_tenths, fc_missing = forecast.tenths[fc_row], forecast.missing[fc_row]
+    fc_tenths, fc_missing = forecast.tenths[fc_row], engine._flat_missing(fc1, policy, 1)[0]
     fy, fm, fd = (a[0] for a in engine._label_table(fc1, n_leads))
     init_date = _Labels(forecast.calendar, [forecast.init_year[ii]], [forecast.init_month[ii]],
                         [forecast.init_day[ii]]).date(0)
@@ -659,7 +659,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
         k = _season_index(layout.season_names, season)
         start, end, data_end = int(jobs.start[k]), int(jobs.end[k]), int(jobs.data_end[k])
         labels = _Labels(forecast.calendar, fy, fm, fd)
-        case = _Case(fc_tenths, engine._flat_missing(fc1, policy, 1)[0], labels, np.full(n_leads, "forecast"), 0,
+        case = _Case(fc_tenths, fc_missing, labels, np.full(n_leads, "forecast"), 0,
                      start, end, data_end, int(layout.preset[k]), _detect_single(plan, start, end, data_end))
         return _build(defn, plan, case, per_cell, amounts, bool(invalid[0]), season=layout.season_names[k],
                       stitched=False, **common)
@@ -672,7 +672,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     labels = _Labels(forecast.calendar, np.concatenate([history.year[:split], fy]),
                      np.concatenate([history.month[:split], fm]), np.concatenate([history.day[:split], fd]))
     tenths = np.concatenate([history.tenths[hist_row][:split], fc_tenths])
-    missing = np.concatenate([history.missing[hist_row][:split], fc_missing])
+    missing = np.concatenate([engine._flat_missing(hist1, policy, 1)[0][:split], fc_missing])
     source = np.array(["observed"] * split + ["forecast"] * n_leads)
     preset = int(layout.preset[k])
     run = _stitched_run(plan, amounts, start, end, data_end, split)

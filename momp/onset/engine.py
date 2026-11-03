@@ -841,12 +841,15 @@ def _derived_stitched_windows(definition: Definition, forecast: ForecastRain, hi
 
 
 def _prior_search(plan: plan_mod.Plan, history: DailyRain, jobs: StitchedJobs, layout: StitchedLayout,
-                  per_cell: dict[str, np.ndarray], backend: str) -> tuple[np.ndarray, np.ndarray]:
+                  per_cell: dict[str, np.ndarray], backend: str,
+                  policy: str | None = None) -> tuple[np.ndarray, np.ndarray]:
     """History-only search per (season, init, cell): the onset day (-1 none) and whether it is ONSET.
 
     Candidates run to min(season end, split - 1) with data_end = split. Returns
-    arrays shaped (n_season, n_init, n_cell).
+    arrays shaped (n_season, n_init, n_cell). policy is the run's missing-rain policy (default: the one ingest
+    recorded on the history); "zero" ignores the missing flags.
     """
+    policy = _missing_policy(history, policy)
     k, n_init, n_cell = len(layout.season_names), layout.n_init, layout.n_cell
     rest = layout.n_series // max(n_init, 1)
 
@@ -860,16 +863,19 @@ def _prior_search(plan: plan_mod.Plan, history: DailyRain, jobs: StitchedJobs, l
     preset[(preset < 0) & (end < start)] = Status.NOT_FOUND
     pjobs = Jobs(per_init_cell(jobs.cell), start, end, split)
     n_time = history.tenths.shape[-1]
-    day, status = _run(plan, history.tenths.reshape(n_cell, n_time), history.missing.reshape(n_cell, n_time),
+    day, status = _run(plan, history.tenths.reshape(n_cell, n_time), _flat_missing(history, policy, n_cell),
                        per_cell, pjobs, preset, backend)
     return day.reshape(k, n_init, n_cell), (status == Status.ONSET).reshape(k, n_init, n_cell)
 
 
 def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRain, thresholds: dict[str, np.ndarray],
                   per_cell: dict[str, np.ndarray], jobs: StitchedJobs, layout: StitchedLayout,
-                  backend: str, windows: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+                  backend: str, windows: np.ndarray | None = None,
+                  policy: str | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Decide PRIOR from the history alone, then run the stitched search for the other jobs; return (day, status) per job.
 
+    policy is the run's missing-rain policy for the history and the forecast alike (default: the forecast's recorded
+    one); under "zero" the days already hold 0 and no flag is passed, as in the plain search.
     The PRIOR search is skipped for curve rules, whose onset is a minimum over the whole
     window and so can move when the window grows (spec section 13). per_cell holds
     the history-only thresholds (first window); windows are the start leads of
@@ -880,8 +886,9 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
     n_cell, n_time = layout.n_cell, history.tenths.shape[-1]
     n_leads = forecast.tenths.shape[-1]
     n_series = layout.n_series
-    flat_h = history.tenths.reshape(n_cell, n_time), history.missing.reshape(n_cell, n_time)
-    flat_f = forecast.tenths.reshape(-1, n_leads), forecast.missing.reshape(-1, n_leads)
+    policy = _missing_policy(forecast, policy)
+    flat_h = history.tenths.reshape(n_cell, n_time), _flat_missing(history, policy, n_cell)
+    flat_f = forecast.tenths.reshape(-1, n_leads), _flat_missing(forecast, policy, n_series)
     amounts, invalid = plan_mod.resolve_amounts(plan, thresholds, n_series=flat_f[0].shape[0],
                                                 exact=resolution_of(flat_f[0]) == "exact")
     n_jobs = len(jobs.series)
@@ -893,7 +900,7 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
     active &= ~bad
     if plan.family == plan_mod.FIRST_PASSAGE and active.any():
         k, n_init, n_member = len(layout.season_names), layout.n_init, layout.n_member
-        prior_day, prior_hit = _prior_search(plan, history, jobs, layout, per_cell, backend)
+        prior_day, prior_hit = _prior_search(plan, history, jobs, layout, per_cell, backend, policy)
         shape = (k, n_init, n_member, n_cell)
         hit = np.broadcast_to(prior_hit[:, :, None, :], shape).ravel() & active
         day[hit] = np.broadcast_to(prior_day[:, :, None, :], shape).ravel()[hit]
@@ -1068,7 +1075,8 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
                                               season_climatology)
         per_cell = _series_thresholds(plan, thresholds, spatial_dims, spatial_shape, spatial_shape,
                                       first_window_only=True)
-        day, status = _run_stitched(plan, history, forecast, per_series, per_cell, jobs, layout, backend, windows)
+        day, status = _run_stitched(plan, history, forecast, per_series, per_cell, jobs, layout, backend, windows,
+                                    policy)
         split = jobs.split
         hist_labels = (history.year, history.month, history.day)
     k = len(layout.season_names)
