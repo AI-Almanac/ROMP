@@ -420,8 +420,7 @@ def reduce_onset_days(doy: xr.DataArray, how: str = "mean") -> xr.DataArray:
     """The climatological onset day of year over the "year" dim of `doy` (NaN for a year without an onset).
 
     "mean" is the mean over the years that have an onset, rounded half to even (ROMP's climatological onset);
-    "median" is the median of those years, NaN where fewer than half of the years have an onset
-    (engine.climatological_onset).
+    "median" is the median of those years, NaN where fewer than half of the years have an onset.
     """
     if how == "mean":
         return np.round(doy.mean(dim="year"))

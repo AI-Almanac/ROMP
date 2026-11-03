@@ -265,22 +265,6 @@ def _is_leap(calendar: str, year: np.ndarray) -> np.ndarray:
     return (year % 4 == 0) & ((year % 100 != 0) | (year % 400 == 0))
 
 
-def _day_of_year(calendar: str, year, month, day) -> np.ndarray:
-    """1-based day of year of year-month-day labels in the calendar."""
-    month = np.asarray(month, dtype=np.int64)
-    day = np.asarray(day, dtype=np.int64)
-    if calendar == "360_day":
-        return (month - 1) * 30 + day
-    return _CUM_DAYS[month - 1] + day + (_is_leap(calendar, year) & (month > 2))
-
-
-def _year_length(calendar: str, year) -> np.ndarray:
-    """Number of days in each year of the calendar."""
-    if calendar == "360_day":
-        return np.full(np.shape(year), 360)
-    return 365 + _is_leap(calendar, year).astype(np.int64)
-
-
 def _add_days(calendar: str, year, month, day, offsets: np.ndarray):
     """Labels of (year, month, day) + offsets days in the calendar: three int arrays shaped (n_dates, n_offsets)."""
     year, month, day = (np.asarray(a, dtype=np.int64) for a in (year, month, day))
@@ -1161,48 +1145,3 @@ def regional(rain: DailyRain, mask, weights: str = "cos_lat") -> DailyRain:
     coords = {"time": rain.coords["time"]} if "time" in rain.coords else {}
     return DailyRain(tenths, all_missing, ("time",), coords, rain.year, rain.month, rain.day, rain.calendar,
                      rain.day_boundary, rain.source, rain.missing_policy)
-
-
-def climatological_onset(definition: Definition, rain: DailyRain, *, thresholds=None, years,
-                         season_climatology: xr.Dataset | None = None, backend: str = "numba") -> xr.Dataset:
-    """Median onset day of year per season and cell over `years`, and how many years had an onset.
-
-    Only years with status ONSET count. The day of year is counted from 1 Jan of
-    the season's year, so onsets of a season that runs into the next year exceed
-    365. onset_doy is NaN where fewer than half of `years` have an onset.
-    Variables: onset_doy (float) and n_onset_years (int), dims (season, *spatial).
-    """
-    from momp.onset.climatology import reduce_onset_days
-
-    ds = detect_observed(definition, rain, thresholds=thresholds, years=years,
-                         season_climatology=season_climatology, backend=backend)
-    index = ds["onset_index"].values
-    found = ds["status"].values == Status.ONSET
-    safe = np.where(found, index, 0)
-    year, month, day = rain.year[safe], rain.month[safe], rain.day[safe]
-    season_year = ds["year"].values.reshape((-1,) + (1,) * (found.ndim - 1))
-    doy = (_day_of_year(rain.calendar, year, month, day)
-           + (year - season_year) * _year_length(rain.calendar, season_year)).astype(float)
-    doy = np.where(found, doy, np.nan)
-    n_found = found.sum(axis=0)
-    dims = ds["status"].dims[1:]
-    median = reduce_onset_days(xr.DataArray(doy, dims=("year", *dims)), "median").values
-    out = xr.Dataset({"onset_doy": (dims, median), "n_onset_years": (dims, n_found.astype(np.int64))},
-                     coords={d: ds.coords[d] for d in dims if d in ds.coords})
-    out.attrs.update({"definition_id": definition.id, "definition_version": definition.version,
-                      "years": [int(y) for y in ds["year"].values], "backend": backend})
-    return out
-
-
-def save(ds: xr.Dataset, path) -> None:
-    """Write a result Dataset to a zarr store, replacing what is there.
-
-    cftime onset dates (non-standard calendars) cannot hold "no onset" in a CF
-    time encoding, so they are stored as YYYY-MM-DD strings, empty where there
-    is no onset.
-    """
-    for name, var in ds.data_vars.items():
-        if var.dtype == object:
-            text = np.array([f"{d.year:04d}-{d.month:02d}-{d.day:02d}" if d is not None else "" for d in var.values.ravel()])
-            ds = ds.assign({name: (var.dims, text.reshape(var.shape), var.attrs)})
-    ds.to_zarr(path, mode="w")

@@ -134,19 +134,6 @@ def skill_score_in_bins(cfg=None, setting=None):
             plot_reliability_diagram(score_results["forecast_obs_df"], **case_cfg)
 
 
-    max_forecast_day = cfg.max_forecast_day
-
-    if 2 > 3:
-        import pickle
-        import os
-        fout = os.path.join(cfg.dir_out,f"combi_binned_skill_scores_{max_forecast_day}day.pkl")
-        with open(fout, "wb") as f:
-            pickle.dump(result_binned, f)
-
-        fout = os.path.join(cfg.dir_out,f"combi_overall_skill_scores_{max_forecast_day}day.pkl")
-        with open(fout, "wb") as f:
-            pickle.dump(result_overall, f)
-
     import pprint
 
     # panel heatmap plot for binned BSS and AUC

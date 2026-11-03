@@ -71,17 +71,6 @@ def test_mean_is_rounded_and_median_needs_half_the_years():
         reduce_onset_days(doy, "mode")
 
 
-def test_engine_climatological_onset_is_the_provider_median():
-    rng = np.random.default_rng(4)
-    da, thr = observed_case(rng, nan=0.0)
-    rain = ingest(da, day_boundary=BOUNDARY)
-    defn = D.loads(HEAD + ENGINE_RULE)
-    out = engine.climatological_onset(defn, rain, thresholds={"thr": thr}, years=[2001, 2002])
-    ds = engine.detect_observed(defn, rain, thresholds={"thr": thr}, years=[2001, 2002])
-    found = ds["status"].values == engine.Status.ONSET
-    assert out["n_onset_years"].values.tolist() == found.sum(axis=0).tolist()
-
-
 def _engine_case(seed=33):
     rng = np.random.default_rng(seed)
     da, thr = observed_case(rng, nan=0.0)

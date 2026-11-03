@@ -3,7 +3,6 @@ import os
 import numpy as np
 import pandas as pd
 import xarray as xr
-import pickle
 from momp.metrics.error import year_points
 from momp.spatial import axes
 from momp.stats.bins import get_target_bins
@@ -119,29 +118,6 @@ def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
         attrs={'description': 'Scored init cases whose forecast onset was back-dated (on or before the init, '
                               'scored as the first lead); 0 unless the verification window starts at lead 1'})
     return spatial_metrics
-
-
-def save_ref_score_results(results, filename):
-    """Pickle the reference (climatology) results to filename + ".pkl"."""
-    to_save = {
-    "climatology_obs_df": results["climatology_obs_df"],
-    "brier_ref": results["BS_ref"],
-    "rps_ref": results["RPS_ref"],
-    "auc_ref": results["AUC_ref"],
-    }
-
-    with open(f"{filename}.pkl", "wb") as f:
-        pickle.dump(to_save, f)
-
-
-def load_ref_score_results(ref_score_file, results_dict):
-    """Load pickled reference results from the Path ref_score_file and merge them into results_dict."""
-    with ref_score_file.open("rb") as f:
-        loaded_results = pickle.load(f)
-
-    results_dict.update(loaded_results)
-
-    return results_dict
 
 
 def with_unit_labels(obj, kwargs):
