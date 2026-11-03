@@ -269,7 +269,7 @@ def test_a_blend_config_has_its_recipe(world, tmp_path):
 
 def test_importing_the_config_package_stays_light():
     code = ("import sys, hcwf.config, hcwf.config.model, hcwf.config.flat_bridge\n"
-            "heavy = [m for m in ('hcwf.io.input', 'hcwf.blend.recipe', 'hcwf.lib.control', 'hcwf.utils.mask') "
+            "heavy = [m for m in ('hcwf.io.input', 'hcwf.blend.recipe', 'hcwf.utils.mask') "
             "if m in sys.modules]\n"
             "assert not heavy, heavy\n")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

@@ -25,9 +25,7 @@ from __future__ import annotations
 import datetime
 import json
 import warnings
-from dataclasses import asdict
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -35,8 +33,8 @@ import xarray as xr
 
 from hcwf.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
                            get_initialization_dates, load_history, load_imd_rainfall, load_thresholds)
-from hcwf.lib.control import LAYOUT, init_dataclass, iter_list, make_case
-from hcwf.lib.convention import Case, Setting
+from hcwf.config.flat_bridge import model_kwargs, to_flat
+from hcwf.config.model import RunConfig
 from hcwf.lib.onset_config import onset_setup
 from hcwf.lib.run_folder import file_name
 from hcwf.lib.resolved import resolved_config_text
@@ -69,26 +67,6 @@ _COMPRESSION = {"zlib": True, "complevel": 4, "shuffle": True}
 
 
 # --- configuration ----------------------------------------------------------------------------------
-
-def case_kwargs(dic: dict, model: str, *, reference: bool = False) -> dict:
-    """The keyword arguments the scoring builds for one model: Setting and Case values of its first window.
-
-    The detection does not depend on the verification window, so the first one stands for all. With
-    reference=True the case is the climatology reference's, built as spatial_far_mr_mae_map builds it:
-    the model name is the reference's and the data location the reference's.
-    """
-    dic = dict(dic)
-    if reference:
-        dic["model_list"] = (model,)
-    pool = iter_list(dic)
-    combi = tuple(model if field == "model" else values[0] for field, values in zip(LAYOUT, pool))
-    case = make_case(Case, combi, dic)
-    if reference:
-        case.update({"model_dir": dic["ref_model_dir"], "model_var": case.ref_model_var,
-                     "file_pattern": dic["ref_model_file_pattern"], "unit_cvt": dic["ref_model_unit_cvt"],
-                     "model_dims": None})
-    return {**asdict(init_dataclass(Setting, dic)), **asdict(case)}
-
 
 def onsets_folder(dic: dict) -> Path:
     """The folder of the onset files: the run's ``onsets`` folder, or dir_out/onsets."""
@@ -367,12 +345,13 @@ def _years_loop(kw: dict, load):
             warnings.warn(f"export skips year {year} (missing input file): {exc}", UserWarning)
 
 
-def collect_observed(dic: dict) -> xr.Dataset:
+def collect_observed(rc: RunConfig) -> xr.Dataset:
     """The observed onsets of every evaluated year, from hcwf.stats.detect.detect_observed_result (what is scored).
 
     Dims (year, season, lat, lon), or (year, season, unit) on evaluation units: onset_date, onset_doy and status.
     """
-    kw = case_kwargs(dic, dic["model_list"][0])
+    dic = to_flat(rc)
+    kw = model_kwargs(rc, rc.models[0].name)
     thresholds = load_thresholds(**kw)
     parts, sample, setup = [], None, None
     for year, rain in _years_loop(kw, lambda y: load_imd_rainfall(y, **kw)):
@@ -406,7 +385,7 @@ def collect_observed(dic: dict) -> xr.Dataset:
 
 # --- models -------------------------------------------------------------------------------------------
 
-def collect_model(dic: dict, model: str) -> xr.Dataset:
+def collect_model(rc: RunConfig, model: str) -> xr.Dataset:
     """The onsets of one forecast model for every evaluated year, from hcwf.stats.detect._detect_forecast.
 
     Dims (init_time, [member], season, lat, lon), or with unit instead of lat and lon on evaluation units: onset_date, onset_doy, onset_lead (the engine's 1-based lead,
@@ -415,7 +394,8 @@ def collect_model(dic: dict, model: str) -> xr.Dataset:
     members_by_status, onset_probability and the ensemble onset the scoring uses: ensemble_onset_date,
     ensemble_onset_doy, ensemble_onset_day and ensemble_status.
     """
-    kw = case_kwargs(dic, model)
+    dic = to_flat(rc)
+    kw = model_kwargs(rc, model)
     ensemble = bool(kw["probabilistic"])
     thresholds = load_thresholds(**kw)
     parts, sample, calendar, setup = [], None, "standard", None
@@ -518,9 +498,9 @@ def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: 
 
 # --- climatology references -----------------------------------------------------------------------------
 
-def _reference_inputs(dic: dict, model: str):
+def _reference_inputs(rc: RunConfig, model: str):
     """The case kwargs, thresholds and per-year (year, observed onsets, init dates, rain sample) of a climatology reference."""
-    kw = case_kwargs(dic, model, reference=True)
+    kw = model_kwargs(rc, model, reference_as=model)
     thresholds = load_thresholds(**kw)
     years = []
     for year, rain in _years_loop(kw, lambda y: load_imd_rainfall(y, **kw)):
@@ -568,7 +548,7 @@ def _reference_year(table: pd.DataFrame, init_dates, obs_da: xr.DataArray, score
                 "season": [season], **{d: obs_da[d].values for d in spatial}})
 
 
-def collect_climatology(dic: dict) -> xr.Dataset:
+def collect_climatology(rc: RunConfig) -> xr.Dataset:
     """The traditional climatology: its onset per cell and, per init, the forecast HCWF scores from it.
 
     climatological_onset_doy and climatological_onset_date (season, lat, lon) come from
@@ -576,7 +556,8 @@ def collect_climatology(dic: dict) -> xr.Dataset:
     the per-init onset_date, onset_doy, onset_lead, onset_day, status and scored (init_time, season, lat, lon)
     from compute_climatology_as_forecast (a date within the lead window, else no onset).
     """
-    kw, thresholds, years = _reference_inputs(dic, CLIMATOLOGY)
+    dic = to_flat(rc)
+    kw, thresholds, years = _reference_inputs(rc, CLIMATOLOGY)
     setup = onset_setup(kw)
     clim_doy = compute_climatological_onset(**kw)
     parts = []
@@ -612,7 +593,7 @@ def collect_climatology(dic: dict) -> xr.Dataset:
     return ds
 
 
-def collect_conditional_climatology(dic: dict) -> xr.Dataset:
+def collect_conditional_climatology(rc: RunConfig) -> xr.Dataset:
     """The conditional climatology: per init its median onset and its full onset probability by lead.
 
     onset_date, onset_doy, onset_lead, onset_day, status and scored (init_time, season, lat, lon) come from
@@ -621,7 +602,8 @@ def collect_conditional_climatology(dic: dict) -> xr.Dataset:
     (init_time, season, lead, lat, lon) is that conditional CDF, P(onset on or before the lead | no onset by
     the init), for leads 0 to max_forecast_day (0 at lead 0), NaN for cells without a KDE.
     """
-    kw, thresholds, years = _reference_inputs(dic, CONDITIONAL_CLIMATOLOGY)
+    dic = to_flat(rc)
+    kw, thresholds, years = _reference_inputs(rc, CONDITIONAL_CLIMATOLOGY)
     setup = onset_setup(kw)
     clim_onset = compute_climatological_onset_dataset(**kw)
     horizon = int(kw["max_forecast_day"])
@@ -659,15 +641,15 @@ def collect_conditional_climatology(dic: dict) -> xr.Dataset:
 
 # --- entry point --------------------------------------------------------------------------------------
 
-def _collect(dic: dict, source: str) -> xr.Dataset:
+def _collect(rc: RunConfig, source: str) -> xr.Dataset:
     """The Dataset of one source."""
     if source == OBSERVED:
-        return collect_observed(dic)
+        return collect_observed(rc)
     if source == CLIMATOLOGY:
-        return collect_climatology(dic)
+        return collect_climatology(rc)
     if source == CONDITIONAL_CLIMATOLOGY:
-        return collect_conditional_climatology(dic)
-    return collect_model(dic, source)
+        return collect_conditional_climatology(rc)
+    return collect_model(rc, source)
 
 
 def export_onsets(cfg, sources=None, out=None) -> dict:
@@ -682,15 +664,14 @@ def export_onsets(cfg, sources=None, out=None) -> dict:
     functions and settings; nothing is scored.
     """
     from hcwf.config.build import resolve
-    from hcwf.config.flat_bridge import to_flat
-
-    dic = to_flat(resolve(cfg))
+    rc = resolve(cfg)
+    dic = to_flat(rc)
     names = _check_sources(dic, sources)
     folder = Path(out) if out is not None else onsets_folder(dic)
     paths = {}
     for source in names:
         log.info(f"Exporting onset dates of {source} ...")
-        ds = _collect(dic, source)
+        ds = _collect(rc, source)
         path = write_netcdf(ds, folder / file_name(dic, "onset", source.replace(" ", "_")))
         log.info(f"  wrote {path}")
         paths[source] = path

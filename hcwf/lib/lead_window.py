@@ -9,7 +9,7 @@ import os
 
 import xarray as xr
 
-from hcwf.lib.control import evaluation_years
+from hcwf.config.model import evaluation_years
 from hcwf.lib.onset_config import OnsetConfigError, forecast_reach, onset_setup
 from hcwf.utils.practical import set_dir
 from hcwf.utils.standard import dim_fmt_model

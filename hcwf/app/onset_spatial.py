@@ -2,7 +2,6 @@
 from hcwf.io.input import load_imd_rainfall
 from hcwf.io.input import load_thresholds
 from hcwf.stats.detect import detect_observed_onset
-from hcwf.lib.loader import get_cfg, get_setting
 from hcwf.graphics.func_map import spatial_metrics_map
 import logging
 
@@ -34,11 +33,3 @@ def spatial_onset(year, **kwargs):
                     show_ylabel=True, title="onset day", rect_box=True, **kwargs)
 
     return onset_doy
-
-
-if __name__ == "__main__":
-    from hcwf.lib.loader import get_cfg, get_setting
-
-    cfg, setting = get_cfg(), get_setting()
-
-    spatial_onset(2020, **vars(cfg))

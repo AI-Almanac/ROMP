@@ -17,7 +17,7 @@ import numpy as np
 import xarray as xr
 
 from hcwf.lib.config_schema import has_blend
-from hcwf.lib.control import climatology_years, evaluation_years
+from hcwf.config.model import climatology_years, evaluation_years
 from hcwf.lib.onset_config import onset_setup
 
 log = logging.getLogger(__name__)
@@ -466,14 +466,16 @@ def _alignment(dic: dict, report: CheckReport) -> None:
     if not setup.check_alignment:
         report.add("onset.check_alignment is false: skipped")
         return
-    from hcwf.export import case_kwargs
+    from hcwf.config.flat_bridge import model_kwargs
+    from hcwf.config.model import RunConfig
     from hcwf.lib import align_sample
     from hcwf.lib.onset_config import FORECAST_BOUNDARY
 
     jobs = {}
+    rc = RunConfig.from_flat(dic, check=False)
     for model in dic["model_list"]:
         try:
-            kw = {**case_kwargs(dic, model), "dir_fig": None}
+            kw = {**model_kwargs(rc, model), "dir_fig": None}
         except Exception as exc:  # noqa: BLE001
             report.add(f"{model}: skipped ({exc})")
             continue
@@ -552,10 +554,11 @@ def _cache(dic: dict, report: CheckReport) -> None:
                    "definition, cells and years is a hit")
         return
     try:
-        from hcwf.export import case_kwargs
+        from hcwf.config.flat_bridge import model_kwargs
+        from hcwf.config.model import RunConfig
         from hcwf.io.input import load_imd_rainfall, load_thresholds
 
-        kw = {**case_kwargs(dic, dic["model_list"][0]), "dir_fig": None}
+        kw = {**model_kwargs(RunConfig.from_flat(dic, check=False), dic["model_list"][0]), "dir_fig": None}
         year = next(y for y in kw["years"] if _find(kw["obs_dir"], tuple(kw["obs_file_pattern"]), y))
         rain = load_imd_rainfall(year, **kw)
         parts = observed_cache.fingerprint_parts(rain, load_thresholds(**kw), kw)

@@ -1,13 +1,7 @@
 """Compute, save and plot spatial MAE, FAR and MR maps for deterministic and ensemble (probabilistic) forecast models."""
-from dataclasses import asdict
-from itertools import product
-import copy
-
+from hcwf.config.flat_bridge import case_kwargs
 from hcwf.metrics.error import create_spatial_far_mr_mae
 from hcwf.stats.benchmark import compute_metrics_multiple_years
-from hcwf.lib.control import iter_list, make_case
-from hcwf.lib.convention import Case
-from hcwf.lib.loader import get_cfg, get_setting
 from hcwf.graphics.maps import plot_spatial_metrics
 from hcwf.graphics.onset_map import plot_spatial_climatology_onset
 from hcwf.graphics.panel_portrait_error import panel_portrait_mae_far_mr
@@ -19,32 +13,25 @@ from hcwf.utils.log import progress
 log = logging.getLogger(__name__)
 
 
-def spatial_far_mr_mae_map(cfg=None, setting=None):
+def spatial_far_mr_mae_map(rc):
     """Compute, save and plot spatial MAE, FAR and MR maps for each deterministic forecast case.
 
     Also evaluates the reference model (climatology or a user-specified model)
-    when cfg.ref_model is set. Returns a nested dict of spatial metrics keyed by
-    case combination. For an ensemble run the forecast onset is the ensemble onset (compute_metrics_multiple_years
-    picks it from cfg.probabilistic); the climatology reference never reads a forecast.
+    when the run has one (rc.reference.model). rc is the resolved RunConfig. Returns a nested dict of spatial metrics
+    keyed by case combination. For an ensemble run the forecast onset is the ensemble onset (compute_metrics_multiple_years
+    picks it from probabilistic); the climatology reference never reads a forecast.
     """
-
-    if cfg is None:
-        cfg = get_cfg()
-    if setting is None:
-        setting = get_setting()
 
     results = {}
 
-    layout_pool = iter_list(vars(cfg))
-
-    for combi in progress(list(product(*layout_pool)), desc="cases"):
-        case = make_case(Case, combi, vars(cfg))
+    for case in progress(list(rc.cases()), desc="cases"):
+        combi = case.key
 
         log.debug(f"{'='*50}")
-        log.info(f"processing {case.model} onset evaluation for verification window "
-                f"{case.verification_window}, case: {case.case_name}")
+        log.info(f"processing {case.model.name} onset evaluation for verification window "
+                f"{case.window.span}, case: {case.name}")
 
-        case_cfg = {**asdict(case), **asdict(setting)}
+        case_cfg = case_kwargs(rc, case, "deterministic")
 
         # model-obs onset benchmarking
         metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg)
@@ -77,31 +64,18 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
     # ------------------------------------------------------------------------
     # baseline metrics (climatology or user specified model)
 
-    if not cfg.ref_model:
+    if not rc.reference.model:
         return results
 
-    cfg_ref = copy.copy(cfg)
-    cfg_ref.model_list = (cfg.ref_model,)
-    layout_pool = iter_list(vars(cfg_ref))
-
-    for combi in progress(list(product(*layout_pool)), desc="cases"):
-        case = make_case(Case, combi, vars(cfg_ref))
+    for case in progress(list(rc.reference_cases()), desc="cases"):
+        combi = case.key
         log.debug(f"{'='*50}")
-        log.info(f"processing {case.model} onset evaluation for verification window"
-                f"{case.verification_window}, case: {case.case_name}")
+        log.info(f"processing {case.model.name} onset evaluation for verification window"
+                f"{case.window.span}, case: {case.name}")
 
-        # the reference model's own data location, variable, pattern, unit and dims
-        # (read from setting/case, which exist even if the forecast loop never ran)
-        case_ref = {'model_dir': setting.ref_model_dir,
-                    'model_var': case.ref_model_var,
-                    'file_pattern': setting.ref_model_file_pattern,
-                    'unit_cvt': setting.ref_model_unit_cvt,
-                    'model_dims': None
-                    }
-
-        case.update(case_ref)
-
-        case_cfg_ref = {**asdict(case), **asdict(setting)}
+        # the reference's own data location, variable, pattern, unit and dims (the reference case holds them, even if
+        # the forecast loop never ran)
+        case_cfg_ref = case_kwargs(rc, case, "deterministic")
 
         # model-obs onset benchmarking
         metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
@@ -129,8 +103,8 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
 
 
     # save climatological onset to netcdf
-    if case.model == 'climatology' and case_cfg_ref['save_nc_climatology']:
-        save_climatology_onset(onset_da_dict, case_cfg_ref, case.years_clim)
+    if case.model.name == 'climatology' and case_cfg_ref['save_nc_climatology']:
+        save_climatology_onset(onset_da_dict, case_cfg_ref, rc.evaluation.climatology_years)
 
     # spatial map of climatology onset day
     if case_cfg_ref['plot_climatology_onset']:
@@ -141,8 +115,3 @@ def spatial_far_mr_mae_map(cfg=None, setting=None):
        panel_portrait_mae_far_mr(results, **case_cfg_ref)
 
     return results
-
-# ------------------------------------------------------------------------------
-if __name__ == "__main__":
-
-    results = spatial_far_mr_mae_map()

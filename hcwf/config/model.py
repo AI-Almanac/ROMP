@@ -12,7 +12,7 @@ declare attribute names and types only: every key, default, help text and choice
 hcwf/lib/config_schema.py, and ``OutputSpec`` and ``MetricsSpec`` are generated from its ``output`` and ``metrics``
 sections. tests/test_runconfig_coverage.py checks that every schema key is read by a projection.
 
-Imports of the heavy modules (io.input, onset_config, blend.recipe, control) are inside the functions, so that
+Imports of the heavy modules (io.input, onset_config, blend.recipe) are inside the functions, so that
 ``import hcwf.config.model`` stays light.
 """
 from __future__ import annotations
@@ -36,6 +36,52 @@ Dims = tuple[tuple[str, str], ...]
 CLIMATOLOGY_REFERENCES = ("climatology", "conditional_climatology")
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# helpers on years, members and day bins (the flat record and the typed specs both use them)
+# ----------------------------------------------------------------------------------------------------------------------
+
+def years_tuple_clim(year_start: int, year_end: int) -> tuple[int, ...]:
+    """Create a tuple of integers from year_start to year_end inclusive."""
+    return tuple(range(year_start, year_end + 1))
+
+
+def years_tuple_model(start_date: tuple[int, int, int], end_date: tuple[int, int, int]) -> tuple[int, ...]:
+    """Create a tuple of years from start_date to end_date inclusive. Each date is a tuple like (year, month, day)."""
+    return tuple(range(start_date[0], end_date[0] + 1))
+
+
+def evaluation_years(dic: Mapping) -> tuple[int, ...]:
+    """The years evaluated: `years` (evaluation.years) if given, else every year from start_date to end_date."""
+    return tuple(dic["years"]) if dic.get("years") else years_tuple_model(dic["start_date"], dic["end_date"])
+
+
+def climatology_years(dic: Mapping) -> tuple[int, ...]:
+    """The climatology years: `years_clim` (evaluation.climatology_years) if given, else start_year_clim to end_year_clim."""
+    return tuple(dic["years_clim"]) if dic.get("years_clim") else years_tuple_clim(dic["start_year_clim"],
+                                                                                   dic["end_year_clim"])
+
+
+def take_ensemble_members(members) -> tuple[int, ...] | None:
+    """Normalize members into a tuple of ints (or None).
+
+    Accepts a list or tuple of ints (returned as a tuple), a string 'start-end' (expanded), and None, empty or 'All' (None).
+    """
+    if not members or members == "All":
+        return None
+    if isinstance(members, (list, tuple)):
+        return tuple(members)
+    if isinstance(members, str) and "-" in members:
+        start, end = map(int, members.split("-", 1))
+        return tuple(range(start, end + 1))
+    raise TypeError("members must be list[int], tuple[int, ...], 'start-end' string, or None")
+
+
+def filter_bins_in_window(day_bins, verification_window) -> tuple[tuple[int, int], ...]:
+    """The day bins that lie completely within the verification window, e.g. ((1, 5), (6, 10)) in (6, 20) is ((6, 10),)."""
+    start_win, end_win = verification_window
+    return tuple(b for b in day_bins if start_win <= b[0] and b[1] <= end_win)
+
+
 @dataclass(frozen=True, slots=True)
 class Window:
     """One verification window and its tolerance (verification_window_list[i] and tolerance_days_list[i])."""
@@ -56,8 +102,6 @@ class Window:
 
     def bins(self, day_bins) -> tuple[tuple[int, int], ...]:
         """The day bins that lie completely inside the window."""
-        from hcwf.lib.control import filter_bins_in_window
-
         return filter_bins_in_window(day_bins, self.span)
 
 
@@ -362,10 +406,8 @@ def _project_reference(v, units) -> ReferenceSpec:
 
 def _project_evaluation(v) -> EvaluationSpec:
     """The evaluation, with the years and members resolved."""
-    from hcwf.lib.control import climatology_years, evaluation_years, take_ensemble_members
-
     spans, tolerances = _get(v, "verification_window_list"), _get(v, "tolerance_days_list")
-    # a tolerance belongs to the first window of that span (control.make_case looks it up by span)
+    # a tolerance belongs to the first window of that span (as make_case did: looked up by span)
     windows = tuple(Window(s[0], s[1], tolerances[list(spans).index(s)]) for s in spans)
     lead = _get(v, "lead_window")
     return EvaluationSpec(

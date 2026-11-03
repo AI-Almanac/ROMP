@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 from hcwf.io.input import load_imd_rainfall, load_thresholds
-from hcwf.lib.control import evaluation_years
+from hcwf.config.model import evaluation_years
 from hcwf.lib.onset_config import onset_setup
 from hcwf.onset import explain
 from hcwf.onset.ingest import ingest

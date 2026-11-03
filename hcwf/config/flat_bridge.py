@@ -4,13 +4,15 @@ Design: docs/review/runconfig_design.md section 3 ("Transitional adapter"). Step
 `# R2-bridge` wrapper that calls it. Nothing outside tests and these wrappers may import it.
 
     to_flat(rc)                       a copy of the resolved flat record
-    case_kwargs(rc, case, flow)       today's {**asdict(Setting), **asdict(Case)} of one case, as the flow builds it
+    case_kwargs(rc, case, flow)       the flat keyword arguments of one case: the run's settings and the case's own values
+    model_kwargs(rc, model, ...)      the same for a model's first window (export, --check)
     from_case_kwargs(kw)              (rc, case, selection): the typed inputs a migrated function used to read from kw
 """
 # R2-bridge
 from __future__ import annotations
 
-from dataclasses import asdict, fields
+import copy
+from dataclasses import replace
 from typing import Any, Mapping
 
 from hcwf.config.model import Case, ModelSpec, RunConfig, Selection, Window
@@ -24,8 +26,27 @@ SELECTION_KWARGS = {"keep_unit_ids": "keep_unit_ids", "member_ids": "member_ids"
                     "lat": "lat_select", "lon": "lon_select", "land_only": "land_only", "shp_only": "shp_only",
                     "reference_onset": "reference_onset", "rain_horizon": "rain_horizon"}
 """Selection field -> the kwargs name the readers use."""
-_RUNTIME = ("cache_dir", "short_names", "lead_window")
-"""The settings that are not schema keys (convention._RUNTIME_SETTINGS)."""
+CASE_FIELDS = ("case_name", "model", "model_var", "model_dir", "obs", "obs_var", "ref_model", "ref_model_var",
+               "probabilistic", "members", "onset_percentage_threshold", "verification_window", "tolerance_days",
+               "max_forecast_day", "day_bins", "years", "years_clim", "region", "file_pattern", "unit_cvt",
+               "accumulation", "daily_boundary", "model_dims")
+"""The keys a case owns, in the order of the kwargs (the old Case dataclass); the run's settings are every other key."""
+_RUNTIME = {"cache_dir": None, "short_names": False, "lead_window": None}
+"""The settings that are not schema keys, with their defaults."""
+
+
+def _setting_part(values: Mapping) -> dict:
+    """The run's settings: every schema key that is not a case field (in schema order) and the run's own settings, each
+    from `values` or else its schema default (None for a required or computed one)."""
+    out = {}
+    for item in schema.FIELDS:
+        if item.key in CASE_FIELDS:
+            continue
+        default = None if callable(item.default) or item.default is schema.REQUIRED else item.default
+        out[item.key] = values[item.key] if item.key in values else copy.deepcopy(default)
+    for key, default in _RUNTIME.items():
+        out[key] = values[key] if key in values else default
+    return out
 
 
 def to_flat(rc: RunConfig) -> dict:
@@ -34,17 +55,13 @@ def to_flat(rc: RunConfig) -> dict:
 
 
 def case_kwargs(rc: RunConfig, case: Case, flow: str, selection: Selection | None = None) -> dict:
-    """{**asdict(Setting), **asdict(Case)} of one case, for callees that take `**case_cfg`.
+    """The settings and the case's own values as one dict, for callees that take `**case_cfg`.
 
-    The Setting part is the run's flat record (keys in the order and with the defaults of convention.Setting); the Case
-    part comes from the typed case. For a reference case `flow` is "deterministic" or "ensemble" and must be the flow
+    The settings part is the run's flat record (`_setting_part`); the case part comes from the typed case. For a reference case `flow` is "deterministic" or "ensemble" and must be the flow
     that built it with `rc.reference_cases` (no `like` or `like`): the case then has that flow's rule. day_bins are the
     run's whole bins; the ensemble flow's create_score_results narrows them to the window with `Window.bins`.
     A `selection` adds its keys that are set.
     """
-    from hcwf.lib.control import init_dataclass
-    from hcwf.lib.convention import Case as OldCase, Setting
-
     if flow not in FLOWS:
         raise ValueError(f"flow must be one of {FLOWS}, got {flow!r}")
     ev, ref, model = rc.evaluation, rc.reference, case.model
@@ -57,13 +74,23 @@ def case_kwargs(rc: RunConfig, case: Case, flow: str, selection: Selection | Non
         "years": ev.years, "years_clim": ev.climatology_years, "region": rc.area.region,
         "file_pattern": model.file_pattern, "unit_cvt": model.unit_cvt, "accumulation": model.accumulation,
         "daily_boundary": model.daily_boundary, "model_dims": model.dims_map()}
-    names = [f.name for f in fields(OldCase)]
-    if set(names) != set(mine):
-        raise RuntimeError(f"convention.Case and the bridge disagree: {sorted(set(names) ^ set(mine))}")
-    out = {**asdict(init_dataclass(Setting, rc._values)), **{name: mine[name] for name in names}}
+    out = {**_setting_part(rc._values), **{name: mine[name] for name in CASE_FIELDS}}
     if selection is not None:
         out.update(_selection_kwargs(selection))
     return out
+
+
+def model_kwargs(rc: RunConfig, model: str, *, reference_as: str | None = None, selection: Selection | None = None) -> dict:
+    """The kwargs of one model's first window (the detection does not depend on the window, so it stands for all).
+
+    With `reference_as` (a source name: "climatology" or "conditional_climatology") the case is the reference's, under
+    that name, built with the deterministic rule (`RunConfig.reference_cases()`); `model` is then ignored."""
+    if reference_as is None:
+        case = next(c for c in rc.cases() if c.model.name == model)
+    else:
+        case = rc.reference_cases()[0]
+        case = replace(case, model=replace(case.model, name=reference_as))
+    return case_kwargs(rc, case, "deterministic", selection)
 
 
 def _selection_kwargs(selection: Selection) -> dict:
@@ -80,9 +107,7 @@ def from_case_kwargs(kw: Mapping[str, Any]) -> tuple[RunConfig, Case, Selection]
     `accumulation`, `daily_boundary`, `model_dims`, `verification_window` and `tolerance_days`, so a case need not be one of
     the record's models (a reference case is not). Keys that are neither config nor selection raise.
     """
-    from hcwf.lib.convention import Case as OldCase
-
-    case_only = {f.name for f in fields(OldCase)} - set(schema.BY_KEY)
+    case_only = set(CASE_FIELDS) - set(schema.BY_KEY)
     selection_kwargs = set(SELECTION_KWARGS.values())
     unknown = sorted(set(kw) - set(schema.BY_KEY) - case_only - set(_RUNTIME) - selection_kwargs)
     if unknown:

@@ -2,10 +2,9 @@
 import os
 from hcwf.io.input import load_imd_rainfall, load_thresholds
 from hcwf.stats.detect import detect_observed_onset
-from hcwf.lib.loader import get_cfg, get_setting
 from hcwf.graphics.rainfall_time_series import plot_rainfall_timeseries_with_onset_and_wetspell
 from hcwf.stats.climatology import compute_climatological_onset
-from hcwf.lib.control import climatology_years
+from hcwf.config.model import climatology_years
 import pandas as pd
 from hcwf.lib.onset_config import onset_setup
 import logging
@@ -89,9 +88,3 @@ def obs_onset_analysis(year, lat_select=11, lon_select=39, incl_clim=True, **kwa
 
 
 # ------------------------------------------------------------------------------
-if __name__ == "__main__":
-    from types import SimpleNamespace
-    cfg, setting = get_cfg(), get_setting()
-    cfg_setting = SimpleNamespace(**(vars(cfg) | vars(setting)))
-    obs_onset_analysis(year=2020, lat_select=10, lon_select=40, incl_clim=True, **vars(cfg_setting))
-

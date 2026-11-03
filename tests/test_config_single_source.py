@@ -1,10 +1,8 @@
-"""Run-config paths of the `units:` section start at the config file; Setting has one field per schema key."""
-import dataclasses
+"""Run-config paths of the `units:` section start at the config file; the settings of a case have one key per schema key."""
 
 from hcwf.lib import config_schema as schema
 from hcwf.config import build as loader
-from hcwf.lib.control import init_dataclass
-from hcwf.lib.convention import Case, Setting
+from hcwf.config.flat_bridge import CASE_FIELDS, _setting_part
 
 
 def _dic(**values):
@@ -33,14 +31,12 @@ def test_units_files_are_left_alone_without_a_config_file_or_a_value(tmp_path):
     assert dic["units_shapefile"] == "units.shp" and dic["units_weights"] is None
 
 
-def test_setting_has_a_field_for_every_schema_key_that_a_case_does_not_own():
+def test_setting_has_a_key_for_every_schema_key_that_a_case_does_not_own():
     """A new schema key reaches the benchmark's keyword arguments without a second declaration."""
-    names = {f.name for f in dataclasses.fields(Setting)}
-    case_names = {f.name for f in dataclasses.fields(Case)}
-    assert {f.key for f in schema.FIELDS} - case_names <= names
-    assert not names & case_names   # a Setting is merged over a Case: it must not overwrite the case's own values
+    names = set(_setting_part({}))
+    assert {f.key for f in schema.FIELDS} - set(CASE_FIELDS) <= names
+    assert not names & set(CASE_FIELDS)   # the case's own values must not be overwritten by a setting
     assert {"cache_dir", "short_names", "lead_window"} <= names
-    given = init_dataclass(Setting, {"units_mode": "regrid", "missing": "zero", "not_a_key": 1})
-    assert (given.units_mode, given.missing, given.cache_dir) == ("regrid", "zero", None)
-    given.update({"short_names": True, "not_a_key": 2})
-    assert given.short_names is True and not hasattr(given, "not_a_key")
+    given = _setting_part({"units_mode": "regrid", "missing": "zero", "not_a_key": 1})
+    assert (given["units_mode"], given["missing"], given["cache_dir"]) == ("regrid", "zero", None)
+    assert "not_a_key" not in given

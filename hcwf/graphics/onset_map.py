@@ -1,8 +1,7 @@
-"""Spatial map of climatological onset day of year, plus a script entry point that plots it."""
+"""Spatial map of climatological onset day of year."""
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-import copy
 from hcwf.graphics.maps import calculate_cmz_averages
 from hcwf.utils.printing import tuple_to_str_range
 import cartopy.crs as ccrs
@@ -11,7 +10,7 @@ from matplotlib import colors as mcolors
 from hcwf.utils.visual import cbar_season, set_basemap
 from hcwf.utils.mask import shp_mask
 from hcwf.utils.visual import add_polygon
-from hcwf.graphics.func_map import doy_to_mmm_dd, spatial_metrics_map
+from hcwf.graphics.func_map import doy_to_mmm_dd
 from hcwf.utils.visual import box_boundary
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
 import logging
@@ -151,61 +150,3 @@ def plot_spatial_climatology_onset(onset_da_dict, *, years_clim, shpfile_dir, po
         plt.show()
 
     return fig, ax, plot_path
-
-
-if __name__ == "__main__":
-    from itertools import product
-    from hcwf.stats.benchmark import compute_metrics_multiple_years
-    from hcwf.lib.control import iter_list, make_case
-    from hcwf.lib.convention import Case
-    from hcwf.lib.loader import get_cfg, get_setting
-    from dataclasses import asdict
-
-    cfg, setting = get_cfg(), get_setting()
-
-    cfg.ref_model = 'climatology'
-    cfg.probabilistic = False
-
-    cfg_ref = copy.copy(cfg)
-    cfg_ref.model_list = (cfg.ref_model,)
-    layout_pool = iter_list(vars(cfg_ref))
-
-    for combi in product(*layout_pool):
-        case = make_case(Case, combi, vars(cfg_ref))
-        log.debug(f"processing model onset evaluation for {case.case_name}")
-
-        case_ref = {'model_dir': setting.ref_model_dir,
-                    'model_var': case.ref_model_var,
-                    'file_pattern': setting.ref_model_file_pattern,
-                    'unit_cvt': setting.ref_model_unit_cvt
-                    }
-
-        case.update(case_ref)
-
-        if case.model == 'climatology':
-            case.years = case.years_clim
-
-        log.debug("%s %s", "\n case.file_pattern = ", case.file_pattern)
-        log.debug("%s %s", "\n setting.ref_model_file_pattern = ", setting.ref_model_file_pattern)
-
-        case_cfg_ref = {**asdict(case), **asdict(setting)}
-        log.debug("%s %s", "\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('file_pattern'))
-
-        # model-obs onset benchmarking
-        log.debug("%s %s", "\n ", case_cfg_ref)
-        metrics_df_dict, onset_da_dict = compute_metrics_multiple_years(**case_cfg_ref)
-        log.debug("%s %s", "\n case_cfg_ref.file_pattern  = ", case_cfg_ref.get('years_clim'))
-        break
-
-    da = next(iter(onset_da_dict.values()))
-
-    fig, _, _, _ = spatial_metrics_map(da, case.model, 
-                    fig=None, ax=None, figsize=(8, 6), cmap='YlOrRd', n_colors=10,
-                    onset_plot=True, cbar_ssn=True, domain_mask=True, polygon_only=False,
-                    show_ylabel=True, title="climatology onset", **case_cfg_ref)
-
-    years_clim = case_cfg_ref.get('years_clim')
-    dir_fig = case_cfg_ref.get('dir_fig')
-    plot_filename = f"climatology_onset_{tuple_to_str_range(years_clim)}.png"
-    plot_path = os.path.join(dir_fig, plot_filename)
-    fig.savefig(plot_path, dpi=300, bbox_inches='tight')

@@ -15,6 +15,8 @@ import xarray as xr
 import yaml
 
 from hcwf import export
+from hcwf.config.flat_bridge import model_kwargs
+from hcwf.config.model import RunConfig
 from hcwf.io.input import (get_forecast_deterministic_twice_weekly, get_forecast_probabilistic_twice_weekly,
                            get_initialization_dates, load_history, load_imd_rainfall, load_thresholds)
 from hcwf.config.build import resolve_flat
@@ -110,6 +112,12 @@ class SimpleNs:
         self.__dict__.update(kwargs)
 
 
+def _kw(cfg, model, *, reference=False):
+    """The scoring's keyword arguments for one model (or the reference named `model`), first window."""
+    rc = RunConfig.from_flat(cfg, check=False)
+    return model_kwargs(rc, model, reference_as=model if reference else None)
+
+
 def _open(path):
     """Open an export file with times decoded and the `lead` coordinate left as plain numbers."""
     return export.open_onsets(path)
@@ -144,7 +152,7 @@ def test_observed_layout_dtypes_and_flags(world):
 def test_global_attributes_hold_the_provenance(world):
     """Every file carries the CF convention, definition, thresholds, mask, history mode, lead window, paths and config."""
     cfg = world.cfgs["DET"]
-    defn = onset_setup(export.case_kwargs(cfg, "DET")).definition
+    defn = onset_setup(_kw(cfg, "DET")).definition
     for source, path in world.paths["DET"].items():
         attrs = _open(path).attrs
         assert attrs["Conventions"] == "CF-1.8"
@@ -317,7 +325,7 @@ def _same_dates(exported, strings):
 
 def _scoring_inputs(cfg, model):
     """What the scoring does per year: kwargs, thresholds and per year (year, rain, observed onsets, history)."""
-    kw = export.case_kwargs(cfg, model)
+    kw = _kw(cfg, model)
     thresholds = load_thresholds(**kw)
     out = []
     for year in kw["years"]:
@@ -387,7 +395,7 @@ def test_ensemble_model_equals_the_scored_tables(world):
 def test_climatology_equals_the_scored_table(world):
     """The climatology per-cell onset and per-init forecast match compute_climatology_as_forecast."""
     ds = _open(world.paths["DET"]["climatology"])
-    kw = export.case_kwargs(world.cfgs["DET"], "climatology", reference=True)
+    kw = _kw(world.cfgs["DET"], "climatology", reference=True)
     clim_doy = compute_climatological_onset(**kw)
     assert np.array_equal(ds["climatological_onset_doy"].isel(season=0).values, clim_doy.values.astype(np.float32),
                           equal_nan=True)
@@ -409,7 +417,7 @@ def test_climatology_equals_the_scored_table(world):
 def test_conditional_climatology_equals_the_scored_table_and_pairs(world):
     """The conditional median onset matches the scored table, and the probability reproduces the scored bin probabilities."""
     ds = _open(world.paths["DET"]["conditional_climatology"])
-    kw = export.case_kwargs(world.cfgs["DET"], "conditional_climatology", reference=True)
+    kw = _kw(world.cfgs["DET"], "conditional_climatology", reference=True)
     clim_onset = compute_climatological_onset_dataset(**kw)
     _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
     total, found = 0, 0

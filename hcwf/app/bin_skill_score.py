@@ -1,20 +1,13 @@
 """Entry point computing binned and overall BSS, RPSS and AUC skill scores and their plots for ensemble forecasts."""
-from dataclasses import asdict
-from itertools import product
-import copy
-
+from hcwf.config.flat_bridge import case_kwargs, to_flat
 from hcwf.metrics.skill import create_score_results, prepare_score_cache
 from hcwf.graphics.heatmap import create_heatmap
 from hcwf.graphics.reliability import plot_reliability_diagram
 from hcwf.graphics.panel_portrait_skill import panel_portrait_bss_auc
 from hcwf.graphics.panel_bar_skill import panel_bar_bss_rpss_auc
 from hcwf.io.output import save_score_results, score_tables
-from hcwf.lib.control import iter_list, make_case
-from hcwf.lib.convention import Case
-from hcwf.lib.loader import get_cfg, get_setting
 from hcwf.utils.printing import tuple_to_str
 from hcwf.io.dict import select_key_at_level
-from hcwf.lib.control import filter_bins_in_window
 from collections import defaultdict
 import logging
 from hcwf.utils.log import progress
@@ -22,76 +15,38 @@ from hcwf.utils.log import progress
 log = logging.getLogger(__name__)
 
 
-def skill_score_in_bins(cfg=None, setting=None):
+def skill_score_in_bins(rc):
     """Compute and plot binned and overall BSS, RPSS and AUC skill scores for each case of an ensemble forecast.
 
-    Does nothing (returns None) unless the configuration is probabilistic. If cfg or setting is None, the global
-    configuration is loaded. Returns {"overall": DataFrame, "binned": DataFrame}: the score tables of every
-    model and verification window (columns model and window first), whether or not CSV files are written.
+    rc is the resolved RunConfig. Does nothing (returns None) unless the run is probabilistic. Returns
+    {"overall": DataFrame, "binned": DataFrame}: the score tables of every model and verification window (columns
+    model and window first), whether or not CSV files are written.
     """
 
-    if cfg is None:
-        cfg = get_cfg()
-    if setting is None:
-        setting = get_setting()
-
     # only execute for ensemble forecasts
-    if not cfg.probabilistic:
+    if not rc.evaluation.probabilistic:
         return
 
+    flat = to_flat(rc)
     result_overall = defaultdict(dict)
     result_binned = defaultdict(dict)
     overall_frames, binned_frames = [], []
-    score_input_cache = {}
+    prepared = {}   # the pair tables of each model: everything else the tables depend on is fixed within a run
 
-    layout_pool = iter_list(vars(cfg))
-
-    for combi in progress(list(product(*layout_pool)), desc="cases"):
-        case = make_case(Case, combi, vars(cfg))
+    for case in progress(list(rc.cases()), desc="cases"):
+        model, window = case.model.name, case.window.span
 
         log.debug(f"{'='*50}")
-        log.info(f"processing {case.model} onset evaluation for verification window "
-                f"{case.verification_window}, case: {case.case_name}")
+        log.info(f"processing {model} onset evaluation for verification window "
+                f"{window}, case: {case.name}")
 
-        full_day_bins = cfg.day_bins
-        day_bins_filtered = filter_bins_in_window(case.day_bins, case.verification_window)
+        # the pair tables hold every day bin; each window then reads the bins inside it
+        prep_cfg = case_kwargs(rc, case, "ensemble")
 
-        cache_key = (
-            case.model,
-            tuple(case.years) if case.years else None,
-            tuple(case.years_clim) if case.years_clim else None,
-            case.obs_dir if hasattr(case, "obs_dir") else setting.obs_dir,
-            setting.obs_file_pattern,
-            case.obs_var,
-            setting.date_filter_year,
-            tuple(setting.init_days) if setting.init_days else None,
-            tuple(setting.start_date) if setting.start_date else None,
-            tuple(setting.end_date) if setting.end_date else None,
-            case.model_dir,
-            case.model_var,
-            case.file_pattern,
-            case.unit_cvt,
-            tuple(case.members) if case.members else None,
-            case.onset_percentage_threshold,
-            case.max_forecast_day,
-            tuple(full_day_bins),
-            case.ref_model,
-            setting.ref_model_dir,
-            case.ref_model_var,
-            setting.ref_model_file_pattern,
-            setting.ref_model_unit_cvt,
-            setting.parallel,
-        )
+        if model not in prepared:
+            prepared[model] = prepare_score_cache(**prep_cfg)
 
-        if cache_key not in score_input_cache:
-            prep_case = copy.copy(case)
-            prep_case.day_bins = full_day_bins
-            prep_cfg = {**asdict(setting), **asdict(prep_case)}
-            score_input_cache[cache_key] = prepare_score_cache(**prep_cfg)
-
-        case.day_bins = day_bins_filtered
-        case_cfg = {**asdict(setting), **asdict(case)}
-        case_cfg.update(score_input_cache[cache_key])
+        case_cfg = {**prep_cfg, "day_bins": case.window.bins(prep_cfg["day_bins"]), **prepared[model]}
 
         import time
         start = time.perf_counter()
@@ -102,18 +57,17 @@ def skill_score_in_bins(cfg=None, setting=None):
         end = time.perf_counter()
         log.debug(f"\n\n\n skill score Execution time: {end - start:.4f} seconds\n\n\n")
 
-        window_str = tuple_to_str(case.verification_window)
-        overall_df, binned_df, binned_data, overall_scores = score_tables(score_results, case.model,
-                                                                          case.verification_window)
-        overall_frames.append(overall_df.assign(model=case.model, window=window_str))
-        binned_frames.append(binned_df.assign(model=case.model, window=window_str))
+        window_str = tuple_to_str(window)
+        overall_df, binned_df, binned_data, overall_scores = score_tables(score_results, model, window)
+        overall_frames.append(overall_df.assign(model=model, window=window_str))
+        binned_frames.append(binned_df.assign(model=model, window=window_str))
 
         # save score results as csv file
         if case_cfg['save_csv_score']:
             save_score_results(score_results, **case_cfg)
 
-        result_binned[case.model][window_str] = binned_data
-        result_overall[case.model][window_str] = overall_scores
+        result_binned[model][window_str] = binned_data
+        result_overall[model][window_str] = overall_scores
 
         # heatmap plot
         if case_cfg['plot_heatmap_bss_auc']:
@@ -128,21 +82,21 @@ def skill_score_in_bins(cfg=None, setting=None):
 
     # panel heatmap plot for binned BSS and AUC
     if case_cfg['plot_panel_heatmap_skill']:
-        for verification_window in cfg.verification_window_list:
+        for verification_window in (w.span for w in rc.evaluation.windows):
             window_str = tuple_to_str(verification_window)
             # extract dict for specific window only
             result_binned_window = select_key_at_level(result_binned, 2, window_str)
             log.debug("%s %s", "\n\n\n result_binned_window = ", result_binned_window)
             log.debug("%s", pprint.pformat(result_binned_window))
-            panel_portrait_bss_auc(result_binned_window, verification_window, **vars(cfg))
+            panel_portrait_bss_auc(result_binned_window, verification_window, **flat)
 
     # bar plot for BSS, RPSS, AUC in window
     if case_cfg['plot_bar_bss_rpss_auc']:
-        for verification_window in cfg.verification_window_list:
+        for verification_window in (w.span for w in rc.evaluation.windows):
             window_str = tuple_to_str(verification_window)
             result_overall_window = select_key_at_level(result_overall, 2, window_str)
             log.debug("%s %s", "\n\n\n result_overall_window = ", result_overall_window)
-            panel_bar_bss_rpss_auc(result_overall_window, verification_window, **vars(cfg))
+            panel_bar_bss_rpss_auc(result_overall_window, verification_window, **flat)
 
     import pandas as pd
 
@@ -152,7 +106,3 @@ def skill_score_in_bins(cfg=None, setting=None):
         return table[["model", "window"] + [c for c in table.columns if c not in ("model", "window")]]
 
     return {"overall": stacked(overall_frames), "binned": stacked(binned_frames)}
-
-# ------------------------------------------------------------------------------
-if __name__ == "__main__":
-    skill_score_in_bins()

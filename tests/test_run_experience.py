@@ -22,7 +22,8 @@ from hcwf.lib import check as check_mod
 from hcwf.lib import dataset_detect as detect
 from hcwf.lib import run_folder
 from hcwf.lib.config_yaml import build_config
-from hcwf.lib.convention import Setting
+from hcwf.config.flat_bridge import _setting_part, model_kwargs
+from hcwf.config.model import RunConfig
 from hcwf.lib.dataset_schema import DatasetError, parse_dataset
 from hcwf.config.build import resolve_flat
 from hcwf.params.region_def import domain
@@ -282,7 +283,7 @@ def test_daily_boundary_is_a_forecast_dataset_key():
 
     text = resolved_config_text(flat)
     assert "daily_boundary" in text and "since_init" in text   # given by the user: written back
-    case = export.case_kwargs({**flat, "lead_window": (1, 10)}, "A")
+    case = model_kwargs(RunConfig.from_flat({**flat, "lead_window": (1, 10)}, check=False), "A")
     assert case["accumulation"] == "since_init" and case["daily_boundary"] == "03 UTC"
 
 
@@ -342,8 +343,8 @@ def test_climatology_cv_reaches_the_conditional_scoring(world, tmp_path, monkeyp
     result = hcwf.run(raw, quiet=True)
     assert set(seen) == {expected} and seen
     assert "conditional_climatology" in set(result.scores["summary"]["model"])
-    assert "climatology_cv" in Setting.__annotations__
-    kw = export.case_kwargs(result.config, "DET", reference=True)
+    assert "climatology_cv" in _setting_part({})
+    kw = model_kwargs(RunConfig.from_flat(result.config, check=False), "DET", reference_as="DET")
     assert kw["climatology_cv"] == expected
 
 

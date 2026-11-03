@@ -184,7 +184,7 @@ def test_explicit_years_outside_the_date_ranges_are_refused(data):
 
 
 def test_the_years_a_case_evaluates_are_the_explicit_ones_or_the_ranges(data):
-    from hcwf.lib.control import climatology_years, evaluation_years
+    from hcwf.config.model import climatology_years, evaluation_years
 
     plain = {"start_date": (2018, 5, 1), "end_date": (2020, 7, 31), "start_year_clim": 2015, "end_year_clim": 2017}
     assert evaluation_years(plain) == (2018, 2019, 2020) and climatology_years(plain) == (2015, 2016, 2017)

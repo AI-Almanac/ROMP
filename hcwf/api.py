@@ -33,7 +33,6 @@ import tempfile
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 
 import pandas as pd
 import xarray as xr
@@ -72,8 +71,8 @@ class RunResult:
         if self._forecasts is None:
             from hcwf import export
 
-            dic = self.config
-            self._forecasts = {source: export._collect(dic, source) for source in export.default_sources(dic)[1:]}
+            rc = self.run_config
+            self._forecasts = {source: export._collect(rc, source) for source in export.default_sources(self.config)[1:]}
         return self._forecasts
 
 
@@ -222,10 +221,7 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
     from hcwf.app.bin_skill_score import skill_score_in_bins
     from hcwf.app.spatial_far_mr_mae import spatial_far_mr_mae_map
     from hcwf.lib import run_folder
-    from hcwf.lib.control import init_dataclass
-    from hcwf.lib.convention import Setting
     from hcwf.lib.explain_cells import write_explain_cells
-    from hcwf.lib.loader import use_config
     from hcwf.lib.onset_config import onset_setup
     from hcwf.lib.resolved import definition_lines, write_resolved
     from hcwf.stats import benchmark, climatology, detect, observed_cache, parallel
@@ -244,7 +240,6 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
         detect._alignment_done.clear()
         io_input._loaded_thresholds.clear()
         io_input._reported_ingest.clear()
-        cfg = SimpleNamespace(**dic)
         print_hcwf_banner(rc.project_name)
         log.info("Onset settings:")
         for line in onset_setup(dic).lines():
@@ -265,27 +260,25 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
         observed_cache.activate(dic.get("cache_dir") or (Path(dic["dir_out"]) / ".onset_cache" if write else None))
         results = tables = None
         try:
-            with use_config(dic):
-                setting = init_dataclass(Setting, dic)
-                if write:
-                    write_explain_cells(rc)
-                    if dic.get("save_onsets"):
-                        try:
-                            from hcwf.export import export_onsets
-
-                            export_onsets(rc)
-                        except Exception as exc:  # noqa: BLE001 - the scores matter more than the export
-                            log.error(f"output.save_onsets: could not write the onset files: {exc}")
-                            log.debug(traceback.format_exc())
-                log.info("Starting HCWF Workflow...")
-                tables = skill_score_in_bins(cfg, setting)
-                results = spatial_far_mr_mae_map(cfg, setting)
-                if write and dic.get("mask"):
+            if write:
+                write_explain_cells(rc)
+                if dic.get("save_onsets"):
                     try:
-                        write_resolved(rc)   # again, now that the masks of each dataset's grid are known
-                    except OSError as exc:
-                        log.warning(f"could not update {paths.config_name} with the masks: {exc}")
-                log.info("HCWF Workflow completed successfully!")
+                        from hcwf.export import export_onsets
+
+                        export_onsets(rc)
+                    except Exception as exc:  # noqa: BLE001 - the scores matter more than the export
+                        log.error(f"output.save_onsets: could not write the onset files: {exc}")
+                        log.debug(traceback.format_exc())
+            log.info("Starting HCWF Workflow...")
+            tables = skill_score_in_bins(rc)
+            results = spatial_far_mr_mae_map(rc)
+            if write and dic.get("mask"):
+                try:
+                    write_resolved(rc)   # again, now that the masks of each dataset's grid are known
+                except OSError as exc:
+                    log.warning(f"could not update {paths.config_name} with the masks: {exc}")
+            log.info("HCWF Workflow completed successfully!")
             observed = _observed_dataset(dic)
         finally:
             parallel.shutdown()

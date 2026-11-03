@@ -15,9 +15,10 @@ import yaml
 
 import _oracle_config as old
 from hcwf import export
+from hcwf.config import flat_bridge
+from hcwf.config.model import RunConfig
 from hcwf.config import Config
 from hcwf.config.build import resolve_cli, resolve_flat
-from hcwf.lib import control, convention
 from hcwf.lib.assertion import HCWFConfigError
 from hcwf.lib.run_folder import fingerprint
 from hcwf.lib.resolved import resolved_config_text
@@ -90,9 +91,9 @@ def _same(a, b):
 def test_oracle_has_the_frozen_classes():
     """Setting has one field per schema key outside Case plus the run's own; Case has the 23 fields."""
     assert len(dataclasses.fields(old.Case)) == 23
-    assert [f.name for f in dataclasses.fields(old.Case)] == [f.name for f in dataclasses.fields(convention.Case)]
-    assert [f.name for f in dataclasses.fields(old.Setting)] == [f.name for f in dataclasses.fields(convention.Setting)]
-    assert old.LAYOUT == control.LAYOUT == ("model", "verification_window")
+    assert [f.name for f in dataclasses.fields(old.Case)] == list(flat_bridge.CASE_FIELDS)
+    assert [f.name for f in dataclasses.fields(old.Setting)] == list(flat_bridge._setting_part({}))
+    assert old.LAYOUT == ("model", "verification_window")
 
 
 def test_loader_variant_agrees(configs):
@@ -228,23 +229,21 @@ def _case_dicts(case_cfg):
 
 
 def test_cases_and_case_kwargs_agree(configs):
-    """The oracle's make_case / case_kwargs equal the live ones for every model, window and reference rule."""
+    """The oracle's Setting part and case_kwargs equal the bridge's for every model and the reference (first window)."""
     for name, path in configs.items():
         dic = resolve_flat(path)
-        assert old.iter_list(dic) == control.iter_list(dic)
-        setting = convention.Setting
-        live_setting = control.init_dataclass(setting, dic)
-        frozen_setting = old.init_dataclass(old.Setting, dic)
-        assert dataclasses.asdict(live_setting) == dataclasses.asdict(frozen_setting)
-        for combi in old.product(*old.iter_list(dic)):
-            frozen = old.make_case(old.Case, combi, dic)
-            live = control.make_case(convention.Case, combi, dic)
-            assert dataclasses.asdict(frozen) == dataclasses.asdict(live)
+        rc = RunConfig.from_flat(dic)
+        frozen_setting = dataclasses.asdict(old.init_dataclass(old.Setting, dic))
+        assert flat_bridge._setting_part(dic) == frozen_setting and list(flat_bridge._setting_part(dic)) == list(frozen_setting)
         for model in dic["model_list"]:
-            assert old.case_kwargs(dic, model) == export.case_kwargs(dic, model)
+            assert old.case_kwargs(dic, model) == flat_bridge.model_kwargs(rc, model)
         if dic["ref_model"]:
-            assert old.case_kwargs(dic, dic["ref_model"], reference=True) == \
-                export.case_kwargs(dic, dic["ref_model"], reference=True)
+            # export.case_kwargs also set model_list to (reference,); nothing reads it for a reference, and the flows
+            # keep the forecast models' (the bridge follows the flows)
+            frozen = old.case_kwargs(dic, dic["ref_model"], reference=True)
+            assert frozen.pop("model_list") == (dic["ref_model"],)
+            live = flat_bridge.model_kwargs(rc, dic["ref_model"], reference_as=dic["ref_model"])
+            assert live.pop("model_list") == dic["model_list"] and frozen == live
 
 
 def test_reference_rules_are_the_two_documented_ones(configs):
