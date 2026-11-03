@@ -6,7 +6,15 @@ discrete results exact) unless marked "changes numbers"; each is verified with t
 regression slices, the full suite (`pytest -n auto`) and the blend parity tests, and
 committed separately. Timings are measured on the second Spark.
 
-## Decisions needed
+## Decisions (user, 2026-11-03)
+
+Approved: 1 (remove legacy flat-key onset mode), 2 (drop config.in conversion), 3 (retire the
+case-sensitive India box; new regression baseline for the India slices), 4 (reliability
+figure at 300 dpi), 6 (~/.cache/momp deleted). 5: no solver changes that move results.
+7: GCP names left as they are for now (no decision). Order: restructuring first (R1-R4),
+then all performance work (P0 and P1) on the new layout.
+
+## Decisions asked
 
 1. Remove the legacy flat-key onset mode (wet_init/wet_threshold/... keys,
    `EXTEND_END_DAYS = 47`), keeping the translation only inside `hcwf-run convert`.
