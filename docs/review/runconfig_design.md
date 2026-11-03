@@ -445,6 +445,10 @@ regression green, so the work can stop after any step. S1 and S2 complete R2a. S
 
 ## 4. Open questions (each with a recommendation)
 
+**Decisions (user, 2026-11-03):** Q1 yes — command-line flags become validated, recorded overrides and
+`--model_list` selects a subset; Q2 keep both reference rules in R2 for parity, then a separate small fix makes both
+flows use the reference model's own settings and `reference.dims`; Q3-Q7 as recommended.
+
 1. **CLI overrides as overrides.** Today `--max_forecast_day` and the other flags bypass normalisation and are
    recorded as "run config" in `run.yaml`. `--model_list A` without the matching `*_list` fails validation, or
    silently renames models when the lengths happen to match.
