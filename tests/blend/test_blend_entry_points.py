@@ -26,7 +26,7 @@ class Result:
     def __init__(self, calls):
         self.calls = calls
 
-    def save(self, directory, intermediates=("weekly",)):
+    def save(self, directory, intermediates=()):
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "trained.blend").write_text("stub")

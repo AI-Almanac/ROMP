@@ -104,7 +104,7 @@ def run_momp(config_dict, directory: Path, workers: int) -> None:
     from momp.blend.training import train
 
     t = converted(config_dict)
-    train({**t.cfg, "parallel_workers": workers}, t.recipe, t.setup).save(directory)
+    train({**t.cfg, "parallel_workers": workers}, t.recipe, t.setup).save(directory, intermediates=("weekly",))   # onset_blending's save writes them by default
 
 
 def dump(package: str, target: str, workers: int = 2) -> None:

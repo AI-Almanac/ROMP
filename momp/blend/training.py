@@ -143,9 +143,10 @@ class TrainingResult:
         """The operational random forest, when the recipe has one."""
         return self.evaluation.final_forest
 
-    def save(self, directory, *, intermediates=("weekly",)) -> Path:
+    def save(self, directory, *, intermediates=()) -> Path:
         """Write the evaluation's artifacts, `trained.blend` and the chosen intermediates into a new directory, all or
-        nothing: the weekly features (`Weekly.open` reads them) and the observed onsets as NetCDF, nothing else."""
+        nothing. Intermediates are opt-in (default none): the weekly features (`Weekly.open` reads them) and the
+        observed onsets as NetCDF."""
         directory = Path(directory)
         if directory.exists() and any(directory.iterdir()):
             raise FileExistsError(f"{directory} exists and is not empty")

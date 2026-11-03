@@ -118,7 +118,7 @@ def test_stage_tables_are_kept_only_when_asked(region):
 
 def test_a_training_run_saves_netcdf_and_csv_artifacts(region, tmp_path):
     _, _, result = region
-    out = result.save(tmp_path / "trained")
+    out = result.save(tmp_path / "trained", intermediates=("weekly",))
     tag = result.evaluation.output_tag
 
     assert not list(out.glob("*.pkl"))
@@ -137,6 +137,12 @@ def test_a_training_run_saves_netcdf_and_csv_artifacts(region, tmp_path):
     assert weekly.attrs == result.inputs.weekly.attrs
     pooled = pd.read_csv(out / f"summary_models_pooled{tag}.csv")
     assert list(pooled.columns[:8]) == ["id", "brier", "rps", "auc", "n", "lat", "lon", "pietra"]
+
+
+def test_no_intermediate_is_written_by_default(region, tmp_path):
+    _, _, result = region
+    out = result.save(tmp_path / "plain")
+    assert not (out / "weekly_features.nc").exists() and not (out / "observed_onsets.nc").exists()
 
 
 def test_saving_is_all_or_nothing_and_keeps_chosen_intermediates(region, tmp_path):
