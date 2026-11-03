@@ -7,7 +7,7 @@ import pytest
 import xarray as xr
 
 from old_flat_rule import old_rule
-from hcwf.metrics.bins import extract_pd_bins
+from pair_frames import pairs_equal
 from hcwf.metrics.skill import create_score_results
 from hcwf.scoring.pairs import prepare_pairs
 from hcwf.scoring.pairs import climatological_pairs
@@ -101,7 +101,7 @@ def test_reference_scores_come_from_the_reference_model(config):
 
     assert _scores(results, "_ref") == _scores(as_forecast)
     assert _scores(results, "_ref") != _scores(results)
-    assert results["climatology_obs_df"] is None
+    assert results["climatology_pairs"] is None
 
 
 def test_cached_reference_pairs_are_the_reference_models(config):
@@ -109,7 +109,7 @@ def test_cached_reference_pairs_are_the_reference_models(config):
     rc, case, select = _typed(config)
     prepared = prepare_pairs(rc, case.model, select)
 
-    assert not prepared.reference.equals(prepared.forecast)
+    assert not pairs_equal(prepared.reference, prepared.forecast)
     assert _scores(_results(config, prepared), "_ref") == _scores(_results(config), "_ref")
 
 
@@ -127,15 +127,15 @@ def test_forecast_model_dims_are_not_applied_to_the_reference(config, tmp_path):
 
 
 def test_climatology_reference_is_unchanged(config):
-    """The climatology reference equals the scores computed straight from the climatology pair tables."""
+    """The climatology reference equals the scores computed straight from the climatology pairs."""
     config = dict(config, ref_model="climatology")
     results = _results(config)
 
     rc, case, select = _typed(config)
     clim_onset = climatological_onset_dataset(rc, case, select)
-    pairs = extract_pd_bins(climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS), DAY_BINS)
+    pairs = climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS).select(DAY_BINS)
 
-    assert results["climatology_obs_df"].to_csv() == pairs.to_csv()
+    assert pairs_equal(results["climatology_pairs"], pairs)
     assert _text(results["BS_ref"]) == _text(calculate_brier_score_climatology(pairs))
     assert _text(results["RPS_ref"]) == _text(calculate_rps(pairs))
     assert _text(results["AUC_ref"]) == _text(calculate_auc_climatology(pairs))

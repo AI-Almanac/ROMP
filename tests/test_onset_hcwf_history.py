@@ -208,9 +208,9 @@ def test_back_dated_members_fall_in_the_before_day_one_bin():
     members = pd.DataFrame({"init_time": pd.Timestamp("2020-05-25"), "lat": 0.0, "lon": 0.0, "member": [0, 1],
                             "onset_day": [-2.0, 3.0], "obs_onset_date": "2020-06-20"})
     pairs = forecast_pairs(members, OBS_ONSET, ((1, 5), (6, 10)), back_dated=False)
-    before = pairs[pairs["bin_label"] == "Before day 1"].iloc[0]
-    assert (before["predicted_prob"], before["observed_onset"]) == (0.5, 0)
-    assert pairs[pairs["bin_label"] == "Days 1-5"]["predicted_prob"].iloc[0] == 0.5
+    before = pairs.labels.index("Before day 1")
+    assert (pairs.prob[0, before], pairs.observed[0, before]) == (0.5, 0)
+    assert pairs.prob[0, pairs.labels.index("Days 1-5")] == 0.5
 
 
 # --- model thresholds -------------------------------------------------------------------------------

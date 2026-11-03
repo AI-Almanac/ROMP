@@ -14,6 +14,7 @@ from hcwf.config.model import Window
 from hcwf.spatial import axes
 from hcwf.metrics.contingency import onset_metrics
 from hcwf.metrics.bins import create_climatological_forecast_obs_pairs, forecast_pairs
+from pair_frames import frame_of_pairs
 from hcwf.references.climatology import compute_climatology_as_forecast
 from itertools import product
 from datetime import datetime, timedelta
@@ -995,9 +996,20 @@ def _member_frame(seed=0, members=6):
     return pd.DataFrame(rows)
 
 
-def _dates_as_text(pairs):
-    """The pair table with its observed-onset dates as text, as the loop version wrote them (they are datetime64 now)."""
-    return pairs.assign(obs_onset_date=pairs["obs_onset_date"].dt.strftime("%Y-%m-%d"))
+PAIR_COLUMNS = ["bin_start", "bin_end", "bin_label", "predicted_prob", "observed_onset", "total_members", "bin_index"]
+"""The columns of the loop versions' pair tables that the PairArrays hold (the others, such as the years of a
+climatological case or the observed onset date, were read by nothing and are not kept)."""
+
+
+def _assert_pairs_match(old, pairs, extra=()):
+    """Assert the PairArrays hold exactly the values of the loop version's table in those columns, row for row (the
+    dtypes are the arrays' compact ones: int8 outcomes, int32 counts, dates as datetime64[D])."""
+    new = frame_of_pairs(pairs)
+    columns = ["init_time", "lat", "lon", *PAIR_COLUMNS, *extra]
+    old = old.copy()
+    old["init_time"] = pd.to_datetime(old["init_time"])
+    pd.testing.assert_frame_equal(old[columns].reset_index(drop=True), new[columns].reset_index(drop=True),
+                                  check_dtype=False, check_exact=True)
 
 
 def test_forecast_observation_pairs_match_loops():
@@ -1007,8 +1019,8 @@ def test_forecast_observation_pairs_match_loops():
     kwargs = dict(day_bins=((1, 5), (6, 10), (11, 15)), max_forecast_day=15, **RUN)
     old = _old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs)
     new = forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False)
-    assert len(new) > 0 and (members["onset_day"] <= 0).any()
-    _assert_frames_identical(old, _dates_as_text(new))
+    assert new.n_cases > 0 and (members["onset_day"] <= 0).any()
+    _assert_pairs_match(old, new)
 
 
 def test_forecast_observation_pairs_skip_cells_off_the_grid():
@@ -1017,8 +1029,8 @@ def test_forecast_observation_pairs_skip_cells_off_the_grid():
     members.loc[members["lat"] == LATS[1], "lat"] = np.float32(50.0)
     onset_da = _observed_onsets()
     kwargs = dict(day_bins=((1, 7), (8, 14)), max_forecast_day=14, **RUN)
-    _assert_frames_identical(_old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs),
-                             _dates_as_text(forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False)))
+    _assert_pairs_match(_old_create_forecast_observation_pairs_with_bins(members, onset_da, **kwargs),
+                        forecast_pairs(members, onset_da, kwargs["day_bins"], back_dated=False))
 
 
 # --------------------------------------------------------------------------------------------
@@ -1043,17 +1055,8 @@ def test_climatological_pairs_match_loops(day_bins):
     kwargs = dict(day_bins=day_bins, max_forecast_day=day_bins[-1][1])
     old = _old_create_climatological_forecast_obs_pairs(clim_onset, 2020, INITS, **kwargs)
     new = create_climatological_forecast_obs_pairs(clim_onset, 2020, INITS, **kwargs)
-    assert len(new) > 0
-
-    # Documented difference: in the loops the "Before" row of every case after the first carried the previous
-    # case's obs_days_from_init_doy; it now holds the case's own value, like the other bins of the case.
-    before = new["bin_index"] == 0
-    assert (new["obs_days_from_init_doy"] == new["obs_onset_doy"] - new["init_doy"]).all()
-    assert (old["obs_days_from_init_doy"][~before] == new["obs_days_from_init_doy"][~before]).all()
-    assert (old["obs_days_from_init_doy"][before] != new["obs_days_from_init_doy"][before]).any()
-    expected = old.copy()
-    expected["obs_days_from_init_doy"] = new["obs_days_from_init_doy"]
-    _assert_frames_identical(expected, new)
+    assert new.n_cases > 0
+    _assert_pairs_match(old, new, extra=["total_members_with_onset"])
 
 
 def test_climatological_pairs_without_cases_are_empty():
@@ -1061,7 +1064,7 @@ def test_climatological_pairs_without_cases_are_empty():
     clim_onset = _climatological_onsets()
     late = [pd.Timestamp("2020-12-01")]
     kwargs = dict(day_bins=((1, 5),), max_forecast_day=5)
-    assert len(create_climatological_forecast_obs_pairs(clim_onset, 2020, late, **kwargs)) == 0
+    assert create_climatological_forecast_obs_pairs(clim_onset, 2020, late, **kwargs).n_cases == 0
     assert len(_old_create_climatological_forecast_obs_pairs(clim_onset, 2020, late, **kwargs)) == 0
 
 

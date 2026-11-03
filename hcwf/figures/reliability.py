@@ -3,21 +3,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
-from hcwf.metrics.bins import extract_pd_bins
 from hcwf.runs.folder import file_name
 from hcwf.naming import tuple_to_str
 import logging
 
 log = logging.getLogger(__name__)
 
-def plot_reliability_diagram(combined_forecast_obs, case, spec, day_bins, *, extract_bins=True):
-    """Plot reliability diagram of one case from forecast-observation pairs.
+def plot_reliability_diagram(pairs, case, spec):
+    """Plot reliability diagram of one case from its forecast-observation pairs (PairArrays of the case window's bins).
 
-    day_bins are the case window's bins. Saved to spec.dir_fig if spec.save_fig; shown if spec.show_plot."""
+    Saved to spec.dir_fig if spec.save_fig; shown if spec.show_plot."""
     model, verification_window = case.model.name, case.window.span
 
-    if extract_bins:
-        combined_forecast_obs = extract_pd_bins(combined_forecast_obs, day_bins)
+    predicted, observed = pairs.prob.ravel(), pairs.observed.ravel()
 
     n_bins = 10
     bin_edges = np.linspace(0, 1, n_bins + 1)
@@ -36,19 +34,17 @@ def plot_reliability_diagram(combined_forecast_obs, case, spec, day_bins, *, ext
 
     for i in range(n_bins):
         if i == 0:
-            in_bin = ((combined_forecast_obs['predicted_prob'] >= bin_edges[i]) &
-                    (combined_forecast_obs['predicted_prob'] <= bin_edges[i+1]))
+            in_bin = (predicted >= bin_edges[i]) & (predicted <= bin_edges[i+1])
         else:
-            in_bin = ((combined_forecast_obs['predicted_prob'] > bin_edges[i]) &
-                    (combined_forecast_obs['predicted_prob'] <= bin_edges[i+1]))
+            in_bin = (predicted > bin_edges[i]) & (predicted <= bin_edges[i+1])
 
         n_forecasts = in_bin.sum()
         n_forecasts_array[i] = n_forecasts
 
         if n_forecasts > 0:
-            mean_forecast_prob[i] = combined_forecast_obs.loc[in_bin, 'predicted_prob'].mean()
-            reliability_y[i] = combined_forecast_obs.loc[in_bin, 'observed_onset'].mean()
-            frequency[i] = n_forecasts / len(combined_forecast_obs)
+            mean_forecast_prob[i] = predicted[in_bin].mean()
+            reliability_y[i] = observed[in_bin].mean()
+            frequency[i] = n_forecasts / len(predicted)
             error_bar = np.sqrt(reliability_y[i] * (1 - reliability_y[i]) / n_forecasts)
         else:
             mean_forecast_prob[i] = np.nan

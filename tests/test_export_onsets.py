@@ -21,6 +21,7 @@ from hcwf.io.forecasts import forecast_of, initialization_dates
 from hcwf.io.observations import history_of, observations_of
 from hcwf.io.thresholds import thresholds_of
 from typed_io import flat_config
+from pair_frames import frame_of_pairs
 from hcwf.config.mapping import build_config
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.model import Status
@@ -432,8 +433,7 @@ def test_conditional_climatology_equals_the_scored_table_and_pairs(world):
         total, found = total + len(frame), found + int(frame["onset_date"].notna().sum())
         pairs = create_conditional_climatological_forecast_obs_pairs(clim_onset, year, init_dates, onset_da,
                                                                      day_bins=((1, 5), (6, 10)))
-        pairs = pairs[pairs["bin_label"].isin(["Days 1-5", "Days 6-10"])].copy()
-        pairs["init_time"] = pd.to_datetime(pairs["init_time"])
+        pairs = frame_of_pairs(pairs.select(((1, 5), (6, 10))))
         sel = ds["onset_probability"].isel(season=0).sel(
             init_time=xr.DataArray(pairs["init_time"].values, dims="row"), lat=xr.DataArray(pairs["lat"].values, dims="row"),
             lon=xr.DataArray(pairs["lon"].values, dims="row"))

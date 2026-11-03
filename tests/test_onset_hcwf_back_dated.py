@@ -89,7 +89,7 @@ def _inputs(tmp_path):
 
 
 def _scores():
-    """Minimal score results around a pair table, enough for save_score_results."""
+    """Minimal score results around forecast pairs, enough for save_score_results."""
     return {"BS": {"fair_brier_score": 0.1, "bin_fair_brier_scores": {}},
             "BS_ref": {"bin_fair_brier_scores": {}},
             "RPS": {"fair_rps": 0.2}, "AUC": {"auc": 0.6, "bin_auc_scores": {}},
@@ -102,11 +102,11 @@ def test_member_share_column_in_the_overall_csv(tmp_path):
     """One of the two member onsets is back-dated: share 0.5 in observed mode, no column otherwise."""
     day_bins = ((1, 5), (6, 10))
     pairs = forecast_pairs(_members(), OBS_ONSET, day_bins, **OBSERVED)
-    assert pairs["back_dated_members"].iloc[0] == 1 and pairs["onset_members"].iloc[0] == 2
-    save_score_results({**_scores(), "forecast_obs_df": pairs}, _case("M"), None, _inputs(tmp_path).output)
+    assert pairs.back_dated[0] == 1 and pairs.onset_members[0] == 2
+    save_score_results({**_scores(), "forecast_pairs": pairs}, _case("M"), None, _inputs(tmp_path).output)
     assert pd.read_csv(tmp_path / "overall_skill_scores_M_1-10.csv")["back_dated_member_share"].tolist() == [0.5]
 
     old = forecast_pairs(_members(), OBS_ONSET, day_bins, **NONE)
-    assert "back_dated_members" not in old.columns
-    save_score_results({**_scores(), "forecast_obs_df": old}, _case("L"), None, _inputs(tmp_path).output)
+    assert old.back_dated is None and old.onset_members is None
+    save_score_results({**_scores(), "forecast_pairs": old}, _case("L"), None, _inputs(tmp_path).output)
     assert "back_dated_member_share" not in pd.read_csv(tmp_path / "overall_skill_scores_L_1-10.csv").columns

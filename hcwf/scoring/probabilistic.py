@@ -51,7 +51,7 @@ def skill_score_in_bins(rc):
     result_overall = defaultdict(dict)
     result_binned = defaultdict(dict)
     overall_frames, binned_frames = [], []
-    prepared = {}   # the pair tables of each model: everything else the tables depend on is fixed within a run
+    prepared = {}   # the pairs of each model: everything else the tables depend on is fixed within a run
 
     for case in progress(list(rc.cases()), desc="cases"):
         model, window = case.model.name, case.window.span
@@ -60,7 +60,7 @@ def skill_score_in_bins(rc):
         log.info(f"processing {model} onset evaluation for verification window "
                 f"{window}, case: {case.name}")
 
-        # the pair tables hold every day bin; each window then reads the bins inside it
+        # the pairs hold every day bin; each window then reads the bins inside it
         if model not in prepared:
             prepared[model] = prepare_pairs(rc, case.model)
 
@@ -98,7 +98,7 @@ def skill_score_in_bins(rc):
         if output.plot_reliability:
             from hcwf.figures.reliability import plot_reliability_diagram
 
-            plot_reliability_diagram(score_results["forecast_obs_df"], case, spec, day_bins)
+            plot_reliability_diagram(score_results["forecast_pairs"], case, spec)
 
 
     import pprint

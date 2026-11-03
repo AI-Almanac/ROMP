@@ -41,7 +41,7 @@ def score_tables(score_results, model, verification_window):
 
     # create dataframe and save as .csv
     overall_df = pd.DataFrame([overall_scores_nested])
-    share = back_dated_member_share(score_results.get('forecast_obs_df'))
+    share = back_dated_member_share(score_results.get('forecast_pairs'))
     if share is not None:
         # only with forecast_history "observed"; "none" runs keep their columns
         overall_df['back_dated_member_share'] = share
@@ -66,17 +66,16 @@ def score_tables(score_results, model, verification_window):
     return overall_df, binned_df, binned_data, overall_scores_nested
 
 
-def back_dated_member_share(forecast_obs_df):
-    """Share of the scored member onsets dated on or before their init, or None when the table does not track them.
+def back_dated_member_share(pairs):
+    """Share of the scored member onsets dated on or before their init, or None when the pairs do not track them.
 
-    Reads the per-case `back_dated_members` and `onset_members` columns of the forecast-observation
-    table (present for definition runs with forecast_history "observed"); NaN when no member found an onset.
+    Reads the per-case `back_dated` and `onset_members` counts of the forecast pairs (present for definition runs with
+    forecast_history "observed"); NaN when no member found an onset.
     """
-    if forecast_obs_df is None or 'back_dated_members' not in forecast_obs_df.columns:
+    if pairs is None or pairs.back_dated is None:
         return None
-    cases = forecast_obs_df.drop_duplicates(['init_time', *axes.spatial_dims(forecast_obs_df.columns)])
-    onsets = cases['onset_members'].sum()
-    return float(cases['back_dated_members'].sum() / onsets) if onsets else float('nan')
+    onsets = pairs.onset_members.sum()
+    return float(pairs.back_dated.sum() / onsets) if onsets else float('nan')
 
 
 def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):

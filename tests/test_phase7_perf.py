@@ -1,4 +1,4 @@
-"""Phase 7 speed-ups that must not change a result: year-set texts, shared reference rain, pre-warming, one worker pool."""
+"""Phase 7 speed-ups that must not change a result: shared reference rain, pre-warming, one worker pool."""
 import shutil
 
 import numpy as np
@@ -7,24 +7,6 @@ from hcwf.cache import reset_run_state
 from hcwf.io import observations as observations_io
 from hcwf.io import reference as reference_io
 from hcwf.io import thresholds as thresholds_io
-from hcwf.metrics import bins
-
-
-def _joined(sorted_years, code):
-    """The text of a year set the slow, obvious way."""
-    return ",".join(str(sorted_years[n]) for n in range(len(sorted_years)) if (code >> n) & 1)
-
-
-def test_year_set_texts_equal_the_plain_join():
-    """_year_set_texts gives the comma-separated years of the set bits, for several set sizes, repeated calls included."""
-    rng = np.random.default_rng(1)
-    for n_years in (1, 7, 10, 11, 25, 30):
-        years = [np.int64(1990 + 3 * k) for k in range(n_years)]
-        codes = np.unique(np.concatenate([rng.integers(0, 1 << n_years, 500), [0, (1 << n_years) - 1, 1]]))
-        want = [_joined(years, int(c)) for c in codes]
-        for _ in range(2):   # the second call is served from what the first wrote
-            assert list(bins._year_set_texts(years, codes)) == want
-    assert bins._year_set_texts(years, np.zeros(0, np.int64)).shape == (0,)
 
 
 def _case_kwargs(config):

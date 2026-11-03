@@ -6,9 +6,9 @@ unconditional distribution of onset dates. The probabilities come from a KDE of
 the cell's observed onsets over the climatology years (hcwf.references.kde),
 optionally refitted without the evaluated year (climatology_cv).
 
-Probabilistic use gives a pair table of the shape the climatology scoring
+Probabilistic use gives pairs (PairArrays) of the shape the climatology scoring
 consumes (per init, cell and day bin, with Before and After bins); the
-probabilities are exact, so the table carries infinite member counts and the
+probabilities are exact, so the pairs carry infinite member counts and the
 fair-score corrections vanish. Deterministic use gives the conditional median
 onset date per init and cell, in the layout of compute_climatology_as_forecast.
 
@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from hcwf.config.model import Selection
+from hcwf.metrics.bins import LeadBins, PairArrays, bin_fields
 from hcwf.references.kde import conditional_probabilities, season_days
 from hcwf.spatial import axes
 import logging
@@ -114,7 +115,7 @@ def conditional_lead_probabilities(clim_onset, year, init_dates, like, horizon, 
 
 def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, observed_onset_da=None, *,
                                                          day_bins, climatology_cv=None):
-    """Forecast-observation pairs of the conditional climatology for one year, per init, cell and day bin.
+    """Forecast-observation pairs (PairArrays) of the conditional climatology for one year, per init, cell and day bin.
 
     clim_onset is the (year, lat, lon) observed onset dates of the climatology
     years. observed_onset_da is the target year's observed onsets (lat, lon);
@@ -123,11 +124,9 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     probabilities are the conditional KDE probabilities of the leads in each
     bin; the Before bin holds the leads before the first bin (0 when the bins
     start at lead 1) and the After bin the rest of the mass. Cases whose cell
-    has no KDE (too few onset years) are left out. Rows are ordered by init,
-    lat, lon and bin, with the columns of the climatology pair table.
+    has no KDE (too few onset years) are left out. Cases are ordered by init,
+    lat and lon; their member counts are infinite.
     """
-    from hcwf.metrics.bins import LeadBins
-
     cv = cv_mode(climatology_cv) == "leave_one_year_out"
     bins = LeadBins.from_day_bins(day_bins)
     max_day, min_day = bins.last_day, bins.first_day
@@ -140,19 +139,19 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
     init_case, *where = _cases(inits, obs)
     if not len(init_case):
-        return pd.DataFrame([])
+        return PairArrays.empty(bins, spatial)
 
     values, position, back = _conditional_by_case(clim, target_year, tuple(where), inits, max_day, cv)
     prob = values[position, back[init_case], :]
     kept = np.flatnonzero(~np.isnan(prob).any(axis=1))
     if not len(kept):
-        return pd.DataFrame([])
+        return PairArrays.empty(bins, spatial)
     prob = prob[kept]
     init_case, where = init_case[kept], tuple(w[kept] for w in where)
 
     obs_days = ((obs[where] - inits.values.astype("datetime64[ns]")[init_case])
                 // np.timedelta64(1, "D")).astype(np.int64)
-    labels, bin_prob, observed = bins.labels(), [], []
+    bin_prob, observed = [], []
     for k, (start, end) in enumerate(extended_bins):
         if k == 0:
             bin_prob.append(prob[:, :min_day - 1].sum(axis=1))
@@ -163,33 +162,16 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
         else:
             bin_prob.append(prob[:, start - 1:end].sum(axis=1))
             observed.append((start <= obs_days) & (obs_days <= end))
-    n_bins = len(extended_bins)
-    n_case = len(init_case)
 
-    def per_case(values):
-        """Repeat each per-case value once for every bin."""
-        return np.repeat(values, n_bins)
-
-    return pd.DataFrame({
-        "init_time": per_case(inits.strftime("%Y-%m-%d").to_numpy(dtype=object)[init_case]),
-        **{d: per_case(c) for d, c in axes.columns_of(spatial, coords, where).items()},
-        "bin_start": np.tile(np.array([b[0] for b in extended_bins], dtype=float), n_case),
-        "bin_end": np.tile(np.array([b[1] for b in extended_bins], dtype=float), n_case),
-        "bin_label": np.tile(np.array(labels, dtype=object), n_case),
-        "predicted_prob": np.stack(bin_prob, axis=1).ravel(),
-        "observed_onset": np.stack(observed, axis=1).astype(np.int64).ravel(),
-        "total_members": np.inf,
-        "total_members_with_onset": np.inf,
-        "year": target_year,
-        "obs_onset_date": per_case(pd.DatetimeIndex(obs[where]).strftime("%Y-%m-%d").to_numpy(dtype=object)),
-        "obs_days_from_init": per_case(obs_days),
-        "bin_index": np.tile(np.arange(n_bins), n_case),
-        "forecast_type": "conditional_climatological",
-    })
+    return PairArrays(prob=np.stack(bin_prob, axis=1), observed=np.stack(observed, axis=1).astype(np.int8),
+                      members=np.full(len(init_case), np.inf), **bin_fields(bins),
+                      init=inits.values.astype("datetime64[D]")[init_case],
+                      place=axes.columns_of(spatial, coords, where),
+                      members_with_onset=np.full(len(init_case), np.inf))
 
 
 def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bins):
-    """Conditional climatology pair tables of all years in years, concatenated.
+    """Conditional climatology pairs (PairArrays) of all years in years, concatenated.
 
     A year's observed onsets come from clim_onset when it holds that year,
     otherwise they are detected from the year's rainfall as for the forecasts.
@@ -207,11 +189,11 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
         table = create_conditional_climatological_forecast_obs_pairs(
             clim_onset, year, initialization_dates(year, rc.evaluation), observed, day_bins=day_bins,
             climatology_cv=cv)
-        if len(table):
+        if table.n_cases:
             tables.append(table)
     if not tables:
         raise ValueError("No data was successfully processed for any target year")
-    return pd.concat(tables, ignore_index=True)
+    return PairArrays.concat(tables)
 
 
 def _detect_observed(year, rc, select, thresholds):

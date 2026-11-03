@@ -1,10 +1,9 @@
 """Build forecast-observation pairs per day bin (from ensemble members or climatology) for probabilistic verification."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pandas as pd
 import numpy as np
-from hcwf.cache import memo
 from hcwf.spatial import axes
 import logging
 
@@ -133,6 +132,106 @@ class LeadBins:
         return 999
 
 
+@dataclass(frozen=True)
+class PairArrays:
+    """The forecast-observation pairs of a model, reference or climatology as arrays: one row per case, one column per bin.
+
+    A case is a forecast of one init and place (a grid cell, or a unit) whose observed onset lies after the init.
+    `prob` and `observed` are (case, bin) matrices of the predicted probability of an onset in the bin and whether
+    the observed onset fell in it (0/1); `members` is the ensemble size behind each case's probabilities (inf for a
+    conditional climatology). `start`, `end` and `labels` describe the bins once (the open before and after bins have
+    infinite edges). `init` and `place` ({dim: values}, as the builders order the cases) identify the cases.
+    Optional per-case counts: `members_with_onset` (climatologies: members with an onset, the size behind their
+    probabilities) and `back_dated` / `onset_members` (the members whose onset is dated on or before the init, and all
+    members with an onset; forecast_history "observed" runs).
+
+    The arrays are never changed after building: a verification window (`select`) and the years joined (`concat`) are
+    new containers, the window's matrices views of the originals where its bins are adjacent.
+    """
+
+    prob: np.ndarray
+    observed: np.ndarray
+    members: np.ndarray
+    start: np.ndarray
+    end: np.ndarray
+    labels: tuple
+    init: np.ndarray
+    place: dict
+    members_with_onset: np.ndarray | None = None
+    back_dated: np.ndarray | None = None
+    onset_members: np.ndarray | None = None
+
+    _PER_CASE = ("prob", "observed", "members", "init", "members_with_onset", "back_dated", "onset_members")
+
+    @property
+    def n_cases(self):
+        return len(self.prob)
+
+    @property
+    def n_bins(self):
+        return len(self.labels)
+
+    @classmethod
+    def empty(cls, bins, spatial):
+        """No cases, with the bins of `bins` (LeadBins) and the place dimensions `spatial`."""
+        n_bins = len(bins.extended)
+        return cls(prob=np.empty((0, n_bins)), observed=np.empty((0, n_bins), dtype=np.int8),
+                   members=np.empty(0, dtype=np.int32), **bin_fields(bins), init=np.empty(0, dtype="datetime64[D]"),
+                   place={d: np.empty(0) for d in spatial})
+
+    @classmethod
+    def concat(cls, parts):
+        """The cases of `parts` one after the other (the years of a run, in order); they must share their bins."""
+        parts = list(parts)
+        first = parts[0]
+        for part in parts[1:]:
+            if part.labels != first.labels or list(part.place) != list(first.place):
+                raise ValueError("pairs with different bins or places cannot be joined")
+        columns = {name: [getattr(part, name) for part in parts] for name in cls._PER_CASE}
+        joined = {name: None if any(v is None for v in values) else np.concatenate(values)
+                  for name, values in columns.items()}
+        place = {d: np.concatenate([part.place[d] for part in parts]) for d in first.place}
+        return replace(first, place=place, **joined)
+
+    def bins_where(self, keep):
+        """The pairs of the bins whose position is flagged in `keep` (bool per bin), a view where they are adjacent."""
+        at = np.flatnonzero(keep)
+        columns = slice(at[0], at[-1] + 1) if len(at) and at[-1] - at[0] + 1 == len(at) else at
+        return replace(self, prob=self.prob[:, columns], observed=self.observed[:, columns], start=self.start[at],
+                       end=self.end[at], labels=tuple(self.labels[k] for k in at))
+
+    def select(self, day_bins):
+        """The pairs of the bins whose (first day, last day) is one of `day_bins` (a verification window's bins), in
+        the order they are stored."""
+        wanted = {(float(a), float(b)) for a, b in day_bins}
+        return self.bins_where([(s, e) in wanted for s, e in zip(self.start.tolist(), self.end.tolist())])
+
+    def without_before(self):
+        """The pairs without their "Before day N" bins."""
+        return self.bins_where(["Before" not in label for label in self.labels])
+
+    def sorted_order(self):
+        """Positions of the cases ordered by init and then place (the places in the order of their dimensions)."""
+        return np.lexsort((*(self.place[d] for d in reversed(list(self.place))), self.init))
+
+
+def bin_fields(bins):
+    """The bin edges and labels of `bins` (LeadBins) as the PairArrays fields."""
+    extended = bins.extended
+    return {"start": np.array([b[0] for b in extended], dtype=float), "end": np.array([b[1] for b in extended], dtype=float),
+            "labels": tuple(bins.labels())}
+
+
+def _log_pairs(pairs):
+    """Debug lines on the size and range of the pairs."""
+    if not log.isEnabledFor(logging.DEBUG) or not pairs.prob.size:
+        return
+    log.debug(f"Generated {pairs.n_cases} cases of {pairs.n_bins} bins each")
+    log.debug(f"Probability range: {pairs.prob.min():.3f} - {pairs.prob.max():.3f}")
+    log.debug(f"Observed onset rate: {pairs.observed.mean():.3f}")
+    log.debug(f"Non-zero probabilities: {(pairs.prob > 0).sum()}")
+
+
 # Function to create forecast-observation pairs with specified day bins for probabilistic verification
 
 
@@ -152,7 +251,7 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
     back_dated : bool
         Whether the table also counts the members whose onset is dated on or before the init (reports_back_dated)
 
-    Returns one row per forecast case (init_time, lat, lon, or init_time, unit; in sorted order) and bin; cases without an
+    Returns the PairArrays of the forecast cases (init, then lat and lon or unit; in sorted order); cases without an
     observed onset, or initialized on or after it, are left out.
     """
 
@@ -187,102 +286,33 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
     # Lead day of each kept case's observed onset (the day after the init is lead 1)
     obs_lead = (obs_date[kept].astype("datetime64[D]") - init_kept.astype("datetime64[D]")).astype(np.int64)
 
-    members_in_bin = []
-    observed_onset = []
-    labels = []
+    total_kept = total_members[kept]
+    prob = np.empty((len(kept), len(extended_bins)))
+    observed = np.empty((len(kept), len(extended_bins)), dtype=np.int8)
     for k in range(len(extended_bins)):
-        labels.append(bins.label(k))
         # Members with no onset in the forecast window predict "after day X"
         member_in_bin = bins.in_bin(member_day, k, nan_after=True)
-        observed = bins.in_bin(obs_lead, k)
-        members_in_bin.append(
-            np.bincount(member_case, weights=member_in_bin, minlength=len(cases)).astype(np.int64)[kept])
-        observed_onset.append(observed.astype(np.int64))
-    members_with_onset = np.stack(members_in_bin, axis=1)
+        members_in_bin = np.bincount(member_case, weights=member_in_bin, minlength=len(cases)).astype(np.int64)[kept]
+        prob[:, k] = members_in_bin / total_kept
+        observed[:, k] = bins.in_bin(obs_lead, k)
     if back_dated:
         # members of the scored cases whose onset is dated on or before the init (and all members with an onset)
         in_kept = np.zeros(len(cases), dtype=bool)
         in_kept[kept] = True
         scored_member = in_kept[member_case]
         back_dated_members = np.bincount(member_case, weights=scored_member & has_onset & (member_day <= 0),
-                                         minlength=len(cases)).astype(np.int64)[kept]
+                                         minlength=len(cases)).astype(np.int32)[kept]
         onset_members = np.bincount(member_case, weights=scored_member & has_onset,
-                                    minlength=len(cases)).astype(np.int64)[kept]
+                                    minlength=len(cases)).astype(np.int32)[kept]
     else:
         back_dated_members = onset_members = None
-    n_bins = len(extended_bins)
 
-    def per_case(values):
-        """Repeat each per-case value once for every bin."""
-        return np.repeat(values, n_bins)
-
-    forecast_obs_df = pd.DataFrame({
-        'init_time': per_case(init_times[kept]) if len(kept) else [],
-        **{d: per_case(place[d][kept]) for d in spatial},
-        'bin_start': np.tile(np.array([b[0] for b in extended_bins], dtype=float), len(kept)),
-        'bin_end': np.tile(np.array([b[1] for b in extended_bins], dtype=float), len(kept)),
-        'bin_label': np.tile(np.array(labels, dtype=object), len(kept)),
-        'predicted_prob': (members_with_onset / total_members[kept][:, None]).ravel(),
-        'observed_onset': np.stack(observed_onset, axis=1).ravel(),
-        'members_with_onset': members_with_onset.ravel(),
-        'total_members': per_case(total_members[kept]),
-        'year': per_case(pd.DatetimeIndex(init_kept).year.to_numpy().astype(np.int64)),
-        'obs_onset_date': per_case(obs_date[kept].astype('datetime64[D]').astype('datetime64[ns]')),
-        'bin_index': np.tile(np.arange(n_bins), len(kept)),
-    })
-    if back_dated_members is not None:
-        forecast_obs_df['back_dated_members'] = per_case(back_dated_members)
-        forecast_obs_df['onset_members'] = per_case(onset_members)
-
-    log.debug(f"Generated {len(forecast_obs_df)} forecast-observation pairs")
-    log.debug(f"Total bins per forecast: {len(extended_bins)}")
-    log.debug(f"Probability range: {forecast_obs_df['predicted_prob'].min():.3f} - {forecast_obs_df['predicted_prob'].max():.3f}")
-    log.debug(f"Observed onset rate: {forecast_obs_df['observed_onset'].mean():.3f}")
-    log.debug(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
-
-    # Show distribution across bins
-    log.debug(f"\nDistribution across bins:")
-    bin_stats = forecast_obs_df.groupby('bin_label').agg({
-        'predicted_prob': ['count', 'mean'],
-        'observed_onset': 'mean'
-    }).round(3)
-    log.debug(bin_stats)
-
-    return forecast_obs_df
-
-
-_YEAR_TEXT_BITS = 10
-"""Bits of a year-set code looked up at once when writing its years as text (one table of 2**10 texts per group)."""
-_YEAR_TEXT = memo("metrics.bins.year_text", maxsize=16)
-"""Texts of year sets already written, {sorted years: {"groups": {(group, value): text}, "codes": {code: text}}}."""
-
-
-def _year_set_texts(sorted_years, codes) -> np.ndarray:
-    """Comma-separated text of the years of each code (bit n set = sorted_years[n] is in), as an object array.
-
-    Equal to joining the years of the set bits in order, but a set is written from small per-group tables instead of
-    looping over every year, and a code already written (by an earlier bin or call with these years) is reused.
-    """
-    held = _YEAR_TEXT.setdefault(tuple(int(y) for y in sorted_years), {"groups": {}, "codes": {}})
-    texts, mask = held["codes"], (1 << _YEAR_TEXT_BITS) - 1
-    n_groups = -(-len(sorted_years) // _YEAR_TEXT_BITS)
-
-    def group_text(group, value):
-        """The years of the set bits of `value` within one group of the codes."""
-        key = (group, value)
-        if key not in held["groups"]:
-            base = group * _YEAR_TEXT_BITS
-            held["groups"][key] = ",".join(str(sorted_years[base + n]) for n in range(_YEAR_TEXT_BITS)
-                                           if (value >> n) & 1 and base + n < len(sorted_years))
-        return held["groups"][key]
-
-    out = np.empty(len(codes), dtype=object)
-    for n, code in enumerate(codes.tolist()):
-        if code not in texts:
-            parts = (group_text(g, (code >> (g * _YEAR_TEXT_BITS)) & mask) for g in range(n_groups))
-            texts[code] = ",".join(part for part in parts if part)
-        out[n] = texts[code]
-    return out
+    pairs = PairArrays(prob=prob, observed=observed, members=total_kept.astype(np.int32),
+                       **bin_fields(bins), init=init_kept.astype("datetime64[D]"),
+                       place={d: place[d][kept] for d in spatial},
+                       back_dated=back_dated_members, onset_members=onset_members)
+    _log_pairs(pairs)
+    return pairs
 
 
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
@@ -308,7 +338,8 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
 
     Returns:
     --------
-    DataFrame with forecast-observation pairs, rows in order of init date, lon, lat and bin
+    PairArrays of the cases (a place with an observed onset and an init before it, then a member with an onset), in
+    order of init date, lon, lat
     """
 
     # the forecast window is the span of day_bins
@@ -369,124 +400,28 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     has_onset = ~np.isnan(member_days)
 
     members_in_bin = []
-    contributing = []
-    observed_onset = []
-    labels = []
     for k in range(len(extended_bins)):
-        labels.append(bins.label(k))
         members_in_bin.append(has_onset & bins.in_bin(member_days, k))
-        # members whose onset is dated on or before the init also count for the Before bin's years
-        contributing.append(has_onset & (member_days <= 0) if k == 0 else members_in_bin[-1])
-        observed_onset.append(bins.in_bin(obs_days_from_init, k).astype(np.int64))
 
     members_with_onset = np.stack([in_bin.sum(axis=1) for in_bin in members_in_bin], axis=1)
     total_members_with_onset = members_with_onset.sum(axis=1)
     # Skip if no members showed onset
     kept = np.flatnonzero(total_members_with_onset > 0)
-    n_bins = len(extended_bins)
-
-    # The years of each bin's members as comma-separated text, built once per distinct set of years over all bins
-    year_order = np.argsort(np.array(ensemble_years), kind="stable")
-    sorted_years = [ensemble_years[n] for n in year_order]
-    place_value = 1 << np.arange(len(ensemble_years), dtype=np.int64)
-    in_bins = [in_bin[kept][:, year_order] for in_bin in contributing]
-    sets, which = np.unique(np.stack([in_bin.astype(np.int64) @ place_value for in_bin in in_bins], axis=1),
-                            return_inverse=True)
-    names = _year_set_texts(sorted_years, sets)
-    contributing_years = names[which.reshape(len(kept), n_bins)]
-    n_contributing_years = np.stack([in_bin.sum(axis=1) for in_bin in in_bins], axis=1).astype(np.int64)
-
-    def per_case(values):
-        """Repeat each per-case value once for every bin."""
-        return np.repeat(values, n_bins)
-
-    def per_bin(values):
-        """Tile the per-bin values across all kept cases."""
-        return np.tile(values, len(kept))
+    obs_days_kept = obs_days_from_init[kept]
+    observed = np.stack([bins.in_bin(obs_days_kept, k) for k in range(len(extended_bins))], axis=1).astype(np.int8)
 
     # Predicted probability uses only members that showed onset
-    members_kept = members_with_onset[kept]
-    obs_days_kept = obs_days_from_init[kept]
-    obs_days_column = np.repeat(obs_days_kept[:, None], n_bins, axis=1)
+    total_kept = total_members_with_onset[kept]
+    pairs = PairArrays(prob=members_with_onset[kept] / total_kept[:, None], observed=observed,
+                       members=np.full(len(kept), len(ensemble_years), dtype=np.int32),
+                       **bin_fields(bins), init=inits.values.astype("datetime64[D]")[init_case[kept]],
+                       place=axes.columns_of(spatial, coords, tuple(w[kept] for w in where)),
+                       members_with_onset=total_kept.astype(np.int32))
 
-    forecast_obs_df = pd.DataFrame({
-        'init_time': per_case(inits.strftime('%Y-%m-%d').to_numpy(dtype=object)[init_case[kept]]),
-        **{d: per_case(c) for d, c in axes.columns_of(spatial, coords, tuple(w[kept] for w in where)).items()},
-        'bin_start': per_bin(np.array([b[0] for b in extended_bins], dtype=float)),
-        'bin_end': per_bin(np.array([b[1] for b in extended_bins], dtype=float)),
-        'bin_label': per_bin(np.array(labels, dtype=object)),
-        'predicted_prob': (members_kept / total_members_with_onset[kept][:, None]).ravel(),
-        'observed_onset': np.stack(observed_onset, axis=1)[kept].ravel(),
-        'members_with_onset': members_kept.ravel(),
-        'total_members': len(ensemble_years),
-        'total_members_with_onset': per_case(total_members_with_onset[kept]),
-        'contributing_years': contributing_years.ravel(),
-        'n_contributing_years': n_contributing_years.ravel(),
-        'year': target_year,
-        'obs_onset_date': per_case(pd.DatetimeIndex(obs_onset[tuple(w[kept] for w in where)])
-                                   .strftime('%Y-%m-%d').to_numpy(dtype=object)),
-        'obs_onset_doy': per_case(case_obs_doy[kept]),
-        'init_doy': per_case(init_doy[init_case[kept]]),
-        'obs_days_from_init_doy': obs_days_column.ravel(),
-        'bin_index': per_bin(np.arange(n_bins)),
-        'forecast_type': 'climatological_doy',
-    })
-
-    if len(forecast_obs_df) == 0:
+    if pairs.n_cases == 0:
         log.warning("No forecast-observation pairs generated")
-        return forecast_obs_df
+        return pairs
 
-    log.debug(f"Generated {len(forecast_obs_df)} climatological forecast-observation pairs")
     log.debug(f"Unique {'/'.join(spatial)} locations processed: {n_places}")
-    log.debug(f"Total bins per forecast: {len(extended_bins)}")
-    log.debug(f"Probability range: {forecast_obs_df['predicted_prob'].min():.3f} - {forecast_obs_df['predicted_prob'].max():.3f}")
-    log.debug(f"Observed onset rate: {forecast_obs_df['observed_onset'].mean():.3f}")
-    log.debug(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
-
-    # Verify uniqueness
-    unique_locations_in_output = len(forecast_obs_df[list(spatial)].drop_duplicates())
-    log.debug(f"Unique locations in output: {unique_locations_in_output}")
-
-    # Show distribution across bins
-    log.debug(f"\nDistribution across bins:")
-    bin_stats = forecast_obs_df.groupby('bin_label').agg({
-        'predicted_prob': ['count', 'mean'],
-        'observed_onset': 'mean',
-        'n_contributing_years': 'mean',
-        'total_members_with_onset': 'mean'
-    }).round(3)
-    log.debug(bin_stats)
-
-    return forecast_obs_df
-
-
-def extract_pd_bins(df, day_bins, method='merge', *kwargs):
-    """
-    Select rows from df whose (bin_start, bin_end) match any tuple in bins.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Must contain 'bin_start' and 'bin_end' columns.
-    day_bins : iterable of tuples
-        Example: ((1, 5), (6, 10))
-    method : {"merge", "series"}
-        - "merge": fast, recommended for large DataFrames
-        - "series": simple, minimal change from zip/isin logic
-
-    Returns
-    -------
-    pandas.DataFrame
-        Filtered DataFrame
-    """
-
-    if method == "merge":
-        bins_df = pd.DataFrame(day_bins, columns=["bin_start", "bin_end"])
-        return df.merge(bins_df, on=["bin_start", "bin_end"], how="inner").copy()
-
-    elif method == "series":
-        mask = pd.Series(zip(df["bin_start"], df["bin_end"])).isin(day_bins)
-        return df[mask]
-
-    else:
-        raise ValueError("method must be 'merge' or 'series'")
+    _log_pairs(pairs)
+    return pairs

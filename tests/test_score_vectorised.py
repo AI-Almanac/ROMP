@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from hcwf.metrics.score import calculate_rps
+from pair_frames import pairs_of_frame, shuffled_cases
 
 
 def _old_calculate_rps(forecast_obs_df):
@@ -29,29 +30,31 @@ def _old_calculate_rps(forecast_obs_df):
     return {'rps': np.mean(rps_values), 'fair_rps': np.mean(fair_rps_values), 'n_forecasts': len(forecast_groups)}
 
 
-def _frame(n_cases, n_bins, members, seed, shuffle=False, ragged=False):
+def _frame(n_cases, n_bins, members, seed):
     """Build a random pair table of n_cases cases with n_bins bins each."""
     rng = np.random.default_rng(seed)
     rows = []
     for c in range(n_cases):
-        nb = n_bins - (c % 3 if ragged else 0)
+        nb = n_bins
         counts = rng.multinomial(members, np.ones(nb) / nb)
         obs = rng.integers(nb)
         for b in range(nb):
             rows.append((pd.Timestamp("2000-01-01") + pd.Timedelta(days=c % 17), c % 5, c // 5,
-                         counts[b] / members, int(b == obs), members, b))
+                         counts[b] / members, int(b == obs), members, b, f"Days {b + 1}-{b + 1}"))
     df = pd.DataFrame(rows, columns=['init_time', 'lat', 'lon', 'predicted_prob', 'observed_onset',
-                                     'total_members', 'bin_index'])
-    return df.sample(frac=1, random_state=seed).reset_index(drop=True) if shuffle else df
+                                     'total_members', 'bin_index', 'bin_label'])
+    return df
 
 
 @pytest.mark.parametrize("n_bins", [3, 5, 9, 17, 40])
 @pytest.mark.parametrize("shuffle", [False, True])
-@pytest.mark.parametrize("ragged", [False, True])
-def test_rps_identical(n_bins, shuffle, ragged):
-    """RPS, fair RPS and the case count equal the loop's exactly."""
-    df = _frame(300, n_bins, 51, n_bins, shuffle, ragged)
-    new, old = calculate_rps(df), _old_calculate_rps(df)
+def test_rps_identical(n_bins, shuffle):
+    """RPS, fair RPS and the case count equal the loop's exactly, whatever the order of the cases in the arrays."""
+    df = _frame(300, n_bins, 51, n_bins)
+    pairs = pairs_of_frame(df)
+    if shuffle:
+        pairs = shuffled_cases(pairs, n_bins)
+    new, old = calculate_rps(pairs), _old_calculate_rps(df)
     assert new['rps'] == old['rps'] and new['fair_rps'] == old['fair_rps']
     assert new['n_forecasts'] == old['n_forecasts']
 
@@ -59,4 +62,4 @@ def test_rps_identical(n_bins, shuffle, ragged):
 def test_rps_needs_ensemble():
     """A single member raises as before."""
     with pytest.raises(ValueError):
-        calculate_rps(_frame(4, 3, 1, 0))
+        calculate_rps(pairs_of_frame(_frame(4, 3, 1, 0)))

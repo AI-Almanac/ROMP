@@ -1,14 +1,13 @@
 """Brier score, RPS, AUC and skill-score calculations for binned onset forecast-observation pairs.
 
-The pair tables (one row per forecast case and bin) are reshaped into (case, bin) matrices and scored by
-hcwf.metrics.probabilistic; this module only keeps HCWF's result layout (dicts keyed by bin label) and its guards.
+The pairs (PairArrays: (case, bin) matrices) are scored by hcwf.metrics.probabilistic; this module only keeps
+HCWF's result layout (dicts keyed by bin label) and its guards.
 """
 
 import numpy as np
 import pandas as pd
 import warnings
 from hcwf.metrics import probabilistic
-from hcwf.spatial import axes
 from hcwf.metrics.bins import LeadBins
 import logging
 
@@ -31,40 +30,12 @@ def get_target_bins(brier_forecast, brier_climatology):
     return sorted(target_bins, key=LeadBins.first_day_of)
 
 
-def _pair_matrices(df, members_column=None):
-    """(P, Y, members, labels): the probabilities, outcomes and member counts of a pair table as (case, bin) matrices
-    (members None without a members_column).
-
-    Rows keep their order, so the table must hold every bin, in the same order, for each case (as the pair
-    builders write it); a table in another order is sorted by case and bin first. labels are the bin labels
-    in order of appearance.
-    """
-    codes, labels = pd.factorize(df['bin_label'])
-    n_bins = len(labels)
-    regular = lambda c: len(c) % n_bins == 0 and bool((c.reshape(-1, n_bins) == np.arange(n_bins)).all())
-    order = None
-    if not regular(codes):
-        case_columns = ['init_time', *axes.spatial_dims(df.columns)]
-        if not {*case_columns, 'bin_index'} <= set(df.columns):
-            raise ValueError("the pair table does not hold every bin, in the same order, for each case")
-        case = df.groupby(case_columns, sort=False).ngroup().to_numpy()
-        order = np.lexsort((df['bin_index'].to_numpy(), case))
-        codes, labels = pd.factorize(df['bin_label'].to_numpy()[order])
-        if not regular(codes):
-            raise ValueError("the pair table does not hold the same bins for each case")
-
-    def matrix(column):
-        values = df[column].to_numpy()
-        return (values if order is None else values[order]).reshape(-1, n_bins)
-
-    members = None if members_column is None else matrix(members_column)
-    return matrix('predicted_prob'), matrix('observed_onset'), members, list(labels)
-
-
-def _brier_results(df, members_column):
-    """Brier results of a pair table in HCWF's layout: overall and per-bin Brier and fair Brier scores."""
-    P, Y, members, labels = _pair_matrices(df, members_column)
-    scores = probabilistic.brier_scores(P, Y, members, scale="element", by_bin=True, bin_mean="compensated", skipna=True)
+def _brier_results(pairs, members):
+    """Brier results of pairs in HCWF's layout: overall and per-bin Brier and fair Brier scores (`members`: the
+    ensemble size of each case)."""
+    scores = probabilistic.brier_scores(pairs.prob, pairs.observed, members, scale="element", by_bin=True,
+                                        bin_mean="compensated", skipna=True)
+    labels = pairs.labels
     by_label = sorted(range(len(labels)), key=lambda j: labels[j])
     return {
         'brier_score': scores['brier'],
@@ -74,9 +45,9 @@ def _brier_results(df, members_column):
     }
 
 
-def _require_members(forecast_obs_df, what):
+def _require_members(pairs, what):
     """Raise unless the first case has more than one ensemble member (the fair scores divide by members - 1)."""
-    n_members = forecast_obs_df['total_members'].iloc[0] if len(forecast_obs_df) > 0 else 1
+    n_members = pairs.members[0] if pairs.n_cases > 0 else 1
     if n_members <= 1:
         raise ValueError(
             f"Fair {what} requires >1 ensemble member, but found total_members={n_members}. "
@@ -85,13 +56,8 @@ def _require_members(forecast_obs_df, what):
         )
 
 
-def _without_before(forecast_obs_df):
-    """The pair table without its "Before day N" bins."""
-    return forecast_obs_df[~forecast_obs_df['bin_label'].str.contains('Before', na=False)].copy()
-
-
 # Function to calculate Brier Score and Fair Brier Score for the model forecasts (both overall and bin-wise)
-def calculate_brier_score(forecast_obs_df):
+def calculate_brier_score(pairs):
     """
     Calculate Brier Score and Fair Brier Score for probabilistic forecasts.
 
@@ -107,17 +73,16 @@ def calculate_brier_score(forecast_obs_df):
 
     Parameters:
     -----------
-    forecast_obs_df : DataFrame
-        Output from forecast_pairs()
-        Must contain columns: 'predicted_prob', 'observed_onset', 'total_members', 'bin_label'
+    pairs : PairArrays
+        Output from forecast_pairs(), restricted to the scored bins (PairArrays.select)
 
     Returns:
     --------
     dict with Brier score metrics
     """
-    _require_members(forecast_obs_df, "Brier Score")
+    _require_members(pairs, "Brier Score")
 
-    brier_results = _brier_results(forecast_obs_df, 'total_members')
+    brier_results = _brier_results(pairs, pairs.members)
 
     log.debug(f"Brier Score: {brier_results['brier_score']:.4f}")
     log.debug(f"Fair Brier Score: {brier_results['fair_brier_score']:.4f}")
@@ -125,10 +90,10 @@ def calculate_brier_score(forecast_obs_df):
     return brier_results
 
 
-def _auc_results(forecast_obs_df):
-    """AUC results of a pair table in HCWF's layout: the overall AUC and the AUC of each bin (NaN where a bin has
+def _auc_results(pairs):
+    """AUC results of pairs in HCWF's layout: the overall AUC and the AUC of each bin (NaN where a bin has
     only positives or only negatives)."""
-    P, Y, _, labels = _pair_matrices(forecast_obs_df)
+    P, Y = pairs.prob, pairs.observed
     p_ij, y_ij = P.ravel(), Y.ravel()
     auc = probabilistic.auc(y_ij, p_ij)
     if np.isnan(auc):
@@ -138,16 +103,15 @@ def _auc_results(forecast_obs_df):
             'n_positive': np.sum(y_ij),
             'n_negative': np.sum(1 - y_ij),
             'bin_auc_scores': {},
-            'forecast_obs_df_with_ranks': forecast_obs_df
         }
     return {
         'auc': auc,
-        'bin_auc_scores': {label: probabilistic.auc(Y[:, j], P[:, j]) for j, label in enumerate(labels)},
+        'bin_auc_scores': {label: probabilistic.auc(Y[:, j], P[:, j]) for j, label in enumerate(pairs.labels)},
     }
 
 
 # Function to calculate Area Under the Curve (AUC) for the model forecasts (both overall and bin-wise)
-def calculate_auc(forecast_obs_df):
+def calculate_auc(pairs):
     """
     Calculate Area Under the Curve (AUC) for probabilistic forecasts.
 
@@ -161,47 +125,18 @@ def calculate_auc(forecast_obs_df):
 
     Parameters:
     -----------
-    forecast_obs_df : DataFrame
-        Output from forecast_pairs()
-        Must contain columns: 'predicted_prob', 'observed_onset', 'bin_label'
+    pairs : PairArrays
+        Output from forecast_pairs(), restricted to the scored bins (PairArrays.select)
 
     Returns:
     --------
     dict with AUC metrics
     """
-    return _auc_results(forecast_obs_df)
-
-
-def _rps_matrices(forecast_obs_df, group_id, n_groups):
-    """(P, Y, members, valid): the probabilities, outcomes and member count of each forecast case (group) as
-    (case, bin) matrices in group order, rows ordered by bin_index within a case.
-
-    Rows whose key is missing (group id -1) are dropped, as groupby does. valid is None when every case has the
-    same number of bins; otherwise cases with fewer bins are padded with zeros at the end and valid marks the
-    bins they have.
-    """
-    keep = group_id >= 0
-    gid = group_id[keep]
-    p = forecast_obs_df['predicted_prob'].to_numpy()[keep]
-    y = forecast_obs_df['observed_onset'].to_numpy()[keep]
-    members = forecast_obs_df['total_members'].to_numpy()[keep]
-    order = np.lexsort((forecast_obs_df['bin_index'].to_numpy()[keep], gid))
-    gid, p, y, members = gid[order], p[order], y[order], members[order]
-    counts = np.bincount(gid, minlength=n_groups)
-    starts = np.concatenate(([0], np.cumsum(counts)))
-    if n_groups and (counts == counts[0]).all():
-        m = int(counts[0])
-        return (np.ascontiguousarray(p.reshape(n_groups, m)), np.ascontiguousarray(y.reshape(n_groups, m)),
-                members.reshape(n_groups, m)[:, 0], None)
-    m = int(counts.max()) if n_groups else 0
-    position = np.arange(len(gid)) - starts[gid]
-    P, Y = np.zeros((n_groups, m)), np.zeros((n_groups, m), dtype=y.dtype)
-    P[gid, position], Y[gid, position] = p, y
-    return P, Y, members[starts[:-1]], np.arange(m)[None, :] < counts[:, None]
+    return _auc_results(pairs)
 
 
 # Function to calculate Ranked Probability Score (RPS) and Fair RPS for the model forecasts for (either 15 day or 30 day forecast)
-def calculate_rps(forecast_obs_df):
+def calculate_rps(pairs):
     """
     Calculate Ranked Probability Score (RPS) and Fair RPS for probabilistic forecasts.
 
@@ -218,23 +153,23 @@ def calculate_rps(forecast_obs_df):
 
     Parameters:
     -----------
-    forecast_obs_df : DataFrame
-        Output from forecast_pairs()
-        Must contain columns: 'predicted_prob', 'observed_onset', 'total_members', 'bin_index'
+    pairs : PairArrays
+        Output from forecast_pairs(), restricted to the scored bins (PairArrays.select)
 
     Returns:
     --------
     dict with RPS metrics
     """
-    _require_members(forecast_obs_df, "RPS")
+    _require_members(pairs, "RPS")
 
-    # Group by forecast (init_time and the location: lat and lon, or unit) to get all bins for each forecast
-    forecast_groups = forecast_obs_df.groupby(['init_time', *axes.spatial_dims(forecast_obs_df.columns)])
-    group_id = forecast_groups.ngroup().to_numpy()
-    n_forecasts = len(forecast_groups)
-
-    P, Y, members, valid = _rps_matrices(forecast_obs_df, group_id, n_forecasts)
-    rps_values, fair_rps_values = probabilistic.rps_cases(P, Y, members, summation="prefix", valid=valid)
+    # The cases in order of init and place; the mean over them is taken in that order
+    order = pairs.sorted_order()
+    if (order == np.arange(len(order))).all():
+        P, Y, members = pairs.prob, pairs.observed, pairs.members
+    else:
+        P, Y, members = pairs.prob[order], pairs.observed[order], pairs.members[order]
+    n_forecasts = pairs.n_cases
+    rps_values, fair_rps_values = probabilistic.rps_cases(np.ascontiguousarray(P), Y, members, summation="prefix")
 
     # Calculate overall RPS (average over all forecasts)
     rps = np.mean(rps_values)
@@ -254,18 +189,17 @@ def calculate_rps(forecast_obs_df):
     return rps_results
 
 
-def calculate_brier_score_climatology(forecast_obs_df):
+def calculate_brier_score_climatology(pairs):
     """
     Calculate Brier Score and Fair Brier Score of a climatology (or other pooled-member) reference.
 
     The scores of calculate_brier_score, over the bins that are not "Before" bins (e.g. "Before day N"), with the
-    fair correction taken from each case's total_members_with_onset instead of total_members.
+    fair correction taken from each case's members_with_onset instead of members.
 
     Parameters:
     -----------
-    forecast_obs_df : DataFrame
-        Output from create_climatological_forecast_obs_pairs()
-        Must contain columns: 'predicted_prob', 'observed_onset', 'total_members_with_onset', 'bin_label'
+    pairs : PairArrays
+        Output from create_climatological_forecast_obs_pairs(), restricted to the scored bins; needs members_with_onset
 
     Returns:
     --------
@@ -273,9 +207,9 @@ def calculate_brier_score_climatology(forecast_obs_df):
     """
 
     # Filter out "Before initialization" bin
-    filtered_df = _without_before(forecast_obs_df)
+    filtered = pairs.without_before()
 
-    if len(filtered_df) == 0:
+    if filtered.prob.size == 0:
         log.warning("No data remaining after filtering out 'Before initialization' bin")
         return {
             'brier_score': np.nan,
@@ -287,12 +221,12 @@ def calculate_brier_score_climatology(forecast_obs_df):
         }
 
     log.debug(f"Calculating Brier Score excluding 'Before initialization' bin")
-    log.debug(f"Original samples: {len(forecast_obs_df)}, After filtering: {len(filtered_df)}")
+    log.debug(f"Original samples: {pairs.prob.size}, After filtering: {filtered.prob.size}")
 
-    brier_results = _brier_results(filtered_df, 'total_members_with_onset')
+    brier_results = _brier_results(filtered, filtered.members_with_onset)
     brier_results.update({
-        'n_samples': len(filtered_df),
-        'filtered_bins': sorted(filtered_df['bin_label'].unique()),
+        'n_samples': filtered.prob.size,
+        'filtered_bins': sorted(filtered.labels),
         'excluded_bins': ['Before initialization']
     })
 
@@ -303,22 +237,21 @@ def calculate_brier_score_climatology(forecast_obs_df):
     return brier_results
 
 
-def calculate_auc_climatology(forecast_obs_df):
+def calculate_auc_climatology(pairs):
     """
     Calculate Area Under the Curve (AUC) of a climatology reference: calculate_auc over the bins that are not
     "Before" bins.
 
     Parameters:
     -----------
-    forecast_obs_df : DataFrame
-        Output from create_climatological_forecast_obs_pairs()
-        Must contain columns: 'predicted_prob', 'observed_onset', 'bin_label'
+    pairs : PairArrays
+        Output from create_climatological_forecast_obs_pairs(), restricted to the scored bins
 
     Returns:
     --------
     dict with AUC metrics
     """
-    return _auc_results(_without_before(forecast_obs_df))
+    return _auc_results(pairs.without_before())
 
 
 def calculate_skill_scores(brier_forecast, rps_forecast,

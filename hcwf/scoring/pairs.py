@@ -1,4 +1,4 @@
-"""The per-model pair tables of a run: read the years, detect onsets, and pair them into day bins.
+"""The per-model pairs (PairArrays) of a run: read the years, detect onsets, and pair them into day bins.
 
 The pure pairing (`forecast_pairs`, `LeadBins`) and the scores are in hcwf.metrics; this module reads and detects.
 """
@@ -16,7 +16,7 @@ from hcwf.io import reference as reference_io
 from hcwf.io import thresholds as thresholds_io
 from hcwf.io import warmup as warmup_io
 from hcwf.io.forecasts import initialization_dates
-from hcwf.metrics.bins import create_climatological_forecast_obs_pairs, forecast_pairs
+from hcwf.metrics.bins import PairArrays, create_climatological_forecast_obs_pairs, forecast_pairs
 from hcwf.onset.detect import check_alignment, detect_ensemble, detect_observed
 from hcwf.parallel import NO_DATA, Pending, concat_year_args, spec_workers, start_year_args
 from hcwf.references.climatology import climatological_onset_dataset
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 
 def _case_of(rc, model):
-    """The case that reads `model` in the run's first window (the pair tables do not depend on the window)."""
+    """The case that reads `model` in the run's first window (the pairs do not depend on the window)."""
     return Case(model, rc.evaluation.windows[0])
 
 
@@ -86,7 +86,7 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
             tables[year] = (ensemble_table, onset_da)
             del rainfall_ds, read_forecast, onset_all_members, ensemble_table, onset_da
 
-            log.debug(f"Year {year} completed: {len(forecast_obs)} forecast-observation pairs")
+            log.debug(f"Year {year} completed: {forecast_obs.n_cases} forecast cases")
 
         except FileNotFoundError as e:
             # Reforecast archives commonly have year gaps; skip years whose
@@ -101,7 +101,7 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
     if not all_forecast_obs_pairs:
         raise ValueError("No data was successfully processed for any year")
 
-    combined_forecast_obs = pd.concat(all_forecast_obs_pairs, ignore_index=True)
+    combined_forecast_obs = PairArrays.concat(all_forecast_obs_pairs)
 
     # Print final summary statistics
     log.debug(f"\nFinal Summary Statistics:")
@@ -136,7 +136,7 @@ def start_pairs(rc, model, select=Selection()):
         for _, year_tables in parts:
             tables.update(year_tables)
         share_ensemble_tables(rc, model, tables, select)
-        return pd.concat([pairs for pairs, _ in parts], ignore_index=True)
+        return PairArrays.concat([pairs for pairs, _ in parts])
 
     return Pending(join)
 
@@ -168,9 +168,9 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
                 max_forecast_day=rc.evaluation.max_forecast_day
             )
 
-            if len(forecast_obs) > 0:
+            if forecast_obs.n_cases > 0:
                 all_forecast_obs_pairs.append(forecast_obs)
-                log.debug(f"Target year {target_year} completed: {len(forecast_obs)} pairs")
+                log.debug(f"Target year {target_year} completed: {forecast_obs.n_cases} cases")
             else:
                 log.debug(f"No pairs generated for target year {target_year}")
 
@@ -182,43 +182,38 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
     if not all_forecast_obs_pairs:
         raise ValueError("No data was successfully processed for any target year")
 
-    combined_forecast_obs = pd.concat(all_forecast_obs_pairs, ignore_index=True)
+    combined_forecast_obs = PairArrays.concat(all_forecast_obs_pairs)
 
-    log.debug(f"\n{'='*50}")
-    log.debug("CLIMATOLOGICAL FORECAST SUMMARY")
-    log.debug(f"{'='*50}")
-    log.debug(f"Target years processed: {list(years)}")
-    log.debug(f"Total forecast-observation pairs: {len(combined_forecast_obs)}")
-    log.debug(f"Probability range: {combined_forecast_obs['predicted_prob'].min():.3f} - {combined_forecast_obs['predicted_prob'].max():.3f}")
-    log.debug(f"Overall observed onset rate: {combined_forecast_obs['observed_onset'].mean():.3f}")
+    log.debug(f"Climatological forecast cases of target years {list(years)}: {combined_forecast_obs.n_cases}")
 
     return combined_forecast_obs
 
 
 class PreparedPairs(NamedTuple):
-    """The pair tables a model's scores are made from, built once per model (`prepare_pairs`)."""
+    """The pairs a model's scores are made from, built once per model (`prepare_pairs`)."""
 
-    forecast: pd.DataFrame
+    forecast: PairArrays
     """The model's forecast-observation pairs, every day bin."""
-    reference: pd.DataFrame | None
+    reference: PairArrays | None
     """The reference model's pairs, from the reference model's own data; None for a climatology reference."""
     clim_onset: Any
     """The climatology years' onsets (a climatology reference), else None."""
-    climatology: pd.DataFrame | None
+    climatology: PairArrays | None
     """The climatology reference's pairs (conditional or not); None for a model reference."""
 
 
 def _climatology_years(years, clim_onset, rc, case, select, day_bins):
-    """The climatology reference's pair tables of `years` (the form `parallel.concat_year_args` calls)."""
+    """The climatology reference's pairs of `years` (the form `parallel.concat_year_args` calls)."""
     if is_conditional_climatology(rc.reference.model):
         return conditional_pairs(clim_onset, rc, case, select, years=years, day_bins=day_bins)
     return climatological_pairs(clim_onset, rc, years=years, day_bins=day_bins)
 
 
 def _climatology_pairs(clim_onset, rc, case, select):
-    """Pair tables of the climatology reference (conditional or not) for all years, in worker processes unless parallel is off."""
+    """Pairs of the climatology reference (conditional or not) for all years, in worker processes unless parallel is off."""
     return concat_year_args(_climatology_years, rc.evaluation.years,
-                            (clim_onset, rc, case, select, rc.evaluation.day_bins), rc.parallel)
+                            (clim_onset, rc, case, select, rc.evaluation.day_bins), rc.parallel,
+                            combine=PairArrays.concat)
 
 
 def _reference_model(rc, model):
@@ -228,7 +223,7 @@ def _reference_model(rc, model):
 
 
 def prepare_pairs(rc, model, select=Selection()):
-    """Build the forecast-observation pair tables (and the reference's) of `model` (ModelSpec) shared across its cases.
+    """Build the forecast-observation pairs (and the reference's) of `model` (ModelSpec) shared across its cases.
 
     Returns PreparedPairs: the model's pairs, the reference model's own pairs (None for climatology and
     conditional_climatology), the climatological onsets and the climatology pairs; create_score_results reuses them.

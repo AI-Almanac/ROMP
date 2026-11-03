@@ -174,8 +174,9 @@ def test_pair_tables_are_per_unit_cases():
     obs = xr.DataArray(np.array(["2020-05-04", "2020-05-20"], dtype="datetime64[ns]"), dims="unit",
                        coords={"unit": ["a", "b"]})
     pairs = forecast_pairs(members, obs, [(1, 5), (6, 10)], back_dated=False)   # forecast_history "none": no back-dating
-    assert "unit" in pairs and "lat" not in pairs
-    assert pairs.groupby(["init_time", "unit"]).ngroups == 3   # unit a is scored on the first init only
+    assert list(pairs.place) == ["unit"]
+    assert pairs.n_cases == 3   # unit a is scored on the first init only
+    assert list(pairs.place["unit"]) == ["a", "b", "b"]
     assert np.isfinite(calculate_rps(pairs)["rps"]) and np.isfinite(calculate_brier_score(pairs)["brier_score"])
 
 

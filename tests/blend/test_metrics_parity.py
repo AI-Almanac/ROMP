@@ -13,6 +13,7 @@ from hcwf.metrics import score
 from hcwf.metrics.bins import LeadBins
 from tests.blend._oracle import blend_metrics as legacy
 from tests.blend._oracle import hcwf_score_pandas as hcwf_old
+from tests.pair_frames import pairs_of_frame, shuffled_cases
 
 
 # --- synthetic data -----------------------------------------------------------------------------------------
@@ -262,31 +263,27 @@ def same(a, b, path=""):
                                       "calculate_auc_climatology"])
 def test_hcwf_brier_and_auc_are_byte_identical_to_the_pandas_ones(n_bins, function):
     df = pair_frame(300, n_bins, 51, n_bins, clim=function.endswith("climatology"))
-    same(getattr(score, function)(df.copy()), getattr(hcwf_old, function)(df.copy()), function)
+    old = getattr(hcwf_old, function)(df.copy())
+    old.pop("forecast_obs_df_with_ranks", None)   # the table the pandas AUC handed back when it was undefined; no one read it
+    same(getattr(score, function)(pairs_of_frame(df)), old, function)
 
 
-def test_hcwf_scores_do_not_add_columns_to_the_pair_table():
-    df = pair_frame(20, 3, 11, 0)
-    before = list(df.columns)
-    score.calculate_brier_score(df)
-    assert list(df.columns) == before
-
-
-def test_hcwf_scores_of_a_shuffled_table_equal_those_of_the_sorted_one():
-    df = pair_frame(120, 4, 31, 3)
-    shuffled = df.sample(frac=1, random_state=0).reset_index(drop=True)
-    a, b = score.calculate_brier_score(df.copy()), score.calculate_brier_score(shuffled)
+def test_hcwf_scores_of_shuffled_cases_equal_those_of_the_sorted_ones():
+    pairs = pairs_of_frame(pair_frame(120, 4, 31, 3))
+    shuffled = shuffled_cases(pairs)
+    a, b = score.calculate_brier_score(pairs), score.calculate_brier_score(shuffled)
     for key in ("brier_score", "fair_brier_score"):
         assert a[key] == pytest.approx(b[key], rel=1e-12)
     for key in ("bin_brier_scores", "bin_fair_brier_scores"):
         assert a[key] == {k: pytest.approx(v, rel=1e-12) for k, v in b[key].items()}
-    assert score.calculate_auc(df.copy())["auc"] == score.calculate_auc(shuffled)["auc"]
+    assert score.calculate_auc(pairs)["auc"] == score.calculate_auc(shuffled)["auc"]
+    assert score.calculate_rps(pairs) == score.calculate_rps(shuffled)
 
 
 def test_hcwf_auc_without_both_outcomes_is_nan_with_the_counts():
     df = pair_frame(10, 3, 11, 0)
     df["observed_onset"] = 0
-    result = score.calculate_auc(df)
+    result = score.calculate_auc(pairs_of_frame(df))
     assert np.isnan(result["auc"]) and result["n_positive"] == 0 and result["n_negative"] == 30
     assert result["bin_auc_scores"] == {}
 
@@ -295,7 +292,7 @@ def test_hcwf_scores_refuse_a_single_member():
     df = pair_frame(5, 3, 1, 0)
     for function in (score.calculate_brier_score, score.calculate_rps):
         with pytest.raises(ValueError):
-            function(df)
+            function(pairs_of_frame(df))
 
 
 def test_hcwf_skill_scores_are_one_minus_the_ratio():
@@ -380,7 +377,7 @@ def test_hcwf_climatology_brier_skips_the_nan_of_one_member_cases(n_bins):
     df.loc[df["lon"] % 3 == 0, "total_members_with_onset"] = 1
     df.loc[df["lon"] % 3 == 0, "predicted_prob"] = (df["bin_index"] == 2).astype(float)
     assert np.isnan(((df["predicted_prob"] * (1 - df["predicted_prob"])) / (df["total_members_with_onset"] - 1))).any()
-    same(score.calculate_brier_score_climatology(df.copy()), hcwf_old.calculate_brier_score_climatology(df.copy()))
+    same(score.calculate_brier_score_climatology(pairs_of_frame(df)), hcwf_old.calculate_brier_score_climatology(df.copy()))
 
 
 def test_grouped_auc_matches_auc_per_group_with_ties_and_empty_classes():

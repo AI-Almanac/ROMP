@@ -7,7 +7,7 @@ import pytest
 import xarray as xr
 
 from old_flat_rule import old_rule
-from hcwf.metrics.bins import extract_pd_bins
+from pair_frames import frame_of_pairs, pairs_equal
 from hcwf.metrics.skill import create_score_results
 from hcwf.scoring.pairs import prepare_pairs
 from hcwf.scoring.onset_tables import compute_metrics
@@ -84,8 +84,8 @@ def test_probabilistic_reference_gives_skill_scores(config):
     """The conditional reference yields BS/RPS/AUC for the reference and skill scores against it."""
     results = scores(config)
 
-    table = results["climatology_obs_df"]
-    assert len(table) and set(table["bin_label"]) == {"Days 1-5", "Days 6-10"}
+    pairs = results["climatology_pairs"]
+    assert pairs.n_cases and set(pairs.labels) == {"Days 1-5", "Days 6-10"}
     assert np.isfinite(results["BS_ref"]["fair_brier_score"])
     assert np.isfinite(results["RPS_ref"]["fair_rps"])
     assert np.isfinite(results["AUC_ref"]["auc"])
@@ -99,16 +99,17 @@ def test_pair_table_probabilities_are_conditional(config):
     """Each case's probabilities (Before, bins, After) sum to one, Before is zero, and only inits before the onset are scored."""
     clim_onset = climatological_onset_dataset(*typed(config))
     inits = pd.date_range(f"{TARGET}-05-01", f"{TARGET}-07-30", freq="3D")
-    table = create_conditional_climatological_forecast_obs_pairs(clim_onset, TARGET, inits, day_bins=DAY_BINS)
+    pairs = create_conditional_climatological_forecast_obs_pairs(clim_onset, TARGET, inits, day_bins=DAY_BINS)
 
-    assert len(table)
-    assert set(table["bin_label"]) == {"Before day 1", "Days 1-5", "Days 6-10", "After day 10"}
-    by_case = table.groupby(["init_time", "lat", "lon"])
-    np.testing.assert_allclose(by_case["predicted_prob"].sum().to_numpy(), 1.0)
-    assert (table.loc[table["bin_label"] == "Before day 1", "predicted_prob"] == 0).all()
-    assert (pd.to_datetime(table["init_time"]) < pd.to_datetime(table["obs_onset_date"])).all()
-    assert (by_case["observed_onset"].sum() == 1).all()
-    assert np.isinf(table["total_members"]).all()
+    assert pairs.n_cases
+    assert set(pairs.labels) == {"Before day 1", "Days 1-5", "Days 6-10", "After day 10"}
+    np.testing.assert_allclose(pairs.prob.sum(axis=1), 1.0)
+    before = pairs.labels.index("Before day 1")
+    assert (pairs.prob[:, before] == 0).all()
+    # an init on or after the observed onset would have the onset in the Before bin; none is scored
+    assert (pairs.observed[:, before] == 0).all()
+    assert (pairs.observed.sum(axis=1) == 1).all()
+    assert np.isinf(pairs.members).all() and np.isinf(pairs.members_with_onset).all()
 
 
 def test_leave_one_year_out_excludes_the_test_year(config):
@@ -119,8 +120,9 @@ def test_leave_one_year_out_excludes_the_test_year(config):
         clim_onset, TARGET, inits, day_bins=DAY_BINS, climatology_cv="leave_one_year_out")
     full = create_conditional_climatological_forecast_obs_pairs(
         clim_onset, TARGET, inits, day_bins=DAY_BINS, climatology_cv="none")
-    assert loyo[["init_time", "lat", "lon", "bin_label"]].equals(full[["init_time", "lat", "lon", "bin_label"]])
-    assert not np.allclose(loyo["predicted_prob"], full["predicted_prob"])
+    assert loyo.labels == full.labels and np.array_equal(loyo.init, full.init)
+    assert all(np.array_equal(loyo.place[d], full.place[d]) for d in loyo.place)
+    assert not np.allclose(loyo.prob, full.prob)
     with pytest.raises(ValueError, match="climatology_cv"):
         create_conditional_climatological_forecast_obs_pairs(
             clim_onset, TARGET, inits, day_bins=DAY_BINS, climatology_cv="sometimes")
@@ -143,11 +145,12 @@ def test_deterministic_reference_is_the_conditional_median(config):
     pairs = create_conditional_climatological_forecast_obs_pairs(clim_onset, TARGET, inits, onsets[TARGET],
                                                                   day_bins=((1, 1), (2, 2), (3, 3), (4, 4), (5, 5),
                                                                             (6, 6), (7, 7), (8, 8), (9, 9), (10, 10)))
+    pairs = frame_of_pairs(pairs)
     one_day = pairs[pairs["bin_label"].str.startswith("Days")]
     cdf = one_day.groupby(["init_time", "lat", "lon"], sort=False)["predicted_prob"].apply(
         lambda p: int(np.argmax(np.cumsum(p.to_numpy()) >= 0.5) + 1) if (np.cumsum(p.to_numpy()) >= 0.5).any() else np.nan)
     row = forecast.iloc[0]
-    key = (pd.Timestamp(row["init_time"]).strftime("%Y-%m-%d"), row["lat"], row["lon"])
+    key = (pd.Timestamp(row["init_time"]), row["lat"], row["lon"])
     assert cdf.loc[key] == row["onset_day"]
 
 
@@ -157,14 +160,14 @@ def test_climatology_reference_is_unchanged(config):
     results = scores(config)
     clim_onset = climatological_onset_dataset(*typed(config))
     rc, _, _ = typed(config)
-    pairs = extract_pd_bins(climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS), DAY_BINS)
+    pairs = climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS).select(DAY_BINS)
 
-    assert results["climatology_obs_df"].to_csv() == pairs.to_csv()
+    assert pairs_equal(results["climatology_pairs"], pairs)
     assert repr(results["BS_ref"]) == repr(calculate_brier_score_climatology(pairs))
     assert repr(results["RPS_ref"]) == repr(calculate_rps(pairs))
     assert repr(results["AUC_ref"]) == repr(calculate_auc_climatology(pairs))
     again = scores(dict(config, climatology_cv="none"))
-    assert again["climatology_obs_df"].to_csv() == results["climatology_obs_df"].to_csv()
+    assert pairs_equal(again["climatology_pairs"], results["climatology_pairs"])
 
     det = dict(config, probabilistic=False, model="climatology")
     metrics, onsets = compute_metrics(*typed(det))

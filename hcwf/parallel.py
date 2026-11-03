@@ -342,8 +342,10 @@ def map_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA
     return start_year_args(func, years, args, parallel, skip, prewarm, item_bytes).result()
 
 
-def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], None] | None = None) -> Pending:
-    """Start the pair tables of func(years, *args); the Pending gives them concatenated.
+def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], None] | None = None,
+                      combine: Callable[[list], Any] | None = None) -> Pending:
+    """Start the pair tables of func(years, *args); the Pending gives them concatenated (by `combine` over the list of
+    year results, default pandas.concat of DataFrames).
 
     With one worker func runs once on all the years before this returns. Otherwise each year is computed by
     `start_year_args` and the tables joined in year order; a year without data is left out, and ValueError("No data ...")
@@ -359,6 +361,8 @@ def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], 
         parts = [part for part in pending.result() if part is not None]
         if not parts:
             raise ValueError(f"{NO_DATA} for any year")
+        if combine is not None:
+            return combine(parts)
         import pandas as pd
 
         return pd.concat(parts, ignore_index=True)
@@ -366,9 +370,10 @@ def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], 
     return Pending(join)
 
 
-def concat_year_args(func, years, args: tuple, parallel, prewarm: Callable[[], None] | None = None):
+def concat_year_args(func, years, args: tuple, parallel, prewarm: Callable[[], None] | None = None,
+                     combine: Callable[[list], Any] | None = None):
     """The pair tables of func(years, *args), concatenated in year order (`start_concat_args`, waited for)."""
-    return start_concat_args(func, years, args, parallel, prewarm).result()
+    return start_concat_args(func, years, args, parallel, prewarm, combine).result()
 
 
 # ---- how many workers, ordered read-ahead, shared memory (was parallel.py) ----

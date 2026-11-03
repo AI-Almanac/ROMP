@@ -92,7 +92,7 @@ def test_the_real_tables_are_registered():
     names = set(cache.memos())
     assert {"io.stores.open", "io.observations.years", "io.reference.held", "io.thresholds.loaded", "io.forecasts.reported",
             "config.detect.samples", "config.onset.setups", "references.climatology.onsets", "scoring.onset_tables",
-            "metrics.bins.year_text", "onset.detect.alignment_done", "onset.observed_cache.tables",
+            "onset.detect.alignment_done", "onset.observed_cache.tables",
             "spatial.masks.built", "spatial.masks.records", "spatial.masks.implicit_keep"} <= names
     shared = {name for name, table in cache.memos().items() if table.share}
     assert {"io.thresholds.loaded", "spatial.masks.built", "spatial.masks.records", "spatial.masks.implicit_keep",

@@ -5,12 +5,14 @@ Serial and parallel runs give the same tables; what a worker is sent is small.""
 import typed_io
 import pickle
 
+import numpy as np
 import pandas as pd
 import pytest
 from hcwf.cache import reset_run_state
 from hcwf.config.model import Selection
 from hcwf.metrics.skill import create_score_results
 from hcwf.scoring.pairs import prepare_pairs
+from pair_frames import pairs_equal
 from hcwf.scoring import onset_tables as benchmark
 from hcwf import parallel
 from hcwf.scoring.onset_tables import compute_metrics
@@ -62,7 +64,7 @@ def _frames_equal(a, b):
 
 @pytest.mark.parametrize("source", ["A", "climatology"])
 def test_serial_equals_parallel_on_the_typed_path(config, source):
-    """The onset tables (and so the metrics) and the pair tables of worker processes are the serial ones, in year order."""
+    """The onset tables (and so the metrics) and the pairs of worker processes are the serial ones, in year order."""
     probabilistic = source == "A"
     config = dict(config, probabilistic=probabilistic, model=source)
     results = {}
@@ -83,8 +85,8 @@ def test_serial_equals_parallel_on_the_typed_path(config, source):
     _frames_equal(serial[1], par[1])
     if probabilistic:
         for name in ("forecast", "reference"):
-            _frames_equal(getattr(serial[2], name), getattr(par[2], name))
-        assert len(serial[2].forecast["year"].unique()) == len(YEARS)
+            assert pairs_equal(getattr(serial[2], name), getattr(par[2], name))
+        assert len(np.unique(serial[2].forecast.init.astype("datetime64[Y]"))) == len(YEARS)
 
 
 @pytest.mark.parametrize("workers", [False, True])
@@ -120,9 +122,9 @@ def test_scored_bins_are_the_evaluations(config):
     rc, case, select = typed_io.from_case_kwargs(config)
     prepared = prepare_pairs(rc, case.model, select)
     narrowed = create_score_results(case, prepared, rc.metrics, replace(rc.evaluation, day_bins=DAY_BINS[:1]))
-    assert set(narrowed["forecast_obs_df"]["bin_label"]) == {"Days 1-5"}
-    assert len(create_score_results(case, prepared, rc.metrics, rc.evaluation)["forecast_obs_df"]) > \
-        len(narrowed["forecast_obs_df"])
+    assert set(narrowed["forecast_pairs"].labels) == {"Days 1-5"}
+    assert create_score_results(case, prepared, rc.metrics, rc.evaluation)["forecast_pairs"].n_bins > \
+        narrowed["forecast_pairs"].n_bins
 
 
 def test_worker_payload_is_small(config, configs):  # noqa: F811
