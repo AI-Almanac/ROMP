@@ -243,3 +243,33 @@ def test_model_thresholds_are_computed_from_the_forecast_archive_and_cached(tmp_
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("cache not used")))
     again = hcwf_input.load_thresholds(**kwargs)
     assert np.allclose(again["wet_spell_amount"].values, 10.0)
+
+
+def test_model_thresholds_cache_misses_when_unit_factor_or_variable_changes(tmp_path, monkeypatch):
+    """The cached model thresholds are keyed by every input that changes them, not only by the model folder."""
+    archive = tmp_path / "model"
+    archive.mkdir()
+    for year in (2015, 2016):
+        times = pd.date_range(f"{year}-05-01", f"{year}-06-30")
+        ds = xr.Dataset({"tp": (("time", "day", "lat", "lon"), np.full((len(times), 10, 2, 2), 2.0))},
+                        coords={"time": times, "day": np.arange(1, 11), "lat": [0.0, 1.0], "lon": [0.0, 1.0]})
+        ds.to_netcdf(archive / f"{year}.nc")
+    monkeypatch.setattr(hcwf_input, "region_select", lambda ds, **kwargs: ds)
+    kwargs = _cfg(onset_definition="moron_robertson", threshold_source="model", threshold_years=(2015, 2016),
+                  model="TOY", model_dir=str(archive), model_var="tp", file_pattern="{}.nc", unit_cvt=None,
+                  date_filter_year=2024, init_days=tuple(range(7)), start_date=(2015, 5, 1), end_date=(2015, 6, 30),
+                  members=None, probabilistic=False, max_forecast_day=10, dir_out=str(tmp_path / "out"), region="x")
+    hcwf_input._loaded_thresholds.clear()
+    assert np.allclose(hcwf_input.load_thresholds(**kwargs)["wet_spell_amount"].values, 10.0)
+    for change in ({"unit_cvt": 2.0}, {"region": "y"}, {"daily_boundary": "06:00"}, {"accumulation": "since_init"}):
+        hcwf_input._loaded_thresholds.clear()
+        calls = []
+        real = hcwf_input.get_forecast_deterministic_twice_weekly
+        monkeypatch.setattr(hcwf_input, "get_forecast_deterministic_twice_weekly",
+                            lambda *a, _real=real, **k: calls.append(1) or _real(*a, **k))
+        try:
+            hcwf_input.load_thresholds(**{**kwargs, **change})
+        except Exception:   # noqa: BLE001 - only whether the cache was bypassed matters here
+            pass
+        monkeypatch.setattr(hcwf_input, "get_forecast_deterministic_twice_weekly", real)
+        assert calls, f"cache served for a changed {change}"

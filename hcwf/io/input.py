@@ -344,6 +344,27 @@ def _model_forecasts(setup, years, kwargs):
         raise FileNotFoundError(f"no forecast file of {kwargs.get('model')} for the years {years[0]}-{years[1]}")
 
 
+_MODEL_READ_KEYS = ("region", "mask", "land_only", "shp_only", "nc_mask", "model_var", "unit_cvt", "accumulation",
+                    "daily_boundary", "model_dims", "file_pattern", "model_paths", "model_files_years", "model_dir",
+                    "date_filter_year", "start_date", "end_date", "probabilistic", "max_forecast_day",
+                    *_FORECAST_INGEST_KEYS)
+"""The config keys that change the model's forecasts as read (grid, units, steps, days), beside the files."""
+
+
+def _model_files(years, kwargs) -> list:
+    """The identity of what holds the model's forecasts of each year: its files, or the zarr store, or the missing year."""
+    found = []
+    for year in range(int(years[0]), int(years[1]) + 1):
+        try:
+            sources = _forecast_sources(year, kwargs.get("model_dir"), kwargs.get("file_pattern"),
+                                        kwargs.get("model_paths"), kwargs.get("model_files_years"))
+        except (FileNotFoundError, TypeError, AttributeError):
+            found.append([f"missing {year}"])
+            continue
+        found.append([file_identity(f if f is not None else kwargs["model_dir"]) for f in sources])
+    return found
+
+
 def _model_thresholds(setup, pending, years, cache_dir, kwargs):
     """The model's own climatology of the pending thresholds, read from or written to the cache directory.
 
@@ -354,11 +375,15 @@ def _model_thresholds(setup, pending, years, cache_dir, kwargs):
     window = (1, int(kwargs["max_forecast_day"]))
     windows = [(int(a), int(b)) for a, b in kwargs["verification_window_list"]] \
         if kwargs.get("verification_window_list") else None
-    parts = {"model": str(kwargs.get("model")), "model_files": file_identity(kwargs["model_dir"]) if kwargs.get("model_dir") else None,
+    parts = {"model": str(kwargs.get("model")), "model_files": _model_files(years, kwargs),
              "years": [int(years[0]), int(years[1])], "window": list(window), "windows": windows,
              "definition": definition_mod.definition_hash(setup.definition), "pending": [repr(p) for p in pending],
              "lead_label": setup.lead_label, "init_days": [int(d) for d in kwargs.get("init_days", ())],
-             "members": None if not kwargs.get("members") else [int(m) for m in kwargs["members"]]}
+             "members": None if not kwargs.get("members") else [int(m) for m in kwargs["members"]],
+             "read": {key: kwargs.get(key) for key in _MODEL_READ_KEYS},
+             "units": {key: kwargs.get(key) for key in _UNITS_KEYS},
+             "units_files": units_files(kwargs, str(kwargs.get("model") or "")),
+             "boundary": setup.forecast_boundary}
     names = {name for name, _ in pending}
 
     def compute():
