@@ -14,6 +14,7 @@ geopandas = pytest.importorskip("geopandas")
 from shapely.geometry import MultiPolygon, box  # noqa: E402
 
 import hcwf  # noqa: E402
+from hcwf.io import output
 from hcwf.runs import export
 from typed_io import flat_config  # noqa: E402
 
@@ -183,18 +184,18 @@ def test_onset_export_per_unit(world):
     cfg = flat_config(_raw(base, "DET", False))
     paths = export.export_onsets(cfg, sources=["observed", "DET", "climatology", "conditional_climatology"],
                                  out=base / "onsets_det")
-    observed = export.open_onsets(paths["observed"])
+    observed = output.open_onsets(paths["observed"])
     assert observed["onset_date"].dims == ("year", "season", "unit") and observed["unit"].size == 4
     assert list(observed["unit_name"].values)[0] == "Alpha"
-    model = export.open_onsets(paths["DET"])
+    model = output.open_onsets(paths["DET"])
     assert model["onset_date"].dims[-1] == "unit" and model["scored"].dims == ("init_time", "unit")
-    climatology = export.open_onsets(paths["climatology"])
+    climatology = output.open_onsets(paths["climatology"])
     assert climatology["climatological_onset_doy"].dims == ("season", "unit")
-    conditional = export.open_onsets(paths["conditional_climatology"])
+    conditional = output.open_onsets(paths["conditional_climatology"])
     assert conditional["onset_probability"].dims == ("init_time", "season", "lead", "unit")
     ens = export.export_onsets(flat_config(_raw(base, "ENS", True)), sources=["ENS"],
                                out=base / "onsets_ens")
-    members = export.open_onsets(ens["ENS"])
+    members = output.open_onsets(ens["ENS"])
     assert members["ensemble_onset_date"].dims[-1] == "unit" and members["members_by_status"].dims[-1] == "unit"
 
 

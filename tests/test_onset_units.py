@@ -3,6 +3,7 @@ import pytest
 
 from hcwf.onset import units
 from hcwf.onset.model import Amount, Comparison, DayRef, DryRun, DryWindow, Span
+from hcwf.errors import UnitsError
 
 
 @pytest.mark.parametrize("text, op", [
@@ -36,7 +37,7 @@ def test_threshold_amount():
 ])
 def test_amount_errors(text, hint):
     """Bad amounts say what is wrong and how to fix it."""
-    with pytest.raises(units.UnitsError, match=hint) as exc:
+    with pytest.raises(UnitsError, match=hint) as exc:
         units.parse_comparison(text)
     assert "Fix:" in str(exc.value)
 
@@ -46,7 +47,7 @@ def test_count():
     assert units.parse_count("at least 3") == ("ge", 3)
     assert units.parse_count("<= 2") == ("le", 2)
     for bad in ("3", "at least 3.5", "at least three"):
-        with pytest.raises(units.UnitsError):
+        with pytest.raises(UnitsError):
             units.parse_count(bad)
 
 
@@ -55,7 +56,7 @@ def test_duration():
     assert units.parse_duration("5 days") == 5
     assert units.parse_duration("1 day") == 1
     for bad in ("5", "0 days", "5 weeks", 5):
-        with pytest.raises(units.UnitsError, match="Fix:"):
+        with pytest.raises(UnitsError, match="Fix:"):
             units.parse_duration(bad)
 
 
@@ -77,7 +78,7 @@ def test_spans():
 ])
 def test_span_errors(text, window, hint):
     """Ambiguous or empty spans are errors with a fix."""
-    with pytest.raises(units.UnitsError, match=hint):
+    with pytest.raises(UnitsError, match=hint):
         units.parse_span(text, window)
 
 
@@ -89,7 +90,7 @@ def test_dayrefs():
     assert units.parse_dayref("climatological cessation + 10 days") == DayRef(climatological="cessation", offset_days=10)
     for bad, hint in (("02-29", "not allowed"), ("13-01", "valid month-day"), ("04-31", "valid month-day"),
                       ("June 2", "cannot read")):
-        with pytest.raises(units.UnitsError, match=hint):
+        with pytest.raises(UnitsError, match=hint):
             units.parse_dayref(bad)
 
 
@@ -97,7 +98,7 @@ def test_during():
     """Reference periods are two fixed days or the whole year."""
     assert units.parse_during("04-01 to 10-31") == (DayRef(month=4, day=1), DayRef(month=10, day=31))
     assert units.parse_during("whole year") is None
-    with pytest.raises(units.UnitsError, match="Fix:"):
+    with pytest.raises(UnitsError, match="Fix:"):
         units.parse_during("April to October")
 
 
@@ -107,7 +108,7 @@ def test_dry_spells():
     assert units.parse_dry_run("more than 7 days") == DryRun(8, phrase="more than")
     assert units.parse_dry_window("10 days with less than 5 mm") == DryWindow(10, Comparison("lt", Amount(tenths=50)))
     for bad in ("less than 7 days", "7"):
-        with pytest.raises(units.UnitsError):
+        with pytest.raises(UnitsError):
             units.parse_dry_run(bad)
-    with pytest.raises(units.UnitsError, match="Fix:"):
+    with pytest.raises(UnitsError, match="Fix:"):
         units.parse_dry_window("10 days")

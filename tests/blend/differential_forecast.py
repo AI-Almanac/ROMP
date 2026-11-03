@@ -23,7 +23,6 @@ import resource
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import warnings
 from pathlib import Path
@@ -136,7 +135,7 @@ def run_oracle(root: Path, out: Path) -> None:
 
 def run_hcwf_old(root: Path, oracle: Path, out: Path) -> None:
     from hcwf.blend import TrainedBlend
-    from hcwf.blend.forecast import IncompatibleForecast
+    from hcwf.errors import IncompatibleForecast
 
     meta: dict = {}
     for name in training.configs(root):
@@ -151,7 +150,7 @@ def run_hcwf_new(root: Path, out: Path) -> None:
     from _recipes import converted
 
     from hcwf.blend import TrainedBlend
-    from hcwf.blend.forecast import IncompatibleForecast
+    from hcwf.errors import IncompatibleForecast
     from hcwf.blend.training import train
 
     meta: dict = {}

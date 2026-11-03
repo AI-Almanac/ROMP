@@ -83,7 +83,7 @@ def _source(dic: dict, key: str) -> str:
 
 def _open(path):
     """The lazy Dataset of a NetCDF file or zarr store (a context manager that closes it)."""
-    from hcwf.io.input import is_zarr
+    from hcwf.config.datasets import is_zarr
 
     return xr.open_zarr(str(path), chunks=None) if is_zarr(path) else xr.open_dataset(path)
 
@@ -102,7 +102,7 @@ def _find(folder, patterns, year):
 
     A folder that is a zarr store holds all years: the store is returned if it has times in the year.
     """
-    from hcwf.io.input import is_zarr
+    from hcwf.config.datasets import is_zarr
 
     if is_zarr(folder):
         return Path(str(folder)) if _store_has_year(folder, year) else None
@@ -244,10 +244,10 @@ def _grid(path, dims=None, forecast=False):
 
 def _box(dic: dict):
     """The region's lat/lon box (lats, latn, lonw, lone), or None when the region is unknown."""
-    from hcwf.spatial.region_def import domain
+    from hcwf.onset.regions import box
 
     try:
-        return domain(dic["region"])
+        return box(dic["region"])
     except Exception:  # noqa: BLE001 - reported by the region checks
         return None
 
@@ -558,7 +558,8 @@ def _cache(dic: dict, report: CheckReport) -> None:
         from dataclasses import replace
 
         from hcwf.config.model import RunConfig
-        from hcwf.io.input import observations_of, thresholds_of
+        from hcwf.io.observations import observations_of
+        from hcwf.io.thresholds import thresholds_of
 
         rc = RunConfig.from_flat(dic, check=False)
         read = replace(rc, output=replace(rc.output, figure_dir=None))   # a check draws no mask figure

@@ -42,7 +42,7 @@ def create_parser():
     add("--show_panel", type=str2bool, default=None, help="toggle panel plot display, True or False")
     add("--probabilistic", type=str2bool, default=None, help="ensemble evaluation toggle, True or False")
     add("--parallel", type=str2bool, default=None, help="parallelization, True or False")
-    add("--region", type=str, default=None, help="region as defined in params.region_def")
+    add("--region", type=str, default=None, help="a region id or alias (hcwf/onset/regions/*.yaml)")
 
     # run control (handled by the driver, not config values)
     add("--check", action="store_true",

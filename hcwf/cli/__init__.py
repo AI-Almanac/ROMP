@@ -110,7 +110,7 @@ def _datasets(argv) -> int:
 
     import yaml
 
-    from hcwf.config.schema import ConfigSchemaError
+    from hcwf.errors import ConfigSchemaError
     from hcwf.config.mapping import build_config
 
     p = argparse.ArgumentParser(prog="hcwf-run datasets", description="Show how a config's datasets resolve.")
@@ -226,8 +226,9 @@ def _forecast(argv) -> int:
                                           "blend; with several blends, one subfolder each)")
     args = p.parse_args(argv)
     from hcwf.api import forecast
-    from hcwf.blend.forecast import IncompatibleForecast, parse_forecast_arguments
-    from hcwf.blend.trained import BlendFileError
+    from hcwf.blend.forecast import parse_forecast_arguments
+    from hcwf.errors import IncompatibleForecast
+    from hcwf.errors import BlendFileError
 
     try:
         files = parse_forecast_arguments(args.forecast)

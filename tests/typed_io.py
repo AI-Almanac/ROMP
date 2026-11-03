@@ -17,8 +17,16 @@ from hcwf.config.model import complete_flat as _completed
 from hcwf.config.model import (AreaSpec, Case, EvaluationSpec, FigureSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec,
                                ParallelSpec, RunConfig, Selection, Window, _project_area, _project_evaluation,
                                _project_generated, _project_obs, _project_onset_options, _project_parallel)
-from hcwf.io import input as io_input
+from hcwf.io import forecasts as forecasts_io
+from hcwf.io import observations as observations_io
+from hcwf.io import thresholds as thresholds_io
 from hcwf.config import schema
+
+
+def skip_region_cut(monkeypatch):
+    """Read the fixtures whole: `region_select` (the region's box and cell mask) does nothing in every reader."""
+    for module in (observations_io, forecasts_io, thresholds_io):
+        monkeypatch.setattr(module, "region_select", lambda ds, **kwargs: ds)
 
 
 def flat_config(source, overrides=None, **options) -> dict:
@@ -146,47 +154,47 @@ def inputs(kwargs):
 def observations(year, kwargs):
     """`load_observations` of a flat config."""
     got = inputs(kwargs)
-    return io_input.load_observations(year, got.obs, got.area, got.options, got.select, onset=got.onset_if_units(),
+    return observations_io.load_observations(year, got.obs, got.area, got.options, got.select, onset=got.onset_if_units(),
                                       run_years=got.ev.years, dir_fig=got.dir_fig)
 
 
 def obs_years(years, kwargs, hold=True):
     """`read_obs_years` of a flat config."""
     got = inputs(kwargs)
-    return io_input.read_obs_years(years, got.obs, got.area, got.options, got.select, onset=got.onset_if_units(),
+    return observations_io.read_obs_years(years, got.obs, got.area, got.options, got.select, onset=got.onset_if_units(),
                                    run_years=got.ev.years, dir_fig=got.dir_fig, parallel=got.parallel, hold=hold)
 
 
 def forecast(year, kwargs, ensemble):
     """`load_forecast` of a flat config."""
     got = inputs(kwargs)
-    return io_input.load_forecast(year, got.model, got.ev, got.area, got.options, got.onset_if_steps(),
+    return forecasts_io.load_forecast(year, got.model, got.ev, got.area, got.options, got.onset_if_steps(),
                                   ensemble=ensemble, select=got.select, dir_fig=got.dir_fig)
 
 
 def thresholds(kwargs):
     """`load_thresholds` of a flat config."""
     got = inputs(kwargs)
-    return io_input.load_thresholds(got.onset(), got.obs, got.area, got.options, got.ev, got.output, model=got.model,
+    return thresholds_io.load_thresholds(got.onset(), got.obs, got.area, got.options, got.ev, got.output, model=got.model,
                                     select=got.select, parallel=got.parallel, cache_dir=got.cache_dir)
 
 
 def history(year, current, kwargs):
     """`observed_history` of a flat config."""
     got = inputs(kwargs)
-    return io_input.observed_history(year, current, got.onset(), got.obs, got.area, got.options, got.select,
+    return observations_io.observed_history(year, current, got.onset(), got.obs, got.area, got.options, got.select,
                                      run_years=got.ev.years, dir_fig=got.dir_fig)
 
 
 def steps_needed(kwargs):
     """`steps_needed` of a flat config."""
     got = inputs(kwargs)
-    return io_input.steps_needed(kwargs.get("max_forecast_day"), got.onset_if_steps())
+    return forecasts_io.steps_needed(kwargs.get("max_forecast_day"), got.onset_if_steps())
 
 
 def initialization_dates(year, kwargs):
     """`initialization_dates` of a flat config."""
-    return io_input.initialization_dates(year, inputs(kwargs).ev)
+    return forecasts_io.initialization_dates(year, inputs(kwargs).ev)
 
 
 def flat_command_line(args, **options) -> dict:
@@ -205,4 +213,4 @@ def ingest_options(kwargs, forecast=False) -> dict:
 def ingest_forecast(cube, setup, kwargs, source=None):
     """`ingest_forecast` of a flat config (its model's accumulation and boundary, its options and selection)."""
     got = inputs(kwargs)
-    return io_input.ingest_forecast(cube, setup, got.model, got.options, got.select, source)
+    return forecasts_io.ingest_forecast(cube, setup, got.model, got.options, got.select, source)

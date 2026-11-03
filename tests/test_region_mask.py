@@ -9,10 +9,10 @@ import pytest
 import xarray as xr
 from shapely.geometry import box, mapping
 
-from hcwf.config.schema import ConfigSchemaError
 from hcwf.config.mapping import build_config
 from hcwf.spatial import masks as mask_mod
-from hcwf.spatial.masks import MaskError, MaskSpec, align_raster_mask, build_mask, rasterise
+from hcwf.spatial.masks import MaskSpec, build_mask, rasterise
+from hcwf.errors import ConfigSchemaError, MaskError
 
 LAT = np.array([0.5, 1.5, 2.5, 3.5])
 LON = np.array([0.5, 1.5, 2.5, 3.5])

@@ -60,11 +60,11 @@ def _mask_module():
 
 def snapshot() -> dict:
     """What the workers need that this process has already read or built (small arrays only, never data cubes)."""
-    from hcwf.io import input as io_input
+    from hcwf.io import thresholds as thresholds_io
     from hcwf.onset import observed_cache
 
     mask = _mask_module()
-    return {"thresholds": dict(io_input._loaded_thresholds), "observed": observed_cache.export_state(),
+    return {"thresholds": dict(thresholds_io._loaded_thresholds), "observed": observed_cache.export_state(),
             "masks": (dict(mask._BUILT), dict(mask._RECORDS)), "land": dict(mask._LAND_BOOL)}
 
 
@@ -72,11 +72,11 @@ def install(state: dict, token: int) -> None:
     """Make a snapshot this (worker) process's read-once inputs; does nothing if it already holds that snapshot."""
     if _installed["token"] == token:
         return
-    from hcwf.io import input as io_input
+    from hcwf.io import thresholds as thresholds_io
     from hcwf.onset import observed_cache
 
     mask = _mask_module()
-    io_input._loaded_thresholds.update(state["thresholds"])
+    thresholds_io._loaded_thresholds.update(state["thresholds"])
     observed_cache.install_state(state["observed"])
     mask._BUILT.update(state["masks"][0])
     mask._RECORDS.update(state["masks"][1])

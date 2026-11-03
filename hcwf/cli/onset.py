@@ -8,9 +8,9 @@ import xarray as xr
 
 from hcwf.onset import definition, regions
 from hcwf.onset.alignment import check_forecast_alignment
-from hcwf.onset.definition import DefinitionError
 from hcwf.onset.describe import describe
 from hcwf.onset.ingest import ingest, ingest_forecast
+from hcwf.errors import DefinitionError, RegionError
 
 
 def _list(args) -> int:
@@ -150,6 +150,6 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.run(args)
-    except (DefinitionError, regions.RegionError, ValueError, FileNotFoundError, KeyError) as exc:
+    except (DefinitionError, RegionError, ValueError, FileNotFoundError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

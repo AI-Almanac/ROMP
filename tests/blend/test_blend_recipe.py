@@ -9,6 +9,7 @@ from _recipes import ORACLE_SRC, blending_dict, partial
 from hcwf.blend import recipe as R
 from hcwf.config.convert_specs import convert_blend
 from hcwf.metrics.bins import LeadBins
+from hcwf.errors import RecipeError
 
 CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
 
@@ -33,20 +34,20 @@ def recipe():
 def test_rain_windows_are_read_from_the_definition(recipe):
     predictor = R.RainPredictor("max", "follow")
     assert recipe.recipe.window_days(predictor, recipe.setup.definition) == 21
-    with pytest.raises(R.RecipeError, match="dry window"):
+    with pytest.raises(RecipeError, match="dry window"):
         recipe.recipe.window_days(R.RainPredictor("min", "dry_spell"), recipe.setup.definition)
 
 
 def test_formulas_may_only_name_features_the_recipe_builds(recipe):
     bad = dataclasses.replace(recipe.recipe.evaluation, formulas=(("x", R.Formula(text="outcome ~ prob_clim_qx + nope_qx")),),
                               final_formula="x", window_variants=())
-    with pytest.raises(R.RecipeError, match="nope_qx"):
+    with pytest.raises(RecipeError, match="nope_qx"):
         dataclasses.replace(recipe.recipe, evaluation=bad).check(recipe.setup.definition)
 
 
 def test_bins_must_fit_the_probability_days(recipe):
     features = dataclasses.replace(recipe.recipe.features, bins=LeadBins.uniform(5, 7))
-    with pytest.raises(R.RecipeError, match="probability days"):
+    with pytest.raises(RecipeError, match="probability days"):
         dataclasses.replace(recipe.recipe, features=features)
 
 

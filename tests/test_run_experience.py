@@ -24,12 +24,13 @@ from hcwf.runs import folder as run_folder
 from hcwf.config.mapping import build_config
 import typed_io
 from hcwf.config.model import RunConfig
-from hcwf.config.datasets import DatasetError, parse_dataset
+from hcwf.config.datasets import parse_dataset
 from typed_io import flat_config
-from hcwf.spatial.region_def import domain
+from hcwf.onset.regions import box
 from hcwf.onset import detect as stats_detect
 from hcwf.onset import observed_cache
 from hcwf import log as logs
+from hcwf.errors import DatasetError, RegionError, RunExistsError
 
 ROOT = Path(__file__).resolve().parents[1]
 LAT, LON = [6.0, 8.0, 10.0], [38.0, 40.0, 42.0]
@@ -192,12 +193,11 @@ def test_no_print_is_left_on_the_run_path():
 
 def test_region_box_comes_from_the_registry_for_any_case():
     """Lowercase and alias names work whatever the case; unknown names are errors."""
-    assert domain("ethiopia") == domain("Ethiopia") == (3, 15, 33, 48)
-    assert domain("India") == domain("india") == (6.5, 38.5, 66.5, 100)
-    from hcwf.onset import regions
+    assert box("ethiopia") == box("Ethiopia") == (3, 15, 33, 48)
+    assert box("India") == box("india") == (6.5, 38.5, 66.5, 100)
 
-    with pytest.raises(regions.RegionError):
-        domain("atlantis")
+    with pytest.raises(RegionError):
+        box("atlantis")
 
 
 def test_day_convention_sources_are_in_the_region_notes():
@@ -471,7 +471,7 @@ def test_run_writes_the_folder_refuses_a_rerun_and_overwrite_clears_it(world, tm
     text = (folder / "run.log").read_text()
     assert "[INFO]" in text and "[DEBUG]" in text and "Observed onsets: cache" in text
     assert "dir_out" not in (folder / "run.yaml").read_text() and "data_dir" not in (folder / "run.yaml").read_text()
-    with pytest.raises(run_folder.RunExistsError, match="--overwrite"):
+    with pytest.raises(RunExistsError, match="--overwrite"):
         hcwf.run(path, write=True, quiet=True)
     (folder / "stale.txt").write_text("old")
     hcwf.run(path, write=True, overwrite=True, quiet=True)

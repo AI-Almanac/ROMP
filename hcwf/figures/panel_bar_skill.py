@@ -2,12 +2,27 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from hcwf.io.dict import extract_overall_dict
 from hcwf.runs.folder import file_name
 from hcwf.naming import tuple_to_str
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def extract_overall_dict(dic, second_level_key):
+    """
+    extract a 1-D array from a 2-level nested dictionary
+    given a specific 2nd-level key,
+    Extract all 1st-level keys
+    And get all 2nd-level values
+    """
+    # 1st-level keys
+    first_level_keys = list(dic.keys())
+
+    # 1-D array of values for the chosen 2nd-level key
+    array_1d = np.array([dic[first][second_level_key] for first in first_level_keys])
+
+    return array_1d, first_level_keys
 
 
 def panel_bar_bss_rpss_auc(result_overall, verification_window, spec, *, legend=True):

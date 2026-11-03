@@ -36,13 +36,14 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Store, file_identity
-from hcwf.io.input import _forecast_sources as _year_sources
-from hcwf.io.input import _obs_source, open_store
-from hcwf.config.datasets import DatasetError, file_year, is_zarr, resolve_paths
+from hcwf.io.stores import forecast_sources as _year_sources
+from hcwf.io.stores import observation_source, open_store
+from hcwf.config.datasets import file_year, is_zarr, resolve_paths
 from hcwf.onset import ingest as ing
 from hcwf.onset.alignment import (ForecastAlignmentReport, _match_axis, _sqrt_field,
                                   forecast_alignment_from_samples)
 from hcwf.onset.calendar import label_keys
+from hcwf.errors import DatasetError
 
 SAMPLE_INITS = 40
 """Most inits in the sample."""
@@ -140,10 +141,10 @@ def _box_indices(values: np.ndarray, lo: float, hi: float, wrap: bool = False) -
 
 def _region_box(region):
     """(lats, latn, lonw, lone) of the region, or None when it is unknown."""
-    from hcwf.spatial.region_def import domain
+    from hcwf.onset.regions import box
 
     try:
-        return domain(region)
+        return box(region)
     except Exception:  # noqa: BLE001 - an unknown region just means no box
         return None
 
@@ -163,7 +164,7 @@ def _standardise(ds: xr.Dataset, kw: dict) -> xr.Dataset:
     return fix(ds, kw.get("model_dims"))
 
 
-def _forecast_sources(kw: dict) -> list:
+def forecast_sources(kw: dict) -> list:
     """The standardised forecast Datasets to read: the zarr store, or the files of the run's years (any number a year)."""
     folder = kw.get("model_dir")
     if _is_store(kw, "model"):
@@ -319,7 +320,7 @@ def _obs_segments(kw: dict, years) -> list:
         years = _dataset_years(kw, "obs")[:1]
     for year in sorted(years):
         try:
-            _, found = _obs_source(year, folder, _patterns(kw.get("obs_file_pattern")), kw.get("obs_paths"),
+            _, found = observation_source(year, folder, _patterns(kw.get("obs_file_pattern")), kw.get("obs_paths"),
                                    kw.get("obs_files_years"))
         except FileNotFoundError:
             continue
@@ -396,7 +397,7 @@ def read_sample(kw: dict) -> Sample:
 
 def _read_sample(kw: dict) -> Sample:
     """The body of read_sample, run under the NetCDF lock when files are read."""
-    sources = _forecast_sources(kw)
+    sources = forecast_sources(kw)
     if not sources:
         raise ValueError("no forecast file or store found")
     try:

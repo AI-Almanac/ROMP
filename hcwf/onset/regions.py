@@ -2,22 +2,28 @@
 
 Entries live in hcwf/onset/regions/*.yaml (schema in docs/onset_spec.md,
 "Regions and countries"). Areas nest through `part_of`, so a country inherits
-the definitions of the regions that contain it.
+the definitions of the regions that contain it. `box` is the one lookup of a region's lat/lon box, and `polygon_boundary` the
+India CMZ outline for the grids that have one.
 """
 from __future__ import annotations
 
 import functools
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import yaml
 
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import RegionError
 from hcwf.onset.definition import registry_ids as definition_ids
 from hcwf.onset.ingest import parse_day_boundary
 from hcwf.onset.model import Definition
-from hcwf.spatial.units import UnitsSpec, UnitsSpecError
+from hcwf.spatial.units import UnitsSpec
+from hcwf.errors import UnitsSpecError
+
+log = logging.getLogger(__name__)
 
 REGIONS_DIR = Path(__file__).parent / "regions"
 
@@ -26,10 +32,6 @@ _KEYS = ("id", "title", "kind", "iso", "aliases", "part_of", "domain", "units", 
 _UNITS_KEYS = ("shapefile", "unit_id_col", "unit_name_col", "parent_col", "weights", "centroids", "centroid_id_col",
                "dissemination", "dissemination_id_col")
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
-
-
-class RegionError(HCWFConfigError):
-    """A malformed region entry or an unknown region; the message names the YAML path and the fix."""
 
 
 @dataclass(frozen=True)
@@ -268,6 +270,30 @@ def box(name: str) -> tuple[float, float, float, float]:
         _fail(f"{region.id}.yaml", "domain", "the region has no domain (lat/lon box). Fix: add "
                                               "'domain: {lat: [low, high], lon: [low, high]}'")
     return region.lat[0], region.lat[1], region.lon[0], region.lon[1]
+
+
+def polygon_boundary(da):
+    """Return (lat, lon) arrays of the India CMZ polygon matching the grid spacing of da (1, 2 or 4 degrees), else (None, None)."""
+    polygon_lat, polygon_lon = None, None
+    lat = da.lat.values
+    lat_diff = abs(lat[1] - lat[0])
+
+    if abs(lat_diff - 2.0) < 0.1:  # 2-degree resolution
+        polygon_lon = np.array([83, 75, 75, 71, 71, 77, 77, 79, 79, 83, 83, 89, 89, 85, 85, 83, 83])
+        polygon_lat = np.array([17, 17, 21, 21, 29, 29, 27, 27, 25, 25, 23, 23, 21, 21, 19, 19, 17])
+        log.debug("Using 2-degree CMZ polygon coordinates")
+
+    elif abs(lat_diff - 4.0) < 0.1:  # 4-degree resolution
+        polygon_lon = np.array([86, 74, 74, 70, 70, 82, 82, 86, 86])
+        polygon_lat = np.array([18, 18, 22, 22, 30, 30, 26, 26, 18])
+        log.debug("Using 4-degree CMZ polygon coordinates")
+
+    elif abs(lat_diff - 1.0) < 0.1:  # 1-degree resolution
+        polygon_lon = np.array([74, 85, 85, 86, 86, 87, 87, 88, 88, 88, 85, 85, 82, 82, 79, 79, 78, 78, 69, 69, 74, 74])
+        polygon_lat = np.array([18, 18, 19, 19, 20, 20, 21, 21, 21, 24, 24, 25, 25, 26, 26, 27, 27, 28, 28, 21, 21, 18])
+        log.debug("Using 1-degree CMZ polygon coordinates")
+
+    return polygon_lat, polygon_lon
 
 
 def units_spec(name: str) -> UnitsSpec | None:

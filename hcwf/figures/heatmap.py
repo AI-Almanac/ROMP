@@ -5,7 +5,7 @@ import seaborn as sns
 import os
 
 from hcwf.runs.folder import file_name
-from hcwf.metrics.bins import get_target_bins
+from hcwf.metrics.score import get_target_bins
 from hcwf.naming import tuple_to_str
 import logging
 

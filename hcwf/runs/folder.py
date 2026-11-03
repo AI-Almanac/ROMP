@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hcwf.config import schema
+from hcwf.errors import RunExistsError
 
 MAX_NAME = 40
 RUN_FILE = "run.yaml"
@@ -43,10 +44,6 @@ _NOT_IN_FINGERPRINT = {
 _BLEND_NOT_IN_FINGERPRINT = {"blend_climatology": ("workers",), "blend_outputs": ("intermediates", "pickles")}
 """Keys inside blend sections that do not define the results."""
 _CLIMATOLOGY_REFERENCES = ("climatology", "conditional_climatology")
-
-
-class RunExistsError(FileExistsError):
-    """The run folder of this config already holds a run; the message says how to re-run."""
 
 
 @dataclass(frozen=True)

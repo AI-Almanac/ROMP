@@ -3,7 +3,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
-from hcwf.spatial.region_def import polygon_boundary
+from hcwf.onset.regions import polygon_boundary
 from hcwf.figures.visual import box_boundary, get_india_outline, shp_outline
 from hcwf.figures.field import colorbar_extend, draw_field, extent, units_of
 from hcwf.runs.folder import file_name

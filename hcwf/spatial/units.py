@@ -31,10 +31,11 @@ import pandas as pd
 from scipy import sparse
 
 from hcwf.config import schema
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import AreaError, UnitsSpecError
 from . import ids as unit_ids
 from . import regrid
 from .regrid import SparseTransform
+from hcwf.errors import RegionError
 
 log = logging.getLogger(__name__)
 
@@ -42,14 +43,6 @@ KINDS = ("grid", "polygon", "region")
 _GRID_ID = re.compile(r"^(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)$")
 _LAT_NAMES = ("lat", "center_lat", "latitude")
 _LON_NAMES = ("lon", "center_lon", "longitude")
-
-
-class AreaError(HCWFConfigError):
-    """No unit falls inside the area of interest."""
-
-
-class UnitsSpecError(HCWFConfigError):
-    """A units specification that cannot be used (an unset environment variable in a path, no source for a mode)."""
 
 
 def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
@@ -530,7 +523,7 @@ class UnitsSpec:
 
             try:
                 base = regions.units_spec(str(values["region"]))
-            except regions.RegionError:
+            except RegionError:
                 base = None
         if base is None:
             return cls(**given)

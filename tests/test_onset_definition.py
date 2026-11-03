@@ -10,6 +10,7 @@ from hcwf.onset.model import (
     Amount, Comparison, Curve, DayRef, DerivedSeasons, DryRun, DryWindow, FirstPassage, Season, Span,
     ThresholdSpec, Total, Veto, WetDays,
 )
+from hcwf.errors import DefinitionError
 
 HEADER = """\
 id: t
@@ -52,7 +53,7 @@ def rule(text: str) -> FirstPassage:
 
 def fails(text: str, *needles: str):
     """Assert loading raises a DefinitionError whose message has every needle."""
-    with pytest.raises(dfn.DefinitionError) as exc:
+    with pytest.raises(DefinitionError) as exc:
         dfn.loads(text)
     for needle in needles:
         assert needle in str(exc.value), str(exc.value)
@@ -292,7 +293,7 @@ def test_threshold_used_in_require_and_dry_window():
 ])
 def test_validation_errors(text, path, fix):
     """Each strictness rule names the YAML path and says how to fix it."""
-    with pytest.raises(dfn.DefinitionError) as exc:
+    with pytest.raises(DefinitionError) as exc:
         dfn.loads(text)
     message = str(exc.value)
     assert path in message and fix in message, message
@@ -372,10 +373,10 @@ def test_extends_unknown_and_cycle(tmp_path):
     fails("extends: nope\nid: x\nversion: 1\ntitle: T\nstatus: draft\n", "extends", "registry id")
     (tmp_path / "a.yaml").write_text("extends: b.yaml\nid: a\nversion: 1\ntitle: A\nstatus: draft\n")
     (tmp_path / "b.yaml").write_text("extends: a.yaml\nid: b\nversion: 1\ntitle: B\nstatus: draft\n")
-    with pytest.raises(dfn.DefinitionError, match="cycle"):
+    with pytest.raises(DefinitionError, match="cycle"):
         dfn.load(tmp_path / "a.yaml")
     (tmp_path / "self.yaml").write_text("extends: self.yaml\nid: s\nversion: 1\ntitle: S\nstatus: draft\n")
-    with pytest.raises(dfn.DefinitionError, match="cycle"):
+    with pytest.raises(DefinitionError, match="cycle"):
         dfn.load(tmp_path / "self.yaml")
 
 
@@ -385,7 +386,7 @@ def test_load_path_and_errors(tmp_path):
     file.write_text(ICPAC)
     assert dfn.load(file).id == "t"
     assert dfn.load(str(file)).id == "t"
-    with pytest.raises(dfn.DefinitionError, match="registry id"):
+    with pytest.raises(DefinitionError, match="registry id"):
         dfn.load("missing")
 
 

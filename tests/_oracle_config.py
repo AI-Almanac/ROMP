@@ -871,7 +871,8 @@ def driver_finish(cfg, cli_args=None) -> dict:
 # the problems hcwf/runs/check.py `_units` and `_blend` reported), kept to compare hcwf.config.validate with.
 # ---------------------------------------------------------------------------------------------------------------
 from datetime import datetime
-from hcwf.config.onset import OnsetConfigError as _OnsetConfigError, onset_setup as _onset_setup
+from hcwf.config.onset import onset_setup as _onset_setup
+from hcwf.errors import OnsetConfigError as _OnsetConfigError
 
 
 def check_config(dic: dict) -> None:
@@ -1037,7 +1038,8 @@ class HCWFValidator:
 
 def check_units_problem(dic):
     """The problem `_units` of check.py reported: the text of the error line, or None."""
-    from hcwf.spatial.units import UnitsSpec, UnitsSpecError
+    from hcwf.spatial.units import UnitsSpec
+    from hcwf.errors import UnitsSpecError
 
     try:
         {name: UnitsSpec.from_flat(dic, name) for name in ["observations", *dic["model_list"]]}
@@ -1048,7 +1050,8 @@ def check_units_problem(dic):
 
 def check_blend_problems(dic):
     """The error lines `_blend` of check.py reported."""
-    from hcwf.blend.recipe import RecipeError, recipe_from_config
+    from hcwf.blend.recipe import recipe_from_config
+    from hcwf.errors import RecipeError
 
     try:
         recipe_from_config(dic, _onset_setup(dic))
@@ -1074,7 +1077,8 @@ def _fp_years(kwargs):
 
 def _fp_obs_files(kwargs, years):
     from hcwf.cache import file_identity
-    from hcwf.io.input import is_zarr, year_files
+    from hcwf.config.datasets import is_zarr
+    from hcwf.io.stores import year_files
 
     if kwargs.get("obs_paths"):
         found = []
@@ -1133,7 +1137,7 @@ def fingerprint_parts(rain, thresh, kwargs) -> dict:
     import numpy as np
 
     from hcwf.cache import part_hash
-    from hcwf.io.input import units_files
+    from hcwf.spatial.onto_units import units_files
     from hcwf.spatial.units import UnitsSpec
     from hcwf.config.onset import onset_setup
     from hcwf.onset import definition as definition_mod

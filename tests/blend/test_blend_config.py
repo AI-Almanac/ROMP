@@ -8,8 +8,8 @@ import xarray as xr
 from hcwf.blend import recipe as R
 from hcwf.config import Blend, Config, Dataset, Units
 from hcwf.config import schema
-from hcwf.config.schema import ConfigSchemaError
 from hcwf.config.mapping import build_config
+from hcwf.errors import ConfigSchemaError, RecipeError
 
 BASE = {"model_list": ("m",), "blend_years": {"training": [2000, 2001], "cv_holdout": [2001]},
         "blend_formulas": {"f": "outcome ~ prob_clim_qx"}}
@@ -64,16 +64,16 @@ def test_every_problem_of_the_section_is_reported_with_suggestions():
     cfg = {**BASE, "blend_years": {"trainin": [2000], "cv_holdout": "20x0"}, "blend_cv_methods": ("globl",),
            "blend_models": {"mm": {"lead_days": [1]}, "m": {"rain_predictors": [{"agg": "avg"}]}},
            "blend_mme": {"enabled": True, "optimize": "sometimes"}, "blend_rain_transform": "cube"}
-    with pytest.raises(R.RecipeError) as caught:
+    with pytest.raises(RecipeError) as caught:
         R.recipe_from_config(cfg)
     text = "\n".join(caught.value.problems)
     for expected in ('blend.years.trainin: unknown key. Did you mean "training"?', "blend.years.cv_holdout",
                      "blend.cv_methods: 'globl' is not one of", 'blend.models.mm: not one of the models. Did you mean "m"?',
                      "blend.models.m.rain_predictors[0].agg: 'avg' is not one of", "blend.mme.optimize"):
         assert expected in text, expected
-    with pytest.raises(R.RecipeError, match="blend.years: required"):
+    with pytest.raises(RecipeError, match="blend.years: required"):
         R.recipe_from_config({"model_list": ("m",), "blend_formulas": {"f": "outcome ~ x"}})
-    with pytest.raises(R.RecipeError, match="rain_transform"):
+    with pytest.raises(RecipeError, match="rain_transform"):
         R.recipe_from_config({**BASE, "blend_rain_transform": "cube"})
 
 
@@ -167,9 +167,9 @@ def test_check_says_which_box_a_region_name_selects():
 
 
 def test_an_external_prediction_needs_a_name_and_a_file():
-    with pytest.raises(R.RecipeError, match=r"blend.external_predictions\[0\]: name and file are required"):
+    with pytest.raises(RecipeError, match=r"blend.external_predictions\[0\]: name and file are required"):
         R.recipe_from_config({**BASE, "blend_external_predictions": [{"name": "x"}]})
-    with pytest.raises(R.RecipeError, match="blend.external_predictions\\[0\\].fle: unknown key. Did you mean \"file\""):
+    with pytest.raises(RecipeError, match="blend.external_predictions\\[0\\].fle: unknown key. Did you mean \"file\""):
         R.recipe_from_config({**BASE, "blend_external_predictions": [{"name": "x", "fle": "p.nc"}]})
     recipe = R.recipe_from_config({**BASE, "blend_external_predictions": [{"name": "x", "file": "p.nc", "method": "local"}]})
     assert recipe.evaluation.external_predictions == (R.ExternalPrediction("x", "p.nc", "local"),)
@@ -182,13 +182,13 @@ def test_mme_weights_are_a_mapping_or_a_file_and_must_fit_the_sources(tmp_path):
     cfg["blend_mme"]["weights"] = "weights.csv"
     assert R.recipe_from_config(cfg).evaluation.mme.weights == "weights.csv"
     for bad, message in (({"clim_raw": 1.0}, "one weight for each source"), ({"clim_raw": 0.5, "m": 0.9}, "sum to 1")):
-        with pytest.raises(R.RecipeError, match=message):
+        with pytest.raises(RecipeError, match=message):
             R.recipe_from_config({**cfg, "blend_mme": {**cfg["blend_mme"], "weights": bad}})
-    with pytest.raises(R.RecipeError, match="cannot be 'always'"):
+    with pytest.raises(RecipeError, match="cannot be 'always'"):
         R.recipe_from_config({**cfg, "blend_mme": {**cfg["blend_mme"], "optimize": "always"}})
-    with pytest.raises(R.RecipeError, match="blend.mme.weights"):
+    with pytest.raises(RecipeError, match="blend.mme.weights"):
         R.recipe_from_config({**cfg, "blend_mme": {"weights": [0.5, 0.5]}})
-    with pytest.raises(R.RecipeError, match="blend.mme.weights.m"):
+    with pytest.raises(RecipeError, match="blend.mme.weights.m"):
         R.recipe_from_config({**cfg, "blend_mme": {"weights": {"m": "heavy"}}})
     # the loader anchors a relative weights file at the config file
     from hcwf.config.build import _anchor_mme_weights

@@ -15,7 +15,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.config.model import Selection
-from hcwf.io.input import ingest_forecast
+from hcwf.io.forecasts import ingest_forecast
 from hcwf.config.onset import forecast_reach
 from hcwf.onset import engine
 from hcwf.onset import observed_cache

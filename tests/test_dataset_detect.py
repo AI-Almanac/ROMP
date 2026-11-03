@@ -3,8 +3,9 @@
 import pytest
 
 from hcwf.config import detect
-from hcwf.config.datasets import DatasetError, TEMPLATES, expand_path, get_dataset, load_datasets, parse_dataset
+from hcwf.config.datasets import TEMPLATES, expand_path, get_dataset, load_datasets, parse_dataset
 from tests.synthetic_data import write_forecast, write_obs
+from hcwf.errors import DatasetError
 
 
 def _obs(tmp_path, **kw):
@@ -207,10 +208,10 @@ def test_zarr_detection_is_cached_and_follows_the_store(tmp_path):
 
 
 def test_importing_dataset_detect_does_not_pull_in_the_input_stack():
-    """`hcwf-run init` and `datasets` import dataset_detect only; it must not load hcwf.io.input and what it imports."""
+    """`hcwf-run init` and `datasets` import dataset_detect only; it must not load the readers (hcwf.io.observations, ...) and what they import."""
     import subprocess
     import sys
 
-    code = "import sys, hcwf.config.detect; print('hcwf.io.input' in sys.modules)"
+    code = "import sys, hcwf.config.detect; print('hcwf.io.observations' in sys.modules)"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "False"

@@ -119,7 +119,7 @@ def _onto_units(forecast, transform, source, feeding, kept_units, domain, post_s
 def dump_hcwf(root: Path) -> dict:
     import typed_io
 
-    from hcwf.io import input as io_input
+    from hcwf.spatial import onto_units
     from hcwf.spatial import EvaluationUnits
     from hcwf.spatial.ids import GridIdConvention
     from hcwf.io.dims import dim_fmt, dim_fmt_model_ensemble
@@ -141,11 +141,11 @@ def dump_hcwf(root: Path) -> dict:
     def lazy_obs(year):
         return dim_fmt(xr.open_dataset(root / "obs" / f"{year}.nc"))["precip"]
 
-    got = io_input.read_on_units(lazy_obs(2003), grid, block_dim="time")
+    got = onto_units.read_on_units(lazy_obs(2003), grid, block_dim="time")
     out["obs_regrid"], out["obs_regrid_ids"] = got.values, got["unit"].values.tolist()
     for year in (2003, 2004):
         for policy in ("keep", "zero", "drop"):
-            got, supported, _ = io_input.read_on_units(lazy_obs(year), cells, block_dim="time", missing=policy,
+            got, supported, _ = onto_units.read_on_units(lazy_obs(year), cells, block_dim="time", missing=policy,
                                                        convention=convention, support=True)
             out[f"obs_cell_{year}_{policy}"] = got.values
             out[f"obs_cell_{year}_{policy}_supported"] = supported
@@ -164,9 +164,9 @@ def dump_hcwf(root: Path) -> dict:
     out["fc_plain_members"] = plain["member"].values
     out["fc_scaled"] = (plain.transpose("init_time", "member", "lat", "lon", "step").values * np.float32(1000.0)).reshape(
         len(INITS), -1, len(LATS) * len(LONS), DAYS)
-    out["fc_cell"] = blend_order(io_input.read_on_units(forecast(), cells, block_dim="init_time", scale=SCALE,
+    out["fc_cell"] = blend_order(onto_units.read_on_units(forecast(), cells, block_dim="init_time", scale=SCALE,
                                                         convention=convention))
-    out["fc_regrid"] = blend_order(io_input.read_on_units(forecast(), grid, block_dim="init_time", post_scale=SCALE))
+    out["fc_regrid"] = blend_order(onto_units.read_on_units(forecast(), grid, block_dim="init_time", post_scale=SCALE))
     return out
 
 

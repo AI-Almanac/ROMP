@@ -9,7 +9,7 @@ from hcwf.onset import calendar as cal
 from hcwf.onset import definition as dfn
 from hcwf.onset import regions as rg
 from hcwf.onset.model import DayRef, Season
-from hcwf.spatial.region_def import domain
+from hcwf.errors import RegionError
 
 NE_COUNTRY = {"ethiopia": "Ethiopia", "india": "India", "kenya": "Kenya"}
 
@@ -59,28 +59,28 @@ def test_lookups_ignore_case_and_use_aliases():
     assert rg.box("EAST AFRICA") == rg.box("east_africa") == rg.box("East Africa")
     assert rg.box("Amazon Basin") == rg.box("amazon")
     assert rg.box("sub_ethiopia") == rg.box("Sub_Ethiopia") == (7.5, 13.5, 37.5, 40)
-    assert rg.box("ETHIOPIA") == domain("Ethiopia") == (3, 15, 33, 48)
-    with pytest.raises(rg.RegionError, match="unknown region"):
+    assert rg.box("ETHIOPIA") == rg.box("Ethiopia") == (3, 15, 33, 48)
+    with pytest.raises(RegionError, match="unknown region"):
         rg.box("atlantis")
 
 
 def test_india_has_one_box_whatever_the_spelling():
     """`India`, `india` and `INDIA` are the same region with the registry's box."""
-    assert domain("India") == rg.box("India") == domain("india") == domain("INDIA") == (6.5, 38.5, 66.5, 100)
+    assert rg.box("India") == rg.box("India") == rg.box("india") == rg.box("INDIA") == (6.5, 38.5, 66.5, 100)
     assert rg.load_region("India") is rg.load_region("india")
 
 
 def test_box_without_domain_is_an_error(region_dir):
     """A region with no box says how to add one."""
     (region_dir / "flat.yaml").write_text("id: flat\ntitle: Flat\nkind: region\n")
-    with pytest.raises(rg.RegionError, match="no domain"):
+    with pytest.raises(RegionError, match="no domain"):
         rg.box("flat")
 
 
 def test_legacy_domains_are_no_longer_a_region_key(region_dir):
     """The case-sensitive legacy box was retired: a region file naming it is an unknown-key error."""
     (region_dir / "flat.yaml").write_text("id: flat\ntitle: Flat\nkind: region\nlegacy_domains:\n  Flat: {lat: [5, 1], lon: [0, 1]}\n")
-    with pytest.raises(rg.RegionError, match="legacy_domains"):
+    with pytest.raises(RegionError, match="legacy_domains"):
         rg.load_region("flat")
 
 
@@ -135,7 +135,7 @@ def test_grid_units_from_the_region_box(region_dir):
     units = rg.units_for("box", lat, lon)
     assert units.kind == "grid" and len(units) == 9
     assert units.lat.min() == 0 and units.lat.max() == 2 and units.lon.min() == 10 and units.lon.max() == 12
-    with pytest.raises(rg.RegionError, match="need lat and lon"):
+    with pytest.raises(RegionError, match="need lat and lon"):
         rg.units_for("box")
 
 
@@ -149,7 +149,7 @@ def test_grid_units_from_the_region_box(region_dir):
 def test_bad_units_blocks(region_dir, block, message):
     """A malformed units block is a RegionError naming the key."""
     (region_dir / "bad.yaml").write_text(f"id: bad\ntitle: Bad\nkind: region\n{block}\n")
-    with pytest.raises(rg.RegionError, match=message):
+    with pytest.raises(RegionError, match=message):
         rg.load_region("bad")
 
 
@@ -158,7 +158,7 @@ def test_unset_environment_variable_in_a_units_path(region_dir, monkeypatch):
     monkeypatch.delenv("HCWF_TEST_MISSING", raising=False)
     (region_dir / "bad.yaml").write_text(
         "id: bad\ntitle: Bad\nkind: region\nunits: {shapefile: '${HCWF_TEST_MISSING}/u.shp', unit_id_col: id}\n")
-    with pytest.raises(rg.RegionError, match="not set"):
+    with pytest.raises(RegionError, match="not set"):
         rg.units_for("bad")
 
 

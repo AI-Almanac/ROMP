@@ -14,9 +14,12 @@ import pytest
 import xarray as xr
 import yaml
 
+from hcwf.io import output
 from hcwf.runs import export
 from hcwf.config.model import RunConfig
-from hcwf.io.input import forecast_of, history_of, initialization_dates, observations_of, thresholds_of
+from hcwf.io.forecasts import forecast_of, initialization_dates
+from hcwf.io.observations import history_of, observations_of
+from hcwf.io.thresholds import thresholds_of
 from typed_io import flat_config
 from hcwf.config.mapping import build_config
 from hcwf.onset import definition as definition_mod
@@ -116,7 +119,7 @@ def _typed(cfg, model, *, reference=False):
 
 def _open(path):
     """Open an export file with times decoded and the `lead` coordinate left as plain numbers."""
-    return export.open_onsets(path)
+    return output.open_onsets(path)
 
 
 # --- layouts, dtypes, attributes -----------------------------------------------------------------------------
@@ -268,16 +271,16 @@ def test_non_standard_calendar_dates_round_trip(tmp_path):
     dates = np.array([[cftime.datetime(2020, 3, 1, calendar="noleap"), None],
                       [cftime.datetime(2020, 12, 31, calendar="noleap"), cftime.datetime(2021, 1, 2, calendar="noleap")]],
                      dtype=object)
-    days = export._days(dates, "noleap")
-    assert np.isnan(days[0, 1]) and days[0, 0] == cftime.date2num(dates[0, 0], export.DATE_UNITS, "noleap")
-    assert export._doy(days, "noleap").tolist()[1][0] == 365.0 and np.isnan(export._doy(days, "noleap")[0, 1])
-    ds = xr.Dataset({"onset_date": export._date_var(days, ("a", "b"), "noleap", "onset"),
-                     "status": export.status_var([[0, 1], [0, 0]], ("a", "b"))}, coords={"a": [0, 1], "b": [0, 1]})
-    path = export.write_netcdf(ds, tmp_path / "noleap.nc")
+    days = output.days_of(dates, "noleap")
+    assert np.isnan(days[0, 1]) and days[0, 0] == cftime.date2num(dates[0, 0], output.DATE_UNITS, "noleap")
+    assert output.day_of_year(days, "noleap").tolist()[1][0] == 365.0 and np.isnan(output.day_of_year(days, "noleap")[0, 1])
+    ds = xr.Dataset({"onset_date": output.date_var(days, ("a", "b"), "noleap", "onset"),
+                     "status": output.status_var([[0, 1], [0, 0]], ("a", "b"))}, coords={"a": [0, 1], "b": [0, 1]})
+    path = output.write_netcdf(ds, tmp_path / "noleap.nc")
     with netCDF4.Dataset(path) as raw:
         assert raw["onset_date"].calendar == "noleap" and raw["onset_date"].units == "days since 1970-01-01"
         assert bool(raw["onset_date"][:].mask[0, 1])
-    got = export.open_onsets(path)["onset_date"].values
+    got = output.open_onsets(path)["onset_date"].values
     assert got[0, 0] == dates[0, 0] and got[1, 1] == dates[1, 1] and got[1, 0] == dates[1, 0]
     assert got[0, 1] is None
 
@@ -294,7 +297,7 @@ def test_non_standard_calendar_observed_export(tmp_path):
     _write_forecast(base / "DET", 0)
     cfg = flat_config(_raw(base, "DET", False))
     path = export.export_onsets(cfg, sources=["observed"], out=base / "nl")["observed"]
-    ds = export.open_onsets(path)
+    ds = output.open_onsets(path)
     assert ds.attrs["calendar"] == "noleap"
     found = ds["status"].values == Status.ONSET
     assert found.any() and all(d.calendar == "noleap" for d in ds["onset_date"].values[found])

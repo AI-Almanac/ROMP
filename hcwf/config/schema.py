@@ -37,8 +37,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from hcwf.errors import HCWFConfigError
-from hcwf.config.datasets import DatasetError, expand_env, parse_year_list, suggest
+from hcwf.errors import ConfigSchemaError, HCWFConfigError
+from hcwf.config.datasets import expand_env, parse_year_list, suggest
+from hcwf.errors import DatasetError
 
 DIM_NAMES = ("init_time", "step", "member", "lat", "lon", "unit")
 """Canonical dimension names that ``dims`` may rename (``unit``: the dimension of evaluation units)."""
@@ -56,10 +57,6 @@ SECTIONS = {
 """The sections a YAML config may use, with one-line help."""
 LIST_SECTIONS = ("models",)
 """Sections that are a list of entries, not a mapping of keys."""
-
-
-class ConfigSchemaError(HCWFConfigError):
-    """A YAML config has unknown keys, wrongly typed values or missing required keys; all are listed."""
 
 
 class _Required:
@@ -473,7 +470,7 @@ def _fields() -> tuple[Field, ...]:
         Field("mask", "mask", "cells to evaluate, on each dataset's own grid; the parts given intersect: "
               + "; ".join(f"{k}: {h}" for k, (_, h) in MASK_KEYS.items()), None, nullable=True, fill=False),
         Field("shpfile_dir", "path", "shapefile for the region boundary in maps", None, nullable=True),
-        Field("polygon", "bool", "mask and boundary from region polygons (params/region_def)", False),
+        Field("polygon", "bool", "mask and boundary from region polygons (hcwf.onset.regions.polygon_boundary)", False),
         Field("parallel", "bool", "compute years in several worker processes (false: one process); "
               "write `parallel: {workers: N}` to choose the number", True),
         Field("parallel_workers", "workers", "worker processes when parallel is on (parallel.workers); null: the "

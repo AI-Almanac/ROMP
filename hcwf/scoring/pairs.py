@@ -10,8 +10,12 @@ from typing import Any, NamedTuple
 import pandas as pd
 
 from hcwf.config.model import Case, Selection
-from hcwf.io import input as io_input
-from hcwf.io.input import initialization_dates
+from hcwf.io import forecasts as forecasts_io
+from hcwf.io import observations as observations_io
+from hcwf.io import reference as reference_io
+from hcwf.io import thresholds as thresholds_io
+from hcwf.io import warmup as warmup_io
+from hcwf.io.forecasts import initialization_dates
 from hcwf.metrics.bins import create_climatological_forecast_obs_pairs, forecast_pairs
 from hcwf.onset.detect import check_alignment, detect_ensemble, detect_observed
 from hcwf.parallel import concat_year_args, start_concat_args
@@ -46,7 +50,7 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
     case = _case_of(rc, model)
     log.debug(f"Processing years: {list(years)}")
 
-    thresh_slice = io_input.thresholds_of(rc, model, select)
+    thresh_slice = thresholds_io.thresholds_of(rc, model, select)
 
     # Initialize list to store all forecast-observation pairs
     all_forecast_obs_pairs = []
@@ -61,11 +65,11 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
         try:
             # Load model and observation data
             log.debug("Loading S2S model data...")
-            p_model = io_input.forecast_of(year, rc, model, ensemble=True, select=select)
+            p_model = forecasts_io.forecast_of(year, rc, model, ensemble=True, select=select)
             p_model_slice = p_model # !!!!! region subset
 
             log.debug("Loading observational rainfall data...")
-            rainfall_ds = io_input.observations_of(year, rc, select)
+            rainfall_ds = observations_io.observations_of(year, rc, select)
             rainfall_ds_slice = rainfall_ds #!!!!! region subset
             check_alignment(rainfall_ds_slice, p_model_slice, rc, case)
 
@@ -76,7 +80,7 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
             log.debug("Computing onset for all ensemble members...")
             onset_all_members, _ = detect_ensemble(
                 p_model_slice, thresh_slice, onset_da, rc, case, select,
-                history=io_input.history_of(year, rainfall_ds_slice, rc, select))
+                history=observations_io.history_of(year, rainfall_ds_slice, rc, select))
             log.debug(f"Found onset in {onset_all_members['onset_day'].notna().sum()} member cases")
 
             log.debug("Creating forecast-observation pairs...")
@@ -118,11 +122,11 @@ def _pairs_of_years(years, rc, model, select):
 def start_pairs(rc, model, select=Selection()):
     """Start the forecast-observation pairs of `model` over the run's years; the Pending's result() waits for them.
 
-    The thresholds and masks every year needs are read here first (io_input.warm_up_of); with workers, the years run in
+    The thresholds and masks every year needs are read here first (warmup_io.warm_up_of); with workers, the years run in
     them while this process goes on, and each worker gets only `(rc, model, select)`.
     """
     return start_concat_args(_pairs_of_years, rc.evaluation.years, (rc, model, select), rc.parallel,
-                             prewarm=lambda: io_input.warm_up_of(rc, model, select))
+                             prewarm=lambda: warmup_io.warm_up_of(rc, model, select))
 
 
 def climatological_pairs(clim_onset, rc, *, years, day_bins):
@@ -231,10 +235,10 @@ def prepare_pairs(rc, model, select=Selection()):
 
     if not climatology:
         ref_pending = start_pairs(rc, _reference_model(rc, model), select)
-        io_input.release_reference()
+        reference_io.release_reference()
     else:
         clim_onset = climatological_onset_dataset(rc, case, select)
-        io_input.release_reference()
+        reference_io.release_reference()
 
     forecast_obs_df_all = pending.result()
     ref_obs_df_all = ref_pending.result() if ref_pending is not None else None

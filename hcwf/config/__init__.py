@@ -26,9 +26,9 @@ from typing import Any
 import yaml
 
 from hcwf.config import schema
-from hcwf.config.schema import ConfigSchemaError
 from hcwf.config.mapping import build_config
 from hcwf.config.convert import plain, render_yaml
+from hcwf.errors import ConfigSchemaError
 
 
 class _Unset:

@@ -40,7 +40,7 @@ import pandas as pd
 import xarray as xr
 import yaml
 
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import BlendFileError
 from hcwf.blend.samples import ObservedOnsets
 from hcwf.cache import atomic_write, file_identity
 from hcwf.config import detect as dataset_detect
@@ -60,10 +60,6 @@ OLD_FORMAT = "onset-blending/trained-blend"
 LEGACY_HCWF_FORMAT = "momp/trained-blend"
 _MANIFEST = "manifest.json"
 TRAINED_FILENAME = "trained.blend"
-
-
-class BlendFileError(HCWFConfigError):
-    """A trained-blend file that cannot be used (damaged, another format or version, no longer rebuilds)."""
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -228,7 +224,8 @@ def _weights_frame(transform) -> pd.DataFrame:
 def _freeze_units(rc, recipe, name: str, ids) -> FrozenUnits:
     """The units of model `name` on its (first) training file's grid, restricted to the trained `ids`."""
     from hcwf.config.model import Selection
-    from hcwf.io import input as io_input
+    from hcwf.io import forecasts as forecasts_io
+    from hcwf.spatial import onto_units
 
     source = rc.model(name)
     spec = source.units
@@ -239,10 +236,10 @@ def _freeze_units(rc, recipe, name: str, ids) -> FrozenUnits:
         return FrozenUnits("cells", None, spec.convention)
     model = recipe.model(name)
     select = Selection(first_lead=model.lead_days[0], last_lead=model.lead_days[1])
-    with io_input.UnitForecast(source.paths[0], source, spec, keep_ids=ids, select=select) as file:
+    with forecasts_io.UnitForecast(source.paths[0], source, spec, keep_ids=ids, select=select) as file:
         if "unit" in file.da.dims:
             return FrozenUnits(spec.how, None, spec.convention)
-        transform = io_input.unit_transform(file.units, np.asarray(file.da["lat"].values),
+        transform = onto_units.unit_transform(file.units, np.asarray(file.da["lat"].values),
                                             np.asarray(file.da["lon"].values), file.positions,
                                             convention=spec.convention)
     return FrozenUnits(spec.how, _weights_frame(transform), spec.convention)
@@ -344,7 +341,7 @@ class TrainedBlend:
     @classmethod
     def from_training(cls, result) -> "TrainedBlend":
         """The blend a training run produced (`hcwf.blend.training.TrainingResult`)."""
-        from hcwf.io import input as io_input
+        from hcwf.spatial import onto_units
         from hcwf.runs.resolved import resolved_config_text_of
         from hcwf.onset import definition as definition_mod
 
@@ -390,7 +387,7 @@ class TrainedBlend:
             recipe=recipe, rc=frozen, model=result.model, observed=inputs.observed, units=ids,
             thresholds=_freeze_thresholds(inputs.thresholds, ids, convention),
             reference=_thaw_reference(_freeze_reference(inputs.reference)), frozen_units=units,
-            signatures=signatures, unit_table=io_input.unit_table(rc.observations, ids).table,
+            signatures=signatures, unit_table=onto_units.unit_table(rc.observations, ids).table,
             provenance={"trained_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                         "training_years": list(recipe.evaluation.years.training), "training_files": identities},
             forest=result.forest)
@@ -543,7 +540,8 @@ class TrainedBlend:
     def _load_old(cls, manifest: dict, members: dict) -> "TrainedBlend":
         """An onset_blending trained blend: its config.yml converted in memory (as `hcwf-run convert` does), its
         arrays as stored."""
-        from hcwf.config.convert_specs import ConvertError, convert_blend
+        from hcwf.config.convert_specs import convert_blend
+        from hcwf.errors import ConvertError
         from hcwf.onset import definition as definition_mod
 
         try:

@@ -3,8 +3,12 @@ hcwf.metrics.contingency, is the pure part), cached across the cases that share 
 
 from hcwf.config.model import Selection
 from hcwf.metrics.contingency import onset_metrics
-from hcwf.io import input as io_input
-from hcwf.io.input import initialization_dates, point_dims
+from hcwf.io import forecasts as forecasts_io
+from hcwf.io import observations as observations_io
+from hcwf.io import thresholds as thresholds_io
+from hcwf.io import warmup as warmup_io
+from hcwf.io.forecasts import initialization_dates
+from hcwf.spatial.onto_units import point_dims
 from hcwf.onset.detect import check_alignment, detect_deterministic, detect_ensemble, detect_observed
 from hcwf.onset.observed_cache import threshold_hash
 from hcwf.references.climatology import climatological_onset, compute_climatology_as_forecast
@@ -47,26 +51,26 @@ def _tables_of_years(years, rc, case, select, ens, extra):
     ref_clim = (model.name == "climatology")
     ref_cond = (model.name == CONDITIONAL_CLIMATOLOGY)
     use_ensemble = (ev.probabilistic and not ref_clim) if ens else ev.probabilistic
-    thresh_da = io_input.thresholds_of(rc, model, select)
+    thresh_da = thresholds_io.thresholds_of(rc, model, select)
     out = {}
     for year in years:
         log.debug(f"\n{'-'*50}")
         log.debug(f"Processing year {year}")
 
         # obs onset
-        imd = io_input.observations_of(year, rc, select)
+        imd = observations_io.observations_of(year, rc, select)
         onset_da = detect_observed(imd, thresh_da, year, rc, select)
-        history = io_input.history_of(year, imd, rc, select)
+        history = observations_io.history_of(year, imd, rc, select)
         # extract forecast at approporiate init dates
         p_model = None
         if ref_cond:
             pass
         elif use_ensemble:
             log.debug("Extracting ensemble forecast data ...")
-            p_model = io_input.forecast_of(year, rc, model, ensemble=True, select=select)
+            p_model = forecasts_io.forecast_of(year, rc, model, ensemble=True, select=select)
         elif not ref_clim and not ens:
             log.debug("Extracting model forecast data ...")
-            p_model = io_input.forecast_of(year, rc, model, ensemble=False, select=select)
+            p_model = forecasts_io.forecast_of(year, rc, model, ensemble=False, select=select)
 
         if p_model is not None and (use_ensemble or not ref_clim):
             check_alignment(imd, p_model, rc, case)
@@ -103,7 +107,7 @@ def onset_tables(rc, case, select=Selection(), *, ens=False, years=None):
     (conditional climatology). Only the source being scored is kept: a new source drops the previous one's tables.
     """
     years = rc.evaluation.years if years is None else years
-    thresh_da = io_input.thresholds_of(rc, case.model, select)
+    thresh_da = thresholds_io.thresholds_of(rc, case.model, select)
     key = _family_key(rc, case, ens, thresh_da, years, select)
     if key not in _ONSET_TABLES:
         _ONSET_TABLES.clear()
@@ -115,7 +119,7 @@ def onset_tables(rc, case, select=Selection(), *, ens=False, years=None):
             log.debug("Computing observed onsets of the climatology years for the conditional climatology")
             extra["clim_onset"] = climatological_onset_dataset(rc, case, select)
         chunks = map_year_args(_tables_of_years, years, (rc, case, select, ens, extra), rc.parallel, skip=None,
-                               prewarm=lambda: io_input.warm_up_of(rc, case.model, select))
+                               prewarm=lambda: warmup_io.warm_up_of(rc, case.model, select))
         tables = {}
         for chunk in chunks:
             tables.update(chunk)

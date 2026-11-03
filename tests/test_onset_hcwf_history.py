@@ -6,12 +6,15 @@ import pytest
 import typed_io
 import xarray as xr
 
-from hcwf.io import input as hcwf_input
-from hcwf.config.onset import OnsetConfigError, history_needs_previous_year, onset_setup
+from hcwf.io import forecasts as forecasts_io
+from hcwf.io import observations as observations_io
+from hcwf.io import thresholds as thresholds_io
+from hcwf.config.onset import history_needs_previous_year, onset_setup
 from hcwf.config.model import Window
 from hcwf.metrics.contingency import onset_metrics
 from hcwf.metrics.bins import forecast_pairs
 from hcwf.onset.detect import detect_deterministic
+from hcwf.errors import OnsetConfigError
 
 BOUNDARY = "00 UTC, labelled by start"
 
@@ -89,7 +92,7 @@ def test_load_history_adds_the_previous_year_only_when_needed(tmp_path, monkeypa
         time = pd.date_range(f"{year}-01-01", f"{year}-12-31")
         return xr.DataArray(np.zeros((len(time), 1, 1)), coords=[("time", time), ("lat", [0.0]), ("lon", [0.0])])
 
-    monkeypatch.setattr(hcwf_input, "load_observations", fake)
+    monkeypatch.setattr(observations_io, "load_observations", fake)
     current = fake(2020)
     loaded.clear()
     assert typed_io.history(2020, current, _cfg()) is current
@@ -223,7 +226,7 @@ def test_model_thresholds_are_computed_from_the_forecast_archive_and_cached(tmp_
                         coords={"time": times, "day": np.arange(1, 11), "lat": [0.0, 1.0], "lon": [0.0, 1.0]})
         ds.to_netcdf(archive / f"{year}.nc")
     assert len(inits) == 61
-    monkeypatch.setattr(hcwf_input, "region_select", lambda ds, **kwargs: ds)
+    typed_io.skip_region_cut(monkeypatch)
     kwargs = _cfg(onset_definition="moron_robertson", threshold_source="model", threshold_years=(2015, 2016),
                   model="TOY", model_dir=str(archive), model_var="tp", file_pattern="{}.nc", unit_cvt=None,
                   date_filter_year=2024, init_days=tuple(range(7)), start_date=(2015, 5, 1), end_date=(2015, 6, 30),
@@ -232,8 +235,8 @@ def test_model_thresholds_are_computed_from_the_forecast_archive_and_cached(tmp_
     amount = thresholds["wet_spell_amount"]
     assert np.allclose(amount.values, 10.0) and amount.attrs["source"].startswith("model:")
     assert list((tmp_path / "out" / ".onset_cache" / "model_thresholds").glob("*/value.nc"))
-    hcwf_input._loaded_thresholds.clear()
-    monkeypatch.setattr(hcwf_input, "load_forecast",
+    thresholds_io._loaded_thresholds.clear()
+    monkeypatch.setattr(thresholds_io, "load_forecast",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("cache not used")))
     again = typed_io.thresholds(kwargs)
     assert np.allclose(again["wet_spell_amount"].values, 10.0)
@@ -248,22 +251,22 @@ def test_model_thresholds_cache_misses_when_unit_factor_or_variable_changes(tmp_
         ds = xr.Dataset({"tp": (("time", "day", "lat", "lon"), np.full((len(times), 10, 2, 2), 2.0))},
                         coords={"time": times, "day": np.arange(1, 11), "lat": [0.0, 1.0], "lon": [0.0, 1.0]})
         ds.to_netcdf(archive / f"{year}.nc")
-    monkeypatch.setattr(hcwf_input, "region_select", lambda ds, **kwargs: ds)
+    typed_io.skip_region_cut(monkeypatch)
     kwargs = _cfg(onset_definition="moron_robertson", threshold_source="model", threshold_years=(2015, 2016),
                   model="TOY", model_dir=str(archive), model_var="tp", file_pattern="{}.nc", unit_cvt=None,
                   date_filter_year=2024, init_days=tuple(range(7)), start_date=(2015, 5, 1), end_date=(2015, 6, 30),
                   members=None, probabilistic=False, max_forecast_day=10, dir_out=str(tmp_path / "out"), region="x")
-    hcwf_input._loaded_thresholds.clear()
+    thresholds_io._loaded_thresholds.clear()
     assert np.allclose(typed_io.thresholds(kwargs)["wet_spell_amount"].values, 10.0)
     for change in ({"unit_cvt": 2.0}, {"region": "y"}, {"daily_boundary": "06:00"}, {"accumulation": "since_init"}):
-        hcwf_input._loaded_thresholds.clear()
+        thresholds_io._loaded_thresholds.clear()
         calls = []
-        real = hcwf_input.load_forecast
-        monkeypatch.setattr(hcwf_input, "load_forecast",
+        real = forecasts_io.load_forecast
+        monkeypatch.setattr(thresholds_io, "load_forecast",
                             lambda *a, _real=real, **k: calls.append(1) or _real(*a, **k))
         try:
             typed_io.thresholds({**kwargs, **change})
         except Exception:   # noqa: BLE001 - only whether the cache was bypassed matters here
             pass
-        monkeypatch.setattr(hcwf_input, "load_forecast", real)
+        monkeypatch.setattr(thresholds_io, "load_forecast", real)
         assert calls, f"cache served for a changed {change}"

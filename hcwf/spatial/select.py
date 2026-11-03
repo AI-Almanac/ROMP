@@ -5,12 +5,14 @@ call by a `Selection` (land_only, shp_only; both on when it does not say), as bl
 """
 from __future__ import annotations
 
-import xarray as xr
-import numpy as np
-from hcwf.spatial.region_def import domain
-from hcwf.spatial.masks import apply_default_mask, default_keep
 import logging
 from typing import TYPE_CHECKING
+
+import numpy as np
+import xarray as xr
+
+from hcwf.onset.regions import box
+from hcwf.spatial.masks import apply_default_mask, default_keep
 
 if TYPE_CHECKING:  # pragma: no cover
     from hcwf.config.model import AreaSpec, Selection
@@ -25,74 +27,6 @@ def implicit_masks(select: Selection | None) -> tuple[bool, bool]:
     return land, shp
 
 
-def swap_lon_axis(
-    dataset: xr.Dataset, to: tuple[float, float], sort_ascending: bool = True
-) -> xr.Dataset:
-    """Swaps the orientation of a dataset's longitude axis.
-
-    This is an API adopted from the xCDAT package
-    (https://xcdat.readthedocs.io/en/latest/index.html)
-    (https://xcdat.readthedocs.io/en/latest/_modules/xcdat/axis.html#swap_lon_axis)
-
-    This method also swaps the axis orientation of the longitude bounds if it
-    exists. Afterwards, it sorts longitude and longitude bounds values in
-    ascending order.
-
-    Note, based on how datasets are chunked, swapping the longitude dimension
-    and sorting might raise ``PerformanceWarning: Slicing is producing a
-    large chunk. To accept the large chunk and silence this warning, set the
-    option...``. This function uses xarray's arithmetic to swap orientations,
-    so this warning seems potentially unavoidable.
-
-    Parameters
-    ----------
-    dataset : xr.Dataset
-         The Dataset containing a longitude axis.
-    to : tuple[float, float]
-        The orientation to swap the Dataset's longitude axis to. Supported
-        orientations include:
-
-        * (-180, 180): represents [-180, 180) in math notation
-        * (0, 360): represents [0, 360) in math notation
-    sort_ascending : bool
-        After swapping, sort in ascending order (True), or keep existing order
-        (False).
-
-    Returns
-    -------
-    xr.Dataset
-        The Dataset with swapped lon axes orientation.
-    """
-    ds = dataset.copy()
-    coords = get_dim_coords(ds, "X").coords
-    coord_keys = list(coords.keys())
-
-    # Attempt to swap the orientation for longitude coordinates.
-    for key in coord_keys:
-        new_coord = _swap_lon_axis(ds.coords[key], to)
-
-        if ds.coords[key].identical(new_coord):
-            continue
-
-        ds.coords[key] = new_coord
-
-    try:
-        bounds = ds.bounds.get_bounds("X")
-    except KeyError:
-        bounds = None
-
-    if isinstance(bounds, xr.DataArray):
-        ds = _swap_lon_bounds(ds, str(bounds.name), to)
-    elif isinstance(bounds, xr.Dataset):
-        for key in bounds.data_vars.keys():
-            ds = _swap_lon_bounds(ds, str(key), to)
-
-    if sort_ascending:
-        ds = ds.sortby(list(coords.dims), ascending=True)
-
-    return ds
-
-
 def lon_swap(ds_tag, *, region):
     """Rename coords to lat/lon, then return the region bounds and dataset in a consistent longitude convention.
 
@@ -101,7 +35,7 @@ def lon_swap(ds_tag, *, region):
     tuple
         (lats, latn, lonw, lone, ds_tag); the bounds are conformed to the dataset's longitude range.
     """
-    lats, latn, lonw, lone = domain(region)
+    lats, latn, lonw, lone = box(region)
 
     coord_list = list(ds_tag.coords.keys())
 
@@ -117,16 +51,9 @@ def lon_swap(ds_tag, *, region):
         lone = ((lone + 180) % 360) - 180
 
     if lonw > lone:
-        if np.min(ds_tag.lon) < 0:
-            ds_tag = swap_lon_axis(ds_tag, (0, 360)).compute()
-            lonw = lonw % 360
-            lone = lone % 360
-        else:
-            ds_tag = swap_lon_axis(ds_tag, (-180, 180)).compute()
-            lonw = ((lonw + 180) % 360) - 180
-            lone = ((lone + 180) % 360) - 180
-
-        log.debug("%s %s %s %s", "swapped longitude range ", np.min(ds_tag.lon), " - ", np.max(ds_tag.lon))
+        # a box across the dataset's longitude seam: the swap that would conform the data was never implemented
+        raise ValueError(f"region {region!r}: its longitude box {lonw}..{lone} crosses the longitude seam of the data, "
+                         "which is not supported")
 
     return lats, latn, lonw, lone, ds_tag
 
@@ -156,9 +83,7 @@ def has_box(ds, region) -> bool:
 def region_box(ds, *, region):
     """Subset `ds` (Dataset or DataArray) to the region's lat/lon box, lazily: nothing is read from file here.
 
-    Longitude and latitude are put in HCWF's orientation first (see coords_fmt). A dataset that has to cross the
-    longitude seam is loaded by swap_lon_axis; slice inits, leads and members before calling for large inputs.
-    Without a region, or for data on a string "unit" dimension (admin units), there is no box: `ds` is returned
+    Longitude and latitude are put in HCWF's orientation first (see coords_fmt).     Without a region, or for data on a string "unit" dimension (admin units), there is no box: `ds` is returned
     as it is, in the file's own order.
     """
     if not has_box(ds, region):
@@ -260,6 +185,19 @@ def _load_kept(da, block_dim, keep, keep_dims):
     return xr.DataArray(out, dims=da.dims, coords=da.coords, attrs=da.attrs, name=da.name)
 
 
+def in_memory(da):
+    """The DataArray with its data in memory (a no-op for one already read)."""
+    return da if da.variable._in_memory else da.load()
+
+
+def scale_in_place(da, factor):
+    """Multiply the loaded array by factor in its own memory (float32 stays float32), if there is a factor."""
+    if factor:
+        data = da.values
+        np.multiply(data, factor, out=data)
+    return da
+
+
 def read_selection(obj, block_dim, keep=None):
     """Read a box-selected Dataset or DataArray into memory (see load_blocks); Dataset variables are read one by one."""
     if isinstance(obj, xr.DataArray):
@@ -312,7 +250,7 @@ def region_select_masks(ds_reg, *, area: AreaSpec, select: Selection | None = No
         return ds_reg
     if area.mask:
         if area.nc_mask:
-            from hcwf.spatial.masks import MaskError
+            from hcwf.errors import MaskError
 
             raise MaskError("both `mask` and `nc_mask` are set; use one. nc_mask: <file> is the same as "
                             "mask: {file: <file>}, except that the old nc_mask also applies the land and country "

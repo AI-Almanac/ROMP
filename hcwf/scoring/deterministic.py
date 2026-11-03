@@ -4,12 +4,21 @@ from hcwf.scoring.onset_tables import compute_metrics
 from hcwf.figures.maps import plot_spatial_metrics
 from hcwf.figures.onset_map import plot_spatial_climatology_onset
 from hcwf.figures.panel_portrait_error import panel_portrait_mae_far_mr
-from hcwf.io.output import add_back_dated_map, save_climatology_onset, save_metrics_to_netcdf
-from hcwf.io.output import set_nested
+from hcwf.io.output import save_climatology_onset, save_metrics_to_netcdf
+from hcwf.metrics.tables import add_back_dated_map
 import logging
 from hcwf.log import progress
 
 log = logging.getLogger(__name__)
+
+
+def set_nested(result_dict, keys, value):
+    """build nested dictionaries on the fly based on combi, dynamic-nesting"""
+    d = result_dict
+    for key in keys[:-1]:
+        d = d.setdefault(key, {})
+    d[keys[-1]] = value
+    return result_dict
 
 
 def spatial_far_mr_mae_map(rc):

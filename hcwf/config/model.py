@@ -334,6 +334,10 @@ class Selection:
     check_units: Any = None
 
 
+NO_SELECTION = Selection()
+"""The Selection that chooses nothing: the default of every reader's `select`."""
+
+
 def complete_flat(kw: Mapping[str, Any]) -> dict:
     """The flat values with what a partial dict leaves out filled in (a blend's frozen config and unit tests have fewer keys than a run
     holds): each missing schema key a resolved record always holds takes its default (None when it is required or computed), and the case's keys and the

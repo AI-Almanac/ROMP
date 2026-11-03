@@ -25,8 +25,6 @@ for example ``verification_window_list``, ``max_forecast_day``, ``start_date``, 
 """
 from __future__ import annotations
 
-import contextlib
-import functools
 import logging
 import shutil
 import tempfile
@@ -222,7 +220,8 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
     from hcwf.onset import detect
     from hcwf.onset import observed_cache
     from hcwf import parallel
-    from hcwf.io import input as io_input
+    from hcwf.io import forecasts as forecasts_io
+    from hcwf.io import thresholds as thresholds_io
     from hcwf.spatial import masks as mask_mod
     from hcwf.log import print_hcwf_banner
 
@@ -234,8 +233,8 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
         benchmark.reset_onset_tables()
         climatology.reset_memo()
         detect._alignment_done.clear()
-        io_input._loaded_thresholds.clear()
-        io_input._reported_ingest.clear()
+        thresholds_io._loaded_thresholds.clear()
+        forecasts_io._reported_ingest.clear()
         print_hcwf_banner(rc.project_name)
         log.info("Onset settings:")
         for line in rc.onset.lines():

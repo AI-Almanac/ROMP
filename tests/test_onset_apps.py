@@ -2,11 +2,11 @@
 import numpy as np
 import pandas as pd
 import pytest
+import typed_io
 import xarray as xr
 
 from hcwf.figures import notebook as onset_spatial
 from hcwf.figures import notebook as onset_time_series
-from hcwf.io import input as hcwf_input
 
 BOUNDARY = "00 UTC, labelled by start"
 
@@ -21,7 +21,7 @@ def obs(tmp_path, monkeypatch):
     rain[time.dayofyear >= 153] = 20.0
     xr.Dataset({"pr": (("time", "lat", "lon"), rain)},
                coords={"time": time, "lat": [8.0, 9.0], "lon": [38.0, 39.0]}).to_netcdf(obs_dir / "2020.nc")
-    monkeypatch.setattr(hcwf_input, "region_select", lambda ds, **kwargs: ds)
+    typed_io.skip_region_cut(monkeypatch)
     return obs_dir
 
 

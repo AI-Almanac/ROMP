@@ -146,7 +146,7 @@ def run_hcwf(config_dict) -> dict:
     from _recipes import converted
 
     from hcwf.blend import features
-    from hcwf.io.input import thresholds_of
+    from hcwf.io.thresholds import thresholds_of
 
     t = converted(config_dict)
     rc, recipe, setup = t.rc(), t.recipe, t.setup

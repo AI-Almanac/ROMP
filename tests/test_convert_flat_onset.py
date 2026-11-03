@@ -7,10 +7,10 @@ import pytest
 import yaml
 
 from hcwf.cli import main as cli_main
-from hcwf.config.schema import ConfigSchemaError
 from hcwf.config.convert import convert_flat_onset, flat_onset_to_rule
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.model import Amount, Comparison, DayRef, DryRun, FirstPassage, Season, Span, Total, Veto, WetDays
+from hcwf.errors import ConfigSchemaError
 
 BASE = dict(wet_init=1, wet_threshold=20, wet_spell=3, dry_threshold=1, dry_spell=7, dry_extent=0,
             thresh_file=None, thresh_var=None, earliest_onset_date=None,

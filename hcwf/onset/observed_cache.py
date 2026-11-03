@@ -85,7 +85,7 @@ def reset() -> None:
     _new.clear()
     _tables.clear()
     _memo.clear()
-    from hcwf.io.input import clear_obs_cache
+    from hcwf.io.reference import clear_obs_cache
 
     clear_obs_cache()
 
@@ -117,7 +117,8 @@ def observation_files(obs, files_years, years) -> list:
     """The identity (name, size, mtime) of the observation file of every year (or of the zarr store, with the years).
 
     obs is the ObsSpec; files_years is `Selection.obs_files_years` (the years of the listed files to keep)."""
-    from hcwf.io.input import is_zarr, year_files
+    from hcwf.config.datasets import is_zarr
+    from hcwf.io.stores import year_files
 
     if obs.paths:   # listed files, any number per year
         found = []

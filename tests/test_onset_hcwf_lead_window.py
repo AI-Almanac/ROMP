@@ -5,7 +5,7 @@ import pytest
 import xarray as xr
 
 from hcwf.config.leads import apply_lead_window, count_leads, usable_last_lead
-from hcwf.config.onset import OnsetConfigError
+from hcwf.errors import OnsetConfigError
 
 
 def _cfg(definition="icpac", **values):

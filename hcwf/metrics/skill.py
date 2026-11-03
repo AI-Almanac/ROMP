@@ -2,7 +2,7 @@
 
 
 from hcwf.metrics.score import calculate_brier_score, calculate_auc, calculate_rps, calculate_brier_score_climatology, calculate_auc_climatology, calculate_skill_scores
-from hcwf.io.dict import extract_pd_bins
+from hcwf.metrics.bins import extract_pd_bins
 import logging
 
 log = logging.getLogger(__name__)

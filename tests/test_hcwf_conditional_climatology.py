@@ -6,9 +6,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-import hcwf.io.input as model_input
 from old_flat_rule import old_rule
-from hcwf.io.dict import extract_pd_bins
+from hcwf.metrics.bins import extract_pd_bins
 from hcwf.metrics.skill import create_score_results
 from hcwf.scoring.pairs import prepare_pairs
 from hcwf.scoring.onset_tables import compute_metrics
@@ -61,7 +60,7 @@ def _write_model(path, steps=14):
 @pytest.fixture
 def config(tmp_path, monkeypatch):
     """Keyword arguments of the scoring functions for forecast model A against the conditional climatology."""
-    monkeypatch.setattr(model_input, "region_select", lambda ds, **kwargs: ds)
+    typed_io.skip_region_cut(monkeypatch)
     _write_obs(tmp_path / "obs")
     _write_model(tmp_path / "a")
     return dict(

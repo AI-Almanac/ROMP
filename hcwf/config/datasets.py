@@ -41,7 +41,7 @@ from pathlib import Path
 
 import yaml
 
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import DatasetError
 
 KINDS = ("observations", "forecast")
 DATASET_KEYS = ("id", "title", "kind", "name", "path", "paths", "years", "file_pattern", "variable", "units",
@@ -89,10 +89,6 @@ notes: free text
 """,
 }
 """Blank dataset entries, as printed by `hcwf-run init --dataset-template`."""
-
-
-class DatasetError(HCWFConfigError):
-    """A malformed dataset entry or an unknown dataset; the message names the file or key and the fix."""
 
 
 @dataclass(frozen=True)

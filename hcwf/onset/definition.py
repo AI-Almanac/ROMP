@@ -15,12 +15,13 @@ from pathlib import Path
 
 import yaml
 
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import DefinitionError
 from hcwf.onset import units
 from hcwf.onset.model import (
     Comparison, Condition, Curve, DayRef, Definition, DerivedSeasons, FirstPassage,
     Season, Span, ThresholdSpec, Total, Veto, WetDays,
 )
+from hcwf.errors import UnitsError
 
 REGISTRY_DIR = Path(__file__).parent / "registry"
 
@@ -31,10 +32,6 @@ _RESTATED_KEYS = ("id", "version", "title", "status")
 _EXCLUSIVE_PAIRS = (("season", "seasons"), ("onset", "curve"))
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 _REQUIRE_KEYS = ("first day", "all days", "wet days", "total")
-
-
-class DefinitionError(HCWFConfigError):
-    """An onset definition that is malformed or ambiguous; the message names the YAML path and the fix."""
 
 
 def _fail(path: str, message: str):
@@ -51,7 +48,7 @@ def _units(path: str, func, *args):
     """Call a units parser, re-raising its UnitsError as a DefinitionError at the YAML path."""
     try:
         return func(*args)
-    except units.UnitsError as exc:
+    except UnitsError as exc:
         raise DefinitionError(f"{path}: {exc}") from None
 
 

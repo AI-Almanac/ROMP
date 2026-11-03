@@ -209,7 +209,7 @@ def test_threshold_cache_reuses_and_follows_inputs_and_files(tmp_path, monkeypat
 
 def test_a_threshold_cache_key_does_not_load_the_lazy_reference_rain():
     import numpy as np
-    from hcwf.io.input import _LazyRain
+    from hcwf.io.reference import LazyRain
     from hcwf.onset.climatology import ThresholdCache
     from hcwf.onset.model import DailyRain
 
@@ -222,7 +222,7 @@ def test_a_threshold_cache_key_does_not_load_the_lazy_reference_rain():
     def load():
         raise AssertionError("the key must not load the reference years")
 
-    parts = ThresholdCache(None).parts("spec", _LazyRain(probe, load), (2000, 2001), "thr")
+    parts = ThresholdCache(None).parts("spec", LazyRain(probe, load), (2000, 2001), "thr")
     assert parts["source"] == "obs" and "resolution" not in parts
 
 

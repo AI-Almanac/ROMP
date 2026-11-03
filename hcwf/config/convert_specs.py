@@ -38,7 +38,7 @@ from typing import Any
 import yaml
 
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, years_of, year_windows
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import ConvertError
 from hcwf.config.datasets import suggest
 
 __all__ = ["ConvertError", "Conversion", "convert_blend", "convert_blend_file", "convert_spec_files", "convert_specs",
@@ -47,14 +47,6 @@ __all__ = ["ConvertError", "Conversion", "convert_blend", "convert_blend_file", 
 DERIVED = "derived from the config"
 UNUSED = "no code reads it"
 RUNTIME = "a run setting, not part of the blend"
-
-
-class ConvertError(HCWFConfigError):
-    """A blending config or spec set that cannot be converted; lists every problem found."""
-
-    def __init__(self, problems):
-        self.problems = list(problems)
-        super().__init__("Cannot convert:\n" + "\n".join(f"  - {p}" for p in self.problems))
 
 
 @dataclass
@@ -715,9 +707,11 @@ def validate_conversion(conversion: Conversion):
     """Check a conversion without reading any data file: its sections are flattened and typed as a run config's are, the
     `blend:` section builds a Recipe and the onset settings resolve. Returns (flat config, Recipe, OnsetSetup); raises
     ConvertError listing the problems."""
-    from hcwf.blend.recipe import RecipeError, recipe_from_config
+    from hcwf.blend.recipe import recipe_from_config
+    from hcwf.errors import RecipeError
     from hcwf.config import schema
-    from hcwf.config.onset import OnsetConfigError, onset_setup
+    from hcwf.config.onset import onset_setup
+    from hcwf.errors import OnsetConfigError
 
     mapping, errors = conversion.mapping, []
     flat, origin, _ = schema.flatten_sections(mapping, errors)

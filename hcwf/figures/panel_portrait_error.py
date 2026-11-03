@@ -2,12 +2,52 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from hcwf.io.output import nested_dict_to_array
 from hcwf.runs.folder import file_name
 from hcwf.figures.visual import portrait_plot
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def nested_dict_to_array(nested_dict, metric_key):
+    """
+    Convert a 2-level nested dict to a 2D NumPy array based on the first two levels.
+
+    Parameters
+    ----------
+    nested_dict : dict
+        Nested dictionary with at least two levels.
+        Example: results[model][window]['mae']
+    metric_key : str
+        The key at the leaf level to extract (e.g., 'mae').
+
+    Returns
+    -------
+    arr : np.ndarray
+        2D array with shape (num_top_keys, num_second_keys)
+    row_labels : list
+        List of top-level keys (rows)
+    col_labels : list
+        List of second-level keys (columns)
+    """
+    # Top-level keys → rows
+    row_labels = list(nested_dict.keys())
+
+    # Second-level keys → columns (assume all rows share same keys)
+    first_row = nested_dict[row_labels[0]]
+    col_labels = list(first_row.keys())
+
+    # Initialize array
+    arr = np.full((len(row_labels), len(col_labels)), np.nan)
+
+    # Fill array with metric values
+    for i, rkey in enumerate(row_labels):
+        for j, ckey in enumerate(col_labels):
+            # Safely get the value (default to np.nan if missing)
+            da = nested_dict.get(rkey, {}).get(ckey, {}).get(metric_key, np.nan)
+            arr[i,j] = da.mean()
+
+    return arr, row_labels, col_labels
 
 
 def panel_portrait_mae_far_mr(results, spec):

@@ -4,7 +4,9 @@ The functions take the typed inputs of hcwf.config.model (the run `rc`, the `cas
 """
 
 from hcwf.config.model import Selection
-from hcwf.io.input import observation_years_of, reference_held, reference_rain_year, release_reference, thresholds_of
+from hcwf.io.observations import observation_years_of
+from hcwf.io.reference import reference_held, reference_rain_year, release_reference
+from hcwf.io.thresholds import thresholds_of
 from hcwf.onset.detect import detect_observed
 from hcwf.onset.climatology import ReferenceOnset, reduce_onset_days
 from hcwf.spatial import axes

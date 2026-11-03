@@ -10,7 +10,8 @@ from shapely.geometry import box
 from _oracle import nc_utils_filters as nc_utils
 from _oracle.geometry_utils import normalize_regrid_weights
 from _oracle.sparse_transform_utils import compile_sparse_cell_transform, sparse_observed_weighted_mean
-from hcwf.spatial import AreaError, EvaluationUnits, GridIdConvention, regrid
+from hcwf.spatial import EvaluationUnits, GridIdConvention, regrid
+from hcwf.errors import AreaError
 
 CONVENTION = GridIdConvention(2, "fixed", "spec")
 GEOMETRY = {"geometry": {"grid_id_decimal_digits": 2, "grid_id_format": "fixed"}}

@@ -158,7 +158,8 @@ def _onset(cfg) -> list[str]:
     """Keys earlier versions read (the flat onset keys and the other removed ones) are refused with the message a YAML
     config gets, then the onset part is fully resolved: every needed setting is known."""
     from hcwf.config import schema
-    from hcwf.config.onset import OnsetConfigError, onset_setup
+    from hcwf.config.onset import onset_setup
+    from hcwf.errors import OnsetConfigError
 
     dic = vars(cfg)
     try:
@@ -202,7 +203,8 @@ def _mask(cfg) -> list[str]:
 def _units(values) -> tuple[dict, tuple[str, ...]]:
     """({source: UnitsSpec or None} of the observations and every model, the problems): the `units:` section as each
     source reads it."""
-    from hcwf.spatial.units import UnitsSpec, UnitsSpecError
+    from hcwf.spatial.units import UnitsSpec
+    from hcwf.errors import UnitsSpecError
 
     try:
         return {name: UnitsSpec.from_flat(values, name) for name in ["observations", *values["model_list"]]}, ()
@@ -217,7 +219,8 @@ def _blend(values) -> tuple[Any, tuple[str, ...]]:
 
     if not has_blend(values):
         return None, ()
-    from hcwf.blend.recipe import RecipeError, recipe_from_config
+    from hcwf.blend.recipe import recipe_from_config
+    from hcwf.errors import RecipeError
     from hcwf.config.onset import onset_setup
 
     try:

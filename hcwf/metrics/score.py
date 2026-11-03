@@ -9,10 +9,26 @@ import pandas as pd
 import warnings
 from hcwf.metrics import probabilistic
 from hcwf.spatial import axes
-from hcwf.metrics.bins import get_target_bins
+from hcwf.metrics.bins import LeadBins
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def get_target_bins(brier_forecast, brier_climatology):
+    """Extract and sort target bins"""
+    all_forecast_bins = set(brier_forecast['bin_fair_brier_scores'].keys())
+    all_clim_bins = set(brier_climatology['bin_fair_brier_scores'].keys())
+    common_bins = all_forecast_bins.intersection(all_clim_bins)
+
+    target_bins = []
+    for bin_label in common_bins:
+        if (bin_label.startswith('Days ') and
+            not bin_label.startswith('After') and
+            not bin_label.startswith('Before')):
+            target_bins.append(bin_label)
+
+    return sorted(target_bins, key=LeadBins.first_day_of)
 
 
 def _pair_matrices(df, members_column=None):

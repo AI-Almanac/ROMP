@@ -5,7 +5,7 @@ from matplotlib.path import Path
 from typing import Union
 import regionmask
 import xarray as xr
-from hcwf.spatial.region_def import polygon_boundary
+from hcwf.onset.regions import polygon_boundary
 from hcwf.io.dims import dim_fmt
 import logging
 

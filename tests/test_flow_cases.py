@@ -82,7 +82,7 @@ def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
     dic, rc = _run(configs, "model_reference", True)
     read = []
     monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: read.append(model) or Pending.finished(table))
-    monkeypatch.setattr(skill.io_input, "release_reference", lambda: None)
+    monkeypatch.setattr(skill.reference_io, "release_reference", lambda: None)
     table = pd.DataFrame({"a": [1]})
     for model in rc.models:
         read.clear()

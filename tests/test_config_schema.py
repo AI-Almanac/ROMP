@@ -5,9 +5,10 @@ import re
 import pytest
 
 from hcwf.config import Config, Dataset, Evaluation, Onset
-from hcwf.config.schema import ConfigSchemaError, FIELDS, describe_schema
+from hcwf.config.schema import FIELDS, describe_schema
 from hcwf.config.mapping import build_config
 from tests.synthetic_data import write_forecast, write_obs
+from hcwf.errors import ConfigSchemaError
 
 
 @pytest.fixture

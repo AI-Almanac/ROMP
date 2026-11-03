@@ -11,7 +11,7 @@ import xarray as xr
 
 import typed_io
 from hcwf.config.model import AreaSpec, Selection
-from hcwf.io import input as hcwf_input
+from hcwf.io import reference as reference_io
 from old_flat_rule import old_rule
 from hcwf.spatial.select import mask_region_loaded, region_select
 
@@ -46,9 +46,9 @@ def forecast_year(year, seed, ensemble):
 @pytest.fixture(autouse=True)
 def fresh_cache():
     """Each test starts with no observation years held."""
-    hcwf_input.clear_obs_cache()
+    reference_io.clear_obs_cache()
     yield
-    hcwf_input.clear_obs_cache()
+    reference_io.clear_obs_cache()
 
 
 def test_in_place_land_mask_keeps_the_cells_region_select_keeps():

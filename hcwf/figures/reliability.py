@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
-from hcwf.io.dict import extract_pd_bins
+from hcwf.metrics.bins import extract_pd_bins
 from hcwf.runs.folder import file_name
 from hcwf.naming import tuple_to_str
 import logging

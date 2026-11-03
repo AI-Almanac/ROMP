@@ -11,9 +11,10 @@ import re
 import xarray as xr
 
 from hcwf.config.model import evaluation_years
-from hcwf.config.onset import OnsetConfigError, forecast_reach, onset_setup
+from hcwf.config.onset import forecast_reach, onset_setup
 from hcwf.io.paths import set_dir
 from hcwf.io.dims import dim_fmt_model
+from hcwf.errors import OnsetConfigError
 
 
 def usable_last_lead(n_leads: int, reach: int) -> int:
@@ -38,7 +39,8 @@ def _years_text(years: list[int]) -> str:
 
 def count_leads(dic: dict, index: int) -> int:
     """Number of forecast leads (steps of at least 1) of model_list[index]: from the first year's file, or from the zarr store."""
-    from hcwf.io.input import is_zarr, open_store
+    from hcwf.config.datasets import is_zarr
+    from hcwf.io.stores import open_store
 
     folder = set_dir(str(dic["model_dir_list"][index]))
     years = evaluation_years(dic)

@@ -3,8 +3,9 @@
 import pytest
 import yaml
 
-from hcwf.config.onset import OnsetConfigError, onset_setup
+from hcwf.config.onset import onset_setup
 from hcwf.onset import definition as definition_mod
+from hcwf.errors import OnsetConfigError
 
 
 def _cfg(**values):

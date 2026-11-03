@@ -58,7 +58,7 @@ def set_basemap(ax, spec, grid=True, line=False):
 
     `spec` is the run's FigureSpec: its region and shpfile_dir give the outline and the extent."""
     region, shpfile_dir = spec.region, spec.shpfile_dir
-    from hcwf.spatial.region_def import domain
+    from hcwf.onset.regions import box
     import cartopy.crs as ccrs
     import matplotlib.ticker as mticker
 
@@ -72,7 +72,7 @@ def set_basemap(ax, spec, grid=True, line=False):
         shp_outline(ax, region=region)
 
     # Set map extent to Ethiopia
-    lats, latn, lonw, lone = domain(region)
+    lats, latn, lonw, lone = box(region)
     ax.set_extent([lonw, lone, lats, latn], crs=ccrs.PlateCarree())
 
     if not grid:
@@ -104,11 +104,11 @@ def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
     Returns the Rectangle patch.
     """
     import matplotlib.patches as mpatches
-    from hcwf.spatial.region_def import domain
+    from hcwf.onset.regions import box
 
     if rect_boundary == "rect_boundary":  # the plots' placeholder name: no box is drawn until a region is given
         return ax
-    lats, latn, lonw, lone = domain(rect_boundary)
+    lats, latn, lonw, lone = box(rect_boundary)
 
     vals = [lats, latn, lonw, lone]
 
@@ -800,7 +800,7 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
 
     Returns `ax`, or (ax, polygon_lat, polygon_lon, polygon_defined) if `return_polygon` is True.
     """
-    from hcwf.spatial.region_def import polygon_boundary
+    from hcwf.onset.regions import polygon_boundary
 
     polygon_defined = False
 

@@ -1,4 +1,4 @@
-"""The typed readers of hcwf.io.input (R2 S6): the typed specs built by hand give what the specs of a flat config give, for grid,
+"""The typed readers of hcwf.io (R2 S6): the typed specs built by hand give what the specs of a flat config give, for grid,
 units, listed-files and zarr data; `Selection` names every per-call key the readers take that is not config."""
 import typed_io
 import flat_values
@@ -15,7 +15,11 @@ import xarray as xr
 from _inputs import write_adm3, write_forecast
 from hcwf.config.model import (AreaSpec, EvaluationSpec, ModelSpec, ObsSpec, OnsetOptions, OutputSpec, Selection,
                                Window)
-from hcwf.io import input as io_input
+from hcwf.io import forecasts as forecasts_io
+from hcwf.io import observations as observations_io
+from hcwf.io import reference as reference_io
+from hcwf.io import thresholds as thresholds_io
+from hcwf.spatial import onto_units
 from hcwf.config import schema
 from hcwf.config.onset import onset_setup
 from hcwf.spatial.units import UnitsSpec
@@ -29,11 +33,11 @@ LON = np.arange(32.0, 50.0, 1.0)
 @pytest.fixture(autouse=True)
 def fresh():
     """No observation years held and no thresholds loaded before or after a test."""
-    io_input.clear_obs_cache()
-    io_input._loaded_thresholds.clear()
+    reference_io.clear_obs_cache()
+    thresholds_io._loaded_thresholds.clear()
     yield
-    io_input.clear_obs_cache()
-    io_input._loaded_thresholds.clear()
+    reference_io.clear_obs_cache()
+    thresholds_io._loaded_thresholds.clear()
 
 
 # -------------------------------------------------------------------------------------------- typed specs by hand
@@ -92,8 +96,8 @@ def test_grid_observations_read_the_same_from_flat_keys(tmp_path):
     flat = dict(obs_dir=str(tmp_path), obs_file_pattern=["{}.nc"], obs_var="rain", obs_unit_cvt=2.0,
                 region="Ethiopia", shp_only=False, years=[2020])
     old = typed_io.observations(2020, flat)
-    io_input.clear_obs_cache()
-    direct = io_input.load_observations(
+    reference_io.clear_obs_cache()
+    direct = observations_io.load_observations(
         2020, obs_spec(dir=str(tmp_path), file_pattern=("{}.nc",), unit_cvt=2.0), area_spec("Ethiopia"),
         options_spec(), Selection(shp_only=False), run_years=(2020,))
     xr.testing.assert_identical(old, direct)
@@ -108,14 +112,14 @@ def test_zarr_observations_read_the_same_from_flat_keys(tmp_path):
     flat = dict(obs_dir=str(store), obs_file_pattern=["{}.nc"], obs_var="rain", obs_unit_cvt=None, region="Ethiopia",
                 shp_only=False, years=[2020])
     old = typed_io.observations(2020, flat)
-    io_input.clear_obs_cache()
+    reference_io.clear_obs_cache()
     obs, area, options = obs_spec(dir=str(store), file_pattern=("{}.nc",)), area_spec("Ethiopia"), options_spec()
-    direct = io_input.load_observations(2020, obs, area, options, Selection(shp_only=False), run_years=(2020,))
+    direct = observations_io.load_observations(2020, obs, area, options, Selection(shp_only=False), run_years=(2020,))
     xr.testing.assert_identical(old, direct)
-    from_files = io_input.load_observations(2020, obs_spec(dir=str(tmp_path), file_pattern=("{}.nc",)), area, options,
+    from_files = observations_io.load_observations(2020, obs_spec(dir=str(tmp_path), file_pattern=("{}.nc",)), area, options,
                                             Selection(shp_only=False))
     np.testing.assert_array_equal(direct.values, from_files.values)
-    both = [rain for rain, error in io_input.read_obs_years([2019, 2020], obs, area, options,
+    both = [rain for rain, error in observations_io.read_obs_years([2019, 2020], obs, area, options,
                                                             Selection(shp_only=False), run_years=(2019, 2020))]
     flat_reads = [rain for rain, error in typed_io.obs_years([2019, 2020], {**flat, "years": [2019, 2020]})]
     for typed, flat_read in zip(both, flat_reads):
@@ -127,13 +131,13 @@ def test_listed_files_and_a_grid_point_read_the_same_from_flat_keys(tmp_path):
     flat = dict(obs_dir=str(tmp_path), obs_paths=["obs_*.nc"], obs_var="rain", obs_unit_cvt=None, region=None,
                 grid_point=True, lat_select=5.0, lon_select=40.0, obs_files_years=[2020])
     old = typed_io.observations(2020, flat)
-    direct = io_input.load_observations(
+    direct = observations_io.load_observations(
         2020, obs_spec(dir=str(tmp_path), paths=("obs_*.nc",)), area_spec(), options_spec(),
         Selection(grid_point=True, lat=5.0, lon=40.0, obs_files_years=[2020]))
     xr.testing.assert_identical(old, direct)
     assert direct.sizes["lat"] == 1 and direct.sizes["lon"] == 1
     with pytest.raises(FileNotFoundError):
-        io_input.load_observations(2019, obs_spec(dir=str(tmp_path), paths=("obs_*.nc",)), area_spec(),
+        observations_io.load_observations(2019, obs_spec(dir=str(tmp_path), paths=("obs_*.nc",)), area_spec(),
                                    options_spec(), Selection())
 
 
@@ -142,15 +146,15 @@ def test_unit_observations_read_the_same_from_flat_keys(tmp_path):
     flat = {**ONSET, "obs_dir": str(tmp_path), "obs_file_pattern": ["adm3_{}.nc"], "obs_var": "precip",
             "obs_unit_cvt": None, "region": None, "units_mode": "cells", "years": [2003]}
     old = typed_io.observations(2003, flat)
-    io_input.clear_obs_cache()
+    reference_io.clear_obs_cache()
     obs = obs_spec(dir=str(tmp_path), file_pattern=("adm3_{}.nc",), var="precip", units=UnitsSpec(mode="cells"))
-    direct = io_input.load_observations(2003, obs, area_spec(), options_spec(), Selection(), onset=onset_setup(flat),
+    direct = observations_io.load_observations(2003, obs, area_spec(), options_spec(), Selection(), onset=onset_setup(flat),
                                         run_years=(2003,))
     xr.testing.assert_identical(old, direct)
     assert "unit" in direct.dims and bool(direct["present"].all())
-    assert io_input.point_dims(obs) == io_input.point_dims(typed_io.inputs(flat).obs) == ("unit",)
+    assert onto_units.point_dims(obs) == onto_units.point_dims(typed_io.inputs(flat).obs) == ("unit",)
     with pytest.raises(ValueError, match="onset setup"):
-        io_input.load_observations(2003, obs, area_spec(), options_spec(), Selection())
+        observations_io.load_observations(2003, obs, area_spec(), options_spec(), Selection())
 
 
 # --------------------------------------------------------------------------------------------------- forecasts
@@ -175,12 +179,12 @@ def test_forecasts_read_the_same_from_flat_keys(tmp_path, ensemble):
                     end_date=(2020, 7, 31), max_forecast_day=10, model_dims=dims, shp_only=False, **ONSET)
         old = typed_io.forecast(2020, flat, ensemble)
         model = model_spec(dir=where, unit_cvt=1.0, dims=tuple(dims.items()))
-        direct = io_input.load_forecast(2020, model, ev, area_spec("Ethiopia"), options_spec(), onset,
+        direct = forecasts_io.load_forecast(2020, model, ev, area_spec("Ethiopia"), options_spec(), onset,
                                         ensemble=ensemble, select=Selection(shp_only=False))
         xr.testing.assert_identical(old, direct)
-        assert direct.sizes["step"] == min(14, io_input.steps_needed(10, onset))   # the file holds 14 days
-        assert list(pd.to_datetime(direct.init_time.values)) == list(io_input.initialization_dates(2020, ev))
-        assert list(io_input.initialization_dates(2020, ev)) == list(typed_io.initialization_dates(2020, flat))
+        assert direct.sizes["step"] == min(14, forecasts_io.steps_needed(10, onset))   # the file holds 14 days
+        assert list(pd.to_datetime(direct.init_time.values)) == list(forecasts_io.initialization_dates(2020, ev))
+        assert list(forecasts_io.initialization_dates(2020, ev)) == list(typed_io.initialization_dates(2020, flat))
 
 
 def test_listed_forecast_files_read_the_same_from_flat_keys(tmp_path):
@@ -193,7 +197,7 @@ def test_listed_forecast_files_read_the_same_from_flat_keys(tmp_path):
                 model_dims={"member": "number", "step": "day"})
     old = typed_io.forecast(2020, flat, True)
     ev = evaluation_spec(init_days=tuple(range(7)), max_forecast_day=None)
-    direct = io_input.load_forecast(
+    direct = forecasts_io.load_forecast(
         2020, model_spec(dir=str(tmp_path), dims=(("member", "number"), ("step", "day"))), ev, area_spec(),
         options_spec(), None, ensemble=True, select=Selection(model_paths=["live_*.nc"], model_files_years=[2020]))
     xr.testing.assert_identical(old, direct)
@@ -206,11 +210,11 @@ def test_a_unit_forecast_reads_the_same_from_a_model_spec_and_from_flat_keys(tmp
     flat = {"model_var": "tp", "model_dims": {"member": "number", "step": "day"}, "unit_cvt": None, "first_lead": 2,
             "last_lead": 5, "max_member": 1}
     got = typed_io.inputs(flat)
-    with io_input.UnitForecast(path, got.model, units, select=got.select) as old:
+    with forecasts_io.UnitForecast(path, got.model, units, select=got.select) as old:
         old_runs = [rain.values for _, _, rain in old.runs()]
         old_days, old_members = old.days.tolist(), old.members.tolist()
     model = model_spec(dims=(("member", "number"), ("step", "day")))
-    with io_input.UnitForecast(path, model, units, select=Selection(first_lead=2, last_lead=5, max_member=1)) as new:
+    with forecasts_io.UnitForecast(path, model, units, select=Selection(first_lead=2, last_lead=5, max_member=1)) as new:
         runs = [rain.values for _, _, rain in new.runs()]
         assert new.days.tolist() == old_days == [2, 3, 4, 5] and new.members.tolist() == old_members == [0, 1]
     np.testing.assert_array_equal(np.concatenate(runs), np.concatenate(old_runs))
@@ -224,12 +228,12 @@ def test_thresholds_read_the_same_from_flat_keys(tmp_path):
     _obs_files(tmp_path / "obs", range(2000, 2007))
     flat = {**_reference_config(tmp_path), "region": None, "cache_dir": str(tmp_path / "c1")}
     old = typed_io.thresholds(flat)
-    io_input._loaded_thresholds.clear()
-    io_input.clear_obs_cache()
+    thresholds_io._loaded_thresholds.clear()
+    reference_io.clear_obs_cache()
     obs = obs_spec(dir=str(tmp_path / "obs"), file_pattern=("obs_{}.nc",), day_boundary=flat["obs_day_boundary"])
     ev = evaluation_spec(start_date=(2000, 5, 1), end_date=(2000, 8, 31), years=(2006,), max_forecast_day=10,
                          climatology_years=tuple(range(2000, 2007)), windows=())
-    direct = io_input.load_thresholds(onset_setup(flat), obs, area_spec(), options_spec(), ev,
+    direct = thresholds_io.load_thresholds(onset_setup(flat), obs, area_spec(), options_spec(), ev,
                                       output_spec(tmp_path), model=model_spec(),
                                       cache_dir=str(tmp_path / "c2"))
     assert set(old) == set(direct) and old
@@ -264,13 +268,14 @@ def test_units_are_resolved_once_per_source_and_read_from_the_spec():
             "units_unit_id_col": "id"}
     obs, ens = UnitsSpec.from_flat(flat, "observations"), UnitsSpec.from_flat(flat, "ens")
     assert (obs.how, obs.weights, obs.shapefile) == ("cell_transform", "o.csv", None) and ens.weights == "m.csv"
-    assert io_input.units_spec(obs_spec(units=obs)) is obs and io_input.units_spec(model_spec(units=ens)) is ens
-    assert io_input.units_spec(obs_spec()) is None and io_input.units_files(obs_spec()) == []
+    assert onto_units.units_spec(obs_spec(units=obs)) is obs and onto_units.units_spec(model_spec(units=ens)) is ens
+    assert onto_units.units_spec(obs_spec()) is None and onto_units.units_files(obs_spec()) == []
     assert set(UnitsSpec.from_flat.__globals__["UNITS_KEYS"]) == {f.key for f in schema.FIELDS if f.section == "units"}
 
 
 # the modules whose flat-key reads moved to the typed specs and `Selection` (design S6)
-MODULES = ("io/input.py", "spatial/units.py", "spatial/select.py", "spatial/masks.py", "io/paths.py")
+MODULES = ("io/stores.py", "io/observations.py", "io/reference.py", "io/forecasts.py", "io/thresholds.py", "io/warmup.py",
+           "spatial/onto_units.py", "spatial/units.py", "spatial/select.py", "spatial/masks.py", "io/paths.py")
 CONFIG_NAMES = {"kwargs", "kw", "cfg", "config", "values", "dic"}
 
 
@@ -290,7 +295,7 @@ def _keys_read(path):
 
 
 def test_selection_keys_cover_every_non_schema_key_the_readers_read():
-    root = Path(io_input.__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2] / "hcwf"
     named = set(flat_values.SELECTION_KWARGS.values())
     assert set(flat_values.SELECTION_KWARGS) == {f.name for f in dataclasses.fields(Selection)}
     read = {key for module in MODULES for key in _keys_read(root / module)}

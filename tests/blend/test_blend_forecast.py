@@ -16,9 +16,9 @@ from _recipes import converted
 
 from hcwf.blend import TrainedBlend
 from hcwf.blend import forecast as forecast_module
-from hcwf.blend.forecast import IncompatibleForecast
-from hcwf.blend.trained import FEATURES_VERSION, FORMAT, BlendFileError
+from hcwf.blend.trained import FEATURES_VERSION, FORMAT
 from hcwf.blend.training import train
+from hcwf.errors import BlendFileError, IncompatibleForecast
 
 @pytest.fixture(scope="module", autouse=True)
 def _detection_cache(tmp_path_factory):
@@ -147,18 +147,18 @@ def test_a_saved_blend_forecasts_like_its_model(region):
 
 def test_a_single_issue_reads_only_that_issue(region, monkeypatch):
     """With issue_date the live file is read for that issue alone; the forecast is the one of the full read."""
-    from hcwf.io import input as io_input
+    from hcwf.io import forecasts as forecasts_io
 
     root, _, blend, _ = region
     files = {"ens": root / "ens" / "2013.nc"}
     seen = []
-    original = io_input.UnitForecast.runs
+    original = forecasts_io.UnitForecast.runs
 
     def spy(self):
         seen.append([pd.Timestamp(i).date() for i in self.issues])
         return original(self)
 
-    monkeypatch.setattr(io_input.UnitForecast, "runs", spy)
+    monkeypatch.setattr(forecasts_io.UnitForecast, "runs", spy)
     full = blend.forecast(files, workers=1)
     assert len(seen[-1]) > 1
     seen.clear()

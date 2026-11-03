@@ -1,69 +1,34 @@
-"""Saving and loading of score results, spatial-metric NetCDF files and nested result dictionaries."""
+"""Everything a run writes besides figures: the score tables (CSV), the spatial-metrics and climatological-onset NetCDF
+files, the per-unit tables and GeoJSON, and the CF NetCDF files of onset dates (`runs.export` collects those).
+
+The tables themselves are computed in hcwf.metrics.tables; this module only writes (and, for onset files, reads) them.
+"""
+from __future__ import annotations
+
+import json
+import logging
 import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import xarray as xr
-from hcwf.metrics.error import year_points
-from hcwf.spatial import axes
-from hcwf.metrics.bins import get_target_bins
-from hcwf.runs.folder import file_name
+
+from hcwf.metrics.tables import score_tables
 from hcwf.naming import tuple_to_str
-import logging
+from hcwf.onset.model import Status
+from hcwf.runs.folder import file_name
 
 log = logging.getLogger(__name__)
 
+DATE_UNITS = "days since 1970-01-01"
+DATE_FILL = -2147483648
+EPOCH = np.datetime64("1970-01-01")
+_MAX_CHUNK = 2_000_000
+_COMPRESSION = {"zlib": True, "complevel": 4, "shuffle": True}
 
-def score_tables(score_results, model, verification_window):
-    """The overall and binned skill-score tables of one case, without writing anything.
 
-    Returns (overall_df, binned_df, binned_data, overall_scores_nested): the two DataFrames that
-    save_score_results writes, the binned columns as a dict and the overall scores as {metric: value}.
-    """
-
-    # Save overall scores
-    overall_scores = {
-        'Metric': ['Fair_Brier_Score', 'Fair_Brier_Skill_Score', 'Fair_RPS', 'Fair_RPS_Skill_Score', 'AUC', 'AUC_ref'],
-        'Score': [
-            score_results['BS']['fair_brier_score'],
-            score_results['skill_results']['fair_brier_skill_score'],
-            score_results['RPS']['fair_rps'],
-            score_results['skill_results']['fair_rps_skill_score'],
-            score_results['AUC']['auc'],
-            score_results['AUC_ref']['auc'],
-        ]
-    }
-
-    overall_scores_nested = dict(zip(overall_scores['Metric'], overall_scores['Score']))
-
-    # pd.DataFrame expects lists/arrays as values, or a list of dicts for rows, not a dict of scalars
-    # Wrap the dict in a list so pandas treats it as a single row, or make each value wrapped in a list []
-
-    # create dataframe and save as .csv
-    overall_df = pd.DataFrame([overall_scores_nested])
-    share = back_dated_member_share(score_results.get('forecast_obs_df'))
-    if share is not None:
-        # only with forecast_history "observed"; "none" runs keep their columns
-        overall_df['back_dated_member_share'] = share
-
-    # Get target bins, remove bins with "Day Before" and "Day After"
-    target_bins = get_target_bins(score_results['BS'], score_results['BS_ref'])
-    clean_bins = [b.replace("Days ", "") for b in target_bins]
-
-    # Save binned scores
-    binned_data = {
-        'Bin': target_bins,
-        'clean_bins': clean_bins,
-        'Fair_Brier_Skill_Score': [score_results['skill_results']['bin_fair_brier_skill_scores'].get(bin_name, np.nan) for bin_name in target_bins],
-        'AUC': [score_results['AUC']['bin_auc_scores'].get(bin_name, np.nan) for bin_name in target_bins],
-        'AUC_ref': [score_results['AUC_ref']['bin_auc_scores'].get(bin_name, np.nan) for bin_name in target_bins],
-        'Fair_Brier_Score_Forecast': [score_results['BS']['bin_fair_brier_scores'].get(bin_name, np.nan) for bin_name in target_bins],
-        'Fair_Brier_Score_Climatology': [score_results['BS_ref']['bin_fair_brier_scores'].get(bin_name, np.nan) for bin_name in target_bins]
-    }
-
-    # create dataframe and save as .csv
-    binned_df = pd.DataFrame(binned_data)
-    return overall_df, binned_df, binned_data, overall_scores_nested
-
+# --- score tables and spatial metrics -----------------------------------------------------------------
 
 def save_score_results(score_results, case, paths, output):
     """Save overall and binned skill scores of one case to CSV files in output.data_dir (named by `paths`); return
@@ -84,45 +49,6 @@ def save_score_results(score_results, case, paths, output):
     return binned_data, overall_scores_nested
 
 
-def back_dated_member_share(forecast_obs_df):
-    """Share of the scored member onsets dated on or before their init, or None when the table does not track them.
-
-    Reads the per-case `back_dated_members` and `onset_members` columns of the forecast-observation
-    table (present for definition runs with forecast_history "observed"); NaN when no member found an onset.
-    """
-    if forecast_obs_df is None or 'back_dated_members' not in forecast_obs_df.columns:
-        return None
-    cases = forecast_obs_df.drop_duplicates(['init_time', *axes.spatial_dims(forecast_obs_df.columns)])
-    onsets = cases['onset_members'].sum()
-    return float(cases['back_dated_members'].sum() / onsets) if onsets else float('nan')
-
-
-def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
-    """Add the `n_back_dated` map (in place) from per-year metrics tables that carry an `n_back_dated` column.
-
-    Each cell holds the number of scored init cases, over the years with an observed onset there,
-    whose forecast onset was back-dated; a no-op for tables without the column (forecast_history "none" runs).
-    Returns spatial_metrics.
-    """
-    tables = [df for df in metrics_df_dict.values() if 'n_back_dated' in df.columns]
-    if not tables:
-        return spatial_metrics
-    first = onset_da_dict[list(onset_da_dict)[0]]
-    spatial = axes.spatial_dims(first.dims)
-    coords = axes.coords_of(first, spatial)
-    counts = np.zeros(tuple(len(coords[d]) for d in spatial))
-    for year, df in metrics_df_dict.items():
-        if 'n_back_dated' not in df.columns or len(df) == 0:
-            continue
-        points, at = year_points(df, onset_da_dict[year], spatial, coords)
-        counts[at] += points['n_back_dated'].to_numpy()
-    spatial_metrics['n_back_dated'] = xr.DataArray(
-        counts, coords=[(d, coords[d]) for d in spatial], name='n_back_dated',
-        attrs={'description': 'Scored init cases whose forecast onset was back-dated (on or before the init, '
-                              'scored as the first lead); 0 unless the verification window starts at lead 1'})
-    return spatial_metrics
-
-
 def with_unit_labels(obj, units):
     """A DataArray or Dataset over "unit" with each unit's name and centroid (unit_name, lat, lon) as coordinates.
 
@@ -132,7 +58,7 @@ def with_unit_labels(obj, units):
     """
     if "unit" not in obj.dims:
         return obj
-    from hcwf.io.input import unit_table
+    from hcwf.spatial.onto_units import unit_table
 
     table = unit_table(units, obj["unit"].values)
     names = table.column("name")
@@ -147,7 +73,7 @@ def save_unit_tables(ds, units, stem):
     table = table[["unit_id", "name", "lat", "lon", *[c for c in table.columns if c not in ("unit_id", "name", "lat", "lon")]]]
     written = [f"{stem}.csv"]
     table.to_csv(written[0], index=False)
-    from hcwf.io.input import unit_table
+    from hcwf.spatial.onto_units import unit_table
 
     polygons = unit_table(units, ds["unit"].values)
     if polygons.geometry is not None:
@@ -157,6 +83,27 @@ def save_unit_tables(ds, units, stem):
         written.append(f"{stem}.geojson")
         frame.to_file(written[1], driver="GeoJSON")
     return written
+
+
+def netcdf_attrs(attrs: dict, *, none: str = "drop") -> dict:
+    """Attributes NetCDF can hold: text, numbers and number arrays; bools become 0/1, dicts JSON text, lists and tuples
+    comma-joined text, paths text. A None is dropped (`none="drop"`) or written as the text "None" (`none="text"`)."""
+    out = {}
+    for key, value in attrs.items():
+        if value is None:
+            if none == "text":
+                out[key] = str(value)
+            continue
+        if isinstance(value, (bool, np.bool_)):
+            value = int(value)
+        elif isinstance(value, dict):
+            value = json_text(value)
+        elif isinstance(value, (list, tuple)):
+            value = ",".join(str(v) for v in value)
+        elif isinstance(value, Path):
+            value = str(value)
+        out[key] = value
+    return out
 
 
 def save_metrics_to_netcdf(spatial_metrics, case, paths, output, ev, units, desc_dict=None, fname='spatial_metrics',
@@ -196,21 +143,7 @@ def save_metrics_to_netcdf(spatial_metrics, case, paths, output, ev, units, desc
     else:
         fout = os.path.join(output.data_dir, f"{fname}_{case.name}.nc")
 
-    # Normalize attributes for NetCDF compatibility
-    clean_attrs = {}
-
-    for key in allowed_attrs:
-
-        val = attrs.get(key)
-
-        if isinstance(val, (list, tuple)):
-            clean_attrs[key] = ','.join(map(str, val))
-        elif isinstance(val, bool):
-            clean_attrs[key] = int(val)
-        elif val is None:
-            clean_attrs[key] = str(val)
-        else:
-            clean_attrs[key] = val
+    clean_attrs = netcdf_attrs({key: attrs.get(key) for key in allowed_attrs}, none="text")
 
     ds.attrs.update(clean_attrs)
     if 'n_back_dated' in ds:
@@ -236,8 +169,8 @@ def save_climatology_onset(onset_da_dict, paths, output, units, years_clim):
 
     onset_da_dict is the reference case's {year: onset}: every year holds the same climatological field.
     """
-    from hcwf.spatial.masks import mask_attrs
     from hcwf.naming import tuple_to_str_range
+    from hcwf.spatial.masks import mask_attrs
 
     fout = os.path.join(output.data_dir, file_name(paths, "climatology", tuple_to_str_range(years_clim)))
     climatological_onset_doy = with_unit_labels(next(iter(onset_da_dict.values())), units)
@@ -246,58 +179,158 @@ def save_climatology_onset(onset_da_dict, paths, output, units, years_clim):
     climatological_onset_doy.to_netcdf(fout)
 
 
-def set_nested(result_dict, keys, value):
-    """build nested dictionaries on the fly based on combi, dynamic-nesting"""
-    d = result_dict
-    for key in keys[:-1]:
-        d = d.setdefault(key, {})
-    d[keys[-1]] = value
-    return result_dict
+# --- CF NetCDF files of onset dates -------------------------------------------------------------------
+
+def days_of(values, calendar: str) -> np.ndarray:
+    """Days since 1970-01-01 (float, NaN for none) of datetime64 values or cftime objects (None for none)."""
+    values = np.asarray(values)
+    if values.dtype.kind == "M":
+        days = (values.astype("datetime64[D]") - EPOCH) / np.timedelta64(1, "D")
+        return np.where(np.isnat(values), np.nan, days).astype(float)
+    import cftime
+
+    out = np.full(values.shape, np.nan)
+    present = np.array([v is not None for v in values.ravel()], dtype=bool).reshape(values.shape)
+    if present.any():
+        out[present] = cftime.date2num(list(values[present]), DATE_UNITS, calendar=calendar)
+    return out
 
 
-def analyze_nested_dict(d):
-    """ inquire number of dimension and dimension names of a nested dict"""
-    depth = dict_depth(d)
-    dims = dict_dims(d)
-    return depth, dims
+def to_dates(days, calendar: str) -> np.ndarray:
+    """datetime64[ns] (NaT for none) or, for a non-standard calendar, cftime objects (None) of day numbers."""
+    days = np.asarray(days, dtype=float)
+    present = ~np.isnan(days)
+    if standard_calendar(calendar):
+        whole = np.where(present, days, 0).astype("int64").astype("timedelta64[D]")
+        return np.where(present, (EPOCH + whole).astype("datetime64[ns]"), np.datetime64("NaT", "ns"))
+    import cftime
+
+    out = np.full(days.shape, None, dtype=object)
+    if present.any():
+        out[present] = cftime.num2date(days[present], DATE_UNITS, calendar=calendar)
+    return out
 
 
-def nested_dict_to_array(nested_dict, metric_key):
+def standard_calendar(calendar: str) -> bool:
+    """Whether dates in this calendar are numpy datetimes."""
+    return calendar in ("standard", "gregorian", "proleptic_gregorian")
+
+
+def day_of_year(days, calendar: str) -> np.ndarray:
+    """Day of the calendar year (1-366) of day numbers, NaN for none, counted in the date's own year."""
+    dates = to_dates(days, calendar)
+    if standard_calendar(calendar):
+        return pd.DatetimeIndex(dates.ravel()).dayofyear.to_numpy(dtype=float).reshape(dates.shape)
+    return np.array([np.nan if d is None else d.dayofyr for d in dates.ravel()], dtype=float).reshape(dates.shape)
+
+
+def date_var(days, dims, calendar: str, long_name: str, comment: str = "") -> xr.DataArray:
+    """A CF date variable: day numbers with NaN for none, written as int32 with a fill value (so none is masked)."""
+    attrs = {"long_name": long_name, "units": DATE_UNITS, "calendar": "standard" if standard_calendar(calendar) else calendar}
+    if comment:
+        attrs["comment"] = comment
+    return xr.DataArray(np.asarray(days, dtype=float), dims=dims, attrs=attrs)
+
+
+def float_var(values, dims, long_name: str, units: str = "", comment: str = "") -> xr.DataArray:
+    """A float32 variable with NaN for none."""
+    attrs = {"long_name": long_name}
+    if units:
+        attrs["units"] = units
+    if comment:
+        attrs["comment"] = comment
+    return xr.DataArray(np.asarray(values, dtype=np.float32), dims=dims, attrs=attrs)
+
+
+def status_var(codes, dims, long_name: str = "onset search outcome") -> xr.DataArray:
+    """An int8 status variable with CF flag_values and flag_meanings (ONSET, NOT_FOUND, CENSORED, PRIOR, INSUFFICIENT_DATA)."""
+    return xr.DataArray(np.asarray(codes).astype(np.int8), dims=dims, attrs={
+        "long_name": long_name,
+        "flag_values": np.array([s.value for s in Status], dtype=np.int8),
+        "flag_meanings": " ".join(s.name for s in Status)})
+
+
+def coord_attrs(ds: xr.Dataset, lead_label: str | None, lead_comment: str) -> None:
+    """Attach CF attributes to the coordinates present in ds."""
+    attrs = {
+        "lat": {"units": "degrees_north", "standard_name": "latitude", "long_name": "latitude", "axis": "Y"},
+        "lon": {"units": "degrees_east", "standard_name": "longitude", "long_name": "longitude", "axis": "X"},
+        "unit": {"long_name": "evaluation unit id", "cf_role": "timeseries_id"},
+        "unit_name": {"long_name": "evaluation unit name"},
+        "year": {"long_name": "year of the onset season (the season's start)"},
+        "season": {"long_name": "onset season (name in the definition)"},
+        "init_time": {"standard_name": "forecast_reference_time", "long_name": "forecast initialisation date"},
+        "member": {"long_name": "ensemble member"},
+        "status_code": {"long_name": "onset status code", "flag_values": np.array([s.value for s in Status], dtype=np.int8),
+                        "flag_meanings": " ".join(s.name for s in Status)},
+        "lead": {"units": "days", "long_name": "forecast lead", "comment": lead_comment, "lead_label": lead_label or ""},
+    }
+    for name, attrs_of in attrs.items():
+        if name in ds.coords:
+            ds[name].attrs.update(attrs_of)
+
+
+def lead_comment(label: str | None) -> str:
+    """Describe which date a lead number stands for."""
+    if label == "start":
+        return ("lead_label 'start': lead k is the forecast day dated init + k - 1; lead 1 is the init day. "
+                "Leads <= 0 are onsets back-dated into the observed history.")
+    if label == "end":
+        return ("lead_label 'end': lead k is the forecast day dated init + k. Leads <= 0 are onsets back-dated "
+                "into the observed history.")
+    return "lead k counted from the first forecast day (lead 1); leads <= 0 are onsets back-dated into the observed history."
+
+
+def json_text(value) -> str:
+    """JSON text of a value (paths and unknown objects as text)."""
+    return json.dumps(value, default=str, sort_keys=True)
+
+
+def _chunks(var: xr.DataArray) -> tuple[int, ...]:
+    """Chunk sizes: whole map, lead and status axes per chunk, one init, year, season (and member for big grids)."""
+    whole = ("lat", "lon", "unit", "lead", "status_code", "member")
+    chunk = [min(n, 512) if d in whole else 1 for d, n in zip(var.dims, var.shape)]
+    while np.prod(chunk) > _MAX_CHUNK:
+        for dim in ("member", "lead", "status_code", "unit", "lon", "lat"):
+            if dim in var.dims and chunk[var.dims.index(dim)] > 1:
+                chunk[var.dims.index(dim)] = -(-chunk[var.dims.index(dim)] // 2)
+                break
+        else:
+            break
+    return tuple(int(c) for c in chunk)
+
+
+def write_netcdf(ds: xr.Dataset, path) -> Path:
+    """Write ds as compressed NetCDF4: zlib level 4 with shuffle, sensible chunks, fill values for date variables."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoding = {}
+    for name, var in ds.data_vars.items():
+        enc = dict(_COMPRESSION) if var.size else {}
+        if var.size:
+            enc["chunksizes"] = _chunks(var)
+        if str(var.attrs.get("units", "")).startswith("days since"):
+            enc.update({"dtype": "int32", "_FillValue": DATE_FILL})
+        elif var.dtype.kind in "iu":
+            enc["_FillValue"] = None
+        encoding[name] = enc
+    ds.to_netcdf(path, engine="netcdf4", format="NETCDF4", encoding=encoding)
+    return path
+
+
+def open_onsets(path) -> xr.Dataset:
+    """Open an export file; dates on non-standard calendars come back as cftime objects with None for no onset.
+
+    xarray cannot decode a cftime variable that has masked values, so such date variables are decoded here
+    (`to_dates`) and everything else by xarray. Standard calendars open as datetime64 with NaT. The
+    `lead` coordinate has units "days": it is opened as plain numbers, not timedeltas.
     """
-    Convert a 2-level nested dict to a 2D NumPy array based on the first two levels.
-
-    Parameters
-    ----------
-    nested_dict : dict
-        Nested dictionary with at least two levels.
-        Example: results[model][window]['mae']
-    metric_key : str
-        The key at the leaf level to extract (e.g., 'mae').
-
-    Returns
-    -------
-    arr : np.ndarray
-        2D array with shape (num_top_keys, num_second_keys)
-    row_labels : list
-        List of top-level keys (rows)
-    col_labels : list
-        List of second-level keys (columns)
-    """
-    # Top-level keys → rows
-    row_labels = list(nested_dict.keys())
-
-    # Second-level keys → columns (assume all rows share same keys)
-    first_row = nested_dict[row_labels[0]]
-    col_labels = list(first_row.keys())
-
-    # Initialize array
-    arr = np.full((len(row_labels), len(col_labels)), np.nan)
-
-    # Fill array with metric values
-    for i, rkey in enumerate(row_labels):
-        for j, ckey in enumerate(col_labels):
-            # Safely get the value (default to np.nan if missing)
-            da = nested_dict.get(rkey, {}).get(ckey, {}).get(metric_key, np.nan)
-            arr[i,j] = da.mean()
-
-    return arr, row_labels, col_labels
+    raw = xr.open_dataset(path, decode_times=False, decode_timedelta=False)
+    dates = [n for n, v in raw.data_vars.items() if str(v.attrs.get("units", "")).startswith("days since")
+             and not standard_calendar(v.attrs.get("calendar", "standard"))]
+    ds = xr.decode_cf(raw.drop_vars(dates), decode_timedelta=False)
+    for name in dates:
+        ds[name] = (raw[name].dims, to_dates(raw[name].values, raw[name].attrs["calendar"]), {
+            k: v for k, v in raw[name].attrs.items() if k not in ("units", "calendar")})
+    ds.attrs.update(raw.attrs)
+    return ds

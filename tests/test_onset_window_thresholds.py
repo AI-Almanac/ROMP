@@ -9,12 +9,12 @@ import pytest
 import typed_io
 import xarray as xr
 
-from hcwf.io import input as hcwf_input
+from hcwf.io import thresholds as thresholds_io
 from hcwf.onset import climatology, engine
 from hcwf.onset import model as m
 from hcwf.onset import plan as plan_mod
-from onset_oracle import HORIZON, FALSE, TRUE, UNKNOWN, Series, oracle_detect, used_thresholds
-from test_onset_engine import ANY_WET, JJAS, definition, make_forecast, make_rain
+from onset_oracle import HORIZON, TRUE, UNKNOWN, Series, oracle_detect, used_thresholds
+from test_onset_engine import JJAS, definition, make_forecast, make_rain
 from test_onset_forecast_layer import _brute_force_means, _climatology_forecasts, _thresholds_definition
 from test_onset_oracle_agreement import _available, random_data, random_definition, random_jobs
 from test_onset_hcwf_history import _cfg
@@ -235,13 +235,13 @@ def test_hcwf_model_thresholds_are_per_verification_window_and_cached_by_windows
         ds = xr.Dataset({"tp": (("time", "day", "lat", "lon"), rain)},
                         coords={"time": times, "day": np.arange(1, 11), "lat": [0.0, 1.0], "lon": [0.0, 1.0]})
         ds.to_netcdf(archive / f"{year}.nc")
-    monkeypatch.setattr(hcwf_input, "region_select", lambda ds, **kwargs: ds)
+    typed_io.skip_region_cut(monkeypatch)
     kwargs = _cfg(onset_definition="moron_robertson", threshold_source="model", threshold_years=(2015, 2016),
                   model="TOY", model_dir=str(archive), model_var="tp", file_pattern="{}.nc", unit_cvt=None,
                   date_filter_year=2024, init_days=tuple(range(7)), start_date=(2015, 5, 1), end_date=(2015, 6, 30),
                   members=None, probabilistic=False, max_forecast_day=10, dir_out=str(tmp_path / "out"), region="x",
                   verification_window_list=((1, 5), (6, 10)))
-    hcwf_input._loaded_thresholds.clear()
+    thresholds_io._loaded_thresholds.clear()
     amount = typed_io.thresholds(kwargs)["wet_spell_amount"]
     assert amount.dims == ("window", "lat", "lon")
     assert amount.values[0].tolist() == [[10.0, 10.0]] * 2 and amount.values[1].tolist() == [[30.0, 30.0]] * 2
@@ -249,12 +249,12 @@ def test_hcwf_model_thresholds_are_per_verification_window_and_cached_by_windows
     cache = tmp_path / "out" / ".onset_cache"
     assert len(list((cache / "model_thresholds").glob("*/value.nc"))) == 1
 
-    hcwf_input._loaded_thresholds.clear()
-    monkeypatch.setattr(hcwf_input, "load_forecast",
+    thresholds_io._loaded_thresholds.clear()
+    monkeypatch.setattr(thresholds_io, "load_forecast",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("cache not used")))
     again = typed_io.thresholds(kwargs)["wet_spell_amount"]
     assert again.values[1].tolist() == [[30.0, 30.0]] * 2
 
-    hcwf_input._loaded_thresholds.clear()
+    thresholds_io._loaded_thresholds.clear()
     with pytest.raises(AssertionError, match="cache not used"):
         typed_io.thresholds({**kwargs, "verification_window_list": ((1, 10),)})

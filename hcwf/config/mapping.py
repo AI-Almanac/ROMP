@@ -20,9 +20,8 @@ import yaml
 
 from hcwf.config import schema
 from hcwf.config import detect
-from hcwf.config.schema import ConfigSchemaError
-from hcwf.config.datasets import (Dataset, DatasetError, expand_path, file_year, get_dataset, load_datasets,
-                                      suggest)
+from hcwf.config.datasets import Dataset, expand_path, file_year, get_dataset, load_datasets, suggest
+from hcwf.errors import ConfigSchemaError, DatasetError, RegionError
 
 YAML_SUFFIXES = (".yaml", ".yml")
 """File suffixes loaded as YAML."""
@@ -102,7 +101,7 @@ def _region_chain(config):
 
     try:
         region = regions.load_region(str(config.get("region")))
-    except regions.RegionError:
+    except RegionError:
         return []
     return [region, *regions.ancestors(region)]
 
@@ -303,7 +302,8 @@ def _check_blend(config, errors):
     """Build the blend Recipe from the section as far as the config says, so its problems are reported with the rest."""
     if not schema.has_blend(config) or "model_list" not in config:
         return
-    from hcwf.blend.recipe import RecipeError, recipe_from_config
+    from hcwf.blend.recipe import recipe_from_config
+    from hcwf.errors import RecipeError
 
     try:
         recipe_from_config(config)

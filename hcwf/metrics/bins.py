@@ -132,27 +132,6 @@ class LeadBins:
         return 999
 
 
-def extract_day_range(bin_label):
-    """ extract the start day of each bin for sorting purpose """
-    return LeadBins.first_day_of(bin_label)
-
-
-def get_target_bins(brier_forecast, brier_climatology):
-    """Extract and sort target bins"""
-    all_forecast_bins = set(brier_forecast['bin_fair_brier_scores'].keys())
-    all_clim_bins = set(brier_climatology['bin_fair_brier_scores'].keys())
-    common_bins = all_forecast_bins.intersection(all_clim_bins)
-
-    target_bins = []
-    for bin_label in common_bins:
-        if (bin_label.startswith('Days ') and
-            not bin_label.startswith('After') and
-            not bin_label.startswith('Before')):
-            target_bins.append(bin_label)
-
-    return sorted(target_bins, key=extract_day_range)
-
-
 # Function to create forecast-observation pairs with specified day bins for probabilistic verification
 
 
@@ -478,3 +457,35 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     log.debug(bin_stats)
 
     return forecast_obs_df
+
+
+def extract_pd_bins(df, day_bins, method='merge', *kwargs):
+    """
+    Select rows from df whose (bin_start, bin_end) match any tuple in bins.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Must contain 'bin_start' and 'bin_end' columns.
+    day_bins : iterable of tuples
+        Example: ((1, 5), (6, 10))
+    method : {"merge", "series"}
+        - "merge": fast, recommended for large DataFrames
+        - "series": simple, minimal change from zip/isin logic
+
+    Returns
+    -------
+    pandas.DataFrame
+        Filtered DataFrame
+    """
+
+    if method == "merge":
+        bins_df = pd.DataFrame(day_bins, columns=["bin_start", "bin_end"])
+        return df.merge(bins_df, on=["bin_start", "bin_end"], how="inner").copy()
+
+    elif method == "series":
+        mask = pd.Series(zip(df["bin_start"], df["bin_end"])).isin(day_bins)
+        return df[mask]
+
+    else:
+        raise ValueError("method must be 'merge' or 'series'")

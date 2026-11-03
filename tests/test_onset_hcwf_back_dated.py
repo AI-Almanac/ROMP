@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.io.output import add_back_dated_map, save_metrics_to_netcdf, save_score_results
+from hcwf.io.output import save_metrics_to_netcdf, save_score_results
+from hcwf.metrics.tables import add_back_dated_map
 from hcwf.config.model import Window
 from hcwf.spatial import axes
 from hcwf.metrics.contingency import onset_metrics

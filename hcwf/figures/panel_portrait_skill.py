@@ -3,12 +3,33 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from hcwf.figures.visual import portrait_plot
-from hcwf.io.dict import extract_binned_dict
 from hcwf.runs.folder import file_name
 from hcwf.naming import tuple_to_str
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def extract_binned_dict(dic, second_level_key, bin_key="clean_bins"):
+    """
+    extract a 2-D array from a 2-level nested dictionary
+    given a specific 2nd-level key, e.g. "Fair_Brier_Skill_Score"
+    Extract all 1st-level keys
+    And get one specified 2nd-level key values, e.g., "clean_bins" [(1,5),(6,10)]
+    """
+    # 1st-level keys
+    first_level_keys = list(dic.keys())
+
+    # binned skill scores are saved as a list without bin keys
+    # use "clean_bins" key to indicate bins
+    second_level_value_as_keys = next(iter(dic.values())).get(bin_key)
+
+    # Build 2-D array (rows = 1st-level, columns = 3rd-level)
+    array_2d = np.array([
+        dic[first][second_level_key]
+        for first in first_level_keys
+    ])
+    return array_2d, first_level_keys, second_level_value_as_keys
 
 
 def panel_portrait_bss_auc(result_binned, verification_window, spec):

@@ -19,7 +19,6 @@ every stage runs on the run's worker pool.
 from __future__ import annotations
 
 import logging
-import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +30,7 @@ from hcwf.blend.recipe import Recipe
 from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Weekly
 from hcwf.cache import atomic_write
 from hcwf.config.model import RunConfig
-from hcwf.io import input as io_input
+from hcwf.io import thresholds as thresholds_io
 from hcwf.onset.climatology import ReferenceOnset
 from hcwf.references.kde import Climatology
 from hcwf.parallel import spec_workers
@@ -86,7 +85,7 @@ def prepare(rc: RunConfig, *, test_years: tuple[int, int] | None = None,
         log.info("%s in %.1fs", stage, timings[stage])
 
     started = time.perf_counter()
-    thresholds = io_input.thresholds_of(rc, rc.models[0])
+    thresholds = thresholds_io.thresholds_of(rc, rc.models[0])
     reference = features.reference_onset(recipe)
     observed = features.observed(rc, recipe, thresholds, reference, workers=workers)
     lap("observed onsets", started)

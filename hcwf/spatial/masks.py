@@ -37,7 +37,7 @@ from typing import Union
 import numpy as np
 import xarray as xr
 
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import MaskError
 import logging
 
 log = logging.getLogger(__name__)
@@ -55,10 +55,6 @@ _COUNTRY_FIELDS = ("NAME", "NAME_LONG", "ADM0_A3")
 _LAT_NAMES = ("lat", "latitude", "y", "nav_lat", "lats")
 _LON_NAMES = ("lon", "longitude", "x", "nav_lon", "lons", "long")
 _EPS = 1e-9
-
-
-class MaskError(HCWFConfigError):
-    """A region mask cannot be built: bad specification, unreadable source, grid not covered, or no cell kept."""
 
 
 @dataclass(frozen=True)
@@ -949,7 +945,7 @@ def points_inside_polygon(polygon_lon, polygon_lat, grid_lons, grid_lats):
 def polygon_mask(da_model):
     """mask data based on polygon boundary"""
 
-    from hcwf.spatial.region_def import polygon_boundary
+    from hcwf.onset.regions import polygon_boundary
 
     orig_lat = da_model.lat.values
     orig_lon = da_model.lon.values

@@ -14,8 +14,8 @@ from pathlib import Path
 import yaml
 
 from hcwf.config import schema
-from hcwf.config.schema import ConfigSchemaError
 from hcwf.config.datasets import suggest
+from hcwf.errors import ConfigSchemaError
 
 SECTION_ORDER = ("observations", "reference", "models", "onset", "units", "blend", "evaluation", "metrics", "output")
 INTERNAL_KEYS = ("dataset_report", "config_sources", "lead_window", "onset_lead_lines", "run_paths",

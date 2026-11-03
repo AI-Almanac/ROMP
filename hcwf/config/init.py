@@ -7,15 +7,15 @@ a comment showing the evidence, so you can review and edit them.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import yaml
 
 from hcwf.config import detect
 from hcwf.config.convert import _flow
-from hcwf.config.datasets import DatasetError, expand_path
+from hcwf.config.datasets import expand_path
 from hcwf.onset import regions
+from hcwf.errors import RegionError
 
 _OBS_PLACEHOLDERS = (("file_pattern", '"{}.nc"', "the year placeholder; detected from the files if left out"),
                      ("variable", "rainfall", "rainfall variable; detected if it is the only one"),
@@ -102,7 +102,7 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
     region_name = region_line.split(":")[1].split("#")[0].strip()
     try:
         regions.load_region(region_name)
-    except regions.RegionError:
+    except RegionError:
         region_name = None
     start, end, default = _season_bounds(region_name)
     obs_for_labels = dict(obs_res.values) if obs_res is not None else None

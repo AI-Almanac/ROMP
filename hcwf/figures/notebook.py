@@ -6,7 +6,8 @@ import os
 import pandas as pd
 
 from hcwf.config.model import Selection
-from hcwf.io.input import observations_of, thresholds_of
+from hcwf.io.observations import observations_of
+from hcwf.io.thresholds import thresholds_of
 from hcwf.onset.detect import detect_observed
 from hcwf.figures.func_map import spatial_metrics_map
 from hcwf.figures.rainfall_time_series import plot_rainfall_timeseries_with_onset_and_wetspell

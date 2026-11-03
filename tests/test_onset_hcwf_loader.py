@@ -2,7 +2,7 @@
 
 import pytest
 
-from hcwf.io.input import steps_needed
+from hcwf.io.forecasts import steps_needed
 from hcwf.config.onset import onset_setup
 
 

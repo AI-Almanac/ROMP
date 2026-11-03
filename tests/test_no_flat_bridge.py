@@ -91,3 +91,21 @@ def test_only_the_record_writers_read_the_flat_values(path):
     if rel in VALUES_READERS:
         return
     assert not lines, f"{rel} reads RunConfig.values at line(s) {lines}"
+
+
+def test_the_split_modules_are_gone():
+    """R3b: the reader is io/{stores,observations,reference,forecasts,thresholds,warmup}.py and spatial/onto_units.py, the
+    region lookup is onset/regions.py, the writers are io/output.py."""
+    for gone in ("io/input.py", "io/dict.py", "spatial/region_def.py"):
+        assert not (PACKAGE / gone).exists(), gone
+
+
+@pytest.mark.parametrize("path", [p for p in _python_files(PACKAGE) if p.name != "errors.py"],
+                         ids=lambda p: p.relative_to(PACKAGE).as_posix())
+def test_every_error_class_is_defined_in_errors_py(path):
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.ClassDef):
+            bases = {b.id for b in node.bases if isinstance(b, ast.Name)}
+            assert not node.name.endswith("Error") or node.name.startswith("_") or not bases & {"Exception", "ValueError",
+                   "FileExistsError", "HCWFConfigError", "KeyError", "RuntimeError"}, \
+                f"{path.relative_to(PACKAGE)}:{node.lineno} {node.name} belongs in hcwf/errors.py"

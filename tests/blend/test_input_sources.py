@@ -1,7 +1,6 @@
 """Datasets as a list of files, the one table of dimension names, units, and unit dimensions (the input parts of
 onset_blending's test_io.py, test_pipeline.py and test_cell_transforms.py, against HCWF's single reader)."""
 import datetime as dt
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -9,13 +8,12 @@ import pytest
 import typed_io
 import xarray as xr
 
-from _inputs import LATS, LONS, write_adm3, write_forecast, write_observations
-from hcwf.io import input as io_input
+from _inputs import write_adm3, write_forecast, write_observations
 from hcwf.config import detect
-from hcwf.config.datasets import DatasetError, file_year, parse_dataset, parse_years, resolve_paths
+from hcwf.config.datasets import file_year, parse_dataset, parse_years, resolve_paths
 from hcwf.onset import ingest as ing
-from hcwf.io import dims as standard
 from hcwf.io.dims import ROLE_ALIASES, dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim
+from hcwf.errors import DatasetError
 
 BOUNDARY = "00 UTC, labelled by start"
 

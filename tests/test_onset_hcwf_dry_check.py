@@ -7,10 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from hcwf.io.input import steps_needed
-from hcwf.config.onset import OnsetConfigError, onset_setup
+from hcwf.io.forecasts import steps_needed
+from hcwf.config.onset import onset_setup
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
+from hcwf.errors import DefinitionError, OnsetConfigError
 
 BOUNDARY = "00 UTC, labelled by start"
 
@@ -29,7 +30,7 @@ def test_override_merges_replaces_and_keeps_provenance():
 
 def test_override_validates_again():
     """An invalid change is a DefinitionError naming the path."""
-    with pytest.raises(definition_mod.DefinitionError, match="wet_day"):
+    with pytest.raises(DefinitionError, match="wet_day"):
         definition_mod.override(definition_mod.load("icpac"), {"wet_day": "20 mm"})
 
 

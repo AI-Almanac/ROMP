@@ -19,13 +19,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from hcwf.errors import HCWFConfigError
-from hcwf.config.datasets import DatasetError, parse_year_list, suggest
+from hcwf.errors import RecipeError
+from hcwf.config.datasets import parse_year_list, suggest
 
 from hcwf.blend.design import Formula, WindowVariant
 from hcwf.blend.random_forest import Params as ForestParams
 from hcwf.onset.model import Definition
 from hcwf.metrics.bins import LeadBins
+from hcwf.errors import DatasetError
 
 __all__ = [
     "Baselines", "ClimatologySpec", "Evaluation", "ExternalPrediction", "Features",
@@ -44,14 +45,6 @@ WINDOW_TOKENS = ("trigger", "window", "dry_spell", "sum_window", "follow", "min_
 _MONTH_DAY = re.compile(r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
 _RAIN_TRANSFORMS = ("identity", "none", "", "sqrt", "fourth_root", "log1p")
 _MODEL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)*")
-
-
-class RecipeError(HCWFConfigError):
-    """A recipe that cannot be used; lists every problem found."""
-
-    def __init__(self, problems: list[str]):
-        self.problems = list(problems)
-        super().__init__("Invalid blend recipe:\n" + "\n".join(f"  - {p}" for p in self.problems))
 
 
 # ---------------------------------------------------------------------------------------------------------------

@@ -26,6 +26,7 @@ import xarray as xr
 from hcwf.blend import features, training
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE
 from hcwf.config import detect as dataset_detect
+from hcwf.errors import IncompatibleForecast
 
 WEEKLY_FILENAME = "blended_forecast_probabilities.csv"
 DAILY_FILENAME = "daily_onset_probabilities.csv"
@@ -33,14 +34,6 @@ WEEKLY_NETCDF = "blended_forecast_probabilities.nc"
 DAILY_NETCDF = "daily_onset_probabilities.nc"
 
 __all__ = ["DAILY_FILENAME", "Forecast", "IncompatibleForecast", "WEEKLY_FILENAME", "check_files", "run"]
-
-
-class IncompatibleForecast(ValueError):
-    """Live forecasts the trained blend cannot be applied to; lists every reason."""
-
-    def __init__(self, problems: list[str]):
-        self.problems = list(problems)
-        super().__init__("Cannot forecast with this blend:\n" + "\n".join(f"  - {p}" for p in self.problems))
 
 
 def _dataset(table: pd.DataFrame, columns: list[str]) -> xr.Dataset:

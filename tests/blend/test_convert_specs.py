@@ -13,6 +13,7 @@ import yaml
 from _recipes import ORACLE_SRC, blending_dict, converted, partial, with_stub_data
 from hcwf.config import convert_specs as C
 from hcwf.config.datasets import file_year, resolve_paths
+from hcwf.errors import ConvertError
 
 CONFIGS = sorted(glob.glob(str(ORACLE_SRC / "configs" / "*.yml")))
 SPECS = ORACLE_SRC / "archive" / "specs"
@@ -152,7 +153,7 @@ def test_a_converted_run_has_no_benchmark_settings_and_still_loads(tmp_path):
 def test_benchmark_keys_a_blend_run_does_state_are_kept(tmp_path):
     """Given dates are not replaced by the ones derived from blend.years; a run without a blend still needs them."""
     from typed_io import flat_config
-    from hcwf.config.schema import ConfigSchemaError
+    from hcwf.errors import ConfigSchemaError
 
     mapping = with_stub_data(C.convert_blend(minimal(tmp_path)).mapping, tmp_path / "stub")
     stated = flat_config({**mapping, "evaluation": {"start_date": [2002, 5, 1], "end_date": [2003, 6, 1],
@@ -168,7 +169,7 @@ def test_unknown_keys_and_missing_parts_are_reported_together_with_suggestions(t
     data["onset"]["definiton"] = {}
     data["observations"]["varible"] = "x"
     del data["name"]
-    with pytest.raises(C.ConvertError) as caught:
+    with pytest.raises(ConvertError) as caught:
         C.convert_blend(data)
     text = str(caught.value)
     assert 'onset.definiton: unknown key. Did you mean "definition"?' in text
@@ -180,7 +181,7 @@ def test_exactly_one_threshold_and_one_file_source_are_required(tmp_path):
     data = minimal(tmp_path)
     data["onset"]["threshold"] = {"mm": 5, "file": "t.csv"}
     data["observations"]["files"] = {"folder": "obs", "paths": ["a.nc"]}
-    with pytest.raises(C.ConvertError) as caught:
+    with pytest.raises(ConvertError) as caught:
         C.convert_blend(data)
     assert any("exactly one of 'mm', 'file' or 'climatology'" in p for p in caught.value.problems)
     assert any("either 'folder'" in p for p in caught.value.problems)
@@ -314,7 +315,7 @@ def test_the_spec_converter_reports_disagreements_together(tmp_path):
                  regrid=load(paths["regrid"]))
     specs["forecasts"]["forecast_model"]["options"]["window"] = 3
     specs["cv_models"]["n_bins"] = 5
-    with pytest.raises(C.ConvertError) as caught:
+    with pytest.raises(ConvertError) as caught:
         C.convert_specs(name="t", **specs)
     assert any("the onset definition" in p for p in caught.value.problems)
     assert any("the number of week bins" in p for p in caught.value.problems)

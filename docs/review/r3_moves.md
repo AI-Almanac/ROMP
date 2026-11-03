@@ -10,7 +10,7 @@ R1/R2. Every move is `git mv` plus import rewrites; no shims. Nothing is left in
 | driver.py | cli/driver.py | argv, batch, exit codes and `run_hcwf` are all CLI; one file, not split |
 | lib/parser.py + lib/loader.py | cli/parser.py | M: loader was one 1 KB function (`_get_config_path_pre_parse`) |
 | onset/cli.py | cli/onset.py | `python -m hcwf.onset` stays (3-line `onset/__main__.py`) |
-| export.py | runs/export.py | whole file; the split into io/onsets + scoring/onsets is later (R3b) |
+| export.py | runs/export.py | whole file in R3a; writers split off in R3b (see below) |
 | lib/run_folder.py | runs/folder.py | |
 | lib/check.py | runs/check.py | the `--check` report |
 | lib/resolved.py | runs/resolved.py | resolved_config.yaml text |
@@ -41,7 +41,7 @@ R1/R2. Every move is `git mv` plus import rewrites; no shims. Nothing is left in
 | utils/standard.py | io/dims.py | |
 | utils/mask.py | spatial/masks.py | |
 | utils/region.py | spatial/select.py | |
-| params/region_def.py | spatial/region_def.py | `domain` wrapper and CMZ polygon; folding it into onset/regions.py is later |
+| params/region_def.py | spatial/region_def.py | `domain` wrapper and CMZ polygon; folded into onset/regions.py in R3b (see below) |
 | utils/visual.py | figures/visual.py | |
 | graphics/* | figures/* | |
 | app/spatial_far_mr_mae.py | scoring/deterministic.py | |
@@ -50,7 +50,7 @@ R1/R2. Every move is `git mv` plus import rewrites; no shims. Nothing is left in
 
 Gone before R3a (not in the table): lib/convention.py, lib/control.py, utils/land_mask.py, onset/legacy.py.
 
-Unchanged: api.py, cache.py, blend/, io/input.py (R3b), io/output.py, io/dict.py, spatial/{axes,ids,regrid,units}.py,
+Unchanged: api.py, cache.py, blend/, io/input.py (R3b), io/output.py (R3b), io/dict.py (R3b), spatial/{axes,ids,regrid,units}.py,
 metrics/{probabilistic,error}.py, onset/{alignment,backends,calendar,definition,describe,engine,explain,ingest,model,
 plan,regions,thresholds,units,viz,climatology}, config/{__init__,build,model,validate}.py. The onset registry and
 regions YAML stay in onset/ (data of the onset component), so `pyproject.toml` package-data is unchanged.
@@ -70,3 +70,56 @@ Splits made along it:
 Known leftovers (not R3a): metrics/bins.py is still imported by io/output.py and figures/heatmap.py (for
 `get_target_bins`, pure); error subclasses are not yet gathered in errors.py; io/dict.py has two helpers
 destined for metrics; 6 undefined names (dead code) in io/output.py and spatial/select.py predate R3a.
+
+
+# R3b: move table (R3a tree -> now)
+
+Same rules: `git mv`/split plus import rewrites, no shims, no behaviour change. The one place a re-export would have been
+convenient (`hcwf.io.input` as the single public reader module) was rejected: the typed API names are unchanged, only their
+module is, and every caller imports the module that owns the name.
+
+## io/input.py (1521 lines) -> io/ and spatial/
+| name(s) | new module | note |
+|---|---|---|
+| `open_store`, `year_files`, `observation_source` (was `_obs_source`), `forecast_sources` (was `_forecast_sources`), `open_forecast` (was `_open_forecast`), `fix_dims_for` | io/stores.py | where the data is and how a file or store is opened; nothing decoded |
+| `load_observations`, `read_obs_years`, `observed_history`, `observations_of`, `observation_years_of`, `history_of`, the held-years cache (`forget_years`), `ObsRead` | io/observations.py | `_read_obs_year`, `_obs_key` ... stay private |
+| `release_reference`, `reference_held`, `reference_rain_year`, `reference_rain`, `LazyRain`, `clear_obs_cache` | io/reference.py | the reference (threshold and climatology) years ingested once; `clear_obs_cache` = `forget_years` + `release_reference` (it lives here so that observations.py does not import reference.py) |
+| `load_forecast`, `forecast_of`, `ingest_forecast`, `initialization_dates`, `steps_needed`, `select_leads`, `select_members`, `UnitForecast`, `unit_forecast_bytes`, `ForecastRead` | io/forecasts.py | |
+| `load_thresholds`, `load_onset_thresholds`, `thresholds_of` and the model-threshold helpers | io/thresholds.py | |
+| `warm_up`, `warm_up_of` | io/warmup.py | thresholds and cell masks built once before the years go to workers |
+| `unit_transform`, `feeding_cells`, `unit_series`, `read_on_units`, `read_unit_dim`, `read_units`, `select_units`, `declared_scale`, `unit_table`, `units_spec`, `units_files`, `point_dims`, `SOURCE_POLICIES` | spatial/onto_units.py | cells -> unit series; `unit_table` etc. are the run's evaluation units |
+| `in_memory`, `scale_in_place` (were `_in_memory`, `_scale_in_place`) | spatial/select.py | next to `load_blocks` |
+| `NO_SELECTION` (was `_NO_SELECTION` in input.py) | config/model.py | next to `Selection` |
+
+Names that crossed a module boundary lost their leading underscore (`ObsRead`, `ForecastRead`, `obs_years_of`,
+`observation_year`, `observation_year_once`, `years_held`, `mask_text`, `LazyRain`). `is_zarr` was never io.input's: callers
+import it from config.datasets.
+
+## writers: io/output.py + runs/export.py
+There was one real overlap (NetCDF attribute cleaning, written twice with the same rules; `with_unit_labels`) so the two
+writers are one module, `io/output.py`: score CSVs, spatial-metrics and climatological-onset NetCDF, per-unit tables, and the CF
+onset-date files (`write_netcdf`, `open_onsets`, `date_var`, `float_var`, `status_var`, `coord_attrs`, `days_of`, `to_dates`,
+`day_of_year`, `standard_calendar`, `lead_comment`, `DATE_UNITS`, `DATE_FILL`, `EPOCH`). `netcdf_attrs(attrs, none="drop"|"text")`
+replaces `export._clean` and the inline loop of `save_metrics_to_netcdf`.
+- runs/export.py keeps the collection only: `collect_*`, `_provenance`, `export_onsets`, `default_sources`, `onsets_folder`.
+- The pure half of the old io/output.py -> metrics/tables.py: `score_tables`, `back_dated_member_share`, `add_back_dated_map`.
+- `open_onsets` is now `hcwf.io.output.open_onsets` (docs updated).
+
+## the rest
+- io/dict.py deleted. `extract_pd_bins` -> metrics/bins.py (it pairs bins); `extract_binned_dict` -> figures/panel_portrait_skill.py,
+  `extract_overall_dict` -> figures/panel_bar_skill.py, `nested_dict_to_array` (from io/output.py) -> figures/panel_portrait_error.py
+  (each is read by that one panel); `select_key_at_level` -> scoring/probabilistic.py; `set_nested` (from io/output.py) ->
+  scoring/deterministic.py.
+- spatial/region_def.py deleted: `domain` was a one-line wrapper of `onset.regions.box` (callers use `box`);
+  `polygon_boundary` (India CMZ outline for 1/2/4 degree grids) -> onset/regions.py, unchanged. Moving the coordinates into the
+  region YAML was not done: it needs a schema key and a loader for three grids and would change a data format, not only layout.
+- errors: all 14 error classes are in errors.py (see its docstring for the hierarchy). errors.py has no imports, so any module can
+  import it without a cycle, which is why they could all move; leaving each next to its module would have kept `config.schema`
+  importable only through half of the config package. `spatial/__init__` no longer re-exports `AreaError`/`UnitsSpecError`.
+  `IncompatibleForecast` (ValueError) and `RunExistsError` (FileExistsError) keep their bases.
+- `get_target_bins` -> metrics/score.py: it reads score-result dicts (`bin_fair_brier_scores`), not pairs, so it is not
+  bins.py; the three users (metrics/score, metrics/tables, figures/heatmap) now import it from metrics.score. `extract_day_range`
+  (one caller) was dropped for `LeadBins.first_day_of`.
+- dead code removed: `analyze_nested_dict` (`dict_depth`/`dict_dims` never existed) in io/output.py; `swap_lon_axis` in
+  spatial/select.py (a half port of xcdat calling three undefined helpers). `lon_swap`'s branch for a box across the data's
+  longitude seam called it and always raised NameError; it now raises a ValueError that says so.

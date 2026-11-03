@@ -8,14 +8,14 @@ from hcwf.errors import HCWFConfigError
 
 
 def test_every_config_error_is_an_hcwf_config_error():
-    from hcwf.blend.recipe import RecipeError
-    from hcwf.blend.trained import BlendFileError
-    from hcwf.config.schema import ConfigSchemaError
-    from hcwf.onset.definition import DefinitionError
-    from hcwf.onset.regions import RegionError
-    from hcwf.onset.units import UnitsError
-    from hcwf.spatial.units import AreaError, UnitsSpecError
-    from hcwf.spatial.masks import MaskError
+    from hcwf.errors import RecipeError
+    from hcwf.errors import BlendFileError
+    from hcwf.errors import ConfigSchemaError
+    from hcwf.errors import DefinitionError
+    from hcwf.errors import RegionError
+    from hcwf.errors import UnitsError
+    from hcwf.errors import AreaError, UnitsSpecError
+    from hcwf.errors import MaskError
 
     assert issubclass(HCWFConfigError, ValueError)
     for cls in (RecipeError, BlendFileError, ConfigSchemaError, DefinitionError, RegionError, UnitsError,

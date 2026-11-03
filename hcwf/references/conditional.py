@@ -195,7 +195,8 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
     otherwise they are detected from the year's rainfall as for the forecasts.
     The run `rc` carries the init dates, the onset definition and climatology_cv.
     """
-    from hcwf.io.input import initialization_dates, thresholds_of
+    from hcwf.io.forecasts import initialization_dates
+    from hcwf.io.thresholds import thresholds_of
 
     thresholds = thresholds_of(rc, case.model, select)
     cv = cv_mode(rc.reference.climatology_cv)
@@ -215,7 +216,7 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
 
 def _detect_observed(year, rc, select, thresholds):
     """The observed onsets (lat, lon) of a year outside the climatology years."""
-    from hcwf.io.input import observations_of
+    from hcwf.io.observations import observations_of
     from hcwf.onset.detect import detect_observed
 
     return detect_observed(observations_of(year, rc, select), thresholds, year, rc, select)

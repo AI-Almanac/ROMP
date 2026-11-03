@@ -31,7 +31,8 @@ from scipy.special import logit
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, Recipe, probability_feature_base, window_tag
 from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Weekly
 from hcwf.config.model import Case, Selection, Window
-from hcwf.io import input as io_input
+from hcwf.io import forecasts as forecasts_io
+from hcwf.io import observations as observations_io
 from hcwf.config.datasets import file_year
 from hcwf.onset.climatology import ReferenceOnset
 from hcwf.references import kde
@@ -86,7 +87,7 @@ def observation_years(rc) -> list[int]:
 
 def _observed_year(year, rc, select, thresholds, season_start):
     """One year's observed onsets as a file summary: {ids, years, onset_day, onset_idx, present} over (unit, year)."""
-    onset = detect.detect_observed(lambda: io_input.observations_of(year, rc, select), thresholds, year, rc, select)
+    onset = detect.detect_observed(lambda: observations_io.observations_of(year, rc, select), thresholds, year, rc, select)
     ids = np.asarray(onset["unit"].values).astype(str)
     dates = onset.values.astype("datetime64[D]")
     cutoff = np.datetime64(f"{year}-{season_start}", "D")
@@ -157,7 +158,7 @@ def _forecast_file(path, rc, case, select, spec, thresholds, fixed_cutoff, refer
     the reference onset), plus members (per issue), onset_threshold (unit) and rain_mean (the members' mean rainfall in
     the file's dtype).
     """
-    with io_input.UnitForecast(path, case.model, spec, keep_ids=select.keep_unit_ids, issue_dates=select.issue_dates,
+    with forecasts_io.UnitForecast(path, case.model, spec, keep_ids=select.keep_unit_ids, issue_dates=select.issue_dates,
                                select=select) as file:
         ids, days, issues = file.ids, file.days, file.issues
         if not len(issues):
@@ -210,7 +211,7 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
         rain_horizon=(spec.rain_horizon.max_day, spec.rain_horizon.policy), check_units=False,
         keep_unit_ids=None if keep_ids is None else sorted(keep_ids),
         issue_dates=None if issue_dates is None else tuple(issue_dates))
-    item_bytes = [io_input.unit_forecast_bytes(p, source.var) for p in paths]
+    item_bytes = [forecasts_io.unit_forecast_bytes(p, source.var) for p in paths]
     count = max(1, min(workers, len(paths)))
     count = workers_within(item_bytes, count, budget_bytes) if item_bytes else count
     name = setup.definition.thresholds[0][0] if setup.definition.thresholds else None

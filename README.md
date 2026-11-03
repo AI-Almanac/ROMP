@@ -97,7 +97,7 @@ onset:
   # rule: {...}                # or a complete definition written inline
 ```
 
-`override` is merged like `extends` and validated with the same strict errors; the run prints the definition's description, "icpac v1, overridden: wet_day" and its hash, and records them in `resolved_definition.yaml`. `dry_spell_check: false` is an override too. A path to a shared definition file still works. Regions are YAML files in `hcwf/onset/regions/`. A custom region in `hcwf/spatial/region_def.py` has no default definition, so set `onset.definition` and `observations.day_boundary` yourself.
+`override` is merged like `extends` and validated with the same strict errors; the run prints the definition's description, "icpac v1, overridden: wet_day" and its hash, and records them in `resolved_definition.yaml`. `dry_spell_check: false` is an override too. A path to a shared definition file still works. Regions are YAML files in `hcwf/onset/regions/`. A region you add as a YAML file in `hcwf/onset/regions/` without `definitions` has no default definition, so set `onset.definition` and `observations.day_boundary` yourself.
 
 The old flat onset keys (`wet_init`, `wet_spell`, `dry_extent`, ...) are no longer read: a config needs an onset definition, and one that still has the keys is refused with a pointer to `hcwf-run convert old.yaml -o new.yaml`, which writes them as an `onset.rule`. The keys `layout`, `work_dir`, `pkg_dir`, `debug`, `years`, `years_clim` and `fallback_date` were removed too (they had no effect).
 
@@ -126,18 +126,19 @@ The mask is built on each dataset's own grid (the observations and every model s
 
 ```
 hcwf/
-  driver.py     hcwf-run entry point; api.py is hcwf.run / hcwf.check
-  onset/        onset component: definitions, registry, regions, ingestion, backends, explain, viz
-  app/          benchmarking workflow and diagnostics
-  stats/        HCWF's onset adapter, ensembles, climatology
-  metrics/      error and skill scores
-  io/           input and output
-  lib/          config schema, YAML loading, dataset detection, validation, lead windows
-  config.py     Config objects for notebooks
-  cli.py        the hcwf-run command
-  graphics/     plots and maps
-  params/       region_def.py (custom regions)
-  utils/        helpers
+  api.py        hcwf.run / hcwf.check
+  cli/          hcwf-run entry point (driver, parser, onset subcommand)
+  config/       run config: schema, YAML mapping, validation, dataset description and detection, onset setup, lead windows
+  runs/         run folder, resolved config, --check report, onset-date export (collection)
+  io/           reading (stores, observations, forecasts, reference, thresholds, warmup, dims) and writing (output)
+  spatial/      evaluation units, regrid, masks, region selection, reading cells onto units
+  onset/        onset component: definitions, registry, regions (YAML and lookup), ingestion, engines, backends, explain, viz
+  references/   climatology and conditional-climatology references
+  metrics/      pure scores: pairs, contingency, probabilistic, error, tables
+  scoring/      per-case scoring flows (pairs, onset tables, deterministic and probabilistic skill)
+  figures/      plots and maps
+  blend/        trained blending
+  errors.py     every error HCWF raises on purpose, in one hierarchy
 examples/config.yaml  example run config
 docs/                guides and specification
 demo/                demo data and notebooks

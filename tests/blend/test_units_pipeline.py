@@ -5,11 +5,13 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-from hcwf.io import input as io_input
+from hcwf.io import forecasts as forecasts_io
+from hcwf.spatial import onto_units
 from hcwf.config import schema
 from hcwf.onset import regions as rg
-from hcwf.spatial import EvaluationUnits, UnitsSpec, UnitsSpecError
+from hcwf.spatial import UnitsSpec
 from hcwf.onset import observed_cache
+from hcwf.errors import UnitsSpecError
 
 LAT, LON = np.array([0.0, 1.0, 2.0]), np.array([10.0, 11.0])
 
@@ -68,36 +70,36 @@ def test_units_mode_and_weights_may_differ_by_source():
 
 def test_strict_lead_selection_orders_renumbers_and_checks_the_horizon():
     da = xr.DataArray(np.arange(6.0), dims="step", coords={"step": [3, 1, 2, 5, 4, 6]})
-    out = io_input.select_leads(da, 2, 5, strict=True)
+    out = forecasts_io.select_leads(da, 2, 5, strict=True)
     assert out["lead_day"].values.tolist() == [2, 3, 4, 5] and out["step"].values.tolist() == [1, 2, 3, 4]
     assert out.values.tolist() == [2.0, 0.0, 4.0, 3.0]
     with pytest.raises(ValueError, match="exactly days 1..4"):
-        io_input.select_leads(da, 1, 6, strict=True, rain_horizon=(4, "exact"))
-    io_input.select_leads(da, 1, 6, strict=True, rain_horizon=(4, "truncate"))
+        forecasts_io.select_leads(da, 1, 6, strict=True, rain_horizon=(4, "exact"))
+    forecasts_io.select_leads(da, 1, 6, strict=True, rain_horizon=(4, "truncate"))
     gap = xr.DataArray(np.arange(3.0), dims="step", coords={"step": [1, 2, 4]})
     with pytest.raises(ValueError, match="consecutive"):
-        io_input.select_leads(gap, 1, 4, strict=True)
+        forecasts_io.select_leads(gap, 1, 4, strict=True)
 
 
 def test_hcwfs_lead_selection_drops_step_zero_and_cuts_at_the_last_step():
     da = xr.DataArray(np.arange(6.0), dims="step", coords={"step": [0, 1, 2, 3, 4, 5]})
-    assert io_input.select_leads(da, None, 3)["step"].values.tolist() == [1, 2, 3]
-    assert io_input.select_leads(da)["step"].values.tolist() == [1, 2, 3, 4, 5]
+    assert forecasts_io.select_leads(da, None, 3)["step"].values.tolist() == [1, 2, 3]
+    assert forecasts_io.select_leads(da)["step"].values.tolist() == [1, 2, 3, 4, 5]
 
 
 def test_members_are_named_or_cut_by_number():
     da = xr.DataArray(np.zeros(4), dims="member", coords={"member": [0, 1, 2, 3]})
-    assert io_input.select_members(da, [1, 3])["member"].values.tolist() == [1, 3]
-    assert io_input.select_members(da, at_most=2, among=[1, 2, 3])["member"].values.tolist() == [1, 2]
+    assert forecasts_io.select_members(da, [1, 3])["member"].values.tolist() == [1, 3]
+    assert forecasts_io.select_members(da, at_most=2, among=[1, 2, 3])["member"].values.tolist() == [1, 2]
     with pytest.raises(ValueError, match="none of its members"):
-        io_input.select_members(da, at_most=-1)
+        forecasts_io.select_members(da, at_most=-1)
 
 
 def test_declared_units_win_over_the_configured_factor():
     declared = xr.DataArray(np.zeros(2), attrs={"units": "m"})
-    assert io_input.declared_scale(declared, 7.0) == 1000.0
-    assert io_input.declared_scale(xr.DataArray(np.zeros(2), attrs={"units": "kg m**-2"}), 7.0) is None
-    assert io_input.declared_scale(xr.DataArray(np.zeros(2)), 25.4) == 25.4
+    assert onto_units.declared_scale(declared, 7.0) == 1000.0
+    assert onto_units.declared_scale(xr.DataArray(np.zeros(2), attrs={"units": "kg m**-2"}), 7.0) is None
+    assert onto_units.declared_scale(xr.DataArray(np.zeros(2)), 25.4) == 25.4
 
 
 def test_the_fingerprint_of_a_grid_run_has_its_six_parts_and_units_and_options_add_their_own(monkeypatch):

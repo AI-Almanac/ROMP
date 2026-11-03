@@ -7,14 +7,36 @@ from hcwf.figures.heatmap import create_heatmap
 from hcwf.figures.reliability import plot_reliability_diagram
 from hcwf.figures.panel_portrait_skill import panel_portrait_bss_auc
 from hcwf.figures.panel_bar_skill import panel_bar_bss_rpss_auc
-from hcwf.io.output import save_score_results, score_tables
+from hcwf.io.output import save_score_results
+from hcwf.metrics.tables import score_tables
 from hcwf.naming import tuple_to_str
-from hcwf.io.dict import select_key_at_level
 from collections import defaultdict
 import logging
 from hcwf.log import progress
 
 log = logging.getLogger(__name__)
+
+
+def select_key_at_level(d, level, key):
+    """
+    Select a specific key at a given nesting level in a nested dict.
+    and remove that level from the returned dict.
+
+    level = 1 → top level
+    level = 2 → second level
+    """
+
+    if level == 1:
+        # drop this level: return the selected subtree
+        return d.get(key, {})
+
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            sub = select_key_at_level(v, level - 1, key)
+            if sub:
+                out[k] = sub
+    return out
 
 
 def skill_score_in_bins(rc):

@@ -1,4 +1,4 @@
-"""NetCDF export of the gridded onset dates an HCWF run scores.
+"""NetCDF export of the gridded onset dates an HCWF run scores: what is collected here is written by hcwf.io.output.
 
     from hcwf.runs.export import export_onsets
     paths = export_onsets(cfg, sources=["observed", "AIFS"], out="onsets")   # {source: Path}
@@ -23,7 +23,6 @@ paths, versions and the resolved run config (see docs/onset_in_hcwf.md, "Exporti
 from __future__ import annotations
 
 import datetime
-import json
 import warnings
 from pathlib import Path
 
@@ -31,11 +30,14 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hcwf.io.input import forecast_of, history_of, initialization_dates, observations_of, thresholds_of
+from hcwf.io.forecasts import forecast_of, initialization_dates
+from hcwf.io.observations import history_of, observations_of
+from hcwf.io.thresholds import thresholds_of
 from hcwf.config.model import AreaSpec, Case, RunConfig
 from hcwf.runs.folder import file_name
 from hcwf.runs.resolved import resolved_config_text_of
-from hcwf.io.output import with_unit_labels
+from hcwf.io.output import (EPOCH, coord_attrs, date_var, day_of_year, days_of, float_var, json_text, lead_comment,
+                            netcdf_attrs, standard_calendar, status_var, with_unit_labels, write_netcdf)
 from hcwf.spatial import axes
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
@@ -54,13 +56,8 @@ log = logging.getLogger(__name__)
 
 OBSERVED = "observed"
 CLIMATOLOGY = "climatology"
-DATE_UNITS = "days since 1970-01-01"
-DATE_FILL = -2147483648
-_EPOCH = np.datetime64("1970-01-01")
 _NO_OBS = np.datetime64("2262-01-01", "ns")
 """Stand-in observed onset (after every init) that makes every cell a case for the climatology functions."""
-_MAX_CHUNK = 2_000_000
-_COMPRESSION = {"zlib": True, "complevel": 4, "shuffle": True}
 
 
 # --- configuration ----------------------------------------------------------------------------------
@@ -93,129 +90,6 @@ def _check_sources(rc: RunConfig, sources) -> list[str]:
 
 
 # --- helpers for dates, attributes and encoding -------------------------------------------------------
-
-def _days(values, calendar: str) -> np.ndarray:
-    """Days since 1970-01-01 (float, NaN for none) of datetime64 values or cftime objects (None for none)."""
-    values = np.asarray(values)
-    if values.dtype.kind == "M":
-        days = (values.astype("datetime64[D]") - _EPOCH) / np.timedelta64(1, "D")
-        return np.where(np.isnat(values), np.nan, days).astype(float)
-    import cftime
-
-    out = np.full(values.shape, np.nan)
-    present = np.array([v is not None for v in values.ravel()], dtype=bool).reshape(values.shape)
-    if present.any():
-        out[present] = cftime.date2num(list(values[present]), DATE_UNITS, calendar=calendar)
-    return out
-
-
-def _to_dates(days, calendar: str) -> np.ndarray:
-    """datetime64[ns] (NaT for none) or, for a non-standard calendar, cftime objects (None) of day numbers."""
-    days = np.asarray(days, dtype=float)
-    present = ~np.isnan(days)
-    if _standard(calendar):
-        whole = np.where(present, days, 0).astype("int64").astype("timedelta64[D]")
-        return np.where(present, (_EPOCH + whole).astype("datetime64[ns]"), np.datetime64("NaT", "ns"))
-    import cftime
-
-    out = np.full(days.shape, None, dtype=object)
-    if present.any():
-        out[present] = cftime.num2date(days[present], DATE_UNITS, calendar=calendar)
-    return out
-
-
-def _standard(calendar: str) -> bool:
-    """Whether dates in this calendar are numpy datetimes."""
-    return calendar in ("standard", "gregorian", "proleptic_gregorian")
-
-
-def _doy(days, calendar: str) -> np.ndarray:
-    """Day of the calendar year (1-366) of day numbers, NaN for none, counted in the date's own year."""
-    dates = _to_dates(days, calendar)
-    if _standard(calendar):
-        return pd.DatetimeIndex(dates.ravel()).dayofyear.to_numpy(dtype=float).reshape(dates.shape)
-    return np.array([np.nan if d is None else d.dayofyr for d in dates.ravel()], dtype=float).reshape(dates.shape)
-
-
-def _date_var(days, dims, calendar: str, long_name: str, comment: str = "") -> xr.DataArray:
-    """A CF date variable: day numbers with NaN for none, written as int32 with a fill value (so none is masked)."""
-    attrs = {"long_name": long_name, "units": DATE_UNITS, "calendar": "standard" if _standard(calendar) else calendar}
-    if comment:
-        attrs["comment"] = comment
-    return xr.DataArray(np.asarray(days, dtype=float), dims=dims, attrs=attrs)
-
-
-def _float_var(values, dims, long_name: str, units: str = "", comment: str = "") -> xr.DataArray:
-    """A float32 variable with NaN for none."""
-    attrs = {"long_name": long_name}
-    if units:
-        attrs["units"] = units
-    if comment:
-        attrs["comment"] = comment
-    return xr.DataArray(np.asarray(values, dtype=np.float32), dims=dims, attrs=attrs)
-
-
-def status_var(codes, dims, long_name: str = "onset search outcome") -> xr.DataArray:
-    """An int8 status variable with CF flag_values and flag_meanings (ONSET, NOT_FOUND, CENSORED, PRIOR, INSUFFICIENT_DATA)."""
-    return xr.DataArray(np.asarray(codes).astype(np.int8), dims=dims, attrs={
-        "long_name": long_name,
-        "flag_values": np.array([s.value for s in Status], dtype=np.int8),
-        "flag_meanings": " ".join(s.name for s in Status)})
-
-
-def _coord_attrs(ds: xr.Dataset, lead_label: str | None, lead_comment: str) -> None:
-    """Attach CF attributes to the coordinates present in ds."""
-    attrs = {
-        "lat": {"units": "degrees_north", "standard_name": "latitude", "long_name": "latitude", "axis": "Y"},
-        "lon": {"units": "degrees_east", "standard_name": "longitude", "long_name": "longitude", "axis": "X"},
-        "unit": {"long_name": "evaluation unit id", "cf_role": "timeseries_id"},
-        "unit_name": {"long_name": "evaluation unit name"},
-        "year": {"long_name": "year of the onset season (the season's start)"},
-        "season": {"long_name": "onset season (name in the definition)"},
-        "init_time": {"standard_name": "forecast_reference_time", "long_name": "forecast initialisation date"},
-        "member": {"long_name": "ensemble member"},
-        "status_code": {"long_name": "onset status code", "flag_values": np.array([s.value for s in Status], dtype=np.int8),
-                        "flag_meanings": " ".join(s.name for s in Status)},
-        "lead": {"units": "days", "long_name": "forecast lead", "comment": lead_comment, "lead_label": lead_label or ""},
-    }
-    for name, attrs_of in attrs.items():
-        if name in ds.coords:
-            ds[name].attrs.update(attrs_of)
-
-
-def _lead_comment(label: str | None) -> str:
-    """Describe which date a lead number stands for."""
-    if label == "start":
-        return ("lead_label 'start': lead k is the forecast day dated init + k - 1; lead 1 is the init day. "
-                "Leads <= 0 are onsets back-dated into the observed history.")
-    if label == "end":
-        return ("lead_label 'end': lead k is the forecast day dated init + k. Leads <= 0 are onsets back-dated "
-                "into the observed history.")
-    return "lead k counted from the first forecast day (lead 1); leads <= 0 are onsets back-dated into the observed history."
-
-
-def _json(value) -> str:
-    """JSON text of a value (paths and unknown objects as text)."""
-    return json.dumps(value, default=str, sort_keys=True)
-
-
-def _clean(attrs: dict) -> dict:
-    """Attributes NetCDF can hold: text, numbers and number arrays; bools become 0/1; None is dropped."""
-    out = {}
-    for key, value in attrs.items():
-        if value is None:
-            continue
-        if isinstance(value, (bool, np.bool_)):
-            value = int(value)
-        elif isinstance(value, dict):
-            value = _json(value)
-        elif isinstance(value, (list, tuple)):
-            value = ",".join(str(v) for v in value)
-        elif isinstance(value, Path):
-            value = str(value)
-        out[key] = value
-    return out
-
 
 def _mask_summary(area: AreaSpec, sample: xr.DataArray) -> dict:
     """The mask settings and how many cells (or units) of the loaded grid have no data at all in the sample variable."""
@@ -262,70 +136,20 @@ def _provenance(rc: RunConfig, case: Case, source: str, kind: str, thresholds, m
         "dry_spell_check": setup.dry_check, "onset_season": setup.season, "onset_backend": setup.backend,
         "threshold_source": setup.threshold_source,
         "threshold_years": f"{setup.threshold_years[0]}-{setup.threshold_years[1]}" if setup.threshold_years and setup.uses_thresholds else "",
-        "threshold_files": _json([list(f) for f in setup.threshold_files]),
+        "threshold_files": json_text([list(f) for f in setup.threshold_files]),
         "threshold_values_hash": "none" if thresholds is None or (
             isinstance(thresholds, dict) and not thresholds and getattr(thresholds, "season_climatology", None) is None
         ) else threshold_hash(thresholds),
-        "mask_summary": _json(mask),
+        "mask_summary": json_text(mask),
         "forecast_history": setup.forecast_history, "lead_label": setup.lead_label,
         "lead_window": f"{window[0]}-{window[1]}", "max_forecast_day": ev.max_forecast_day,
         "obs_day_boundary": setup.obs_day_boundary, "forecast_day_boundary": setup.forecast_boundary,
         "years": [int(y) for y in years], "years_clim": [int(y) for y in ev.climatology_years],
         "init_days": list(ev.init_days), "region": rc.area.region,
-        "dataset_paths": _json(paths), "resolved_config_yaml": config_yaml,
+        "dataset_paths": json_text(paths), "resolved_config_yaml": config_yaml,
     }
     attrs.update(extra)
-    return _clean(attrs)
-
-
-def _chunks(var: xr.DataArray) -> tuple[int, ...]:
-    """Chunk sizes: whole map, lead and status axes per chunk, one init, year, season (and member for big grids)."""
-    whole = ("lat", "lon", "unit", "lead", "status_code", "member")
-    chunk = [min(n, 512) if d in whole else 1 for d, n in zip(var.dims, var.shape)]
-    while np.prod(chunk) > _MAX_CHUNK:
-        for dim in ("member", "lead", "status_code", "unit", "lon", "lat"):
-            if dim in var.dims and chunk[var.dims.index(dim)] > 1:
-                chunk[var.dims.index(dim)] = -(-chunk[var.dims.index(dim)] // 2)
-                break
-        else:
-            break
-    return tuple(int(c) for c in chunk)
-
-
-def write_netcdf(ds: xr.Dataset, path) -> Path:
-    """Write ds as compressed NetCDF4: zlib level 4 with shuffle, sensible chunks, fill values for date variables."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    encoding = {}
-    for name, var in ds.data_vars.items():
-        enc = dict(_COMPRESSION) if var.size else {}
-        if var.size:
-            enc["chunksizes"] = _chunks(var)
-        if str(var.attrs.get("units", "")).startswith("days since"):
-            enc.update({"dtype": "int32", "_FillValue": DATE_FILL})
-        elif var.dtype.kind in "iu":
-            enc["_FillValue"] = None
-        encoding[name] = enc
-    ds.to_netcdf(path, engine="netcdf4", format="NETCDF4", encoding=encoding)
-    return path
-
-
-def open_onsets(path) -> xr.Dataset:
-    """Open an export file; dates on non-standard calendars come back as cftime objects with None for no onset.
-
-    xarray cannot decode a cftime variable that has masked values, so such date variables are decoded here
-    (hcwf.runs.export._to_dates) and everything else by xarray. Standard calendars open as datetime64 with NaT. The
-    `lead` coordinate has units "days": it is opened as plain numbers, not timedeltas.
-    """
-    raw = xr.open_dataset(path, decode_times=False, decode_timedelta=False)
-    dates = [n for n, v in raw.data_vars.items() if str(v.attrs.get("units", "")).startswith("days since")
-             and not _standard(v.attrs.get("calendar", "standard"))]
-    ds = xr.decode_cf(raw.drop_vars(dates), decode_timedelta=False)
-    for name in dates:
-        ds[name] = (raw[name].dims, _to_dates(raw[name].values, raw[name].attrs["calendar"]), {
-            k: v for k, v in raw[name].attrs.items() if k not in ("units", "calendar")})
-    ds.attrs.update(raw.attrs)
-    return ds
+    return netcdf_attrs(attrs)
 
 
 # --- observed -----------------------------------------------------------------------------------------
@@ -358,17 +182,17 @@ def collect_observed(rc: RunConfig) -> xr.Dataset:
     calendar = parts[0].attrs["calendar"]
     spatial = axes.spatial_dims(result["onset_date"].dims)
     dims = ("year", "season", *spatial)
-    days = _days(result["onset_date"].transpose(*dims).values, calendar)
+    days = days_of(result["onset_date"].transpose(*dims).values, calendar)
     ds = xr.Dataset(
-        {"onset_date": _date_var(days, dims, calendar, "observed rainy-season onset date",
+        {"onset_date": date_var(days, dims, calendar, "observed rainy-season onset date",
                                  "no onset: masked (see status)"),
-         "onset_doy": _float_var(_doy(days, calendar), dims, "day of the calendar year of the onset", "1",
+         "onset_doy": float_var(day_of_year(days, calendar), dims, "day of the calendar year of the onset", "1",
                                  "1-366 in the onset date's own year; NaN where there is no onset"),
          "status": status_var(result["status"].transpose(*dims).values, dims)},
         coords={"year": result["year"].values, "season": result["season"].values,
                 **{d: result[d].values for d in spatial}})
     ds = with_unit_labels(ds, rc.observations.units)
-    _coord_attrs(ds, None, "")
+    coord_attrs(ds, None, "")
     years = [int(y) for y in ds["year"].values]
     mask = _mask_summary(rc.area, sample)
     ds.attrs = _provenance(rc, case, OBSERVED, "observed", thresholds, mask, years, {
@@ -409,7 +233,7 @@ def collect_model(rc: RunConfig, model: str) -> xr.Dataset:
         raise ValueError(f"no forecast year of {model} could be read; nothing to export")
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
     ds = with_unit_labels(ds, rc.observations.units)
-    _coord_attrs(ds, setup.lead_label, _lead_comment(setup.lead_label))
+    coord_attrs(ds, setup.lead_label, lead_comment(setup.lead_label))
     years = sorted({int(t.year) for t in pd.DatetimeIndex(ds["init_time"].values)})
     extra = {"calendar": calendar, "model": model, "ensemble": ensemble,
              "onset_percentage_threshold": threshold if ensemble else None,
@@ -428,20 +252,20 @@ def _model_year(out: dict, ensemble: bool, threshold: float) -> xr.Dataset:
     spatial = out["spatial"]
     status = res["status"].transpose(*dims).values
     found = status == Status.ONSET
-    days = np.where(found, _days(res["onset_date"].transpose(*dims).values, calendar), np.nan)
-    init_days = _days(out["init"], calendar)
+    days = np.where(found, days_of(res["onset_date"].transpose(*dims).values, calendar), np.nan)
+    init_days = days_of(out["init"], calendar)
     shape = (-1,) + (1,) * (len(dims) - 1)
     variables = {
-        "onset_date": _date_var(days, dims, calendar, "forecast rainy-season onset date",
+        "onset_date": date_var(days, dims, calendar, "forecast rainy-season onset date",
                                 "date label of the onset day; set only where status is ONSET (a PRIOR search is "
                                 "reported as no onset, as scored); no onset: masked"),
-        "onset_doy": _float_var(_doy(days, calendar), dims, "day of the calendar year of the onset", "1",
+        "onset_doy": float_var(day_of_year(days, calendar), dims, "day of the calendar year of the onset", "1",
                                 "1-366 in the onset date's own year; NaN where there is no onset"),
-        "onset_lead": _float_var(np.where(found, res["onset_lead"].transpose(*dims).values, np.nan), dims,
+        "onset_lead": float_var(np.where(found, res["onset_lead"].transpose(*dims).values, np.nan), dims,
                                  "lead of the onset day in days", "",
                                  "1-based forecast lead of the onset day (see the lead coordinate for lead_label); "
                                  "<= 0 means back-dated into the observed history; NaN where there is no onset"),
-        "onset_day": _float_var(days - init_days.reshape(shape), dims, "days from the init date to the onset date",
+        "onset_day": float_var(days - init_days.reshape(shape), dims, "days from the init date to the onset date",
                                 "", "as the onset_day column of the scored tables; NaN where there is no onset"),
         "status": status_var(status, dims),
         "scored": xr.DataArray(out["valid"].astype(np.int8), dims=("init_time", *spatial), attrs={
@@ -475,14 +299,14 @@ def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: 
     has_onset = ~np.isnan(day)
     names = _ensemble_status(out["status"], threshold, has_onset)
     codes = np.vectorize(lambda n: Status[n].value, otypes=[np.int8])(names)
-    ensemble_days = _days(date, calendar) if _standard(calendar) else axes.broadcast_rows(init_days, day.ndim) + day
+    ensemble_days = days_of(date, calendar) if standard_calendar(calendar) else axes.broadcast_rows(init_days, day.ndim) + day
     ensemble_days = np.where(has_onset, ensemble_days, np.nan)
     comment = (f"as scored: the ensemble has an onset when at least {threshold:g} of the members have one; its "
                "day after the init is the mean member onset day rounded half to even (this is not the median)")
-    variables["ensemble_onset_date"] = _date_var(ensemble_days[:, None], dims, calendar, "ensemble onset date", comment)
-    variables["ensemble_onset_doy"] = _float_var(_doy(ensemble_days, calendar)[:, None], dims,
+    variables["ensemble_onset_date"] = date_var(ensemble_days[:, None], dims, calendar, "ensemble onset date", comment)
+    variables["ensemble_onset_doy"] = float_var(day_of_year(ensemble_days, calendar)[:, None], dims,
                                                  "day of the calendar year of the ensemble onset", "1")
-    variables["ensemble_onset_day"] = _float_var(day[:, None], dims, "days from the init date to the ensemble onset",
+    variables["ensemble_onset_day"] = float_var(day[:, None], dims, "days from the init date to the ensemble onset",
                                                  "", comment)
     variables["ensemble_status"] = status_var(codes[:, None], dims, "ensemble onset search outcome")
 
@@ -520,15 +344,15 @@ def _reference_year(table: pd.DataFrame, init_dates, obs_da: xr.DataArray, score
     dims = ("init_time", "season", *spatial)
     date = pd.to_datetime(pd.Series(table["onset_date"].to_numpy(dtype=object))).to_numpy().reshape(shape)
     day = table["onset_day"].to_numpy(dtype=float).reshape(shape)
-    days = _days(date.astype("datetime64[ns]"), "standard")
+    days = days_of(date.astype("datetime64[ns]"), "standard")
     found = ~np.isnan(days)
     return xr.Dataset(
-        {"onset_date": _date_var(days, dims, "standard", "climatological forecast onset date",
+        {"onset_date": date_var(days, dims, "standard", "climatological forecast onset date",
                                  "the forecast is a date within the lead window; none: masked"),
-         "onset_doy": _float_var(_doy(days, "standard"), dims, "day of the calendar year of the onset", "1"),
-         "onset_lead": _float_var(day, dims, "lead of the onset day in days", "",
+         "onset_doy": float_var(day_of_year(days, "standard"), dims, "day of the calendar year of the onset", "1"),
+         "onset_lead": float_var(day, dims, "lead of the onset day in days", "",
                                   "days after the init date (lead k is init + k); NaN where there is no onset"),
-         "onset_day": _float_var(day, dims, "days from the init date to the onset date"),
+         "onset_day": float_var(day, dims, "days from the init date to the onset date"),
          "status": status_var(np.where(found, Status.ONSET, Status.NOT_FOUND), dims),
          "scored": xr.DataArray(scored.astype(np.int8), dims=("init_time", *spatial), attrs={
              "long_name": "case is scored by HCWF", "flag_values": np.array([0, 1], dtype=np.int8),
@@ -560,20 +384,20 @@ def collect_climatology(rc: RunConfig) -> xr.Dataset:
     spatial = axes.spatial_dims(clim_doy.dims)
     doy = clim_doy.transpose(*spatial).values.astype(float)[None]
     reference_year = int(years[0][0])
-    nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - _EPOCH)
+    nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - EPOCH)
                        / np.timedelta64(1, "D") + doy - 1)
     ds = with_unit_labels(ds, rc.observations.units)
     if "unit" in spatial:   # units are matched by id
         doy = clim_doy.reindex(unit=ds["unit"].values).transpose(*spatial).values.astype(float)[None]
-        nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - _EPOCH)
+        nominal = np.where(np.isnan(doy), np.nan, (np.datetime64(f"{reference_year}-01-01") - EPOCH)
                            / np.timedelta64(1, "D") + doy - 1)
-    ds["climatological_onset_doy"] = _float_var(doy, ("season", *spatial), "climatological onset, day of year",
+    ds["climatological_onset_doy"] = float_var(doy, ("season", *spatial), "climatological onset, day of year",
                                                "1", "rounded mean day of the calendar year of the observed onsets "
                                                f"of years_clim {ev.climatology_years[0]}-{ev.climatology_years[-1]}")
-    ds["climatological_onset_date"] = _date_var(nominal, ("season", *spatial), "standard",
+    ds["climatological_onset_date"] = date_var(nominal, ("season", *spatial), "standard",
                                                 "climatological onset date",
                                                 f"the day of year placed in the nominal year {reference_year}")
-    _coord_attrs(ds, setup.lead_label, "days after the init date: the climatology forecast onset lies at lead k = init + k")
+    coord_attrs(ds, setup.lead_label, "days after the init date: the climatology forecast onset lies at lead k = init + k")
     ds.attrs = _provenance(rc, case, CLIMATOLOGY, "climatology reference", thresholds,
                            _mask_summary(rc.area, years[0][3].isel(time=slice(0, 400))), [y[0] for y in years],
                            {"calendar": "standard", "climatology_reference_year": reference_year,
@@ -618,7 +442,7 @@ def collect_conditional_climatology(rc: RunConfig) -> xr.Dataset:
         parts.append(part)
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")
     ds = with_unit_labels(ds, rc.observations.units)
-    _coord_attrs(ds, setup.lead_label, "days after the init date: the conditional onset lies at lead k = init + k")
+    coord_attrs(ds, setup.lead_label, "days after the init date: the conditional onset lies at lead k = init + k")
     ds.attrs = _provenance(rc, case, CONDITIONAL_CLIMATOLOGY, "conditional climatology reference", thresholds,
                            _mask_summary(rc.area, years[0][3].isel(time=slice(0, 400))), [y[0] for y in years],
                            {"calendar": "standard", "climatology_cv": cv_mode(climatology_cv),

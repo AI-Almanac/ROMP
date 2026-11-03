@@ -4,7 +4,8 @@
 import pytest
 
 from hcwf.config.validate import problems
-from hcwf.config.onset import OnsetConfigError, onset_setup
+from hcwf.config.onset import onset_setup
+from hcwf.errors import OnsetConfigError
 
 BOUNDARY = "00 UTC, labelled by start"
 

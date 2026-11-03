@@ -21,6 +21,7 @@ from hcwf.onset import plan as P
 from hcwf.onset.backends import reference
 from hcwf.onset.ingest import ingest, ingest_forecast
 from hcwf.onset.model import Jobs, Status, StitchedJobs
+from hcwf.errors import DefinitionError
 
 BOUNDARY = "00 UTC, labelled by start"
 DEFINITIONS = {
@@ -152,19 +153,19 @@ def test_definitions_without_the_new_fields_keep_their_hash():
 
 def test_dry_day_must_be_a_fixed_less_than():
     for bad in ("at least 1 mm", "less than thr"):
-        with pytest.raises(D.DefinitionError, match="dry_day"):
+        with pytest.raises(DefinitionError, match="dry_day"):
             D.loads(HEAD + DEFINITIONS["dry_day_runs"].replace("less than 0.6 mm", bad))
 
 
 def test_beginning_within_is_for_dry_runs_only():
     text = DEFINITIONS["dry_window_and_run"].replace("starting within: 7 days after window", "beginning within: 7 days after window")
-    with pytest.raises(D.DefinitionError, match="beginning within.*dry run"):
+    with pytest.raises(DefinitionError, match="beginning within.*dry run"):
         D.loads(HEAD + text)
 
 
 def test_fine_amounts_need_the_flag_and_exact_rain():
     text = "wet_day: at least 1 mm\nonset:\n  window: 3 days\n  require: [{total: at least 20.05 mm}]\n  reject if: []\n"
-    with pytest.raises(D.DefinitionError, match="0.1 mm"):
+    with pytest.raises(DefinitionError, match="0.1 mm"):
         D.loads(HEAD + text)
     defn = D.loads(HEAD + text, fine_amounts=True)
     plan = P.compile(defn)

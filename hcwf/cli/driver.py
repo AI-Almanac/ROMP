@@ -22,8 +22,8 @@ import sys
 import traceback
 
 from hcwf.errors import HCWFConfigError
-from hcwf.config.schema import ConfigSchemaError
 from hcwf import log as logs
+from hcwf.errors import ConfigSchemaError
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def _run(cfg, flags, cli_args=None) -> int:
     """Load (or take) a config and run it; the exit code: 0, or 1 after printing why it failed."""
     from hcwf.api import execute
     from hcwf.config.build import resolve, resolve_command_line
-    from hcwf.runs.folder import RunExistsError
+    from hcwf.errors import RunExistsError
 
     try:
         rc = resolve_command_line(cli_args) if cfg is None else resolve(cfg)

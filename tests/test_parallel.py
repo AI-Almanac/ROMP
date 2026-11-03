@@ -1,5 +1,4 @@
 """Parallel years give the serial answer; the parallel.workers config key; threaded reads of NetCDF stay safe."""
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,12 +9,12 @@ import xarray as xr
 
 import typed_io
 from hcwf.config.model import ParallelSpec
-from hcwf.config.schema import ConfigSchemaError
 from hcwf.config.mapping import build_config
 from hcwf import parallel
 from hcwf.parallel import cores, ordered_prefetch, worker_count
 from tests.test_config_schema import _raw, data  # noqa: F401 - the synthetic-data fixture
 from tests.test_oracle_config import configs, world  # noqa: F401 - the fixture world and its configs
+from hcwf.errors import ConfigSchemaError
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "data" / "phase7" / "baseline"
@@ -157,7 +156,7 @@ def test_equal_thresholds_reloaded_each_window_detect_once(configs, monkeypatch)
     calls = []
     monkeypatch.setattr(benchmark, "map_year_args", lambda *a, **k: calls.append(1) or [{}])
     fresh = {"value": 20.0}
-    monkeypatch.setattr(benchmark.io_input, "thresholds_of",
+    monkeypatch.setattr(benchmark.thresholds_io, "thresholds_of",
                         lambda *a, **k: xr.DataArray(np.full((2, 2), fresh["value"]), dims=("lat", "lon"),
                                                      coords={"lat": [1.0, 2.0], "lon": [3.0, 4.0]}))
     benchmark.reset_onset_tables()

@@ -9,19 +9,16 @@ import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from hcwf.errors import HCWFConfigError
+from hcwf.errors import OnsetConfigError
 from hcwf.onset import definition as definition_mod
 from hcwf.onset import plan as plan_mod, regions
 from hcwf.onset.ingest import parse_day_boundary
 from hcwf.onset.model import Definition, DerivedSeasons, FirstPassage
+from hcwf.errors import DefinitionError, RegionError
 
 BACKENDS = ("numba", "reference", "gpu")
 FORECAST_BOUNDARY = "00 UTC, labelled by {label}"
 """Declared day boundary of forecast accumulations: 24 h after a 00 UTC init, labelled per lead_label."""
-
-
-class OnsetConfigError(HCWFConfigError):
-    """The onset settings are missing, inconsistent or unknown; the message says how to fix them."""
 
 
 class Thresholds(dict):
@@ -91,7 +88,7 @@ def _chain(cfg):
         return [], "no region is set"
     try:
         region = regions.load_region(name)
-    except regions.RegionError as exc:
+    except RegionError as exc:
         return [], str(exc)
     return [region, *regions.ancestors(region)], None
 
@@ -265,7 +262,7 @@ def _load_definition(cfg, ref, sources):
         if not isinstance(changes, dict):
             raise OnsetConfigError(f"onset.override = {changes!r} must be a mapping of definition keys to change")
         return definition_mod.override(definition, changes, fine_amounts=fine), tuple(_changed_keys(changes))
-    except definition_mod.DefinitionError as exc:
+    except DefinitionError as exc:
         raise OnsetConfigError(f"onset_definition = {ref!r}: {exc}") from None
 
 

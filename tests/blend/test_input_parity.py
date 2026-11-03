@@ -2,7 +2,6 @@
 into _oracle/nc_utils_io.py): observations, adm3 files, forecast files, sparse tile reads, and the aggregation of source
 cells onto units in either order of scaling."""
 import datetime as dt
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -14,7 +13,7 @@ from _inputs import DAYS, LATS, LONS, grid_weights, id_weights, write_adm3, writ
 from _oracle import nc_utils_filters as filters
 from _oracle import nc_utils_io as legacy
 from _oracle.spatial_id_utils import GridIdConvention
-from hcwf.io import input as io_input
+from hcwf.spatial import onto_units
 from hcwf.onset.ingest import ingest
 from hcwf.spatial import EvaluationUnits
 from hcwf.spatial.select import load_blocks
@@ -143,7 +142,7 @@ def test_an_adm3_file_reads_as_the_legacy_table_reads_it(tmp_path):
     assert new.dims == ("time", "unit") and new["unit"].values.tolist() == ["north", "south", "East ward"]
     np.testing.assert_array_equal(new.values.reshape(-1), old["precip"].to_numpy())
     assert old["id"].tolist()[:3] == ["north", "south", "East ward"]
-    unit = io_input.read_unit_dim(xr.open_dataset(tmp_path / "adm3_2003.nc").pipe(dim_fmt)["precip"],
+    unit = onto_units.read_unit_dim(xr.open_dataset(tmp_path / "adm3_2003.nc").pipe(dim_fmt)["precip"],
                                   block_dim="time", ids=["East ward", "north"])
     np.testing.assert_array_equal(unit.values, new.sel(unit=["East ward", "north"]).values)
     series = ingest(unit, day_boundary=BOUNDARY, units="mm", rain_resolution="exact", negatives="keep", missing="keep")
@@ -162,7 +161,7 @@ def test_observed_cells_onto_units_are_the_legacy_cell_transform(tmp_path, polic
     expect = old.pivot(index="time", columns="id", values="precip")
     da = dim_fmt(xr.open_dataset(tmp_path / "2003.nc"))["precip"]
     units = units_of(grid_weights(), id_keyed=keyed == "id")
-    got = io_input.read_on_units(da, units, block_dim="time", missing=policy, convention=CONVENTION if keyed == "id" else None)
+    got = onto_units.read_on_units(da, units, block_dim="time", missing=policy, convention=CONVENTION if keyed == "id" else None)
     assert got.dims == ("time", "unit") and got["unit"].values.tolist() == ["north", "south"]
     np.testing.assert_array_equal(got.values, expect[["north", "south"]].to_numpy())
     assert got.dtype == np.float64
@@ -181,7 +180,7 @@ def test_a_dropped_source_leaves_the_means_of_its_year(tmp_path):
     old = legacy.transform_groundtruth_long(legacy_ids(old), filters.read_cell_transform(spec), "precip", spec=spec)
     expect = old.pivot(index="time", columns="id", values="precip")
     da = dim_fmt(xr.open_dataset(tmp_path / "2004.nc"))["precip"]
-    got, support, years = io_input.read_on_units(da, units_of(grid_weights()), block_dim="time", missing="drop",
+    got, support, years = onto_units.read_on_units(da, units_of(grid_weights()), block_dim="time", missing="drop",
                                                  support=True)
     np.testing.assert_array_equal(got.values, expect[["north", "south"]].to_numpy())
     assert years.tolist() == [2004] and support.tolist() == [[True], [True]]
@@ -191,7 +190,7 @@ def test_a_dropped_source_leaves_the_means_of_its_year(tmp_path):
     cells = da.copy(deep=True)
     cells.values[0, 0, 0] = np.nan
     cells.values[0, 1, 0] = np.nan
-    empty, support, _ = io_input.unit_series(cells, only_north.transform(cells["lat"], cells["lon"]),
+    empty, support, _ = onto_units.unit_series(cells, only_north.transform(cells["lat"], cells["lon"]),
                                              missing="drop", support=True)
     assert np.isnan(empty.values).all() and support.tolist() == [[False]]
 
@@ -217,8 +216,8 @@ def test_a_region_box_cuts_without_masks_and_the_weights_match_the_flipped_grid(
     ds = xr.open_dataset(tmp_path / "2003.nc")
     flipped = dim_fmt(ds.isel(lat=slice(None, None, -1)))["precip"]
     units = units_of(grid_weights())
-    own = io_input.read_on_units(flipped, units, block_dim="time")
-    boxed = io_input.read_on_units(flipped, units, block_dim="time", region="india")
+    own = onto_units.read_on_units(flipped, units, block_dim="time")
+    boxed = onto_units.read_on_units(flipped, units, block_dim="time", region="india")
     np.testing.assert_array_equal(boxed.values, own.values)
     assert boxed.dtype == np.float64
 
@@ -272,7 +271,7 @@ def test_forecast_cells_onto_units_are_the_legacy_cell_transform_with_the_scale_
                        for unit in ("north", "south")], axis=1)  # (init * member, unit, day)
     ds = dim_fmt_model_ensemble(xr.open_dataset(path))
     da = ds["tp"].sel(init_time=pd.to_datetime(INITS))
-    got = io_input.read_on_units(da, units_of(None, id_keyed=True), block_dim="init_time", scale=scale,
+    got = onto_units.read_on_units(da, units_of(None, id_keyed=True), block_dim="init_time", scale=scale,
                                  convention=CONVENTION)
     assert got.dims == ("init_time", "member", "step", "unit") or set(got.dims) == {"init_time", "member", "step", "unit"}
     got = got.transpose("init_time", "member", "unit", "step")
@@ -285,8 +284,8 @@ def test_a_regrid_scales_after_the_averaging(tmp_path):
     scale = 0.1
     ds = dim_fmt_model_ensemble(xr.open_dataset(path))
     units = EvaluationUnits.from_weights(grid_weights())
-    after = io_input.read_on_units(ds["tp"], units, block_dim="init_time", post_scale=scale)
-    first = io_input.read_on_units(ds["tp"], units, block_dim="init_time", scale=scale)
+    after = onto_units.read_on_units(ds["tp"], units, block_dim="init_time", post_scale=scale)
+    first = onto_units.read_on_units(ds["tp"], units, block_dim="init_time", scale=scale)
     da = dim_fmt_model_ensemble(xr.open_dataset(path))["tp"].load()
     transform = units.transform(da["lat"].values, da["lon"].values)
     cells = da.transpose("lat", "lon", "init_time", "member", "step").values.reshape(len(LATS) * len(LONS), -1)
@@ -299,7 +298,7 @@ def test_a_regrid_scales_after_the_averaging(tmp_path):
     # an array already in memory is not scaled in place
     loaded = ds["tp"].load()
     before = loaded.values.copy()
-    io_input.read_on_units(loaded, units, block_dim="init_time", scale=scale)
+    onto_units.read_on_units(loaded, units, block_dim="init_time", scale=scale)
     np.testing.assert_array_equal(loaded.values, before)
 
 
@@ -355,7 +354,7 @@ def test_units_read_only_the_tiles_that_feed_them(chunked, monkeypatch):
     original = netCDF4_.NetCDF4ArrayWrapper._getitem
     monkeypatch.setattr(netCDF4_.NetCDF4ArrayWrapper, "_getitem",
                         lambda self, key: seen.append(key) or original(self, key))
-    got = io_input.read_on_units(da, units, block_dim="init_time")
+    got = onto_units.read_on_units(da, units, block_dim="init_time")
     monkeypatch.undo()
     assert {(k[3].start, k[4].start) for k in seen} == {(0, 4)}
     full = da.load()

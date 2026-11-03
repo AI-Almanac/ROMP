@@ -40,10 +40,10 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Store, file_identity
-from hcwf.config.datasets import (DatasetError, expand_path, file_year, is_zarr, parse_dataset, resolve_paths,
-                                     year_match)
+from hcwf.config.datasets import expand_path, file_year, is_zarr, parse_dataset, resolve_paths, year_match
 from hcwf.onset import ingest
 from hcwf.io.dims import matches
+from hcwf.errors import DatasetError
 
 _PRECIP_RE = re.compile(r"(?i)precip|rain|prcp|(^|_)(tp|pr)($|_)")
 _ORDER = ("path", "paths", "years", "file_pattern", "variable", "units", "unit_cvt", "dims", "day_boundary",

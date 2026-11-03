@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hcwf.io.input import observations_of, thresholds_of
+from hcwf.io.observations import observations_of
+from hcwf.io.thresholds import thresholds_of
 from hcwf.onset import explain
 from hcwf.onset.ingest import ingest
 import logging

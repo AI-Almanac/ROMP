@@ -42,7 +42,7 @@ def units_of(da, spec):
     `spec` is the run's FigureSpec (or the observations' UnitsSpec or ObsSpec)."""
     if "unit" not in da.dims:
         return None
-    from hcwf.io.input import unit_table
+    from hcwf.spatial.onto_units import unit_table
 
     return unit_table(getattr(spec, "units", spec), da["unit"].values)
 

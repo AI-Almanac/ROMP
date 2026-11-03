@@ -3,6 +3,7 @@ import pytest
 
 from hcwf.onset import definition as dfn
 from hcwf.onset import regions as rg
+from hcwf.errors import DefinitionError, RegionError
 
 VALID = """\
 id: testland
@@ -43,7 +44,7 @@ def test_aliases_and_case():
     assert rg.load_region("Ethiopia").id == "ethiopia"
     assert rg.load_region("INDIA").iso == "IND"
     assert rg.load_region("East Africa").id == "east_africa"
-    with pytest.raises(rg.RegionError, match="unknown region"):
+    with pytest.raises(RegionError, match="unknown region"):
         rg.load_region("atlantis")
 
 
@@ -116,7 +117,7 @@ def test_validation_errors(region_dir, extra, where, fix):
     if extra.startswith("iso:"):
         text = "id: testland\ntitle: Testland\nkind: country\n" + extra
     write(region_dir, text)
-    with pytest.raises(rg.RegionError) as exc:
+    with pytest.raises(RegionError) as exc:
         rg.load_region("testland")
     assert where in str(exc.value) and fix in str(exc.value), str(exc.value)
 
@@ -124,17 +125,17 @@ def test_validation_errors(region_dir, extra, where, fix):
 def test_structural_errors(region_dir):
     """Missing keys, region with iso, id mismatch and duplicate aliases."""
     write(region_dir, "id: testland\nkind: region\n")
-    with pytest.raises(rg.RegionError, match="missing required key 'title'"):
+    with pytest.raises(RegionError, match="missing required key 'title'"):
         rg.load_region("testland")
     write(region_dir, "id: testland\ntitle: T\nkind: region\niso: TST\n")
-    with pytest.raises(rg.RegionError, match="only for countries"):
+    with pytest.raises(RegionError, match="only for countries"):
         rg.load_region("testland")
     write(region_dir, "id: other\ntitle: T\nkind: region\n")
-    with pytest.raises(rg.RegionError, match="file name"):
+    with pytest.raises(RegionError, match="file name"):
         rg.load_region("other")
     write(region_dir, "id: testland\ntitle: T\nkind: region\naliases: [Shared]\n")
     write(region_dir, "id: second\ntitle: T\nkind: region\naliases: [shared]\n", "second")
-    with pytest.raises(rg.RegionError, match="already used"):
+    with pytest.raises(RegionError, match="already used"):
         rg.load_region("second")
 
 
@@ -145,8 +146,8 @@ def test_definition_regions_key():
     assert d.regions == ("east_africa",)
     other = dfn.loads(text.replace("- east_africa", "- sahel"))
     assert other.regions == ("sahel",) and dfn.definition_hash(other) == dfn.definition_hash(d)
-    with pytest.raises(dfn.DefinitionError) as exc:
+    with pytest.raises(DefinitionError) as exc:
         dfn.loads(text.replace("- east_africa", "- narnia"))
     assert "regions[0]" in str(exc.value) and "Fix:" in str(exc.value)
-    with pytest.raises(dfn.DefinitionError, match="regions"):
+    with pytest.raises(DefinitionError, match="regions"):
         dfn.loads(text.replace("regions:\n- east_africa", "regions: east_africa"))
