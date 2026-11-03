@@ -96,10 +96,9 @@ def compute_climatological_onset(*, years_clim,
 
             all_onset_days.append(onset_doy)
 
-        except Exception as e:
-            log.warning(f"Could not process year {year} when compute_climagoloical_onset: {e}")
+        except Exception as e:   # a mean over fewer years would be a different climatology: stop, naming the year
+            e.add_note(f"climatological onset, year {year}")
             raise
-            continue
 
     if not all_onset_days:
         raise ValueError("No valid years found for climatology computation")
