@@ -143,6 +143,30 @@ def test_a_saved_blend_forecasts_like_its_model(region):
         one_date.weekly["cv_week1"].sel(id="10.00_70.00", time="2013-05-15"))
 
 
+def test_a_single_issue_reads_only_that_issue(region, monkeypatch):
+    """With issue_date the live file is read for that issue alone; the forecast is the one of the full read."""
+    from momp.io import input as io_input
+
+    root, _, blend, _ = region
+    files = {"ens": root / "ens" / "2013.nc"}
+    seen = []
+    original = io_input.UnitForecast.runs
+
+    def spy(self):
+        seen.append([pd.Timestamp(i).date() for i in self.issues])
+        return original(self)
+
+    monkeypatch.setattr(io_input.UnitForecast, "runs", spy)
+    full = blend.forecast(files, workers=1)
+    assert len(seen[-1]) > 1
+    seen.clear()
+    one = blend.forecast(files, issue_date="2013-05-15", workers=1)
+    assert seen == [[dt.date(2013, 5, 15)]]
+    for column in one.weekly_table.filter(like="cv_"):
+        whole = full.weekly_table[pd.to_datetime(full.weekly_table["time"]).dt.date == dt.date(2013, 5, 15)]
+        assert np.array_equal(whole[column].to_numpy(), one.weekly_table[column].to_numpy())
+
+
 def test_the_forecast_files_are_blendings_contract(region, tmp_path):
     root, _, blend, _ = region
 

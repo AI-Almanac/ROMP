@@ -233,7 +233,7 @@ def run(blend, forecasts: dict, *, issue_date=None, fewer_members: bool = False,
         forecast_onsets[model.name] = features.forecast(
             cfg, recipe, setup, model.name, thresholds, blend.reference, keep_ids=keep,
             member_ids=blend.signatures[model.name].get("members"), units=blend.frozen_units[model.name],
-            workers=workers, budget_bytes=budget)
+            issue_dates=None if issue_date is None else (issue_date,), workers=workers, budget_bytes=budget)
     # One season: the climatology has nothing to spread over a worker pool (starting it costs more than the fit).
     climatology = features.climatology(recipe, setup, blend.observed, [year], test_years=(year, year), workers=1)
     # No trimming: a forecast must not know when the onset came.

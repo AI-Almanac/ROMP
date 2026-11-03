@@ -1385,9 +1385,11 @@ class UnitForecast:
     member, unit, step) in the file's dtype for cells and float64 for averaged units.
     When the first lead day kept is d (steps are renumbered 1..n) init_time is the issue plus d - 1 days, so every step
     has its true date.
+    `issue_dates` (dates or ISO texts) keeps only the issues on those days, and reads nothing of the others: a file
+    that has none of them has no issues and `runs()` yields nothing.
     """
 
-    def __init__(self, path, kwargs, spec: UnitsSpec, *, keep_ids=None):
+    def __init__(self, path, kwargs, spec: UnitsSpec, *, keep_ids=None, issue_dates=None):
         self.path, name = path, Path(path).name
         variable = kwargs["model_var"]
         ds, self._close = _open_forecast(None, None, None, None, kwargs.get("model_dims"), None, file_path=str(path))
@@ -1407,6 +1409,10 @@ class UnitForecast:
             elif kwargs.get("max_member") is not None or kwargs.get("member_ids") is not None:
                 da = select_members(da, at_most=kwargs.get("max_member"), among=kwargs.get("member_ids"), where=name)
             self.issues = pd.DatetimeIndex(da["init_time"].values).normalize().to_numpy()
+            if issue_dates is not None:
+                wanted = np.array([np.datetime64(d, "D") for d in issue_dates])
+                rows = np.flatnonzero(np.isin(self.issues.astype("datetime64[D]"), wanted))
+                da, self.issues = da.isel(init_time=rows), self.issues[rows]
             spatial = [d for d in da.dims if d not in ("init_time", "member", "step")]
             self.da = da.transpose("init_time", "member", "step", *spatial)
             self.spec = spec
@@ -1433,7 +1439,7 @@ class UnitForecast:
             stored = int(chunks[da.dims.index("init_time")])
             rows = max(1, -(-rows // stored)) * stored
         n_issue = len(self.issues)
-        for start in range(0, n_issue, min(rows, n_issue)):
+        for start in range(0, n_issue, max(1, min(rows, n_issue))):
             stop = min(n_issue, start + rows)
             rain = read_units(da.isel(init_time=slice(start, stop)), self.spec, self.units, self.positions,
                               block_dim="init_time", scale=self.scale)

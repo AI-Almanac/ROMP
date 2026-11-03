@@ -150,13 +150,16 @@ def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids)
 def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, threshold_name):
     """One forecast file's member onset counts per lead day, a run of issues at a time.
 
-    Returns (data, spread): data holds, over (issue, unit, day), count_base / count_fixed_cutoff / count_ref (uint8:
+    Returns (data, spread), or None when `issue_dates` is given and the file has none of them: data holds, over (issue, unit, day), count_base / count_fixed_cutoff / count_ref (uint8:
     members with their onset on each lead day, from the search starting at lead 1, at the fixed cutoff date and at
     the reference onset), plus members (per issue), onset_threshold (unit) and rain_mean (the members' mean rainfall in
     the file's dtype); spread says whether any unit's members differ.
     """
-    with io_input.UnitForecast(path, kwargs, spec, keep_ids=kwargs.get("keep_unit_ids")) as file:
+    with io_input.UnitForecast(path, kwargs, spec, keep_ids=kwargs.get("keep_unit_ids"),
+                               issue_dates=kwargs.get("issue_dates")) as file:
         ids, days, issues = file.ids, file.days, file.issues
+        if not len(issues):
+            return None   # none of the issues asked for is in this file
         n_issue, n_unit, n_day = len(issues), len(ids), len(days)
         variants = ("base", "fixed_cutoff", "ref")
         counts = {v: np.zeros((n_issue, n_unit, n_day), dtype=np.uint8) for v in variants}
@@ -186,12 +189,13 @@ def _forecast_file(path, kwargs, spec, thresholds, fixed_cutoff, reference, thre
 
 
 def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference, *, keep_ids=None, member_ids=None,
-             units=None, workers: int = 1, budget_bytes: int | None = None) -> ForecastOnsets:
+             units=None, issue_dates=None, workers: int = 1, budget_bytes: int | None = None) -> ForecastOnsets:
     """A model's forecast onsets for every one of its files, files in parallel as far as memory allows.
 
     keep_ids limits the units to those (the blendable units under the inner join; their results are unchanged);
     `units` overrides the model's UnitsSpec (a forecast passes the trained blend's); member_ids limits the members
-    read (a forecast reads the trained ones).
+    read (a forecast reads the trained ones); issue_dates reads only the issues on those days (files without any are
+    left out).
     """
     index = cfg["model_list"].index(model)
     spec = recipe.model(model)
@@ -204,13 +208,15 @@ def forecast(cfg: dict, recipe: Recipe, setup, model: str, thresholds, reference
               "rain_horizon": (spec.rain_horizon.max_day, spec.rain_horizon.policy),
               "missing": recipe.onset.forecast_missing, "check_units": False,
               "onset_horizon": cfg.get("onset_horizon") or "truncate", "keep_unit_ids":
-              None if keep_ids is None else sorted(keep_ids)}
+              None if keep_ids is None else sorted(keep_ids),
+              "issue_dates": None if issue_dates is None else tuple(issue_dates)}
     item_bytes = [io_input.unit_forecast_bytes(p, kwargs["model_var"]) for p in paths]
     count = max(1, min(workers, len(paths)))
     count = workers_within(item_bytes, count, budget_bytes) if item_bytes else count
     name = setup.definition.thresholds[0][0] if setup.definition.thresholds else None
     results = map_items(_forecast_file, paths, (kwargs, units, thresholds, recipe.onset.fixed_cutoff, reference, name),
                         workers=count)
+    results = [r for r in results if r is not None]
     names = [tuple(data["unit"].values) for data, _ in results]
     if len(set(names)) > 1:
         raise ValueError(f"model {model}: its files cover different units")
