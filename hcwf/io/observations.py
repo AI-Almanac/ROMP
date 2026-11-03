@@ -30,7 +30,7 @@ from hcwf.spatial.onto_units import (
     select_units,
     units_files,
 )
-from hcwf.spatial.select import implicit_masks, in_memory, region_select, scale_in_place
+from hcwf.spatial.select import implicit_masks, in_memory, region_box, region_select, scale_in_place
 from hcwf.spatial.units import UnitsSpec
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -214,6 +214,35 @@ def _workers(parallel, tasks) -> int:
     return worker_count(config, tasks)
 
 
+def _open_year(year, store, path, read: ObsRead):
+    """The year's observations opened lazily (a zarr store: the year's days of it), in the package's dimension names."""
+    if store is not None:
+        ds = dim_fmt(open_store(store))
+        ds = ds[[read.obs.var]].sel(time=slice(f"{year}-01-01", f"{year}-12-31"))
+        if ds.sizes["time"] == 0:
+            raise FileNotFoundError(f"No observations for year {year} in {store}")
+        return ds
+    return dim_fmt(rename_model_dims(xr.open_dataset(path), read.obs.dims_map()))
+
+
+def observation_grid(year, read: ObsRead):
+    """{"lat": ..., "lon": ...}, the cells `load_observations` gives for the year, from the file's coordinates alone.
+
+    Nothing of the rainfall is read: the region's box (or the one grid point) of the lazy dataset, which is where the
+    loaded array's cells come from (the masks set cells to NaN and keep them). Data without a box has no such grid.
+    """
+    store, path = _locate(year, read)
+    ds = _open_year(year, store, path[0] if isinstance(path, tuple) else path, read)
+    try:
+        box = region_box(ds[[read.obs.var]], region=read.area.region)
+        if read.select.grid_point:
+            box = box.sel(lat=[read.select.lat], lon=[read.select.lon])
+        return {name: np.asarray(box[name].values) for name in ("lat", "lon")}
+    finally:
+        if path is not None:
+            ds.close()
+
+
 def _read_obs_year(year, store, path, read: ObsRead):
     """Read one year of one variable: select the year and the region's box on the lazy array, read once, mask in place.
 
@@ -223,14 +252,7 @@ def _read_obs_year(year, store, path, read: ObsRead):
     if isinstance(path, tuple):
         parts = [_read_obs_year(year, store, one, read) for one in path]
         return xr.concat(parts, dim="time").sortby("time")
-    if store is not None:
-        ds = open_store(store)
-        ds = dim_fmt(ds)
-        ds = ds[[obs.var]].sel(time=slice(f"{year}-01-01", f"{year}-12-31"))
-        if ds.sizes["time"] == 0:
-            raise FileNotFoundError(f"No observations for year {year} in {store}")
-    else:
-        ds = dim_fmt(rename_model_dims(xr.open_dataset(path), obs.dims_map()))
+    ds = _open_year(year, store, path, read)
     if obs.units is not None:
         try:
             return _read_obs_units(ds[obs.var], obs.units, obs.unit_cvt, read)
@@ -387,6 +409,13 @@ def observation_years_of(years, rc, select=NO_SELECTION, hold=True):
     return read_obs_years(years, rc.observations, rc.area, rc.onset_options, select,
                           onset=rc.onset if rc.observations.units is not None else None,
                           run_years=rc.evaluation.years, dir_fig=rc.output.figure_dir, parallel=rc.parallel, hold=hold)
+
+
+def observation_grid_of(year, rc, select=NO_SELECTION):
+    """`observation_grid` of a run."""
+    return observation_grid(year, ObsRead(rc.observations, rc.area, rc.onset_options, select,
+                                          rc.onset if rc.observations.units is not None else None,
+                                          tuple(rc.evaluation.years), rc.output.figure_dir, rc.parallel))
 
 
 def history_of(year, current, rc, select=NO_SELECTION):

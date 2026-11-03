@@ -135,8 +135,9 @@ def detect_observed(rain_slice, thresh_slice, year, rc, select=Selection()):
 
     rain_slice is daily rainfall in mm with dims (time, lat, lon), or (time, unit) for evaluation units (the reader's
     `present` coordinate says which units have a series), or that rainfall already ingested as a DailyRain (the
-    climatology years the thresholds were computed from); for units it may also be a function that reads it, called only
-    when the onsets are not cached. thresh_slice is the threshold from hcwf.io.input.load_thresholds (the definition's
+    climatology years the thresholds were computed from), or a function that reads it, called only when the onsets are
+    not cached (for cells the function needs a `probe` attribute whose `coords` hold the lat and lon: the cache's
+    fingerprint reads the grid from it instead of from the rain). thresh_slice is the threshold from hcwf.io.input.load_thresholds (the definition's
     named thresholds).
     Returns a (lat, lon) or (unit) DataArray of datetime64 onset dates, NaT where there is no onset. For units it carries
     the coordinates `present` and `onset_index` (the 1-based day of the onset in the year's series, NaN without one).
@@ -144,7 +145,7 @@ def detect_observed(rain_slice, thresh_slice, year, rc, select=Selection()):
     under the same fingerprint are returned without detecting again.
     """
     reader = rain_slice if callable(rain_slice) else None
-    cached = observed_cache.lookup(None if reader else rain_slice, thresh_slice, year, rc, select)
+    cached = observed_cache.lookup(getattr(reader, "probe", None) if reader else rain_slice, thresh_slice, year, rc, select)
     if cached is not None:
         return cached
     if reader is not None:

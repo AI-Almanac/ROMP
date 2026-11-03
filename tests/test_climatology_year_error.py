@@ -17,8 +17,10 @@ RUN = {**old_rule(), "max_forecast_day": 20, "years_clim": [2001, 2002]}
 def failing_reads(monkeypatch):
     """Every climatology year fails to read."""
     monkeypatch.setattr(climatology, "thresholds_of", lambda rc, model, select=None: 1.0)
-    monkeypatch.setattr(climatology, "_read_years",
-                        lambda years, rc, select, shared=True: iter([(None, OSError("no file")) for _ in years]))
+    def fail():
+        raise OSError("no file")
+
+    monkeypatch.setattr(climatology, "_year_readers", lambda years, rc, select, shared=True: [fail for _ in years])
 
 
 def test_a_failing_year_stops_the_climatology_and_is_named_once(failing_reads, caplog):

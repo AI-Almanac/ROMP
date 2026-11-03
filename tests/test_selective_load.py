@@ -124,3 +124,30 @@ def test_forecast_selects_before_reading_and_zarr_equals_netcdf(tmp_path, ensemb
     np.testing.assert_array_equal(got[keep], expected[keep])
     with pytest.raises(FileNotFoundError):
         loader(2018, str(store), **kw)
+
+
+@pytest.mark.parametrize("zarr", [False, True])
+@pytest.mark.parametrize("point", [False, True])
+def test_observation_grid_is_the_grid_of_the_loaded_year(tmp_path, zarr, point):
+    """The cells the observed-onset cache fingerprints without reading rainfall are those of the loaded year."""
+    from hcwf.io import observations as observations_io
+
+    years = {2019: obs_year(2019, 2), 2020: obs_year(2020, 3)}
+    if zarr:
+        source = tmp_path / "obs.zarr"
+        xr.concat(list(years.values()), dim="time").to_zarr(source)
+    else:
+        source = tmp_path
+        for year, ds in years.items():
+            ds.to_netcdf(tmp_path / f"{year}.nc")
+    kw = dict(obs_dir=str(source), obs_file_pattern=["{}.nc"], obs_var="rain", region="Ethiopia", shp_only=False,
+              years=[2020])
+    if point:
+        kw.update(grid_point=True, lat_select=5.0, lon_select=40.0)
+    got = typed_io.inputs(kw)
+    loaded = observations_io.load_observations(2020, got.obs, got.area, got.options, got.select, run_years=got.ev.years)
+    read = observations_io.ObsRead(got.obs, got.area, got.options, got.select, None, tuple(got.ev.years), got.dir_fig)
+    grid = observations_io.observation_grid(2020, read)
+    for name in ("lat", "lon"):
+        assert grid[name].dtype == loaded[name].values.dtype
+        np.testing.assert_array_equal(grid[name], loaded[name].values)

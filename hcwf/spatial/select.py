@@ -106,6 +106,100 @@ def _tiles(size: int, stored: int | None):
     return [(a, min(size, a + step)) for a in range(0, size, max(1, step))]
 
 
+def _picked_rows(da, axis):
+    """(read, key, stored, shape) when da is a NetCDF4 variable read with an increasing list of rows on the axis `axis`.
+
+    key is the outer index of the lazy selection (a tuple with one entry per dim of da: a slice, or an integer array);
+    read(key) reads the same variable, with the same decoding, through another such index; stored is the length of the
+    file's chunks along the axis, shape the shape of the file's variable. None for anything else (in memory, zarr,
+    unchunked storage, a selection xarray cannot be unpicked, rows not increasing): the caller then reads with xarray's
+    own indexing.
+    """
+    try:
+        import copy
+
+        from xarray.core import indexing
+
+        chunks = da.encoding.get("chunksizes")
+        wrappers, data = [], da.variable._data
+        while not isinstance(data, indexing.LazilyIndexedArray):
+            if tuple(data.shape) != tuple(da.shape):
+                return None
+            wrappers.append(data)
+            data = data.array
+        root = data.array
+        while hasattr(root, "array"):
+            root = root.array
+        key = data.key
+        if type(root).__name__ != "NetCDF4ArrayWrapper" or not isinstance(key, indexing.OuterIndexer):
+            return None
+        key = key.tuple
+        if not chunks or len(chunks) != da.ndim or len(key) != da.ndim:
+            return None
+        entry = key[axis]
+        if not (isinstance(entry, np.ndarray) and entry.ndim == 1 and entry.dtype.kind in "iu" and len(entry)
+                and entry[0] >= 0 and np.all(np.diff(entry) > 0)):
+            return None
+        inner = [w for w in wrappers if not isinstance(w, (indexing.MemoryCachedArray, indexing.CopyOnWriteArray))]
+
+        def read(new_key):
+            current = indexing.LazilyIndexedArray(data.array, indexing.OuterIndexer(new_key))
+            for wrapper in reversed(inner):   # the file's decoding (fill values, scaling) over the new selection
+                clone = copy.copy(wrapper)
+                clone.array, current = current, clone
+            return np.asarray(current)
+
+        return read, key, int(chunks[axis]), tuple(data.array.shape)
+    except Exception:  # noqa: BLE001 - an internal layout this does not know is read the ordinary way
+        return None
+
+
+def _along(entry, extent, part):
+    """The index `entry` of one axis (slice or integer array, over an axis of `extent`) narrowed by the slice `part`."""
+    if part == slice(None):
+        return entry
+    if isinstance(entry, slice):
+        picked = range(extent)[entry][part]
+        if picked.step < 0:
+            raise ValueError("a reversed slice")
+        return slice(picked.start, picked.stop, picked.step)
+    return entry[part]
+
+
+def _read_slices(da, index, axis):
+    """da[index] (one slice per dim) as an array, read from the file the way HDF5 can decode it once.
+
+    The rows a list picks along one axis (the inits of a year out of a file's whole time axis) read as a list make HDF5
+    decode a stored chunk again for every run of the list, which costs several times the read when the chunks are larger
+    than its cache. Here the rows are read one stored chunk at a time as a contiguous range and the wanted ones taken in
+    memory: the same values, one chunk in memory more.
+    """
+    plan = _picked_rows(da, axis)
+    if plan is None:
+        return da.isel({d: i for d, i in zip(da.dims, index) if i != slice(None)}).values
+    read, key, stored, shape = plan
+    try:
+        keys = [_along(entry, shape[a], index[a]) if a != axis else None for a, entry in enumerate(key)]
+    except ValueError:
+        return da.isel({d: i for d, i in zip(da.dims, index) if i != slice(None)}).values
+    rows = key[axis][index[axis]]
+    out = None
+    chunk_of = rows // max(1, stored)
+    for first in np.flatnonzero(np.r_[True, np.diff(chunk_of) != 0]):
+        stop = first + int(np.searchsorted(chunk_of[first:], chunk_of[first], side="right"))
+        group = rows[first:stop]
+        keys[axis] = slice(int(group[0]), int(group[-1]) + 1)
+        piece = read(tuple(keys))
+        if len(group) != piece.shape[axis]:
+            piece = np.take(piece, group - group[0], axis=axis)
+        if out is None:
+            out = np.empty(piece.shape[:axis] + (len(rows),) + piece.shape[axis + 1:], dtype=piece.dtype)
+        place = [slice(None)] * out.ndim
+        place[axis] = slice(first, stop)
+        out[tuple(place)] = piece
+    return out
+
+
 def load_blocks(da, block_dim, keep=None, keep_dims=None):
     """Read a (lazy) DataArray into memory once, filled block by block along block_dim.
 
@@ -141,7 +235,7 @@ def load_blocks(da, block_dim, keep=None, keep_dims=None):
     for start in range(0, da.shape[axis], rows):
         index = [slice(None)] * da.ndim
         index[axis] = slice(start, start + rows)
-        out[tuple(index)] = da.isel({da.dims[axis]: index[axis]}).values
+        out[tuple(index)] = _read_slices(da, index, axis)
     return xr.DataArray(out, dims=da.dims, coords=da.coords, attrs=da.attrs, name=da.name)
 
 
@@ -177,7 +271,7 @@ def _load_kept(da, block_dim, keep, keep_dims):
             index[axis] = slice(start, start + rows)
             for a, (lo, hi) in zip(axes, bounds):
                 index[a] = slice(lo, hi)
-            block = da.isel({d: index[i] for i, d in enumerate(da.dims) if index[i] != slice(None)}).values
+            block = _read_slices(da, index, axis)
             if not inside.all():
                 moved = np.moveaxis(block, axes, list(range(-len(axes), 0)))
                 moved[..., ~inside] = np.nan

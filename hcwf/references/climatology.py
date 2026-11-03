@@ -3,8 +3,10 @@
 The functions take the typed inputs of hcwf.config.model (the run `rc`, the `case` and the per-call `select`).
 """
 
+from types import SimpleNamespace
+
 from hcwf.config.model import Selection
-from hcwf.io.observations import observation_years_of
+from hcwf.io.observations import observation_grid_of, observation_years_of
 from hcwf.cache import memo
 from hcwf.io.reference import reference_held, reference_rain_year, release_reference
 from hcwf.io.thresholds import thresholds_of
@@ -23,28 +25,59 @@ _MEMO = memo("references.climatology.onsets", maxsize=32)
 """Climatological onset datasets of this run: {key: ((thresholds, onset setup) held so their ids stay unique, dataset)}."""
 
 
-def _read_years(years, rc, select, shared=True):
-    """Yield (rain, None), or (None, error), for each year's observations (hcwf.io.input.observation_years_of: read in blocks or ahead).
+class _YearRain:
+    """One climatology year's observations, read when the object is called (detect_observed does so on a cache miss).
 
-    A year the thresholds were just computed from comes as the DailyRain of that already read and ingested reference
-    rainfall (hcwf.io.input.reference_rain_year) instead of being read and converted again; only the other years are read.
-    shared=False reads every year as rainfall.
+    `probe` stands in for the rain where only its grid is needed (the observed-onset cache's fingerprint): the cells
+    of the year from the file's coordinates, or the held reference rain's own, without reading any rainfall.
+    """
+
+    def __init__(self, year, rc, select, read, held):
+        self.year, self._rc, self._select, self._read, self._held = year, rc, select, read, held
+
+    def __call__(self):
+        return self._held if self._held is not None else self._read(self.year)
+
+    @property
+    def probe(self):
+        try:
+            coords = self._held.coords if self._held is not None else observation_grid_of(self.year, self._rc, self._select)
+        except Exception:  # noqa: BLE001 - without a grid the cache is skipped and the year is read
+            coords = {}
+        return SimpleNamespace(coords=coords)
+
+
+def _year_readers(years, rc, select, shared=True):
+    """A `_YearRain` for each year: its observations are read only when called, on a cache miss of detect_observed.
+
+    Calling it returns the rain (hcwf.io.input.observation_years_of: read in blocks or ahead) or raises the year's
+    read error. A year the thresholds were just computed from comes as the DailyRain of that already read and
+    ingested reference rainfall (hcwf.io.input.reference_rain_year) instead of being read and converted again.
+    shared=False reads every year as rainfall. The years are read through one generator while they are asked for in
+    order (so blocks and read-ahead work as before); a year asked for after skipped ones (cached onsets, never read)
+    restarts it there.
     """
     years = list(years)
-    if not shared or not reference_held():
-        yield from observation_years_of(years, rc, select)
-        return
-    boundary = rc.onset.obs_day_boundary
-    held = {year: reference_rain_year(year, rc.observations, rc.area, select, boundary) for year in years}
-    rest = observation_years_of([year for year in years if held[year] is None], rc, select)
-    for year in years:
-        yield (held[year], None) if held[year] is not None else next(rest)
+    held = {year: None for year in years}
+    if shared and reference_held():
+        held = {year: reference_rain_year(year, rc.observations, rc.area, select, rc.onset.obs_day_boundary)
+                for year in years}
+    rest = [year for year in years if held[year] is None]
+    feed = {"years": None, "next": None}   # the generator over `rest` and the position of the year it yields next
 
+    def read(year):
+        position = rest.index(year)
+        if feed["next"] != position:
+            if feed["years"] is not None:
+                feed["years"].close()
+            feed["years"] = observation_years_of(rest[position:], rc, select)
+        feed["next"] = position + 1
+        rain, error = next(feed["years"])
+        if error is not None:
+            raise error
+        return rain
 
-def _axes(rain):
-    """The (lat, lon) values, or the (unit) ids, of a year's rainfall, a DataArray or an ingested DailyRain."""
-    return tuple(np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
-                 for name in axes.spatial_dims(rain.dims))
+    return [_YearRain(year, rc, select, read, held[year]) for year in years]
 
 
 def climatological_onset(rc, case, select=Selection()):
@@ -69,17 +102,14 @@ def climatological_onset(rc, case, select=Selection()):
     all_onset_days = []
     rainfall_all_years = []
 
-    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, select, shared=not grid_point)):
+    for year, reader in zip(years_clim, _year_readers(years_clim, rc, select, shared=not grid_point)):
         try:
-            # Load rainfall data using the existing function that handles both patterns
-            if read_error is not None:
-                raise read_error
-            rainfall_ds = rain
-            del rain
+            rainfall_ds = reader   # read only when the year's onsets are not cached
             if grid_point:
                 if np.ndim(thresh_da) > 0:
                     raise ValueError("thresh_da must be scalar.")
 
+                rainfall_ds = reader()
                 rainfall_all_years.append(rainfall_ds)
 
             # Detect onset for this year
@@ -251,19 +281,14 @@ def climatological_onset_dataset(rc, case, select=Selection()):
     valid_years = []
 
     # Process each year
-    for year, (rain, read_error) in zip(years_clim, _read_years(years_clim, rc, select)):
+    for year, reader in zip(years_clim, _year_readers(years_clim, rc, select)):
         log.debug(f"\nProcessing year {year}...")
 
         try:
-            # Load rainfall data for this year
-            if read_error is not None:
-                raise read_error
-            rainfall_ds = rain
-            del rain
-
-            # Detect onset for this year
-            onset_da = detect_observed(rainfall_ds, thresh_slice, year, rc, select)
-            spatial, values = axes.spatial_dims(onset_da.dims), _axes(rainfall_ds)
+            # Detect onset for this year (the rainfall is read only when its onsets are not cached)
+            onset_da = detect_observed(reader, thresh_slice, year, rc, select)
+            spatial = axes.spatial_dims(onset_da.dims)
+            values = tuple(np.asarray(onset_da[d].values) for d in spatial)
 
             # Count valid onsets
             valid_onsets = (~pd.isna(onset_da.values)).sum()
