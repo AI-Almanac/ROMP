@@ -2,7 +2,7 @@
 
 from hcwf.config import schema
 from hcwf.config import build as loader
-from flat_values import CASE_FIELDS, _setting_part
+from typed_io import CASE_FIELDS, _setting_part
 
 
 def _dic(**values):

@@ -13,7 +13,7 @@ from hcwf.config.mapping import build_config
 from hcwf import parallel
 from hcwf.parallel import cores, ordered_prefetch, worker_count
 from tests.test_config_schema import _raw, data  # noqa: F401 - the synthetic-data fixture
-from tests.test_oracle_config import configs, world  # noqa: F401 - the fixture world and its configs
+from tests.config_world import configs, world  # noqa: F401 - the fixture world and its configs
 from hcwf.errors import ConfigSchemaError
 
 ROOT = Path(__file__).resolve().parents[1]

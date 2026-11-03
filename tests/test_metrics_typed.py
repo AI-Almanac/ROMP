@@ -16,7 +16,7 @@ from hcwf.scoring.onset_tables import compute_metrics
 from hcwf.scoring.pairs import _pairs_of_years
 from old_flat_rule import old_rule
 from test_skill_reference_model import YEARS, DAY_BINS, _write_model, _write_obs
-from tests.test_oracle_config import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
+from tests.config_world import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
 
 LIMIT = 32 * 1024
 

@@ -37,8 +37,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 import xarray as xr
-from scipy.interpolate import interp1d
-from scipy.stats import gaussian_kde
 
 MIN_PROB = 5e-7
 EPS = 1e-12
@@ -55,6 +53,8 @@ def fit_kde(onset_days):
     x = x[~np.isnan(x)]
     if len(x) < MIN_ONSETS:
         return None
+    from scipy.stats import gaussian_kde   # scipy is slow to import; only fit_kde and onset_cdf need it
+
     try:
         return gaussian_kde(x, bw_method="scott")
     except Exception:
@@ -68,6 +68,8 @@ def onset_cdf(kde):
     bandwidths to the largest plus three, cumulated and normalised; outside
     that range the CDF holds its first and last value.
     """
+    from scipy.interpolate import interp1d
+
     data = kde.dataset.flatten()
     bandwidth = kde.factor * np.std(data, ddof=1)
     grid = np.linspace(data.min() - 3 * bandwidth, data.max() + 3 * bandwidth, 512)

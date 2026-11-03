@@ -1,7 +1,6 @@
 """The typed readers of hcwf.io (R2 S6): the typed specs built by hand give what the specs of a flat config give, for grid,
 units, listed-files and zarr data; `Selection` names every per-call key the readers take that is not config."""
 import typed_io
-import flat_values
 import ast
 import dataclasses
 import shutil
@@ -296,10 +295,10 @@ def _keys_read(path):
 
 def test_selection_keys_cover_every_non_schema_key_the_readers_read():
     root = Path(__file__).resolve().parents[2] / "hcwf"
-    named = set(flat_values.SELECTION_KWARGS.values())
-    assert set(flat_values.SELECTION_KWARGS) == {f.name for f in dataclasses.fields(Selection)}
+    named = set(typed_io.SELECTION_KWARGS.values())
+    assert set(typed_io.SELECTION_KWARGS) == {f.name for f in dataclasses.fields(Selection)}
     read = {key for module in MODULES for key in _keys_read(root / module)}
-    outside = sorted(read - set(schema.BY_KEY) - named - set(flat_values._RUNTIME))
+    outside = sorted(read - set(schema.BY_KEY) - named - set(typed_io._RUNTIME))
     assert not outside, f"read from a flat config but neither a schema key nor a Selection key: {outside}"
 
 
@@ -309,6 +308,6 @@ def test_the_selection_names_every_selection_key_the_old_readers_took():
     old_extras = {"keep_unit_ids", "member_ids", "max_member", "issue_dates", "first_lead", "last_lead",
                   "model_files_years", "obs_files_years", "model_paths", "grid_point", "lat_select", "lon_select",
                   "land_only", "shp_only", "reference_onset", "rain_horizon", "check_units"}
-    assert old_extras == set(flat_values.SELECTION_KWARGS.values())
+    assert old_extras == set(typed_io.SELECTION_KWARGS.values())
     got = typed_io.reader_inputs({"keep_unit_ids": ["a"], "lat_select": 1.0, "land_only": False})
     assert got.select == Selection(keep_unit_ids=["a"], lat=1.0, land_only=False)

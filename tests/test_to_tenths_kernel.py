@@ -5,7 +5,7 @@ import xarray as xr
 
 from hcwf.onset import ingest
 
-pytestmark = pytest.mark.skipif(ingest.numba is None, reason="needs numba")
+pytestmark = pytest.mark.skipif(not ingest.has_numba(), reason="needs numba")
 
 SCALES = (10.0, 10000.0, 1.0, 0.1, 25.4 * 10.0)
 """Tenths per input unit: millimetres, metres, and a few odd factors."""
@@ -85,7 +85,7 @@ def test_convert_equals_numpy_path(monkeypatch, units, clip):
     for use_numba in (True, False):
         with monkeypatch.context() as patch:
             if not use_numba:
-                patch.setattr(ingest, "numba", None)
+                patch.setattr(ingest, "_kernel", lambda: None)
             for pos, shape in ((None, da.shape), (positions, da.shape[:-1] + (60,))):
                 with pytest.warns(UserWarning) as caught:
                     t, m = ingest._convert(da, scale, shape, pos, clip_negative=clip)

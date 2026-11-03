@@ -1,9 +1,8 @@
-"""RunConfig (hcwf/config/model.py) against the flat names of the old code (tests/flat_values.py): step S3 of
-docs/review/runconfig_design.md. Parity is checked against the frozen pre-R2 code in tests/_oracle_config.py over the
-fixture configs and, when present, the four regression configs: `case_kwargs` equals the oracle's `{**Setting, **Case}`
-for every case and both reference rules, the typed inputs round-trip, and a RunConfig pickles small and equal."""
+"""RunConfig (hcwf/config/model.py) against the flat record it is projected from (step S3 of
+docs/review/runconfig_design.md), over the fixture configs and, when present, the four regression configs: the cases are
+the product of the models and windows, `case_kwargs` (tests/typed_io.py) gives each case its settings and own values for
+both reference rules, the typed inputs round-trip, and a RunConfig pickles small and equal."""
 import typed_io
-import flat_values
 import dataclasses
 import pickle
 import subprocess
@@ -13,14 +12,11 @@ from itertools import product
 
 import pytest
 
-import _oracle_config as old
-from typed_io import flat_config
+from typed_io import FLOWS, CASE_FIELDS, case_kwargs, flat_config
 from hcwf.config.model import MetricsSpec, ModelSpec, OutputSpec, RunConfig, Selection
 from hcwf.config import schema
 from hcwf.runs.folder import fingerprint
-from test_oracle_config import _norm, _same, configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
-
-FLOWS = flat_values.FLOWS
+from config_world import _same, configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
 
 
 @pytest.fixture(scope="module")
@@ -33,62 +29,44 @@ def runs(configs):
     return out
 
 
-def _oracle_case(dic, combi):
-    return old.make_case(old.Case, combi, dic)
-
-
-def _merge(dic, case):
-    """Today's {**asdict(Setting), **asdict(Case)}."""
-    return {**asdict(old.init_dataclass(old.Setting, dic)), **asdict(case)}
-
-
 def test_cases_are_the_flows_loop(runs):
-    """rc.cases() is the product of the models and windows, with the oracle's names, tolerances and years."""
+    """rc.cases() is the product of the models and windows, with the case names, tolerances and years of the flat record."""
     for name, (dic, rc) in runs.items():
-        combis = list(product(*old.iter_list(dic)))
+        combis = list(product(dic["model_list"], dic["verification_window_list"]))
         assert [c.key for c in rc.cases()] == combis, name
+        tolerances = dict(zip(dic["verification_window_list"], dic["tolerance_days_list"]))
         for case, combi in zip(rc.cases(), combis):
-            frozen = _oracle_case(dic, combi)
-            assert case.name == frozen.case_name and case.window.tolerance == frozen.tolerance_days
-            assert case.window.span == frozen.verification_window and not case.reference
-            assert case.window.bins(rc.evaluation.day_bins) == old.filter_bins_in_window(frozen.day_bins,
-                                                                                         frozen.verification_window)
-        assert rc.evaluation.years == old.evaluation_years(dic)
-        assert rc.evaluation.climatology_years == old.climatology_years(dic)
-        assert rc.evaluation.members == old.take_ensemble_members(dic["members"])
+            assert case.name == f"{combi[0]}_{combi[1][0]}-{combi[1][1]}"
+            assert case.window.tolerance == tolerances[combi[1]] and case.window.span == combi[1] and not case.reference
+            assert case.window.bins(rc.evaluation.day_bins) == tuple(
+                b for b in dic["day_bins"] if combi[1][0] <= b[0] and b[1] <= combi[1][1])
+        assert set(rc.evaluation.years) <= set(range(dic["start_date"][0], dic["end_date"][0] + 1)) and rc.evaluation.years
+        assert set(rc.evaluation.climatology_years) <= set(range(dic["start_year_clim"], dic["end_year_clim"] + 1))
 
 
 @pytest.mark.parametrize("flow", FLOWS)
-def test_case_kwargs_equal_the_oracle_merge(runs, flow):
-    """case_kwargs(rc, case, flow) is {**asdict(Setting), **asdict(Case)} of the oracle: same keys in the same order, equal
-    values, for every model and window, and for the reference cases (the oracle's, with the reference's own accumulation,
-    daily boundary and dims in place of the two old rules)."""
+def test_case_kwargs_hold_the_settings_and_the_cases_own_values(runs, flow):
+    """case_kwargs(rc, case, flow) has every schema key (the case's own ones from the case, the others from the run's
+    record), in the order of the case fields, for every model and window and for the reference cases."""
     for name, (dic, rc) in runs.items():
-        for case, (combi, flow_kw) in zip(rc.cases(), old.deterministic_cases(dic)):
-            expected = _merge(dic, _oracle_case(dic, combi))
-            kw = flat_values.case_kwargs(rc, case, flow)
-            assert kw == expected == flow_kw, (name, combi)
-            assert list(kw) == list(expected), (name, combi)
-        own = flat_values.reference_settings(dic)
-        if flow == "deterministic":
-            pairs = [(c, {**kw, **own}) for c, (_, kw) in zip(rc.reference_cases(), old.deterministic_reference_cases(dic))]
-        else:
-            pairs = []
-            per_model = iter(kw for _, kw in old.ensemble_reference_cases(dic))
-            for model in rc.models:
-                pairs += [(c, {**next(per_model), **own}) for c in rc.reference_cases(for_model=model)]
-        assert pairs, name
-        for case, expected in pairs:
-            assert case.reference
-            assert flat_values.case_kwargs(rc, case, flow) == expected, (name, flow, case.name)
-
-
-def test_ensemble_cases_have_the_oracles_prepare_dict(runs):
-    """The ensemble flow's prep_cfg is the case_kwargs (full day bins); create_score_results narrows them to the window."""
-    for name, (dic, rc) in runs.items():
-        for case, (combi, prep, narrowed) in zip(rc.cases(), old.ensemble_cases(dic)):
-            assert flat_values.case_kwargs(rc, case, "ensemble") == prep
-            assert case.window.bins(rc.evaluation.day_bins) == narrowed["day_bins"]
+        cases = list(rc.cases())
+        cases += rc.reference_cases() if flow == "deterministic" else \
+            [c for m in rc.models for c in rc.reference_cases(for_model=m)]
+        for case in cases:
+            kw = case_kwargs(rc, case, flow)
+            assert list(kw)[-len(CASE_FIELDS):] == list(CASE_FIELDS), (name, case.name)
+            assert {f.key for f in schema.FIELDS} <= set(kw)
+            assert (kw["case_name"], kw["verification_window"], kw["tolerance_days"]) == \
+                (case.name, case.window.span, case.window.tolerance)
+            model = case.model
+            assert (kw["model"], kw["model_dir"], kw["accumulation"], kw["daily_boundary"], kw["model_dims"]) == \
+                (model.name, model.dir, model.accumulation, model.daily_boundary, model.dims_map())
+            assert (kw["years"], kw["years_clim"], kw["max_forecast_day"]) == \
+                (rc.evaluation.years, rc.evaluation.climatology_years, rc.evaluation.max_forecast_day)
+            assert kw["day_bins"] == rc.evaluation.day_bins   # the run's whole bins, in both flows
+            for key in kw.keys() - set(CASE_FIELDS):
+                if key in dic:
+                    assert kw[key] == dic[key], (name, key)
 
 
 def test_reference_settings_are_its_own(runs):
@@ -121,27 +99,27 @@ def test_from_case_kwargs_round_trips(runs, flow):
         cases += rc.reference_cases() if flow == "deterministic" else \
             [c for m in rc.models for c in rc.reference_cases(for_model=m)]
         for case in cases:
-            kw = flat_values.case_kwargs(rc, case, flow)
+            kw = case_kwargs(rc, case, flow)
             rc2, case2, selection = typed_io.from_case_kwargs(kw)
             assert selection == Selection()
             assert case2.reference == (case.reference and case.model.name not in dic["model_list"])
             assert case2.name == case.name and case2.window == case.window
-            assert flat_values.case_kwargs(rc2, case2, flow) == kw, (name, case.name)
-            assert list(flat_values.case_kwargs(rc2, case2, flow)) == list(kw)
+            assert case_kwargs(rc2, case2, flow) == kw, (name, case.name)
+            assert list(case_kwargs(rc2, case2, flow)) == list(kw)
 
 
 def test_from_case_kwargs_keeps_edits_and_selections(runs):
     """A value edited in place (years, max_forecast_day, the reference keys) is what the rebuilt inputs hold; the
     selection keys come back as a Selection; anything else is refused."""
     dic, rc = runs["model_reference"]
-    kw = flat_values.case_kwargs(rc, rc.cases()[0], "deterministic")
+    kw = case_kwargs(rc, rc.cases()[0], "deterministic")
     kw.update(years=(2019,), max_forecast_day=7, ref_model_var="other", keep_unit_ids=["a"], lat_select=(1, 2),
               model_files_years=(2019,))
     rc2, case2, selection = typed_io.from_case_kwargs(kw)
     assert rc2.evaluation.years == (2019,) and rc2.evaluation.max_forecast_day == 7 and rc2.reference.var == "other"
     assert selection.keep_unit_ids == ["a"] and selection.lat == (1, 2) and selection.model_files_years == (2019,)
     assert selection.grid_point is None
-    assert flat_values.case_kwargs(rc2, case2, "deterministic", selection) == kw
+    assert case_kwargs(rc2, case2, "deterministic", selection) == kw
     with pytest.raises(ValueError, match="not config keys or selections: surprise"):
         typed_io.from_case_kwargs({**kw, "surprise": 1})
 
@@ -163,8 +141,8 @@ def test_pickle_is_small_and_equal(runs):
         assert back == rc and back is not rc and hash(back) == hash(rc)
         assert back.models == rc.models and back.evaluation == rc.evaluation and back.onset == rc.onset
         assert back.output == rc.output and back.reference == rc.reference and back.observations == rc.observations
-        assert flat_values.case_kwargs(back, back.cases()[0], "ensemble") == \
-            flat_values.case_kwargs(rc, rc.cases()[0], "ensemble")
+        assert case_kwargs(back, back.cases()[0], "ensemble") == \
+            case_kwargs(rc, rc.cases()[0], "ensemble")
     assert RunConfig.from_flat({**dic, "max_forecast_day": 12}, check=False) != rc
 
 

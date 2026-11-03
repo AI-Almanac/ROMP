@@ -1,22 +1,20 @@
 """The scoring flows loop over rc.cases() / rc.reference_cases() (step S5 of docs/review/runconfig_design.md).
 
-Per flow, the sequence of keyword arguments given to compute_metrics (deterministic flow) and to
-prepare_pairs / create_score_results (ensemble flow) is recorded and compared with the frozen pre-R2 flows of
-tests/_oracle_config.py, on 2 models x 2 windows with a model reference and with a climatology reference."""
-import flat_values
+Per flow, the cases given to compute_metrics (deterministic flow) and to prepare_pairs / create_score_results (ensemble
+flow) are recorded and compared with rc.cases() / rc.reference_cases(), on 2 models x 2 windows with a model reference
+and with a climatology reference."""
 import dataclasses
 
 import pandas as pd
 import pytest
 
-import _oracle_config as old
 from hcwf.scoring import probabilistic as bin_skill_score
 from hcwf.scoring import deterministic as spatial_far_mr_mae
-from typed_io import flat_config
+from typed_io import case_kwargs, flat_config
 from hcwf.config.model import RunConfig
 from hcwf.scoring import pairs as skill
 from hcwf.parallel import Pending
-from test_oracle_config import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
+from config_world import configs, world  # noqa: F401  (fixtures: the fixture world and its configs)
 
 REFERENCES = ("two_models_windows", "model_reference")   # climatology reference, model reference; 2 models x 2 windows
 SWITCHES_OFF = ("save_nc_spatial_far_mr_mae", "plot_spatial_far_mr_mae", "save_nc_climatology", "plot_climatology_onset",
@@ -30,26 +28,26 @@ def _run(configs, name, probabilistic):
 
 
 @pytest.mark.parametrize("name", REFERENCES)
-def test_deterministic_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
+def test_deterministic_flow_scores_the_cases_and_the_reference_cases(configs, monkeypatch, name):
     dic, rc = _run(configs, name, False)
     seen = []
     monkeypatch.setattr(spatial_far_mr_mae, "compute_metrics", lambda rc_, case: seen.append((rc_, case)) or ({}, {}))
     monkeypatch.setattr(spatial_far_mr_mae, "create_spatial_far_mr_mae", lambda *a: {})
     monkeypatch.setattr(spatial_far_mr_mae, "add_back_dated_map", lambda *a: None)
     spatial_far_mr_mae.spatial_far_mr_mae_map(rc)
-    own = flat_values.reference_settings(dic)   # the reference's own settings replace the oracle's models[0] rule
-    expected = [kw for _, kw in old.deterministic_cases(dic)] + \
-        [{**kw, **own} for _, kw in old.deterministic_reference_cases(dic)]
+    expected = list(rc.cases()) + list(rc.reference_cases())
     assert len(seen) == len(expected) == 2 * 2 + 2
-    for (rc_, case), want in zip(seen, expected):
+    assert [case for _, case in seen] == expected
+    assert [case.reference for _, case in seen] == [False] * 4 + [True] * 2
+    for rc_, case in seen:
         assert rc_ is rc
-        got = flat_values.case_kwargs(rc, case, "deterministic")
-        assert got == want
-        assert list(got) == list(want) or sorted(got) == sorted(want)
+        kw = case_kwargs(rc, case, "deterministic")
+        assert kw["model"] == case.model.name and kw["verification_window"] == case.window.span
+        assert kw["case_name"] == case.name and kw["tolerance_days"] == case.window.tolerance
 
 
 @pytest.mark.parametrize("name", REFERENCES)
-def test_ensemble_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
+def test_ensemble_flow_scores_the_cases_with_the_windows_bins(configs, monkeypatch, name):
     dic, rc = _run(configs, name, True)
     prepared, created = [], []
     pairs = object()
@@ -59,21 +57,16 @@ def test_ensemble_flow_gives_the_oracles_kwargs(configs, monkeypatch, name):
                         lambda case, got, metrics, ev: created.append((case, got, metrics, ev)) or {})
     monkeypatch.setattr(bin_skill_score, "score_tables", lambda *a: (table, table, {}, {}))
     tables = bin_skill_score.skill_score_in_bins(rc)
-    cases = old.ensemble_cases(dic)
+    cases = list(rc.cases())
     assert len(created) == len(cases) == 2 * 2 and len(tables["overall"]) == 4
-    for (case, got, metrics, ev), (_, prep, want) in zip(created, cases):
-        assert flat_values.case_kwargs(rc, case, "ensemble") == prep
-        assert got is pairs and metrics is rc.metrics and list(ev.day_bins) == list(want["day_bins"])
+    for (case, got, metrics, ev), want in zip(created, cases):
+        assert case == want
+        assert got is pairs and metrics is rc.metrics
+        assert list(ev.day_bins) == list(want.window.bins(rc.evaluation.day_bins))
         assert ev == dataclasses.replace(rc.evaluation, day_bins=ev.day_bins)
-    # the pair tables are prepared once per model, from its first window, with every day bin
-    firsts = {}
-    for combi, prep, _ in cases:
-        firsts.setdefault(combi[0], prep)
-    assert [model.name for _, model in prepared] == list(firsts) == [m.name for m in rc.models]
+    # the pair tables are prepared once per model
+    assert [model.name for _, model in prepared] == [m.name for m in rc.models]
     assert all(rc_ is rc for rc_, _ in prepared)
-    for (_, model), prep in zip(prepared, firsts.values()):
-        assert flat_values.case_kwargs(rc, rc.cases()[[c.model.name for c in rc.cases()].index(model.name)],
-                                       "ensemble") == prep
 
 
 def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
@@ -89,13 +82,11 @@ def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
         prepared = skill.prepare_pairs(rc, model)
         assert read == [model, rc.reference_cases(for_model=model)[0].model]
         assert prepared.reference is table and prepared.climatology is None
-    # ... and it is the oracle's frozen reference_model_kwargs for each model's first window, with the reference's own
-    # accumulation and daily boundary in place of the forecast model's
-    firsts = {}
-    for combi, kw in old.ensemble_reference_cases(dic):
-        firsts.setdefault(combi[0], {**kw, **flat_values.reference_settings(dic)})
+    # the ensemble flow names the reference's cases after the forecast model; its source is the reference's own
     for model in rc.models:
-        assert flat_values.case_kwargs(rc, rc.reference_cases(for_model=model)[0], "ensemble") == firsts[model.name]
+        for case in rc.reference_cases(for_model=model):
+            assert case.reference and case.for_model == model.name and case.model == rc.reference.as_model()
+            assert case_kwargs(rc, case, "ensemble")["model"] == rc.reference.model
 
 
 def test_ensemble_flow_does_nothing_for_a_deterministic_run(configs):

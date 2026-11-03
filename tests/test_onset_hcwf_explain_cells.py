@@ -8,7 +8,7 @@ import pytest
 import xarray as xr
 
 from hcwf.onset import explain_cells
-from test_oracle_config import configs, world  # noqa: F401  (fixtures)
+from config_world import configs, world  # noqa: F401  (fixtures)
 from hcwf.config import validate
 from hcwf.errors import HCWFConfigError
 

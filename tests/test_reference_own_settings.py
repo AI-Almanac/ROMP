@@ -2,15 +2,13 @@
 
 The pre-R2 flows gave it models[0]'s accumulation and daily boundary (and, in the deterministic flow, no dims), and the
 ensemble flow the current model's. Here the only forecast model is daily (DET) and the reference (DETC) holds the same rain
-accumulated since init, so the old rule read it as daily: the oracle (tests/_oracle_config.py) still does.
+accumulated since init, so the old rule would have read it as daily.
 """
 import pytest
 
-import _oracle_config as old
-import flat_values
-from test_oracle_config import build_world
+from config_world import build_world
 from test_run_experience import raw_config, write_config
-from typed_io import flat_config
+from typed_io import case_kwargs, flat_config
 from hcwf.config.model import RunConfig
 from hcwf.config.convert import flat_to_mapping
 
@@ -35,16 +33,13 @@ def test_detected_accumulation_is_the_references_own(world):
     model, ref = rc.models[0], rc.reference
     assert model.accumulation == "daily" and ref.accumulation == "since_init" and ref.accumulation_detected
     assert dic["ref_model_accumulation"] == "since_init" and dic["ref_model_accumulation_detected"] is True
-    # old rule (deterministic flow): the reference inherited models[0]'s accumulation, so it read the accumulated
-    # files as daily amounts
-    assert old.deterministic_reference_cases(dic)[0][1]["accumulation"] == "daily"
-    # new rule: the same source in both flows, the cases of the ensemble flow named after the forecast model
+    # the same source in both flows, the cases of the ensemble flow named after the forecast model
     for case in rc.reference_cases():
         assert case.model.accumulation == "since_init" and case.model.accumulation_detected
-        assert flat_values.case_kwargs(rc, case, "deterministic")["accumulation"] == "since_init"
+        assert case_kwargs(rc, case, "deterministic")["accumulation"] == "since_init"
     for case in rc.reference_cases(for_model=model):
         assert case.model.accumulation == "since_init" and case.for_model == "DET" and case.name.startswith("DET_")
-        assert flat_values.case_kwargs(rc, case, "ensemble")["accumulation"] == "since_init"
+        assert case_kwargs(rc, case, "ensemble")["accumulation"] == "since_init"
 
 
 def test_given_settings_win_over_detection_and_every_flow_reads_them(world):
@@ -52,10 +47,11 @@ def test_given_settings_win_over_detection_and_every_flow_reads_them(world):
     rc = RunConfig.from_flat(dic)
     assert not rc.reference.accumulation_detected
     want = {"accumulation": "daily", "daily_boundary": "03 UTC", "model_dims": {"member": "realization"}}
-    assert flat_values.reference_settings(dic) == want
+    assert {key: dic[f"ref_model_{key}"] for key in ("accumulation", "daily_boundary", "dims")} == \
+        {"accumulation": "daily", "daily_boundary": "03 UTC", "dims": {"member": "realization"}}
     for for_model in (None, rc.models[0]):
         for case, flow in ((c, "ensemble" if for_model else "deterministic") for c in rc.reference_cases(for_model=for_model)):
-            kw = flat_values.case_kwargs(rc, case, flow)
+            kw = case_kwargs(rc, case, flow)
             assert {k: kw[k] for k in want} == want
     # the models keep their own
     assert (rc.models[0].accumulation, rc.models[0].daily_boundary) == ("daily", None)

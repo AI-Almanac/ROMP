@@ -3,10 +3,6 @@ from dataclasses import replace
 
 from hcwf.metrics.skill import create_score_results
 from hcwf.scoring.pairs import prepare_pairs
-from hcwf.figures.heatmap import create_heatmap
-from hcwf.figures.reliability import plot_reliability_diagram
-from hcwf.figures.panel_portrait_skill import panel_portrait_bss_auc
-from hcwf.figures.panel_bar_skill import panel_bar_bss_rpss_auc
 from hcwf.io.output import save_score_results
 from hcwf.metrics.tables import score_tables
 from hcwf.naming import tuple_to_str
@@ -94,10 +90,14 @@ def skill_score_in_bins(rc):
 
         # heatmap plot
         if output.plot_heatmap_bss_auc:
+            from hcwf.figures.heatmap import create_heatmap   # figures load matplotlib only when asked for
+
             create_heatmap(score_results, case, spec)
 
         # reliability plot
         if output.plot_reliability:
+            from hcwf.figures.reliability import plot_reliability_diagram
+
             plot_reliability_diagram(score_results["forecast_obs_df"], case, spec, day_bins)
 
 
@@ -105,6 +105,8 @@ def skill_score_in_bins(rc):
 
     # panel heatmap plot for binned BSS and AUC
     if output.plot_panel_heatmap_skill:
+        from hcwf.figures.panel_portrait_skill import panel_portrait_bss_auc
+
         for verification_window in (w.span for w in rc.evaluation.windows):
             window_str = tuple_to_str(verification_window)
             # extract dict for specific window only
@@ -115,6 +117,8 @@ def skill_score_in_bins(rc):
 
     # bar plot for BSS, RPSS, AUC in window
     if output.plot_bar_bss_rpss_auc:
+        from hcwf.figures.panel_bar_skill import panel_bar_bss_rpss_auc
+
         for verification_window in (w.span for w in rc.evaluation.windows):
             window_str = tuple_to_str(verification_window)
             result_overall_window = select_key_at_level(result_overall, 2, window_str)

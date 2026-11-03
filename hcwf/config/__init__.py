@@ -26,7 +26,6 @@ from typing import Any
 import yaml
 
 from hcwf.config import schema
-from hcwf.config.mapping import build_config
 from hcwf.config.convert import plain, render_yaml
 from hcwf.errors import ConfigSchemaError
 
@@ -153,6 +152,8 @@ class _ConfigMethods:
 
     def to_flat(self, source: str = "Config") -> dict:
         """Validate and resolve into the flat config dict the pipeline uses (see hcwf.config.flat_config)."""
+        from hcwf.config.mapping import build_config   # reads the datasets' files (xarray, pandas): load on use
+
         return build_config(self.to_mapping(), source=source)
 
     def to_yaml(self, path=None) -> str:

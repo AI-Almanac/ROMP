@@ -1,9 +1,6 @@
 """Compute, save and plot spatial MAE, FAR and MR maps for deterministic and ensemble (probabilistic) forecast models."""
 from hcwf.metrics.error import create_spatial_far_mr_mae
 from hcwf.scoring.onset_tables import compute_metrics
-from hcwf.figures.maps import plot_spatial_metrics
-from hcwf.figures.onset_map import plot_spatial_climatology_onset
-from hcwf.figures.panel_portrait_error import panel_portrait_mae_far_mr
 from hcwf.io.output import save_climatology_onset, save_metrics_to_netcdf
 from hcwf.metrics.tables import add_back_dated_map
 import logging
@@ -66,6 +63,8 @@ def spatial_far_mr_mae_map(rc):
 
         # make spatial metrics plot
         if output.plot_spatial_far_mr_mae:
+            from hcwf.figures.maps import plot_spatial_metrics   # figures load matplotlib only when asked for
+
             plot_spatial_metrics(spatial_metrics, case, spec)
 
 
@@ -105,6 +104,8 @@ def spatial_far_mr_mae_map(rc):
 
         # make spatial metrics plot
         if output.plot_spatial_far_mr_mae:
+            from hcwf.figures.maps import plot_spatial_metrics   # figures load matplotlib only when asked for
+
             plot_spatial_metrics(spatial_metrics, case, spec)
 
 
@@ -114,10 +115,14 @@ def spatial_far_mr_mae_map(rc):
 
     # spatial map of climatology onset day
     if output.plot_climatology_onset:
+        from hcwf.figures.onset_map import plot_spatial_climatology_onset
+
         plot_spatial_climatology_onset(onset_da_dict, spec, ev.climatology_years)
 
     # panel portrait plot of mae, far, mr
     if output.plot_panel_heatmap_error:
+        from hcwf.figures.panel_portrait_error import panel_portrait_mae_far_mr
+
         panel_portrait_mae_far_mr(results, spec)
 
     return results

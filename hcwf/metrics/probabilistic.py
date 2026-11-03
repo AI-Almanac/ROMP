@@ -24,7 +24,6 @@ from __future__ import annotations
 import numba
 import numpy as np
 import pandas as pd
-from scipy.stats import ks_2samp, rankdata
 
 BRIER_SCALES = ("element", "sample", "pooled")
 BIN_MEANS = ("numpy", "compensated")
@@ -180,6 +179,8 @@ def auc(y01: np.ndarray, score: np.ndarray) -> float:
     n0 = float(np.sum(y == 0))
     if n1 == 0 or n0 == 0:
         return np.nan
+    from scipy.stats import rankdata   # scipy.stats is slow to import and only these two functions need it
+
     ranks = rankdata(s, method="average")
     return (np.sum(ranks[y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
 
@@ -190,6 +191,8 @@ def pietra(P: np.ndarray, Y: np.ndarray) -> float:
     p = P.flatten()
     y = Y.flatten().astype(int)
     positive, negative = p[y == 1], p[y == 0]
+    from scipy.stats import ks_2samp
+
     if len(positive) and len(negative):
         return float(ks_2samp(positive, negative).statistic)
     return np.nan

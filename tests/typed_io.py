@@ -1,5 +1,8 @@
 """Test helpers: the typed API of hcwf called with the specs of a flat test config.
 
+`case_kwargs(rc, case, flow)` flattens a typed case to the flat names the tests use (`{**settings, **case}`);
+`selection_kwargs` does the same for a Selection.
+
 The tests keep their configs as flat keyword dicts (what a resolved run holds, or a part of it). These helpers build the
 typed inputs from them (`from_case_kwargs`: run, case and selection; `reader_inputs`: the specs the io readers take) and
 call the typed API (`load_observations`, `load_forecast`, `load_thresholds`, ...). `flat_config` is a resolved run's flat
@@ -10,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
-from flat_values import CASE_FIELDS, SELECTION_KWARGS, _RECORD, _RUNTIME
+import copy
 
 from hcwf.config.build import resolve
 from hcwf.config.model import complete_flat as _completed
@@ -21,6 +24,72 @@ from hcwf.io import forecasts as forecasts_io
 from hcwf.io import observations as observations_io
 from hcwf.io import thresholds as thresholds_io
 from hcwf.config import schema
+
+
+FLOWS = ("deterministic", "ensemble")
+"""The two scoring flows. They build the reference the same way (its own settings); the ensemble flow names its cases after
+the forecast model (RunConfig.reference_cases)."""
+SELECTION_KWARGS = {"keep_unit_ids": "keep_unit_ids", "member_ids": "member_ids", "max_member": "max_member",
+                    "issue_dates": "issue_dates", "first_lead": "first_lead", "last_lead": "last_lead", "model_files_years": "model_files_years",
+                    "obs_files_years": "obs_files_years", "model_paths": "model_paths", "grid_point": "grid_point",
+                    "lat": "lat_select", "lon": "lon_select", "land_only": "land_only", "shp_only": "shp_only",
+                    "reference_onset": "reference_onset", "rain_horizon": "rain_horizon", "check_units": "check_units"}
+"""Selection field -> the kwargs name the readers use."""
+CASE_FIELDS = ("case_name", "model", "model_var", "model_dir", "obs", "obs_var", "ref_model", "ref_model_var",
+               "probabilistic", "members", "onset_percentage_threshold", "verification_window", "tolerance_days",
+               "max_forecast_day", "day_bins", "years", "years_clim", "region", "file_pattern", "unit_cvt",
+               "accumulation", "daily_boundary", "model_dims")
+"""The keys a case owns, in the order of the kwargs (the old Case dataclass); the run's settings are every other key."""
+_RUNTIME = {"cache_dir": None, "short_names": False, "lead_window": None}
+"""The settings that are not schema keys, with their defaults."""
+_RECORD = ("accumulation_detected", "config_file", "config_sources", "dataset_report", "onset_lead_lines", "run_paths")
+"""The other keys of a resolved flat record (what the resolve step adds); a blend's config carries them through."""
+
+
+def _setting_part(values: Mapping) -> dict:
+    """The run's settings: every schema key that is not a case field (in schema order) and the run's own settings, each
+    from `values` or else its schema default (None for a required or computed one)."""
+    out = {}
+    for item in schema.FIELDS:
+        if item.key in CASE_FIELDS:
+            continue
+        default = None if callable(item.default) or item.default is schema.REQUIRED else item.default
+        out[item.key] = values[item.key] if item.key in values else copy.deepcopy(default)
+    for key, default in _RUNTIME.items():
+        out[key] = values[key] if key in values else default
+    return out
+
+
+def case_kwargs(rc: RunConfig, case: Case, flow: str, selection: Selection | None = None) -> dict:
+    """The settings and the case's own values as one dict, as the old code's `**case_cfg`.
+
+    The settings part is the run's flat record (`_setting_part`); the case part comes from the typed case. For a reference case `flow` is "deterministic" or "ensemble" and must be the flow
+    that built it with `rc.reference_cases` (no `for_model` or `for_model`): the cases differ in their name only. day_bins are the
+    run's whole bins; the ensemble flow's create_score_results narrows them to the window with `Window.bins`.
+    A `selection` adds its keys that are set.
+    """
+    if flow not in FLOWS:
+        raise ValueError(f"flow must be one of {FLOWS}, got {flow!r}")
+    ev, ref, model = rc.evaluation, rc.reference, case.model
+    mine = {
+        "case_name": case.name, "model": model.name, "model_var": model.var, "model_dir": model.dir,
+        "obs": rc.observations.name, "obs_var": rc.observations.var, "ref_model": ref.model, "ref_model_var": ref.var,
+        "probabilistic": ev.probabilistic, "members": ev.members,
+        "onset_percentage_threshold": rc.onset_options.percentage_threshold, "verification_window": case.window.span,
+        "tolerance_days": case.window.tolerance, "max_forecast_day": ev.max_forecast_day, "day_bins": ev.day_bins,
+        "years": ev.years, "years_clim": ev.climatology_years, "region": rc.area.region,
+        "file_pattern": model.file_pattern, "unit_cvt": model.unit_cvt, "accumulation": model.accumulation,
+        "daily_boundary": model.daily_boundary, "model_dims": model.dims_map()}
+    out = {**_setting_part(rc._values), **{name: mine[name] for name in CASE_FIELDS}}
+    if selection is not None:
+        out.update(selection_kwargs(selection))
+    return out
+
+
+def selection_kwargs(selection: Selection) -> dict:
+    """The kwargs a Selection sets (the fields that are not None)."""
+    return {kwarg: getattr(selection, name) for name, kwarg in SELECTION_KWARGS.items()
+            if getattr(selection, name) is not None}
 
 
 def skip_region_cut(monkeypatch):

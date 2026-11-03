@@ -39,7 +39,6 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures.process import BrokenProcessPool
 
 import numpy as np
-import pandas as pd
 
 from hcwf import log as logs
 
@@ -295,6 +294,8 @@ def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], 
         parts = [part for part in pending.result() if part is not None]
         if not parts:
             raise ValueError(f"{NO_DATA} for any year")
+        import pandas as pd
+
         return pd.concat(parts, ignore_index=True)
 
     return Pending(join)

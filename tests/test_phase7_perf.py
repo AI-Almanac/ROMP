@@ -1,5 +1,4 @@
 """Phase 7 speed-ups that must not change a result: year-set texts, shared reference rain, pre-warming, one worker pool."""
-import flat_values
 import shutil
 
 import numpy as np
@@ -30,7 +29,7 @@ def test_year_set_texts_equal_the_plain_join():
 def _case_kwargs(config):
     """The flat arguments of the config's first case, as the flows hand them to the readers (the run's completed record)."""
     rc, case, select = typed_io.from_case_kwargs(config)
-    return flat_values.case_kwargs(rc, case, "deterministic", select)
+    return typed_io.case_kwargs(rc, case, "deterministic", select)
 
 
 def _reference_year(config, year, boundary):

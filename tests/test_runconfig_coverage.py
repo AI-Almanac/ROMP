@@ -14,7 +14,7 @@ import pytest
 from typed_io import flat_config
 from hcwf.config.model import RunConfig
 from hcwf.config import schema
-from test_oracle_config import configs, world  # noqa: F401  (fixtures)
+from config_world import configs, world  # noqa: F401  (fixtures)
 
 RUN_KEYS = ("accumulation_detected", "config_file", "config_sources", "dataset_report", "lead_window",
             "onset_lead_lines", "run_paths", "cache_dir", "short_names")
