@@ -845,6 +845,24 @@ def _valid_vectorized_member_inputs(p_model, members):
     return True
 
 
+def _wet_spells_from_each_step(rain, wet_init, wet_spell):
+    """For the wet_spell days starting at each step: whether every day is wet, and their total rain.
+
+    rain has step as its last dim. Spells that would run past the last step
+    are not wet and have NaN rain, as are spells containing a missing day.
+    """
+    values = rain.values
+    n_starts = max(values.shape[-1] - wet_spell + 1, 0)
+    spell_days = [values[..., day:day + n_starts] for day in range(wet_spell)]
+
+    all_wet = np.zeros(values.shape, dtype=bool)
+    all_wet[..., :n_starts] = np.logical_and.reduce([day >= wet_init for day in spell_days])
+    total = np.full(values.shape, np.nan, dtype=values.dtype)
+    total[..., :n_starts] = sum(spell_days[1:], spell_days[0].copy())
+
+    return rain.copy(data=all_wet), rain.copy(data=total)
+
+
 def compute_onset_for_all_members_vectorized(
     p_model,
     thresh_slice,
@@ -883,20 +901,8 @@ def compute_onset_for_all_members_vectorized(
     p_model = p_model.sel(member=list(members), step=slice(1, max_steps_needed))
     rain = p_model.transpose("init_time", "member", "lat", "lon", "step")
 
-    wet_spell_ok = (
-        (rain >= wet_init)
-        .rolling(step=wet_spell, min_periods=wet_spell, center=False)
-        .reduce(np.all)
-        .shift(step=-(wet_spell - 1))
-        .fillna(False)
-        .astype(bool)
-    )
-    rolling_sum = (
-        rain.rolling(step=wet_spell, min_periods=wet_spell, center=False)
-        .sum()
-        .shift(step=-(wet_spell - 1))
-    )
-    sum_ok = rolling_sum > thresh_slice
+    wet_spell_ok, spell_rain = _wet_spells_from_each_step(rain, wet_init, wet_spell)
+    sum_ok = spell_rain > thresh_slice
     onset_condition = wet_spell_ok & sum_ok
     onset_condition = onset_condition.where(onset_condition.step <= max_forecast_day, False)
 
