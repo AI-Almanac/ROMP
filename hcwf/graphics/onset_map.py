@@ -9,7 +9,8 @@ import cartopy.crs as ccrs
 from matplotlib import colors as mcolors
 
 from hcwf.utils.visual import cbar_season, set_basemap
-from hcwf.utils.land_mask import shp_mask, add_polygon
+from hcwf.utils.mask import shp_mask
+from hcwf.utils.visual import add_polygon
 from hcwf.graphics.func_map import doy_to_mmm_dd, spatial_metrics_map
 from hcwf.utils.visual import box_boundary
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of

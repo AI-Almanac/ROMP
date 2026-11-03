@@ -3,7 +3,7 @@ import numpy as np
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
-from hcwf.utils.land_mask import polygon_mask
+from hcwf.utils.mask import polygon_mask
 from hcwf.graphics.maps import calculate_cmz_averages
 from hcwf.utils.printing import tuple_to_str
 import cartopy.crs as ccrs
@@ -11,7 +11,8 @@ from matplotlib import colors as mcolors
 from matplotlib import colormaps
 
 from hcwf.utils.visual import cbar_season, contrast_text_color, set_basemap
-from hcwf.utils.land_mask import shp_mask, add_polygon
+from hcwf.utils.mask import shp_mask
+from hcwf.utils.visual import add_polygon
 from hcwf.utils.visual import box_boundary
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
 import logging

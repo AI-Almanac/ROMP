@@ -2,7 +2,7 @@
 import xarray as xr
 import numpy as np
 from hcwf.params.region_def import domain
-from hcwf.utils.land_mask import polygon_mask, mask_land, shp_mask, apply_nc_mask, land_mask_for
+from hcwf.utils.mask import mask_land, shp_mask, apply_nc_mask, land_mask_for
 import logging
 
 log = logging.getLogger(__name__)
@@ -156,7 +156,7 @@ _KEEP_CACHE = {}
 def _keep_cells(lat, lon, region, land_only, shp_only):
     """Boolean (lat, lon) array of the cells the implicit land and country masks keep; cached by grid and region.
 
-    The land part is hcwf.utils.land_mask.land_mask_for (cached per grid); the country part is shp_mask run on a
+    The land part is hcwf.utils.mask.land_mask_for (cached per grid); the country part is shp_mask run on a
     2-D field of ones, so the cells are exactly those the masks would leave unmasked on any data with these coordinates.
     """
     key = (np.asarray(lat).tobytes(), np.asarray(lon).tobytes(), str(region), bool(land_only), bool(shp_only))

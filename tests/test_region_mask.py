@@ -435,7 +435,7 @@ def test_relative_mask_paths_are_made_absolute(tmp_path, monkeypatch):
 
 def test_legacy_nc_mask_path_is_unchanged(tmp_path):
     """Without `mask`, region_select does what it did: box, nc_mask, land and country masks, byte for byte."""
-    from hcwf.utils.land_mask import apply_nc_mask, mask_land, shp_mask
+    from hcwf.utils.mask import apply_nc_mask, mask_land, shp_mask
     from hcwf.utils.region import coords_fmt, region_select
 
     lat, lon = np.arange(6.5, 35.6, 2.0), np.arange(68.0, 91.5, 2.0)

@@ -4,8 +4,7 @@ import os
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from hcwf.params.region_def import polygon_boundary
-from hcwf.utils.land_mask import get_india_outline, shp_outline
-from hcwf.utils.visual import box_boundary
+from hcwf.utils.visual import box_boundary, get_india_outline, shp_outline
 from hcwf.graphics.field import colorbar_extend, draw_field, extent, units_of
 import logging
 

@@ -55,7 +55,6 @@ def cbar_season():
 
 def set_basemap(ax, region, shpfile_dir, polygon, linewidth=1.25, grid=True, line=False, **kwargs):
     """Draw the region outline and set the map extent on a Cartopy axis; return (ax, gridliner or None)."""
-    from hcwf.utils.land_mask import shp_outline, get_india_outline
     from hcwf.params.region_def import domain
     import cartopy.crs as ccrs
     import matplotlib.ticker as mticker
@@ -760,3 +759,126 @@ def add_legend(
             va="center",
             fontsize=fontsize,
         )
+
+
+# ----------------------------------------------------------------------------------------------------------
+# region outlines on maps
+# ----------------------------------------------------------------------------------------------------------
+
+def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
+    """ add polygon boundary to basemap """
+    import cartopy.crs as ccrs
+    from shapely.geometry import Polygon as ShapelyPolygon
+    from cartopy.feature import ShapelyFeature
+
+    # Cartopy gridlines create a separate layer that can cover patches added with ax.add_patch()
+    # use a ShapelyFeature and add it with ax.add_feature() with a higher zorder
+    # so it appears above gridlines and map features
+    poly_geom = ShapelyPolygon(list(zip(polygon1_lon, polygon1_lat)))
+
+    # wrap as a Cartopy feature
+    poly_feature = ShapelyFeature(
+        [poly_geom],
+        crs=ccrs.PlateCarree(),  # coordinates are lon/lat
+        edgecolor='black',
+        facecolor='none',
+        linewidth=linewidth
+    )
+
+    # add to axes above gridlines
+    ax.add_feature(poly_feature, zorder=10)
+
+    return ax
+
+
+
+def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
+    """Draw the polygon boundary for `da` on `ax` when `polygon` is truthy and a boundary is defined.
+
+    Returns `ax`, or (ax, polygon_lat, polygon_lon, polygon_defined) if `return_polygon` is True.
+    """
+    from hcwf.params.region_def import polygon_boundary
+
+    polygon_defined = False
+
+    if polygon:
+        polygon1_lat, polygon1_lon = polygon_boundary(da)
+
+        if len(polygon1_lat) > 0 and len(polygon1_lon) > 0:
+            polygon_defined = True
+
+    # Add CMZ polygon only if defined
+    if polygon_defined:
+
+        ax = polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=linewidth)
+
+    if return_polygon:
+        return ax, polygon1_lat, polygon1_lon, polygon_defined
+    else:
+        return ax
+
+
+
+def get_india_outline(shpfile_path):
+    """
+    Get region outline coordinates from shapefile.
+    """
+    import geopandas as gpd
+    # Update this path to your India shapefile
+    india_gdf = gpd.read_file(shpfile_path)
+
+    boundaries = []
+    for geom in india_gdf.geometry:
+        if hasattr(geom, 'exterior'):
+            coords = list(geom.exterior.coords)
+            lon_coords = [coord[0] for coord in coords]
+            lat_coords = [coord[1] for coord in coords]
+            boundaries.append((lon_coords, lat_coords))
+        elif hasattr(geom, 'geoms'):
+            for sub_geom in geom.geoms:
+                if hasattr(sub_geom, 'exterior'):
+                    coords = list(sub_geom.exterior.coords)
+                    lon_coords = [coord[0] for coord in coords]
+                    lat_coords = [coord[1] for coord in coords]
+                    boundaries.append((lon_coords, lat_coords))
+    return boundaries
+
+
+def shp_outline(ax, region='Ethiopia', resolution='10m'):
+    """ add shapefile country boundaries to plot"""
+
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
+    # get region boundary
+    from hcwf.utils.mask import get_shp
+
+    region_geom = get_shp(region=region, resolution=resolution)
+
+    if region_geom is None:
+        log.warning("specified region is not in cartopy.io.shapereader")
+        return ax
+
+    if hasattr(ax, "add_geometries"):
+        # Cartopy GeoAxes
+        ax.add_geometries(
+            [region_geom],
+            crs=ccrs.PlateCarree(),
+            facecolor="none",
+            edgecolor="black",
+            linewidth=1.5,
+            zorder=10
+        )
+    else:
+        # Regular matplotlib Axes — handle both Polygon and MultiPolygon
+        geoms = [region_geom] if region_geom.geom_type == 'Polygon' else list(region_geom.geoms)
+        for geom in geoms:
+            x, y = geom.exterior.xy
+            ax.plot(x, y, color="black", linewidth=1.5, zorder=10)
+
+    # Optional: background
+    if hasattr(ax, "add_feature"):
+        ax.add_feature(cfeature.COASTLINE)
+        ax.add_feature(cfeature.BORDERS, linestyle=":")
+
+    return ax

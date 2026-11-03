@@ -4,7 +4,7 @@ import pytest
 import xarray as xr
 
 from hcwf.lib import dataset_detect as detect
-from hcwf.utils import land_mask
+from hcwf.utils import mask as mask_mod
 
 
 
@@ -70,19 +70,19 @@ def test_resolve_netcdf_reads_once(tmp_path, monkeypatch):
 
 def test_land_mask_cached_and_identical():
     """land_mask_for is built once per grid, read-only, and agrees with mask_land / create_land_sea_mask."""
-    land_mask.clear_land_masks()
+    mask_mod.clear_land_masks()
     lat, lon = np.linspace(-10, 40, 26), np.linspace(-20, 60, 41)
-    a = land_mask.land_mask_for(lat, lon)
-    assert land_mask.land_mask_for(lat.copy(), lon.copy()) is a
+    a = mask_mod.land_mask_for(lat, lon)
+    assert mask_mod.land_mask_for(lat.copy(), lon.copy()) is a
     assert a.dtype == bool and a.shape == (26, 41) and not a.flags.writeable
     da = xr.DataArray(np.ones((26, 41)), dims=("lat", "lon"), coords={"lat": lat, "lon": lon})
-    assert (land_mask.create_land_sea_mask(da).values == a).all()
-    assert (land_mask.create_land_sea_mask(da, as_boolean=True).values == a).all()
-    kept = land_mask.mask_land(da)
+    assert (mask_mod.create_land_sea_mask(da).values == a).all()
+    assert (mask_mod.create_land_sea_mask(da, as_boolean=True).values == a).all()
+    kept = mask_mod.mask_land(da)
     assert (np.isfinite(kept.values) == a).all()
-    assert (np.isfinite(land_mask.mask_land(da, land=False).values) == ~a).all()
-    assert land_mask.land_mask_for(lat[::-1], lon) is not a
-    assert len(land_mask._RAW_MASKS) == 2
+    assert (np.isfinite(mask_mod.mask_land(da, land=False).values) == ~a).all()
+    assert mask_mod.land_mask_for(lat[::-1], lon) is not a
+    assert len(mask_mod._RAW_MASKS) == 2
 
 
 def test_disk_cache_hit_reads_no_data(tmp_path, monkeypatch):
