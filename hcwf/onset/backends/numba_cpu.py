@@ -612,17 +612,6 @@ def _variants(cell: np.ndarray, amount: np.ndarray) -> tuple[np.ndarray, np.ndar
             np.ascontiguousarray(inverse.reshape(-1), dtype=np.int64))
 
 
-def _first_column(plan: P.Plan, start: np.ndarray, origin: np.ndarray) -> int:
-    """Earliest history day any candidate's spans can read (never negative)."""
-    offsets = [0]
-    for cond in plan.conditions:
-        offsets.append(0 if cond.since_start else cond.first)
-    offsets.extend(v.first - (v.placement == P.BEGINS) for v in plan.vetoes)
-    if plan.report_first_wet and plan.report_span is not None:
-        offsets.append(0 if plan.report_span[2] else plan.report_span[0])
-    return max(0, min(int(start.min()) + min(offsets), int(origin.min())))
-
-
 def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndarray, fc_tenths: np.ndarray,
                     fc_missing: np.ndarray, amounts: dict[str, np.ndarray], jobs: StitchedJobs, *,
                     trace: bool = False, amount_windows=None) -> Detection:
@@ -668,7 +657,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     stack, index = _stack_amounts(plan, amounts, False)
 
     c1 = int(split[active].max())
-    c0 = min(_first_column(plan, start[active], origin[active]), c1)
+    c0 = min(windowed.first_column(plan, start[active], origin[active]), c1)
     cells, cell_idx = np.unique(cell, return_inverse=True)
     cell_idx = np.ascontiguousarray(cell_idx.reshape(-1), dtype=np.int64)
     hx = np.ascontiguousarray(hist_tenths[cells, c0:c1], dtype=np.int32)

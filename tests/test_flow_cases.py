@@ -54,13 +54,12 @@ def test_ensemble_flow_scores_the_cases_with_the_windows_bins(configs, monkeypat
     table = pd.DataFrame({"a": [1]})
     monkeypatch.setattr(bin_skill_score, "prepare_pairs", lambda rc_, model: prepared.append((rc_, model)) or pairs)
     monkeypatch.setattr(bin_skill_score, "create_score_results",
-                        lambda case, got, metrics, ev: created.append((case, got, metrics, ev)) or {})
+                        lambda got, metrics, ev: created.append((got, metrics, ev)) or {})
     monkeypatch.setattr(bin_skill_score, "score_tables", lambda *a: (table, table, {}, {}))
     tables = bin_skill_score.skill_score_in_bins(rc)
     cases = list(rc.cases())
     assert len(created) == len(cases) == 2 * 2 and len(tables["overall"]) == 4
-    for (case, got, metrics, ev), want in zip(created, cases):
-        assert case == want
+    for (got, metrics, ev), want in zip(created, cases):
         assert got is pairs and metrics is rc.metrics
         assert list(ev.day_bins) == list(want.window.bins(rc.evaluation.day_bins))
         assert ev == dataclasses.replace(rc.evaluation, day_bins=ev.day_bins)

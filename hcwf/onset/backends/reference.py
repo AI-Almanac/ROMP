@@ -184,11 +184,11 @@ class Tables:
         self.x = x
         self.per_mm = 1 if x.dtype.kind == "f" else 10
         wet_amount = amounts[plan.wet.key][:, None]
-        self.wet = ~missing & _compare(plan.wet.op, x, wet_amount)
+        self.wet = ~missing & windowed.compare(plan.wet.op, x, wet_amount)
         if plan.dry is None:
             self.dry = ~missing & ~self.wet
         else:
-            self.dry = ~missing & _compare(plan.dry.op, x, amounts[plan.dry.key][:, None])
+            self.dry = ~missing & windowed.compare(plan.dry.op, x, amounts[plan.dry.key][:, None])
         self.px = _prefix(x, x.dtype)
         self.pm = _prefix(missing, np.int32)
         self.pw = _prefix(self.wet, np.int32)
@@ -213,7 +213,7 @@ class Tables:
                 total = self.px[:, length:] - self.px[:, :span]
                 amount = self.amounts[veto.cmp.key][:, None]
                 complete = (self.pm[:, length:] - self.pm[:, :span]) == 0
-                holds[:, :span] = complete & _compare(veto.cmp.op, total, amount)
+                holds[:, :span] = complete & windowed.compare(veto.cmp.op, total, amount)
         return _prefix(holds, np.int32)
 
 
@@ -222,17 +222,6 @@ def _prefix(values: np.ndarray, dtype) -> np.ndarray:
     out = np.zeros((values.shape[0], values.shape[1] + 1), dtype=dtype)
     np.cumsum(values, axis=1, dtype=dtype, out=out[:, 1:])
     return out
-
-
-def _compare(op: int, value, amount):
-    """Elementwise comparison selected by an operator code."""
-    if op == P.GE:
-        return value >= amount
-    if op == P.GT:
-        return value > amount
-    if op == P.LE:
-        return value <= amount
-    return value < amount
 
 
 def _gather(table: np.ndarray, series: np.ndarray, index: np.ndarray) -> np.ndarray:
@@ -248,12 +237,6 @@ def _observe(tables: Tables, job: _Block, a: np.ndarray, b: np.ndarray) -> tuple
     n_missing = tables.pm[job.series, hi] - tables.pm[job.series, lo]
     flags = (((a < 0) | ((n_missing > 0) & (not tables.keep))) * MISSING_FLAG + (b > e) * HORIZON_FLAG).astype(np.int8)
     return flags == 0, flags
-
-
-def _span(job: _Block, first: int, last: int, since_start: bool) -> tuple[np.ndarray, np.ndarray]:
-    """Absolute [a, b) of a span for every candidate of the block."""
-    a = job.origin + 0 * job.d if since_start else job.d + first
-    return a, job.d + last
 
 
 @dataclass
@@ -284,22 +267,22 @@ class VetoFacts:
 
 def _condition(plan_cond: P.CondPlan, tables: Tables, job: _Block) -> CondFacts:
     """Three-valued code and flags of a Total or WetDays requirement, with the span and value behind them."""
-    a, b = _span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
+    a, b = windowed.span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
     ok, flags = _observe(tables, job, a, b)
     if plan_cond.kind == P.TOTAL:
         value = _gather(tables.px, job.series, b) - _gather(tables.px, job.series, a)
         amount = tables.amounts[plan_cond.cmp.key][job.series]
-        result = _compare(plan_cond.cmp.op, value, amount)
+        result = windowed.compare(plan_cond.cmp.op, value, amount)
     else:
         value = _gather(tables.pw, job.series, b) - _gather(tables.pw, job.series, a)
-        result = _compare(plan_cond.op, value, plan_cond.count)
+        result = windowed.compare(plan_cond.op, value, plan_cond.count)
     code = np.where(ok, np.where(result, TRUE, FALSE), UNKNOWN).astype(np.int8)
     return CondFacts(code, np.where(ok, 0, flags).astype(np.int8), a, b, value)
 
 
 def _veto(veto: P.VetoPlan, spell_prefix: np.ndarray, tables: Tables, job: _Block) -> VetoFacts:
     """Code and flags of a veto: TRUE means a spell was confirmed, so the candidate is rejected."""
-    a, b = _span(job, veto.first, veto.last, False)
+    a, b = windowed.span(job, veto.first, veto.last, False)
     length = veto.length
     if veto.placement == P.INSIDE:
         if veto.last - veto.first < length:

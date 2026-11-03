@@ -14,7 +14,7 @@ from hcwf.spatial import axes
 log = logging.getLogger(__name__)
 
 
-def score_tables(score_results, model, verification_window):
+def score_tables(score_results):
     """The overall and binned skill-score tables of one case, without writing anything.
 
     Returns (overall_df, binned_df, binned_data, overall_scores_nested): the two DataFrames that

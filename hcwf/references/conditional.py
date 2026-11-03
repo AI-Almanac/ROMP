@@ -234,14 +234,10 @@ def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, ob
     init_at = init_ns[init_case]
     onset_at = init_at + lead.astype("timedelta64[D]").astype("timedelta64[ns]")
 
-    def dates(values):
-        """Format datetime values as an object array of YYYY-MM-DD strings."""
-        return pd.DatetimeIndex(values).strftime("%Y-%m-%d").to_numpy(dtype=object)
-
     return pd.DataFrame({
         "init_time": [init_dates[n] for n in init_case],
         **axes.columns_of(spatial, coords, where),
         "onset_day": np.where(has_onset, lead, np.nan),
-        "onset_date": np.where(has_onset, dates(onset_at), None),
-        "obs_onset_date": dates(obs[where]),
+        "onset_date": np.where(has_onset, axes.date_strings(onset_at), None),
+        "obs_onset_date": axes.date_strings(obs[where]),
     })

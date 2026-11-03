@@ -194,11 +194,6 @@ def _kernel():
     return tenths_kernel if tenths_kernel.numba is not None else None
 
 
-def has_numba() -> bool:
-    """Whether numba can be imported (the numpy reference is used without it)."""
-    return _kernel() is not None
-
-
 def _to_tenths(values: np.ndarray, to_tenths: float, clip_negative: bool,
                out: tuple[np.ndarray, np.ndarray] | None = None,
                exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray, int, float]:

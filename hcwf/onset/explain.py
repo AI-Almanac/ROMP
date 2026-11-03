@@ -799,7 +799,7 @@ def _group_key(c: CandidateTrace):
             else None)
 
 
-def _group_reason(a: Anatomy, group: list[CandidateTrace], wet_text: str) -> str:
+def _group_reason(a: Anatomy, group: list[CandidateTrace]) -> str:
     """The shared reason of consecutive candidates failing the same check, with value ranges."""
     checks = [c.checks[c.decisive] for c in group]
     first = checks[0]
@@ -850,7 +850,7 @@ def _candidate_lines(a: Anatomy, compress: bool) -> list[tuple[str, str]]:
             if j > i:
                 group = list(cands[i:j + 1])
                 head = _span_text(a, c.day, cands[j].day, with_year)
-                rows.append((head, f"✗ {len(group)} days: {_group_reason(a, group, wet_text)}"))
+                rows.append((head, f"✗ {len(group)} days: {_group_reason(a, group)}"))
             else:
                 rows.append((format_date(c.date, with_year), f"✗ {_reason(a, c.checks[c.decisive], wet_text)}"))
             i = j + 1

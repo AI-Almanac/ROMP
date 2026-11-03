@@ -86,3 +86,31 @@ def run(plan: P.Plan, amounts: dict[str, np.ndarray], starts: np.ndarray, jobs, 
         status[sel[got]] = out.status[got]
         pending[sel[got]] = False
     return Detection(day, status, None)
+
+
+def compare(op: int, value, amount):
+    """Elementwise comparison selected by an operator code."""
+    if op == P.GE:
+        return value >= amount
+    if op == P.GT:
+        return value > amount
+    if op == P.LE:
+        return value <= amount
+    return value < amount
+
+
+def span(job, first: int, last: int, since_start: bool):
+    """Absolute [a, b) of a span for every candidate of the block."""
+    a = job.origin + 0 * job.d if since_start else job.d + first
+    return a, job.d + last
+
+
+def first_column(plan: P.Plan, start: np.ndarray, origin: np.ndarray) -> int:
+    """Earliest history day any candidate's spans can read (never negative)."""
+    offsets = [0]
+    for cond in plan.conditions:
+        offsets.append(0 if cond.since_start else cond.first)
+    offsets.extend(v.first - (v.placement == P.BEGINS) for v in plan.vetoes)
+    if plan.report_first_wet and plan.report_span is not None:
+        offsets.append(0 if plan.report_span[2] else plan.report_span[0])
+    return max(0, min(int(start.min()) + min(offsets), int(origin.min())))

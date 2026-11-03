@@ -74,7 +74,7 @@ def _results(config, prepared=None):
     """create_score_results of a flat config, from the given pair tables or those prepare_pairs builds."""
     rc, case, select = _typed(config)
     prepared = prepare_pairs(rc, case.model, select) if prepared is None else prepared
-    return create_score_results(case, prepared, rc.metrics, rc.evaluation)
+    return create_score_results(prepared, rc.metrics, rc.evaluation)
 
 
 def _as_forecast(config, model):

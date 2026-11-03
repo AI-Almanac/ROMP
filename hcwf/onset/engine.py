@@ -20,7 +20,6 @@ MAX_TABLE_CELLS = 20_000_000
 
 _STANDARD_CALENDARS = {"standard", "gregorian", "proleptic_gregorian"}
 _BACKEND_MODULES = {"reference": "reference", "numba": "numba_cpu", "gpu": "gpu"}
-_CUM_DAYS = np.array([0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334])
 
 
 @dataclass

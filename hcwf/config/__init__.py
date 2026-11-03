@@ -151,7 +151,7 @@ class _ConfigMethods:
         return dict(sorted(out.items(), key=lambda kv: order.get(kv[0], 99)))
 
     def to_flat(self, source: str = "Config") -> dict:
-        """Validate and resolve into the flat config dict the pipeline uses (see hcwf.config.flat_config)."""
+        """Validate and resolve into the flat config dict the pipeline uses."""
         from hcwf.config.mapping import build_config   # reads the datasets' files (xarray, pandas): load on use
 
         return build_config(self.to_mapping(), source=source)
@@ -214,11 +214,3 @@ Config = dataclasses.make_dataclass(
                "units, blend, evaluation, metrics, output. Unset keys are UNSET and take their default (or the region's, or "
                "are detected from the files) when resolved by to_flat()."})
 Config.__module__ = __name__
-
-
-def flat_config(cfg: "Config") -> dict:
-    """The flat config dict the pipeline uses, built from a Config object (validated, resolved, detections reported).
-
-    This is the single conversion from the Python objects to the pipeline's dict.
-    """
-    return cfg.to_flat()

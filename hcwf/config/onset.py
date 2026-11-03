@@ -239,7 +239,7 @@ def _changed_keys(changes: dict) -> list[str]:
     return out
 
 
-def _load_definition(cfg, ref, sources):
+def _load_definition(cfg, ref):
     """Load the definition (registry id, file path or inline rule) and apply onset_override; returns it with
     the list of changed keys."""
     import yaml
@@ -285,7 +285,7 @@ def _definition_setup(cfg) -> OnsetSetup:
                 f"onset_definition is not set and there is no region default ({why}). "
                 "Fix: set onset_definition = \"icpac\" (an id from `hcwf-run onset list`) or the path of a YAML file")
         ref, sources["definition"] = default, f"region default ({chain[0].id})"
-    definition, overrides = _load_definition(cfg, ref, sources)
+    definition, overrides = _load_definition(cfg, ref)
     if chain:
         warning = regions.check_definition_region(definition, chain[0].id)
         if warning:

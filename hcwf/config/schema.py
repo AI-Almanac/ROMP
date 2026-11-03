@@ -55,8 +55,6 @@ SECTIONS = {
     "output": "output folders and which files and figures to write",
 }
 """The sections a YAML config may use, with one-line help."""
-LIST_SECTIONS = ("models",)
-"""Sections that are a list of entries, not a mapping of keys."""
 
 
 class _Required:
@@ -875,19 +873,3 @@ def raise_errors(errors: list[str], source: str) -> None:
     if errors:
         report = "\n".join(f"  • {e}" for e in errors)
         raise ConfigSchemaError(f"Invalid config {source}:\n{report}")
-
-
-def describe_schema() -> list[tuple[str, str, str, str]]:
-    """Rows (path, expected form, default, help) for every key, for documentation and `--help` text."""
-    rows = []
-    for f in FIELDS:
-        default = "required" if f.required else ("computed" if callable(f.default) else repr(f.default))
-        if not f.fill and not f.required:
-            default = "HCWF chooses"
-        rows.append((f.path, f.expected, default, f.help))
-    return rows
-
-
-def describe_mask_schema() -> list[tuple[str, str, str, str]]:
-    """Rows (path, expected form, default, help) for the keys inside the ``mask:`` section."""
-    return [(f"mask.{key}", expected, "unset", help_) for key, (expected, help_) in MASK_KEYS.items()]

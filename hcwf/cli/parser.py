@@ -4,7 +4,6 @@ The config itself is resolved by hcwf.config.build (the one resolve path); this 
 the command line.
 """
 import argparse
-import ast
 import os
 from pathlib import Path
 
@@ -100,34 +99,6 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
-
-
-# Takes a string like "(3, 5)" and turns it into a Python tuple (3, 5).
-def parse_tuple(value):
-    """
-    Parses a string into its native Python type.
-    Example: "(2019, 5, 1)" -> tuple
-    Example: "((1, 5), (6, 10))" -> nested tuple
-    """
-    try:
-        return ast.literal_eval(value)
-    except (ValueError, SyntaxError):
-        # Fallback for simple strings if eval fails
-        return value
-
-
-def parse_num_to_tuple(value):
-    """
-    Converts a space-separated string into a Python tuple of integers.
-    CLI: "2024 5 1" -> Python: (2024, 5, 1)
-    """
-    try:
-        # Split string by spaces, convert each part to int, then to tuple
-        return tuple(map(int, value.split()))
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"Invalid format: '{value}'. Expected space-separated integers like '2024 5 1'."
-        )
 
 
 def ensure_config_exists(param_path: str) -> Path:

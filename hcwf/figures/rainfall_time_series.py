@@ -6,7 +6,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, wetspell_date, lat_select, lon_select, year_select=None, save_path=None, incl_clim=None, pr_clim=None, onset_clim=None):
+def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, lat_select, lon_select, year_select=None, save_path=None, incl_clim=None, pr_clim=None, onset_clim=None):
     """
     Plot rainfall time series for a selected grid point with onset and wet spell dates marked.
 
@@ -16,8 +16,6 @@ def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, wetspell_da
         Daily precipitation data
     onset_date : xarray.DataArray
         Onset dates with year dimension
-    wetspell_date : xarray.DataArray
-        Wet spell dates with year dimension
     lat_select : float
         Latitude of selected grid point
     lon_select : float

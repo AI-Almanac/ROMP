@@ -18,7 +18,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, figsize=(18, 6), cbar_ssn=False,
+def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=False,
                                    domain_mask=False, rect_box=False):
     """
     Plot spatial maps of climatology onset day of year (saved to spec.dir_fig, shown if spec.show_plot)

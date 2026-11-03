@@ -67,7 +67,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
         if len(polygon1_lat) > 0 and len(polygon1_lon) > 0:
             polygon_defined = True
 
-    def calculate_mae_stats_across_years(spatial_metrics, lons, lats, polygon_lon, polygon_lat):
+    def calculate_mae_stats_across_years(spatial_metrics, polygon_lon, polygon_lat):
         """Calculate MAE statistics: spatial average for each year, then mean ± SE across years"""
         yearly_mae_keys = [key for key in spatial_metrics.keys() if key.startswith('mae_') and key != 'mae_combined']
 
@@ -109,14 +109,14 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
     # Calculate statistics (only calculate CMZ stats if polygon is defined)
     if polygon_defined:
         cmz_mae_mean, cmz_mae_se, _, _ = calculate_mae_stats_across_years(
-            spatial_metrics, lons, lats, polygon1_lon, polygon1_lat
+            spatial_metrics, polygon1_lon, polygon1_lat
         )
 
         cmz_far = calculate_cmz_averages(spatial_metrics['false_alarm_rate'] * 100, polygon1_lon, polygon1_lat)
         cmz_mr = calculate_cmz_averages(spatial_metrics['miss_rate'] * 100, polygon1_lon, polygon1_lat)
     else:
         cmz_mae_mean, cmz_mae_se, _, _ = calculate_mae_stats_across_years(
-            spatial_metrics, lons, lats, None, None
+            spatial_metrics, None, None
         )
         cmz_far = np.nan
         cmz_mr = np.nan

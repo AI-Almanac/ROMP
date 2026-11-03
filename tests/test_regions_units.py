@@ -9,7 +9,7 @@ from hcwf.onset import calendar as cal
 from hcwf.onset import definition as dfn
 from hcwf.onset import regions as rg
 from hcwf.onset.model import DayRef, Season
-from hcwf.errors import RegionError
+from hcwf.errors import RegionError, UnitsSpecError
 
 NE_COUNTRY = {"ethiopia": "Ethiopia", "india": "India", "kenya": "Kenya"}
 
@@ -111,7 +111,7 @@ def test_polygon_units_from_a_region_entry(region_dir, monkeypatch):
         "  dissemination: data/dissem.csv\n")
     (region_dir / "town.yaml").write_text("id: town\ntitle: Town\nkind: region\npart_of: [land]\n")
     for name in ("land", "town"):  # town inherits the units of land
-        units = rg.units_for(name)
+        units = rg.units_spec(name).build()
         assert units.kind == "polygon"
         assert list(units.ids) == ["a1", "b2"]
         assert list(units.column("name")) == ["Alpha", "Beta"]
@@ -124,19 +124,8 @@ def test_weights_units_from_a_region_entry(region_dir):
         region_dir / "w.csv", index=False)
     pd.DataFrame({"target_id": ["u1", "u2"], "lat": [1.0, 2.0], "lon": [3.0, 4.0]}).to_csv(region_dir / "c.csv", index=False)
     (region_dir / "land.yaml").write_text("id: land\ntitle: Land\nkind: region\nunits:\n  weights: w.csv\n  centroids: c.csv\n")
-    units = rg.units_for("land")
+    units = rg.units_spec("land").build()
     assert list(units.ids) == ["u1", "u2"] and list(units.lat) == [1.0, 2.0]
-
-
-def test_grid_units_from_the_region_box(region_dir):
-    """Without a units block the units are the grid cells inside the box and the mask; a grid is required."""
-    (region_dir / "box.yaml").write_text("id: box\ntitle: Box\nkind: region\ndomain: {lat: [0, 2], lon: [10, 12]}\n")
-    lat, lon = np.arange(-2.0, 5.0), np.arange(8.0, 15.0)
-    units = rg.units_for("box", lat, lon)
-    assert units.kind == "grid" and len(units) == 9
-    assert units.lat.min() == 0 and units.lat.max() == 2 and units.lon.min() == 10 and units.lon.max() == 12
-    with pytest.raises(RegionError, match="need lat and lon"):
-        rg.units_for("box")
 
 
 @pytest.mark.parametrize("block,message", [
@@ -158,8 +147,8 @@ def test_unset_environment_variable_in_a_units_path(region_dir, monkeypatch):
     monkeypatch.delenv("HCWF_TEST_MISSING", raising=False)
     (region_dir / "bad.yaml").write_text(
         "id: bad\ntitle: Bad\nkind: region\nunits: {shapefile: '${HCWF_TEST_MISSING}/u.shp', unit_id_col: id}\n")
-    with pytest.raises(RegionError, match="not set"):
-        rg.units_for("bad")
+    with pytest.raises(UnitsSpecError, match="not set"):
+        rg.units_spec("bad").build()
 
 
 # --- seasons crossing 1 January ------------------------------------------------------------------------------

@@ -36,6 +36,11 @@ def first_close(values, targets, tolerance=GRID_TOLERANCE):
     return found
 
 
+def date_strings(values) -> np.ndarray:
+    """The datetime values as an object array of YYYY-MM-DD strings."""
+    return pd.DatetimeIndex(values).strftime("%Y-%m-%d").to_numpy(dtype=object)
+
+
 def columns_of(dims, coords, index) -> dict:
     """The table columns of the points at `index` (a tuple with one index array per spatial dim): {dim: values}."""
     return {d: np.asarray(coords[d])[ix] for d, ix in zip(dims, index)}

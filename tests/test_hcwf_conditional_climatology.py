@@ -31,7 +31,7 @@ def typed(kwargs):
 def scores(config):
     """create_score_results of a test's flat config, from the pair tables prepare_pairs builds."""
     rc, case, select = typed(config)
-    return create_score_results(case, prepare_pairs(rc, case.model, select), rc.metrics, rc.evaluation)
+    return create_score_results(prepare_pairs(rc, case.model, select), rc.metrics, rc.evaluation)
 
 
 def _write_obs(path):

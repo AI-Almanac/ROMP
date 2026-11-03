@@ -643,18 +643,3 @@ class RunConfig:
                           show_panel=self.output.show_panel, date_filter_year=self.evaluation.date_filter_year,
                           short_names=self.short_names, models=tuple(m.name for m in self.models),
                           max_forecast_day=self.evaluation.max_forecast_day, units=self.observations.units)
-
-    def without_files(self, tmp: Path | None = None) -> RunConfig:
-        """The same run writing no files (write=False): every output off, with tmp as the output folders and no disk cache."""
-        from hcwf.config.build import _NO_FILES
-
-        values = dict(self._values)
-        for key, value in _NO_FILES.items():
-            if key in values or key == "explain_cells":
-                values[key] = value
-        if tmp is not None:
-            values["dir_out"] = values["dir_fig"] = str(tmp)
-            values["cache_dir"] = None
-        if values.get("run_paths") is not None:
-            values["run_paths"] = replace(values["run_paths"], write=False)
-        return type(self).from_flat(values)

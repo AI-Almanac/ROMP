@@ -40,7 +40,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Store, file_identity, global_root, memo
-from hcwf.config.datasets import expand_path, file_year, is_zarr, parse_dataset, resolve_paths, year_match
+from hcwf.config.datasets import expand_path, file_year, is_zarr, resolve_paths, year_match
 from hcwf.onset import ingest
 from hcwf.io.dims import matches
 from hcwf.errors import DatasetError
@@ -742,11 +742,6 @@ def finalize_units(values: dict) -> dict:
     if "units" in values:
         values["unit_cvt"] = unit_factor(values["units"], "units")
     return values
-
-
-def check_entry(values: dict, kind: str) -> None:
-    """Validate completed values against the dataset schema (raises DatasetError)."""
-    parse_dataset({k: v for k, v in values.items() if k not in ("name",) or v}, "dataset", kind, require_id=False)
 
 
 def warn_all(res: Resolution) -> None:

@@ -34,8 +34,7 @@ def save_score_results(score_results, case, paths, output):
     """Save overall and binned skill scores of one case to CSV files in output.data_dir (named by `paths`); return
     (binned_data, overall_scores_nested)."""
     model, verification_window = case.model.name, case.window.span
-    overall_df, binned_df, binned_data, overall_scores_nested = score_tables(score_results, model,
-                                                                             verification_window)
+    overall_df, binned_df, binned_data, overall_scores_nested = score_tables(score_results)
     window_str = tuple_to_str(verification_window)
     dir_out = output.data_dir
     overall_filename = os.path.join(dir_out, file_name(paths, "overall", model, window_str))

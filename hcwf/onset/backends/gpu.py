@@ -132,11 +132,11 @@ class _Tables:
         missing = cp.asarray(missing, dtype=cp.bool_)
         x = cp.where(missing, 0, cp.asarray(tenths)).astype(cp.float64 if exact else cp.int64)
         wet_amount = self.amounts[plan.wet.key][:, None]
-        wet = ~missing & _compare(plan.wet.op, x, wet_amount)
+        wet = ~missing & windowed.compare(plan.wet.op, x, wet_amount)
         if plan.dry is None:
             dry = ~missing & ~wet
         else:
-            dry = ~missing & _compare(plan.dry.op, x, self.amounts[plan.dry.key][:, None])
+            dry = ~missing & windowed.compare(plan.dry.op, x, self.amounts[plan.dry.key][:, None])
         self.x_shape = x.shape
         self.px = _prefix(x, x.dtype)
         del x
@@ -168,7 +168,7 @@ class _Tables:
                 total = self.px[:, length:] - self.px[:, :span]
                 amount = self.amounts[veto.cmp.key][:, None]
                 complete = (self.pm[:, length:] - self.pm[:, :span]) == 0
-                holds[:, :span] = complete & _compare(veto.cmp.op, total, amount)
+                holds[:, :span] = complete & windowed.compare(veto.cmp.op, total, amount)
         return _prefix(holds, cp.int32)
 
     def next_wet(self, series, lo):
@@ -214,17 +214,6 @@ def _prefix(values, dtype):
     return out
 
 
-def _compare(op: int, value, amount):
-    """Elementwise comparison selected by an operator code."""
-    if op == P.GE:
-        return value >= amount
-    if op == P.GT:
-        return value > amount
-    if op == P.LE:
-        return value <= amount
-    return value < amount
-
-
 def _gather(table, series, index):
     """table[series, index] with the index clipped into the table."""
     return table[series, cp.clip(index, 0, table.shape[1] - 1)]
@@ -240,30 +229,24 @@ def _observe(tables: _Tables, job: _Block, a, b):
     return flags == 0, flags
 
 
-def _span(job: _Block, first: int, last: int, since_start: bool):
-    """Absolute [a, b) of a span for every candidate of the block."""
-    a = job.origin + 0 * job.d if since_start else job.d + first
-    return a, job.d + last
-
-
 def _condition(plan_cond: P.CondPlan, tables: _Tables, job: _Block):
     """Three-valued code and flags of a Total or WetDays requirement."""
-    a, b = _span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
+    a, b = windowed.span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
     ok, flags = _observe(tables, job, a, b)
     if plan_cond.kind == P.TOTAL:
         value = _gather(tables.px, job.series, b) - _gather(tables.px, job.series, a)
         amount = tables.amounts[plan_cond.cmp.key][job.series]
-        result = _compare(plan_cond.cmp.op, value, amount)
+        result = windowed.compare(plan_cond.cmp.op, value, amount)
     else:
         value = _gather(tables.pw, job.series, b) - _gather(tables.pw, job.series, a)
-        result = _compare(plan_cond.op, value, plan_cond.count)
+        result = windowed.compare(plan_cond.op, value, plan_cond.count)
     code = cp.where(ok, cp.where(result, TRUE, FALSE), UNKNOWN).astype(cp.int8)
     return code, cp.where(ok, 0, flags).astype(cp.int8)
 
 
 def _veto(veto: P.VetoPlan, spell_prefix, tables: _Tables, job: _Block):
     """Code and flags of a veto: TRUE means a spell was confirmed, so the candidate is rejected."""
-    a, b = _span(job, veto.first, veto.last, False)
+    a, b = windowed.span(job, veto.first, veto.last, False)
     length = veto.length
     if veto.placement == P.INSIDE:
         if veto.last - veto.first < length:
@@ -378,17 +361,6 @@ def _variants(cell: np.ndarray, amount: np.ndarray):
     return unique[:, 0].copy(), unique[:, 1].copy(), inverse.reshape(-1).astype(np.int64)
 
 
-def _first_column(plan: P.Plan, start: np.ndarray, origin: np.ndarray) -> int:
-    """Earliest history day any candidate's spans can read (never negative)."""
-    offsets = [0]
-    for cond in plan.conditions:
-        offsets.append(0 if cond.since_start else cond.first)
-    offsets.extend(v.first - (v.placement == P.BEGINS) for v in plan.vetoes)
-    if plan.report_first_wet and plan.report_span is not None:
-        offsets.append(0 if plan.report_span[2] else plan.report_span[0])
-    return max(0, min(int(start.min()) + min(offsets), int(origin.min())))
-
-
 def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndarray, fc_tenths: np.ndarray,
                     fc_missing: np.ndarray, amounts: dict[str, np.ndarray], jobs: StitchedJobs, *,
                     trace: bool = False, amount_windows=None) -> Detection:
@@ -455,7 +427,7 @@ class _StitchedTables:
         c1 = int(split_h[active].max())
         start_h = np.asarray(jobs.start, dtype=np.int64)
         origin_h = start_h if jobs.origin is None else np.asarray(jobs.origin, dtype=np.int64)
-        self.c0 = min(_first_column(plan, start_h[active], origin_h[active]), c1)
+        self.c0 = min(windowed.first_column(plan, start_h[active], origin_h[active]), c1)
         self.width = c1 - self.c0
         cells, cell_idx = np.unique(cell_h, return_inverse=True)
         cell_idx = cell_idx.reshape(-1).astype(np.int64)
@@ -469,7 +441,7 @@ class _StitchedTables:
         wcell, wamt, wv = _variants(cell_idx, wet_amount_h)
         wcell_d, wamt_d = cp.asarray(wcell), cp.asarray(wamt)
         miss_v = miss[wcell_d]
-        wet = ~miss_v & _compare(plan.wet.op, x[wcell_d], wamt_d[:, None])
+        wet = ~miss_v & windowed.compare(plan.wet.op, x[wcell_d], wamt_d[:, None])
         self.pw = _prefix(wet, cp.int32)
         self.wet_order = None
         if plan.report_first_wet:
@@ -480,7 +452,7 @@ class _StitchedTables:
             dry_amount_h = np.asarray(amounts[plan.dry.key], dtype=np.int64)[series_h]
             dcell, damt, dv = _variants(cell_idx, dry_amount_h)
             dcell_d, damt_d = cp.asarray(dcell), cp.asarray(damt)
-            dry = ~miss[dcell_d] & _compare(plan.dry.op, x[dcell_d], damt_d[:, None])
+            dry = ~miss[dcell_d] & windowed.compare(plan.dry.op, x[dcell_d], damt_d[:, None])
         else:
             dcell, dv = wcell, wv
             dry = ~miss_v & ~wet
@@ -518,7 +490,7 @@ class _StitchedTables:
                     px_v, pm_v = self.px[vcell_d], self.pm[vcell_d]
                     total = px_v[:, veto.length:] - px_v[:, :span]
                     complete = (pm_v[:, veto.length:] - pm_v[:, :span]) == 0
-                    holds[:, :span] = complete & _compare(veto.cmp.op, total, vamt_d[:, None])
+                    holds[:, :span] = complete & windowed.compare(veto.cmp.op, total, vamt_d[:, None])
             self.spell_prefix.append(_prefix(holds, cp.int32))
             self.spell_variant.append(cp.asarray(variant))
         del dry, dry_prefix
@@ -566,16 +538,16 @@ def _observe_s(tables: _StitchedTables, job: _StitchedBlock, a, b):
 
 def _condition_s(plan_cond: P.CondPlan, tables: _StitchedTables, job: _StitchedBlock):
     """Three-valued code and flags of a Total or WetDays requirement on the stitched series."""
-    a, b = _span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
+    a, b = windowed.span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
     ok, flags = _observe_s(tables, job, a, b)
     if plan_cond.kind == P.TOTAL:
         value = (_g(tables, tables.px, tables.fc.px, job.cell, job, b) - _g(tables, tables.px, tables.fc.px, job.cell, job, a))
         amount = tables.amounts[plan_cond.cmp.key][job.series]
-        result = _compare(plan_cond.cmp.op, value, amount)
+        result = windowed.compare(plan_cond.cmp.op, value, amount)
     else:
         value = (_g(tables, tables.pw, tables.fc.pw, job.wet_variant, job, b)
                  - _g(tables, tables.pw, tables.fc.pw, job.wet_variant, job, a))
-        result = _compare(plan_cond.op, value, plan_cond.count)
+        result = windowed.compare(plan_cond.op, value, plan_cond.count)
     code = cp.where(ok, cp.where(result, TRUE, FALSE), UNKNOWN).astype(cp.int8)
     return code, cp.where(ok, 0, flags).astype(cp.int8)
 
@@ -617,14 +589,14 @@ def _seam(veto: P.VetoPlan, tables: _StitchedTables, job: _StitchedBlock):
     else:
         total = hist_diff(tables.px, job.cell) + tables.fc.px[job.series, fc_col]
         amount = tables.amounts[veto.cmp.key][job.series]
-        holds = inside & (missing == 0) & _compare(veto.cmp.op, total, amount)
+        holds = inside & (missing == 0) & windowed.compare(veto.cmp.op, total, amount)
     seam[:, 1:] = cp.cumsum(holds, axis=1, dtype=cp.int32)
     return seam
 
 
 def _veto_s(veto: P.VetoPlan, spell_prefix, variant, fc_prefix, tables: _StitchedTables, job: _StitchedBlock):
     """Code and flags of a veto on the stitched series: TRUE means a spell was confirmed, so the candidate is rejected."""
-    a, b = _span(job, veto.first, veto.last, False)
+    a, b = windowed.span(job, veto.first, veto.last, False)
     length = veto.length
     if veto.placement == P.INSIDE:
         if veto.last - veto.first < length:

@@ -191,7 +191,6 @@ def test_a_numeric_unit_factor_serves_files_that_declare_no_units(tmp_path):
     assert "units" not in res.problems and "units" not in res.values
     values = detect.finalize_units(res.values)
     assert values["unit_cvt"] == 0.5
-    detect.check_entry(values, "forecast")
     assert any(line.startswith("unit_cvt: 0.5") for line in res.report())
 
 

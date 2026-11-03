@@ -344,7 +344,7 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
         mask_mod.reset()
 
 
-def _units(dic: dict, report: CheckReport, found) -> None:
+def _units(report: CheckReport, found) -> None:
     """The evaluation units each source is read onto (the `units:` section and the region's): mode, tables, restriction;
     an invalid section (a problem of hcwf.config.validate) and a named file that is not there are errors."""
     if found.units:
@@ -596,7 +596,7 @@ def build_report(rc, found=None, overwrite: bool = False, alignment: bool = Fals
     _settings(dic, report)
     _datasets(dic, report)
     samples = _files(dic, report)
-    _units(dic, report, found)
+    _units(report, found)
     _grids(dic, report, samples)
     _mask_summary(dic, report, samples)
     _leads(dic, report, samples)

@@ -34,7 +34,7 @@ def spatial_onset(year, rc):
 
 
     spatial_metrics_map(onset_doy, "observation year "+str(year), rc.figure_spec(),
-                    window=rc.evaluation.windows[0].span, fig=None, ax=None, figsize=(8, 6), cmap='YlOrRd', n_colors=10,
+                    window=rc.evaluation.windows[0].span, fig=None, ax=None, cmap='YlOrRd', n_colors=10,
                     onset_plot=True, cbar_ssn=True, domain_mask=True, polygon_only=False,
                     show_ylabel=True, title="onset day", rect_box=True)
 
@@ -106,7 +106,7 @@ def obs_onset_analysis(year, rc, lat_select=11, lon_select=39, incl_clim=True):
 
     save_path = os.path.join(rc.output.figure_dir, f"onset_time_series_lat{lat_select}_lon{lon_select}_{year}.png")
 
-    plot_rainfall_timeseries_with_onset_and_wetspell(da_sub, onset_da, None,
+    plot_rainfall_timeseries_with_onset_and_wetspell(da_sub, onset_da,
                                                      lat_select=lat_select, lon_select=lon_select,
                                                      year_select=year, save_path=save_path,
                                                      incl_clim=incl_clim, pr_clim=da_pr_clim_sub,

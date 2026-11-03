@@ -6,7 +6,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-def create_score_results(case, prepared, metrics, ev):
+def create_score_results(prepared, metrics, ev):
     """Compute Brier score, RPS and AUC (as flagged by metrics.BS, .RPS, .AUC) for the forecast model and its reference,
     plus skill scores if metrics.skill_score is set, from the pairs `prepared` (PreparedPairs).
 

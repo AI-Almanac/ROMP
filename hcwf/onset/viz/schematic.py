@@ -406,7 +406,7 @@ def _first_passage_body(pal, meas, defn, body_width: float):
     return height, draw
 
 
-def _curve_body(pal, meas, defn, body_width: float):
+def _curve_body(pal, defn):
     """Layout of a curve schematic: its height and a drawing function."""
     rule: Curve = defn.rule
     height = 2.6
@@ -471,7 +471,7 @@ def schematic(definition: Definition, *, mode: str = "light", figsize: tuple[flo
         inner = width - 2 * MARGIN_IN
         header = _header_lines(definition, meas, inner)
         if isinstance(definition.rule, Curve):
-            body_h, draw = _curve_body(pal, meas, definition, inner)
+            body_h, draw = _curve_body(pal, definition)
             bottom, left = 0.7, MARGIN_IN + 0.35
         else:
             body_h, draw = _first_passage_body(pal, meas, definition, inner)

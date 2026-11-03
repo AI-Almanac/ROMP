@@ -5,7 +5,7 @@ import re
 import pytest
 
 from hcwf.config import Config, Dataset, Evaluation, Onset
-from hcwf.config.schema import FIELDS, describe_schema
+from hcwf.config.schema import FIELDS
 from hcwf.config.mapping import build_config
 from tests.synthetic_data import write_forecast, write_obs
 from hcwf.errors import ConfigSchemaError
@@ -139,7 +139,6 @@ def test_every_schema_key_has_help_and_a_unique_flat_key():
     """The schema is documented: help text everywhere, no duplicate keys."""
     keys = [f.key for f in FIELDS]
     assert len(keys) == len(set(keys)) and all(f.help for f in FIELDS)
-    assert len(describe_schema()) == len(FIELDS)
 
 
 def test_an_unset_env_var_in_a_path_says_which_variable(data, monkeypatch):

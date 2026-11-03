@@ -388,7 +388,7 @@ def mask_errors(root, mask):
 
 def test_mask_section_is_validated_with_help(data_dirs):
     """The mask section accepts the documented keys; mistakes name the key and suggest."""
-    from hcwf.config.schema import describe_mask_schema, describe_schema
+    from hcwf.config.schema import FIELDS, MASK_KEYS
 
     flat = build_config(minimal(data_dirs, mask={"land": True, "country": "Ethiopia",
                                       "condition": {"file": "/d.nc", "variable": "elevation", "above": 1500}}))
@@ -401,8 +401,7 @@ def test_mask_section_is_validated_with_help(data_dirs):
     assert "needs above and/or below" in mask_errors(data_dirs, {"condition": {"file": "/d.nc"}})
     assert "set file too" in mask_errors(data_dirs, {"land": True, "variable": "m"})
     assert mask_errors(data_dirs, {"land": True}) == ""
-    helped = {row[0] for row in describe_schema() + describe_mask_schema()}
-    assert {"mask", "mask.land", "mask.country", "mask.condition", "mask.resolution"} <= helped
+    assert "mask" in {f.path for f in FIELDS} and {"land", "country", "condition", "resolution"} <= set(MASK_KEYS)
 
 
 def test_mask_and_nc_mask_cannot_be_combined(data_dirs):

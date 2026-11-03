@@ -53,8 +53,8 @@ def cbar_season():
     return cmap_jjas, norm_jjas, bounds
 
 
-def set_basemap(ax, spec, grid=True, line=False):
-    """Draw the region outline and set the map extent on a Cartopy axis; return (ax, gridliner or None).
+def set_basemap(ax, spec):
+    """Draw the region outline and set the map extent on a Cartopy axis; return (ax, gridliner).
 
     `spec` is the run's FigureSpec: its region and shpfile_dir give the outline and the extent."""
     region, shpfile_dir = spec.region, spec.shpfile_dir
@@ -75,15 +75,7 @@ def set_basemap(ax, spec, grid=True, line=False):
     lats, latn, lonw, lone = box(region)
     ax.set_extent([lonw, lone, lats, latn], crs=ccrs.PlateCarree())
 
-    if not grid:
-        return ax, None
-
-    if line:
-        # Add gridlines with labels
-        gl = ax.gridlines(draw_labels=True, dms=False, x_inline=False, y_inline=False,
-                      linewidth=0.5, color='gray', alpha=0.01)
-    else:
-        gl = ax.gridlines(draw_labels=True, dms=False, x_inline=False, y_inline=False,
+    gl = ax.gridlines(draw_labels=True, dms=False, x_inline=False, y_inline=False,
                       linewidth=0, linestyle='', color='none', alpha=0)
 
     gl.top_labels = False

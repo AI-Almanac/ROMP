@@ -121,9 +121,9 @@ def test_scored_bins_are_the_evaluations(config):
 
     rc, case, select = typed_io.from_case_kwargs(config)
     prepared = prepare_pairs(rc, case.model, select)
-    narrowed = create_score_results(case, prepared, rc.metrics, replace(rc.evaluation, day_bins=DAY_BINS[:1]))
+    narrowed = create_score_results(prepared, rc.metrics, replace(rc.evaluation, day_bins=DAY_BINS[:1]))
     assert set(narrowed["forecast_pairs"].labels) == {"Days 1-5"}
-    assert create_score_results(case, prepared, rc.metrics, rc.evaluation)["forecast_pairs"].n_bins > \
+    assert create_score_results(prepared, rc.metrics, rc.evaluation)["forecast_pairs"].n_bins > \
         narrowed["forecast_pairs"].n_bins
 
 

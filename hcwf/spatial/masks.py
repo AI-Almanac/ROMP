@@ -38,12 +38,12 @@ import numpy as np
 import xarray as xr
 
 from hcwf.cache import memo
+from hcwf.config.datasets import suggest
 from hcwf.errors import MaskError
 import logging
 
 log = logging.getLogger(__name__)
 
-CELL_RULES = ("centre", "overlap_fraction")
 """How a shape decides whether a data cell is kept."""
 RESOLUTIONS = ("10m", "50m", "110m")
 """Natural Earth resolutions for ``land`` and ``country``."""
@@ -384,7 +384,7 @@ def read_raster_mask(path, variable=None, keep_value=1, condition=None):
             variable = candidates[0]
         elif variable not in ds.data_vars:
             raise MaskError(f"{path}: no variable {variable!r}; the file has {', '.join(map(str, ds.data_vars))}"
-                            f"{_suggest(variable, ds.data_vars)}")
+                            f"{suggest(variable, ds.data_vars)}")
         da = ds[variable]
         extra = [d for d in da.dims if d not in (lat_name, lon_name)]
         for dim in extra:
@@ -409,12 +409,6 @@ def read_raster_mask(path, variable=None, keep_value=1, condition=None):
             kept = values == keep_value
     notes = f"variable {variable!r}, axes lat={lat_name!r} lon={lon_name!r}"
     return np.asarray(kept, dtype=bool), lat, lon, notes
-
-
-def _suggest(name, candidates) -> str:
-    """' Did you mean "x"?' for the closest candidate."""
-    close = difflib.get_close_matches(str(name), [str(c) for c in candidates], n=1, cutoff=0.6)
-    return f' Did you mean "{close[0]}"?' if close else ""
 
 
 # ----------------------------------------------------------------------------------------------------------
@@ -877,22 +871,18 @@ def mask_land(da, land=True):
     return _where_keep(da, keep if land else ~keep)
 
 
-def shp_mask(da, region='Ethiopia', resolution='10m', return_mask=False):
+def shp_mask(da, region='Ethiopia'):
     """`da` with the cells whose centre is not strictly inside the country `region` set to NaN (the implicit shp_only mask).
 
-    With return_mask the boolean DataArray of the kept cells is returned too. A region that is not a country of the
-    shapefile leaves `da` as it is.
+    A region that is not a country of the shapefile leaves `da` as it is.
     """
-    spec = default_mask(region, False, True, resolution=resolution)
+    spec = default_mask(region, False, True)
     if not spec.country:
         return da
     lat, lon = da["lat"].values, da["lon"].values
     keep = build_mask(spec, lat, lon, label="default").keep
     mask_da = xr.DataArray(keep, dims=['lat', 'lon'], coords={'lat': da.lat, 'lon': da.lon})
-    da_masked = da.where(mask_da)
-    if return_mask:
-        return da_masked, mask_da
-    return da_masked
+    return da.where(mask_da)
 
 
 def apply_nc_mask(ds, nc_mask, mask_var=None, keep_value=1):

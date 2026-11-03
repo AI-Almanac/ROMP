@@ -216,20 +216,16 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
                  & (clim_at <= init_at + np.timedelta64(int(max_forecast_day), "D")))
     onsets_forecasted = int(in_window.sum())
 
-    def dates(values):
-        """Format the values as an object array of YYYY-MM-DD strings."""
-        return pd.DatetimeIndex(values).strftime('%Y-%m-%d').to_numpy(dtype=object)
-
     if valid_inits:
         onset_day = (clim_at - init_at) // np.timedelta64(1, "D")
         climatology_forecast_df = pd.DataFrame({
             'init_time': [init_dates[n] for n in i],
             **axes.columns_of(spatial, coords, where),
             'onset_day': onset_day if in_window.all() else np.where(in_window, onset_day, np.nan),
-            'onset_date': np.where(in_window, dates(clim_date), None),
+            'onset_date': np.where(in_window, axes.date_strings(clim_date), None),
             'climatological_onset_doy': doy,
-            'climatological_onset_date': np.where(no_clim, None, dates(clim_date)),
-            'obs_onset_date': dates(obs[where]),
+            'climatological_onset_date': np.where(no_clim, None, axes.date_strings(clim_date)),
+            'obs_onset_date': axes.date_strings(obs[where]),
         })
     else:
         climatology_forecast_df = pd.DataFrame([])

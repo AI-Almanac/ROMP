@@ -355,7 +355,7 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
 
     # Fair RPS Skill Score row
     fair_rpss_row = f"{'Fair RPS Skill Score':<30} {fair_rpss_overall:<18.4f}"
-    for bin_name in target_bins:
+    for _ in target_bins:
         fair_rpss_row += f" {'N/A':<12}"  # RPS is overall only
     log.debug(fair_rpss_row)
 

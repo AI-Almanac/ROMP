@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 def spatial_metrics_map(da, model_name, spec, *, window=None,
-                    fig=None, ax=None, figsize=(8, 6), cmap='YlOrRd', n_colors=10, int_bin=True,
+                    fig=None, ax=None, cmap='YlOrRd', n_colors=10, int_bin=True,
                     onset_plot=False, cbar_ssn=False, domain_mask=False, polygon_only=False,
                     show_ylabel=True, title=None, panel=False, text_scale=1.0, 
                     vmin=None, vmax=None, rect_box=False):

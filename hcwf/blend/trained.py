@@ -517,8 +517,10 @@ class TrainedBlend:
         common = cls._common(members, observed_season=season)
         units = json.loads(members["units.json"])
         weights_arrays = _npz_load(members["weights.npz"])
+        from hcwf.onset.detect import unit_convention
+
         frozen_units = {}
-        convention = _convention(rc)
+        convention = unit_convention(rc)
         for name, item in json.loads(members["weights.json"]).items():
             frozen_units[name] = FrozenUnits(
                 item["how"], None if item["weights"] is None else _get(weights_arrays, item["weights"]), convention)
@@ -590,11 +592,6 @@ class TrainedBlend:
 
         return forecast_module.run(self, forecasts, issue_date=issue_date, fewer_members=fewer_members,
                                    workers=workers)
-
-
-def _convention(rc):
-    spec = rc.observations.units
-    return None if spec is None else spec.convention
 
 
 def expand_files(value) -> list[Path]:

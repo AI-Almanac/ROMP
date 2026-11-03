@@ -46,7 +46,7 @@ def _season_bounds(region_name: str | None):
     return (5, 1), (7, 31), None
 
 
-def _entry_lines(res: detect.Resolution, placeholders, indent: str, first: str = "") -> list[str]:
+def _entry_lines(res: detect.Resolution, placeholders, indent: str) -> list[str]:
     """YAML lines for one dataset: detected/specified values with evidence, TODOs for what cannot be detected."""
     lines = []
     shown = set()
@@ -82,7 +82,6 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
     """The text of a starting run config; obs and models are folders (or None for placeholders).
 
     blend adds a `blend:` section skeleton."""
-    notes = []
     obs_res = None
     obs_lines: list[str]
     if obs:

@@ -270,22 +270,6 @@ class EvaluationUnits:
 
     # -- subsets and area of interest ----------------------------------------------------------------------
 
-    def with_subset(self, name: str, selection) -> "EvaluationUnits":
-        """A copy with the named subset: a boolean array over the units, or the ids it holds (ids the units lack
-        are an error)."""
-        selection = np.asarray(selection)
-        if selection.dtype == bool:
-            mask = selection
-        else:
-            wanted = pd.Index(selection.astype(str))
-            missing = wanted[~wanted.isin(self.ids)]
-            if len(missing):
-                raise ValueError(f"subset {name!r}: {len(missing)} ids are not units, e.g. {', '.join(missing[:10])}")
-            mask = np.isin(self.ids, wanted)
-        out = self._copy(self.table)
-        out.subsets = {**self.subsets, name: mask}
-        return out
-
     def subset_from_csv(self, name: str, path, id_col: str | None = None, *, explicit=None) -> "EvaluationUnits":
         """A copy with a subset named by a CSV list of unit ids (see `read_id_list`); the listed ids that are
         not units are ignored, as listing a cell outside the data is harmless."""

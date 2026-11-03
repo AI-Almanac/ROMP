@@ -70,14 +70,14 @@ def skill_score_in_bins(rc):
         start = time.perf_counter()
 
         # Create bin skill score metrics
-        score_results = create_score_results(case, prepared[model], rc.metrics,
+        score_results = create_score_results(prepared[model], rc.metrics,
                                              replace(rc.evaluation, day_bins=day_bins))
 
         end = time.perf_counter()
         log.debug(f"\n\n\n skill score Execution time: {end - start:.4f} seconds\n\n\n")
 
         window_str = tuple_to_str(window)
-        overall_df, binned_df, binned_data, overall_scores = score_tables(score_results, model, window)
+        overall_df, binned_df, binned_data, overall_scores = score_tables(score_results)
         overall_frames.append(overall_df.assign(model=model, window=window_str))
         binned_frames.append(binned_df.assign(model=model, window=window_str))
 

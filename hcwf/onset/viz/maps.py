@@ -10,7 +10,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from hcwf.onset.explain import Anatomy, format_date
+from hcwf.onset.explain import Anatomy
 from hcwf.onset.model import Status
 from hcwf.onset.viz import style
 from hcwf.onset.viz.anatomy import PANEL_RATIOS, _subtitle, _title, anatomy_panels, draw_anatomy

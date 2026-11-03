@@ -146,8 +146,10 @@ def test_grid_ids_as_targets_give_grid_units():
 # -- subsets and restriction --------------------------------------------------------------------------------
 
 def test_restricting_keeps_order_subsets_and_weights(tmp_path):
-    units = EvaluationUnits.from_shapefile(write_shapes(tmp_path), "code", "label").with_subset("training", ["B2", "C3"])
-    units = units.with_subset("dissemination", np.array([True, False, True]))
+    units = EvaluationUnits.from_shapefile(write_shapes(tmp_path), "code", "label")
+    for name, ids in (("training", ["B2", "C3"]), ("dissemination", ["A1", "C3"])):
+        pd.DataFrame({"id": ids}).to_csv(tmp_path / f"{name}.csv", index=False)
+        units = units.subset_from_csv(name, tmp_path / f"{name}.csv", "id")
     kept = units.restrict("training")
     assert kept.ids.tolist() == ["B2", "C3"] and kept.subsets["dissemination"].tolist() == [False, True]
     assert kept.column("name").tolist() == ["Beta", "Gamma"] and len(kept.geometry) == 2

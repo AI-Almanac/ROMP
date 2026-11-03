@@ -86,7 +86,7 @@ def _field(value, coords, convention=None):
     return _like(value, coords)
 
 
-def _thresholds(setup, thresh_slice, coords, per_window=True, convention=None):
+def _thresholds(thresh_slice, coords, per_window=True, convention=None):
     """The thresholds for the engine: named arrays on the rainfall's cells or units, or None for a fixed amount.
 
     coords are the rainfall's spatial coordinates (lat and lon, or unit). Model-climatology thresholds carry a "window"
@@ -113,7 +113,7 @@ def _season_climatology(setup, thresh_slice, coords):
     return _like(climatology, coords)
 
 
-def _convention(rc):
+def unit_convention(rc):
     """The grid-id convention of the run's units (None: established or inferred)."""
     spec = rc.observations.units
     return None if spec is None else spec.convention
@@ -136,8 +136,8 @@ def detect_observed_dataset(rain_slice, thresh_slice, year, rc, select=Selection
     reference = select.reference_onset
     search = None if reference is None else {"reference": reference.search_start([int(year)], coords["unit"])}
     result = engine.detect_observed(
-        setup.definition, rain, thresholds=_thresholds(setup, thresh_slice, coords, per_window=False,
-                                                       convention=_convention(rc)), years=[year],
+        setup.definition, rain, thresholds=_thresholds(thresh_slice, coords, per_window=False,
+                                                       convention=unit_convention(rc)), years=[year],
         season_climatology=_season_climatology(setup, thresh_slice, coords), backend=setup.backend,
         search_start=search, **engine_options(rc))
     if search:
@@ -228,7 +228,7 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
         stitched = ingest(on_grid, day_boundary=setup.obs_day_boundary, units="mm", source="observed history")
     count = bool(onset_count)
     result = engine.detect_forecast(
-        setup.definition, forecast, thresholds=_thresholds(setup, thresh_slice, coords, convention=_convention(rc)),
+        setup.definition, forecast, thresholds=_thresholds(thresh_slice, coords, convention=unit_convention(rc)),
         lead_window=(1, max_forecast_day), backend=setup.backend, history=stitched,
         season_climatology=_season_climatology(setup, thresh_slice, coords),
         restrict_to_season=restrict_to_season, search_start=search_start,
@@ -321,7 +321,7 @@ def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selec
     (datetime64[ns] days, NaT if none) and obs_onset_date, plus onset_status for definitions.
     """
     out = detect_forecast(p_model, thresh_slice, onset_da, rc, case, select, history=history)
-    setup, valid = out["setup"], out["valid"]
+    valid = out["valid"]
     spatial = out["spatial"]
     log.debug(f"Processing {len(out['init'])} init times x {valid[0].size} {'/'.join(spatial)} points...")
     i, *where = np.nonzero(valid)
@@ -391,7 +391,7 @@ def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     members = rc.evaluation.members
     threshold = rc.onset_options.percentage_threshold
     out = detect_forecast(p_model, thresh_slice, onset_da, rc, case, select, members=members, history=history)
-    setup, valid, day = out["setup"], out["valid"], out["day"]
+    valid, day = out["valid"], out["day"]
     n_init, n_member = day.shape[0], day.shape[1]
     log.debug(f"Processing {n_init} init times x {valid[0].size} unique locations x {n_member} members...")
 

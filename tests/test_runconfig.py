@@ -165,18 +165,6 @@ def test_run_paths_fingerprint_is_the_flat_one(runs):
         assert rc.paths is dic["run_paths"] and rc.paths.fingerprint == fingerprint(dict(rc.values)), name
 
 
-def test_without_files_is_the_write_false_resolve(configs, runs, tmp_path):
-    """without_files(tmp) holds what flat_config(write=False, tmp=tmp) gives (outputs off, folders in tmp, no disk cache)."""
-    for name, (dic, rc) in runs.items():
-        quiet = rc.without_files(tmp_path)
-        _same(dict(quiet.values), flat_config(configs[name], write=False, tmp=tmp_path))
-        assert not quiet.paths.write and rc.paths.write
-        assert quiet.output.save_fig is False and quiet.output.data_dir == str(tmp_path) and quiet.cache_dir is None
-        assert quiet.onset_options.explain_cells is None and quiet.paths.fingerprint == rc.paths.fingerprint
-        assert quiet.models == rc.models and quiet.evaluation == rc.evaluation
-    assert rc.output.data_dir != str(tmp_path)                   # the original is untouched
-
-
 def test_the_projections_match_the_flat_record(runs):
     """Spot checks of what each spec holds, against the flat keys."""
     dic, rc = runs["two_models_windows"]
@@ -246,7 +234,6 @@ def test_a_blend_config_has_its_recipe(world, tmp_path):
     rc = RunConfig.from_flat(dic)
     assert rc.blend is not None and [m.name for m in rc.blend.models] == ["DET"]
     assert rc.paths.fingerprint == fingerprint(dict(rc.values)) and pickle.loads(pickle.dumps(rc)) == rc
-    assert rc.without_files(tmp_path).blend == rc.blend
 
 
 def test_importing_the_config_package_stays_light():

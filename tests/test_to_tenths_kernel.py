@@ -5,8 +5,6 @@ import xarray as xr
 
 from hcwf.onset import ingest
 
-pytestmark = pytest.mark.skipif(not ingest.has_numba(), reason="needs numba")
-
 SCALES = (10.0, 10000.0, 1.0, 0.1, 25.4 * 10.0)
 """Tenths per input unit: millimetres, metres, and a few odd factors."""
 

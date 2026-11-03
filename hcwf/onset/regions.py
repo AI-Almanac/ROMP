@@ -300,26 +300,3 @@ def units_spec(name: str) -> UnitsSpec | None:
     """The `units:` block of the nearest area in the part_of chain that declares one, else None."""
     region = load_region(name)
     return next((r.units for r in (region, *ancestors(region)) if r.units), None)
-
-
-def units_for(name: str, lat=None, lon=None, *, mask=None, label: str = "data"):
-    """The `EvaluationUnits` of a region: its declared polygons or weights, else grid units.
-
-    With a `units:` block (own or inherited through part_of) the units are the shapefile's polygons, or the
-    weights table's targets, with the `dissemination` list as a boolean subset of that name. Without one they
-    are the cells of the (lat, lon) grid inside the region's box and HCWF's `mask` (a `MaskSpec` or its mapping;
-    None keeps every cell), so a grid is required.
-    """
-    from hcwf.spatial.units import EvaluationUnits
-
-    spec = units_spec(name)
-    if spec is None:
-        if lat is None or lon is None:
-            raise RegionError(f"region '{name}' declares no units, so grid units need lat and lon. "
-                              "Fix: pass the grid or add 'units:' to the region entry")
-        units = EvaluationUnits.from_mask(mask, lat, lon, label=label)
-        return units.restrict(units.in_area(box=str(name)))
-    try:
-        return spec.build()
-    except UnitsSpecError as exc:
-        raise RegionError(str(exc)) from None

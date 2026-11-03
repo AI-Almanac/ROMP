@@ -63,13 +63,6 @@ def test_dissemination_lists_without_an_id_column(tmp_path, columns):
     assert cells.restrict("dissemination").ids.tolist() == old["id"].tolist()
 
 
-def test_a_subset_can_be_named_by_ids_and_refuses_unknown_ones():
-    cells = units().with_subset("training", ["10.00_70.00", "10.25_70.25"])
-    assert cells.restrict("training").ids.tolist() == ["10.00_70.00", "10.25_70.25"]
-    with pytest.raises(ValueError, match="not units"):
-        cells.with_subset("x", ["nowhere"])
-
-
 def named_units(tmp_path):
     pd.DataFrame({"id": ["a", "b", "c"], "lat": [10.5, 11.5, 13.0], "lon": [70.5, 71.5, 70.0]}).to_csv(
         tmp_path / "centroids.csv", index=False)

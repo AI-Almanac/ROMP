@@ -16,7 +16,6 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
-import yaml
 
 from hcwf.config import schema
 from hcwf.config import detect
@@ -29,21 +28,11 @@ _OBS_KEYS = {"obs": "name", "obs_dir": "path", "obs_file_pattern": "file_pattern
              "obs_day_boundary": "day_boundary"}
 _MODEL_LISTS = ("model_list", "model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list",
                 "model_dims_list")
-_REPORT_ONLY = ("dataset_report", "config_sources")
 
 
 def is_yaml_path(path) -> bool:
     """Whether a config path names a YAML config (by its suffix)."""
     return Path(str(path)).suffix.lower() in YAML_SUFFIXES
-
-
-def load_yaml_config(path) -> dict:
-    """Read, resolve and validate a YAML config file; returns the flat config dict."""
-    try:
-        raw = yaml.safe_load(Path(path).read_text())
-    except yaml.YAMLError as exc:
-        raise ConfigSchemaError(f"Invalid config {path}: not valid YAML: {exc}") from None
-    return build_config(raw, source=str(path))
 
 
 def _listed_files(values: dict, blend: bool) -> tuple[str, ...]:
@@ -119,7 +108,7 @@ def _implied_label(config) -> str | None:
         return None
 
 
-def _resolve_observations(config, sources, given_block, datasets, report, errors):
+def _resolve_observations(config, given_block, datasets, errors):
     """Resolve the observations dataset; returns its resolution (or None) and writes the flat keys."""
     given = {entry_key: config[flat] for flat, entry_key in _OBS_KEYS.items() if flat in config}
     if "file_pattern" in given:
@@ -135,7 +124,7 @@ def _resolve_observations(config, sources, given_block, datasets, report, errors
     return res
 
 
-def _finish_observations(res, config, sources, errors):
+def _finish_observations(res, config, sources):
     """Write the resolved observation values to the flat keys (after the region fallback for day_boundary)."""
     values = detect.finalize_units(res.values)
     flat = {"obs": values.get("name"), "obs_dir": expand_path(values["path"]) if values.get("path") else None,
@@ -408,7 +397,7 @@ def build_config(raw, source="<config>") -> dict:
         errors.append(str(exc))
         datasets = {}
 
-    obs_res = _resolve_observations(config, sources, special["observations"], datasets, report, errors)
+    obs_res = _resolve_observations(config, special["observations"], datasets, errors)
     if obs_res is not None:
         _problems_obs = dict(obs_res.problems)
         _detect_region(config, sources, obs_res, report, errors)
@@ -423,7 +412,7 @@ def build_config(raw, source="<config>") -> dict:
         _problems(obs_res, "observations", errors)
         report.append("observations:")
         report.extend("  " + t for t in obs_res.report())
-        _finish_observations(obs_res, config, sources, errors)
+        _finish_observations(obs_res, config, sources)
     obs_values = dict(obs_res.values) if obs_res is not None else None
     if obs_values is not None and not obs_values.get("day_boundary"):
         boundary, _ = _region_default_boundary(config)

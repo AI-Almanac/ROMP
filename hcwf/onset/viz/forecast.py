@@ -23,16 +23,12 @@ from hcwf.onset import engine
 from hcwf.onset.explain import _cell_of, _season_index, _slice_coords, format_date
 from hcwf.onset.model import DailyRain, Definition, DerivedSeasons, ForecastRain, Status
 from hcwf.onset.viz import style
+from hcwf.onset.viz.anatomy import _coord_text
 
 _STANDARD = {"standard", "gregorian", "proleptic_gregorian"}
 _NO_ONSET = (Status.NOT_FOUND, Status.CENSORED, Status.INSUFFICIENT_DATA)
 _ROW_IN = 0.2
 _FIG_WIDTH = 9.6
-
-
-def _coord_text(lat: float, lon: float) -> str:
-    """Latitude and longitude as "9.0°N 38.75°E"."""
-    return f"{abs(lat):g}°{'N' if lat >= 0 else 'S'} {abs(lon):g}°{'E' if lon >= 0 else 'W'}"
 
 
 def _one_cell(forecast: ForecastRain, history: DailyRain, lat: float, lon: float, thresholds):
@@ -194,7 +190,7 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
     init_num = inits.astype("int64").astype(float)
 
     present = [s for s in _NO_ONSET if (status == s).any()]
-    cell = _coord_text(place.get("lat", lat), place.get("lon", lon))
+    cell = _coord_text({"lat": place.get("lat", lat), "lon": place.get("lon", lon)})
     with style.figure_style(mode) as pal:
         title = f"{definition.title} - {cell.replace(chr(32), chr(160))} - forecast onset by init"
         title = textwrap.fill(title, 78)
@@ -219,7 +215,7 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
         ax.plot([lo, hi], [lo, hi], color=pal.ink_muted, lw=style.HAIRLINE, ls=(0, (4, 3)), zorder=1.5)
         xs, ys = np.nonzero(keep_onset)
         ax.plot(init_num[xs], days[xs, ys], "o", ms=3.2, color=pal.observed, alpha=0.35 if mode == "light" else 0.55, mew=0, zorder=2)
-        for year, (st, date) in observed.items():
+        for year, (_, date) in observed.items():
             in_year = [i for i, y in enumerate(fc1.init_year) if int(y) == year]
             x0, x1 = init_num[in_year].min() - 1.5, init_num[in_year].max() + 1.5
             if date is None:
