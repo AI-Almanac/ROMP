@@ -2,7 +2,6 @@
 
 .. automodule:: {{ fullname }}
    :members:
-   :private-members:
    :show-inheritance:
 
 {% if modules %}

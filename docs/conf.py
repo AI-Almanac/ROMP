@@ -33,9 +33,6 @@ extensions = [
 exclude_patterns = [
     "_build",
     "_templates",
-    "review",  # historical records, not part of the documentation
-    "blend_merge",
-    "blend_merge.md",
     "**/.ipynb_checkpoints",
 ]
 templates_path = ["_templates"]
@@ -48,10 +45,14 @@ default_role = "py:obj"
 
 autosummary_generate = True  # docs/api.rst -> docs/_api/*.rst, generated at build time and not committed
 autosummary_imported_members = False
+# Package modules with an ``__all__`` must still be recursed into (``autosummary_ignore_module_all = False`` would list only the
+# submodules named in ``hcwf.__all__``). The public interface is enforced where names are rendered: the module template
+# uses ``automodule :members:``, which honours each module's ``__all__``.
+autosummary_ignore_module_all = True
 autodoc_default_options = {
     "members": True,
     "undoc-members": False,
-    "private-members": True,  # the private (_name) helpers are documented too
+    "private-members": False,  # the rendered docs show the public interface (each module's __all__) only
     "special-members": False,
     "show-inheritance": True,
     "member-order": "bysource",
@@ -331,8 +332,233 @@ def _unset_signature(app, what, name, obj, options, signature, return_annotation
     return None
 
 
+# -- Generated reference pages ------------------------------------------------------------------------------------------
+# Two directives generate their page at build time from the code, so nothing is copied by hand:
+#   * ``hcwf-cli``: the text of ``hcwf-run -h``, of the run overrides and of every subcommand's ``-h``, taken by calling the
+#     handlers of `hcwf.cli.COMMANDS` (argparse prints the help and exits);
+#   * ``hcwf-config-keys``: one table per config section (key, type, default, help) from `hcwf.config.schema.FIELDS`.
+
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import os  # noqa: E402
+
+from docutils import nodes  # noqa: E402
+from docutils.parsers.rst import Directive  # noqa: E402
+
+
+def _section(directive, title, children):
+    """Return a section node with a title, registered as a link target of the document.
+
+    Parameters
+    ----------
+    directive : docutils.parsers.rst.Directive
+        The directive that makes the section.
+    title : str
+        The section title.
+    children : list of docutils.nodes.Node
+        The section's content.
+
+    Returns
+    -------
+    docutils.nodes.section
+        The section, with the title first.
+    """
+    section = nodes.section(ids=[nodes.make_id(title)], names=[nodes.fully_normalize_name(title)])
+    section += nodes.title(title, title)
+    section.extend(children)
+    directive.state.document.note_implicit_target(section, section)
+    return section
+
+
+def _help_of(handler, args, prog="hcwf-run", width="90"):
+    """Capture what a command prints for ``-h``.
+
+    Parameters
+    ----------
+    handler : callable
+        Called with the argument list; argparse prints the help and raises ``SystemExit``.
+    args : list of str
+        The arguments (ending in ``-h``).
+    prog : str
+        The program name argparse puts in the usage line.
+    width : str
+        The terminal width argparse wraps at.
+
+    Returns
+    -------
+    str
+        The help text.
+    """
+    out = io.StringIO()
+    saved = (sys.argv, os.environ.get("COLUMNS"))
+    sys.argv, os.environ["COLUMNS"] = [prog], width
+    try:
+        with contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+            handler(args)
+    finally:
+        sys.argv = saved[0]
+        if saved[1] is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = saved[1]
+    return out.getvalue().rstrip() + "\n"
+
+
+class HcwfCli(Directive):
+    """Render the help of ``hcwf-run``: the overview, the run overrides and every subcommand."""
+
+    has_content = False
+
+    def run(self):
+        """Build the sections from the argparse parsers and handlers of `hcwf.cli`.
+
+        Returns
+        -------
+        list of docutils.nodes.Node
+            One section per command, each holding the command's help as a literal block.
+        """
+        from hcwf import cli
+        from hcwf.cli.parser import create_parser
+
+        def block(text):
+            return nodes.literal_block(text, text, language="text")
+
+        parser = create_parser()
+        parser.prog = "hcwf-run"
+        result = [
+            _section(self, "hcwf-run", [block(cli.HELP)]),
+            _section(self, "Run overrides", [
+                nodes.paragraph(text="With a config, ``hcwf-run -p run.yaml -h`` lists the command-line overrides of config values:"
+                                .replace("``", "")),
+                block(parser.format_help()),
+            ]),
+        ]
+        for name, handler in cli.COMMANDS.items():
+            text = _help_of(handler, ["-h"], prog=f"hcwf-run {name}")
+            children = [block(text)]
+            if name == "onset":
+                import re
+
+                for sub in re.findall(r"\{([\w,\-]+)\}", text)[:1] and re.findall(r"\{([\w,\-]+)\}", text)[0].split(","):
+                    children.append(_section(self, f"hcwf-run onset {sub}",
+                                             [block(_help_of(handler, [sub, "-h"], prog=f"hcwf-run onset {sub}"))]))
+            result.append(_section(self, f"hcwf-run {name}", children))
+        return result
+
+
+class HcwfConfigKeys(Directive):
+    """Render one table of keys per section of the run file, from `hcwf.config.schema`."""
+
+    has_content = False
+
+    def run(self):
+        """Build the tables from `hcwf.config.schema.FIELDS`.
+
+        Returns
+        -------
+        list of docutils.nodes.Node
+            One section per config section (the top-level keys first), each holding a table of key, type, default and help.
+        """
+        from hcwf.config import schema
+
+        def prose(text):
+            return re.sub(r"(?<!`)`([^`]+)`(?!`)", r"\1", text)
+
+        def default_of(field):
+            if field.required:
+                return "required"
+            if field.internal:
+                return "set by HCWF"
+            if not field.fill or callable(field.default):
+                return "chosen by HCWF"
+            return repr(field.default)
+
+        groups = {None: [f for f in schema.FIELDS if f.section is None]}
+        for name in schema.SECTIONS:
+            groups[name] = [f for f in schema.FIELDS if f.section == name]
+        result = []
+        for name, fields in groups.items():
+            if not fields:
+                continue
+            table = nodes.table()
+            tgroup = nodes.tgroup(cols=4)
+            table += tgroup
+            for width in (22, 28, 16, 60):
+                tgroup += nodes.colspec(colwidth=width)
+            head = nodes.thead()
+            tgroup += head
+            body = nodes.tbody()
+            tgroup += body
+
+            def row(cells, rows=body, literal_first=False):
+                r = nodes.row()
+                for i, text in enumerate(cells):
+                    para = nodes.paragraph()
+                    para += nodes.literal(text, text) if (literal_first and i in (0, 2)) else nodes.Text(text)
+                    r += nodes.entry("", para)
+                rows += r
+
+            row(["Key", "Type", "Default", "Help"], rows=head)
+            for field in fields:
+                row([field.path, field.expected, default_of(field), prose(field.help)], literal_first=True)
+            if name is None:
+                title, intro = "Top-level keys", "Keys written at the top of the run file."
+            else:
+                title, intro = f"{name}:", f"The ``{name}:`` section: {schema.SECTIONS[name]}.".replace("``", "")
+            result.append(_section(self, title, [nodes.paragraph(text=intro), table]))
+        return result
+
+
+def _literal_for_internal_name(app, env, node, contnode):
+    """Show a reference to an existing but unrendered (internal) name as a literal instead of a broken link.
+
+    The rendered documentation shows the public interface only (each module's ``__all__``), but the docstrings of public
+    names may still mention the private helpers and module constants they use. Such a mention is kept as plain code text.
+    A target that cannot be imported at all is left alone, so it is still reported as a broken reference.
+
+    Parameters
+    ----------
+    app : sphinx.application.Sphinx
+        The application.
+    env : sphinx.environment.BuildEnvironment
+        The build environment.
+    node : sphinx.addnodes.pending_xref
+        The reference that was not found.
+    contnode : docutils.nodes.Node
+        The text the reference would have shown.
+
+    Returns
+    -------
+    docutils.nodes.Node or None
+        The literal text of an existing hcwf object, or None for a target that does not exist.
+    """
+    import importlib
+
+    if node.get("refdomain") != "py":
+        return None
+    target = node["reftarget"].lstrip("~.")
+    module = node.get("py:module")
+    candidates = [target] + ([f"{module}.{target}"] if module else [])
+    for name in candidates:
+        if not name.startswith("hcwf"):
+            continue
+        parts = name.split(".")
+        for i in range(len(parts), 0, -1):
+            try:
+                obj = importlib.import_module(".".join(parts[:i]))
+            except ImportError:
+                continue
+            try:
+                for part in parts[i:]:
+                    obj = getattr(obj, part)
+            except AttributeError:
+                break
+            return nodes.literal(target, node.astext() or target)
+    return None
+
+
 def setup(app):
-    """Connect the config-class hooks.
+    """Connect the config-class hooks and add the generated-reference directives.
 
     Parameters
     ----------
@@ -341,3 +567,6 @@ def setup(app):
     """
     app.connect("autodoc-process-signature", _unset_signature)
     app.connect("autodoc-skip-member", _skip_unset_fields)
+    app.connect("missing-reference", _literal_for_internal_name)
+    app.add_directive("hcwf-cli", HcwfCli)
+    app.add_directive("hcwf-config-keys", HcwfConfigKeys)
