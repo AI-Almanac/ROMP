@@ -5,11 +5,11 @@ Four notebooks walk through the workflow and interface of `hcwf`: config, `hcwf.
 | Notebook | Shows |
 |---|---|
 | `ethiopia/ethiopia_benchmarking.ipynb` | Ethiopia (default definition `icpac`): config and check, onset definition and one explained onset, deterministic benchmark (AIFS_v2, GraphCast) and probabilistic benchmark (AIFS_ENS_v2) against climatology, result objects and figures, polygon units, caches |
-| `ethiopia/ethiopia_blending.ipynb` | Ethiopia: train a blend (AIFS_v2 + GraphCast + climatology), evaluation tables, `trained.blend`, a live 2025 forecast as `Forecast` (`weekly`, `weekly_table`) and a map |
+| `ethiopia/ethiopia_blending.ipynb` | Ethiopia: train a blend (AIFS_v2 + GraphCast + AIFS_ENS_v2 + climatology) straight from the zarr stores, evaluation tables, `trained.blend`, a live 2025 forecast from the stores as `Forecast` (`weekly`, `weekly_table`) and a map |
 | `india/india_benchmarking.ipynb` | The same for India (default definition `moron_robertson_mok`, day boundary 03 UTC labelled by end) |
 | `india/india_blending.ipynb` | The same for India (blend over central and north India) |
 
-Each runs in about 0.5-2 minutes on a many-core machine. The older notebooks in `et/` are unchanged.
+Each runs in under a minute on a many-core machine (20-50 s measured). The older notebooks in `et/` are unchanged.
 
 ## Data
 
@@ -28,6 +28,6 @@ export HCWF_DEMO_DATA=/path/to/data     # then start jupyter from any folder
 
 ## Running
 
-Install hcwf (`pip install ".[dev]"` from the repository root, which brings Jupyter), then open the notebooks and run all cells. Runs write into `runs/` next to the notebook; the blending notebooks also export NetCDF slices to `blend_data/` (the blend trainer and `hcwf.api.forecast` read NetCDF files, one per year, not zarr stores; polygon units need the same). Both folders are git-ignored and are re-used or overwritten on a re-run; delete them to start clean.
+Install hcwf (`pip install ".[dev]"` from the repository root, which brings Jupyter), then open the notebooks and run all cells. Runs write into `runs/` next to the notebook (ignored by version control, overwritten on a re-run; delete it to start clean). Everything is read from the zarr stores directly: the benchmarks (also on polygon units), the blend training and the live forecast.
 
 Kenya notebooks will use the `liebmann_marengo` onset definition once Kenya data is available.
