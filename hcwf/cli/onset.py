@@ -213,7 +213,7 @@ def main(argv=None) -> int:
     int
         The exit status: 0, or 1 after an error.
     """
-    parser = argparse.ArgumentParser(prog="hcwf-run onset", description=__doc__)
+    parser = argparse.ArgumentParser(prog="hcwf-run onset", description=__doc__.replace("``", ""))
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="definition ids with titles and regions").set_defaults(run=_list)
     p = sub.add_parser("describe", help="a definition in plain words, with hash, status and notes")
