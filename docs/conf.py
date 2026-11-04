@@ -4,8 +4,6 @@ Build with ``uv run --extra docs sphinx-build -W --keep-going -b html docs docs/
 See ``docs/contributing_docstrings.md`` for the docstring conventions this configuration renders.
 """
 
-import ast
-import logging
 import sys
 from pathlib import Path
 
@@ -127,50 +125,3 @@ html_theme_options = {
     "show_toc_level": 2,
     "github_url": "https://github.com/AI-Almanac/HCWF",
 }
-
-# -- Packages whose docstrings are not converted yet --------------------------------------------------------------------
-# PENDING in tests/test_docstrings.py is the single list. A package listed there still gets its API pages, but warnings
-# that Sphinx raises from its sources are dropped so ``-W`` passes. Removing the package from PENDING makes them errors.
-
-
-def _pending() -> list[str]:
-    """Return the package paths of PENDING in tests/test_docstrings.py (parsed, not imported)."""
-    tree = ast.parse((ROOT / "tests" / "test_docstrings.py").read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "PENDING" for t in node.targets):
-            return sorted(ast.literal_eval(node.value))
-    raise RuntimeError("PENDING not found in tests/test_docstrings.py")
-
-
-PENDING = _pending()
-_PENDING_PATHS = tuple(str(ROOT / p) + "/" for p in PENDING)
-_PENDING_MODULES = tuple(p.replace("/", ".") for p in PENDING)
-
-
-def _in_pending_module(text: str) -> bool:
-    """Return True when the text names an object inside a pending package."""
-    return any(m + "." in text or m + "`" in text for m in _PENDING_MODULES)
-
-
-class _PendingFilter(logging.Filter):
-    """Drop Sphinx warnings that come from the docstrings of a pending (unconverted) package."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Return False for a warning located in, or about, a pending package."""
-        if record.levelno < logging.WARNING:
-            return True
-        location = str(getattr(record, "location", "") or "")
-        if any(path in location for path in _PENDING_PATHS):
-            return False
-        return not _in_pending_module(location)
-
-
-def _install_pending_filter(app) -> None:
-    """Put the pending filter first on the handlers that count warnings (before ``-W`` makes them errors)."""
-    for handler in logging.getLogger("sphinx").handlers:
-        handler.filters.insert(0, _PendingFilter())
-
-
-def setup(app) -> None:
-    """Register the pending-package warning filter."""
-    app.connect("builder-inited", _install_pending_filter)

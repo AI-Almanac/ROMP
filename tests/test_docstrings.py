@@ -1,6 +1,6 @@
 """Guard for the docstring conventions of docs/contributing_docstrings.md.
 
-Three checks run over every module of ``hcwf`` that is not in `PENDING`:
+Three checks run over every module of ``hcwf``:
 
 * ruff's pydocstyle rules (``D``, numpy convention, plus D401 imperative mood and D417 documented arguments), configured in
   ``[tool.ruff.lint]`` of pyproject.toml;
@@ -8,11 +8,8 @@ Three checks run over every module of ``hcwf`` that is not in `PENDING`:
   Returns / Yields / Raises exist when the code returns / yields / raises, also for short docstrings and private functions;
 * an AST check that every module, class, function and method (nested ones included) has a docstring.
 
-`PENDING` lists the packages whose docstrings have not been converted yet; they are skipped. A package agent removes its
-lines from `PENDING` and from ``[tool.ruff.lint.per-file-ignores]`` in pyproject.toml (a test keeps the two equal).
-
-Run it as a report with ``uv run --extra dev python tests/test_docstrings.py [--all] [PATH ...]``: it prints every
-violation (``--all`` includes the pending packages) and, per package, how many there are.
+Run it as a report with ``uv run --extra dev python tests/test_docstrings.py [PATH ...]``: it prints every violation
+and, per package, how many there are.
 """
 from __future__ import annotations
 
@@ -29,33 +26,20 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "hcwf"
 
-# Packages not converted to the docstring conventions yet, one per line, alphabetic. Remove a line when its package passes.
-PENDING = {
-}
-
 # pydoclint cannot allow optional signature annotations: with ``arg-type-hints-in-signature = false`` it reports DOC108 for
 # every annotated argument. Annotations are optional in HCWF (docstring types are the rendered ones), so DOC108 is ignored.
 IGNORED_PYDOCLINT = {"DOC108"}
 
 
-def python_files(include_pending: bool = False, paths: list[Path] | None = None) -> list[Path]:
-    """Return the ``hcwf`` source files to check, sorted; pending packages only when asked."""
+def python_files(paths: list[Path] | None = None) -> list[Path]:
+    """Return the ``hcwf`` source files to check (all of them, or those under `paths`), sorted."""
     roots = paths or [PACKAGE]
-    files = sorted(f for root in roots for f in ([root] if root.is_file() else root.rglob("*.py"))
-                   if "__pycache__" not in f.parts)
-    if include_pending:
-        return files
-    return [f for f in files if not is_pending(f)]
-
-
-def is_pending(path: Path) -> bool:
-    """Return True when the file lies inside a package of `PENDING`."""
-    rel = path.resolve().relative_to(ROOT).as_posix()
-    return any(rel == p or rel.startswith(p + "/") for p in PENDING)
+    return sorted(f for root in roots for f in ([root] if root.is_file() else root.rglob("*.py"))
+                  if "__pycache__" not in f.parts)
 
 
 def package_of(path: str) -> str:
-    """Return the report group of a file path: its pending package, else ``hcwf`` top level or its subpackage."""
+    """Return the report group of a file path: ``hcwf`` top level or its subpackage."""
     rel = Path(path).resolve().relative_to(ROOT).as_posix() if Path(path).is_absolute() else Path(path).as_posix()
     parts = rel.split("/")
     return "/".join(parts[:2]) if len(parts) > 2 else "hcwf (top level)"
@@ -69,11 +53,9 @@ def _tool_available(module: str) -> bool:
 # -- ruff ---------------------------------------------------------------------------------------------------------------
 
 
-def ruff_violations(files: list[Path], honor_pending_ignores: bool = True) -> list[str]:
+def ruff_violations(files: list[Path]) -> list[str]:
     """Return ruff's ``D`` findings of the files as ``path:line:col: CODE message`` lines."""
     cmd = [sys.executable, "-m", "ruff", "check", "--no-cache", "--output-format=concise", "--force-exclude"]
-    if not honor_pending_ignores:
-        cmd += ["--config", "lint.per-file-ignores = {}"]
     out = subprocess.run([*cmd, *map(str, files)], cwd=ROOT, capture_output=True, text=True)
     return [line for line in out.stdout.splitlines() if re.match(r"^\S+:\d+:\d+: ", line)]
 
@@ -162,28 +144,8 @@ def missing_docstrings(path: Path) -> list[str]:
 # -- tests --------------------------------------------------------------------------------------------------------------
 
 
-def test_pending_packages_exist():
-    """Every PENDING entry is an existing package directory (stale entries are removed, not left behind)."""
-    for entry in PENDING:
-        assert (ROOT / entry).is_dir(), f"PENDING lists {entry}, which does not exist"
-
-
-def test_pending_matches_ruff_ignores():
-    """PENDING equals the packages ignored for the D rules in ``[tool.ruff.lint.per-file-ignores]``."""
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        tomllib = pytest.importorskip("tomli")
-    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    ignores = config["tool"]["ruff"]["lint"].get("per-file-ignores", {})
-    listed = {pattern.removesuffix("/**") for pattern, rules in ignores.items() if rules == ["D"]}
-    assert listed == PENDING, (
-        "PENDING (tests/test_docstrings.py) and per-file-ignores (pyproject.toml) differ: "
-        f"only in PENDING {sorted(PENDING - listed)}, only in pyproject {sorted(listed - PENDING)}")
-
-
 def test_ruff_docstring_rules():
-    """Ruff's D rules (numpy convention, with D401 and D417) pass on every converted module."""
+    """Ruff's D rules (numpy convention, with D401 and D417) pass on every module."""
     if not _tool_available("ruff"):
         pytest.skip("ruff is not installed: run with `uv run --extra dev`")
     found = ruff_violations(python_files())
@@ -191,7 +153,7 @@ def test_ruff_docstring_rules():
 
 
 def test_pydoclint():
-    """Pydoclint (numpy style, see [tool.pydoclint]) passes on every converted module."""
+    """Pydoclint (numpy style, see [tool.pydoclint]) passes on every module."""
     if not _tool_available("pydoclint"):
         pytest.skip("pydoclint is not installed: run with `uv run --extra dev`")
     found = pydoclint_violations(python_files())
@@ -199,19 +161,18 @@ def test_pydoclint():
 
 
 def test_every_object_has_a_docstring():
-    """Every module, class, function and method (nested included) of a converted module has a docstring."""
+    """Every module, class, function and method (nested included) has a docstring."""
     missing = [m for f in python_files() for m in missing_docstrings(f)]
     assert not missing, "missing docstrings:\n" + "\n".join(missing)
 
 
 def main(argv: list[str]) -> int:
-    """Print every docstring violation (``--all`` includes pending packages) with counts per package; return the exit code."""
-    include_pending = "--all" in argv
+    """Print every docstring violation with counts per package; return the exit code."""
     paths = [Path(a).resolve() for a in argv if not a.startswith("--")] or None
-    files = python_files(include_pending, paths)
+    files = python_files(paths)
     findings: list[tuple[str, str]] = []
     if _tool_available("ruff"):
-        findings += [("ruff", line) for line in ruff_violations(files, honor_pending_ignores=not include_pending)]
+        findings += [("ruff", line) for line in ruff_violations(files)]
     if _tool_available("pydoclint"):
         findings += [("pydoclint", line) for line in pydoclint_violations(files)]
     findings += [("missing", m) for f in files for m in missing_docstrings(f)]

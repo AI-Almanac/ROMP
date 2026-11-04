@@ -270,15 +270,3 @@ What the tools check, and what they cannot:
   against annotations, nor that the descriptions are true.
 * Sphinx: cross-references (`py:obj`), reST syntax and that the numpy sections render.
 
-## Converting a package
-
-`PENDING` in `tests/test_docstrings.py` lists the packages whose docstrings are not converted yet; the guard test, ruff
-and the Sphinx warnings skip them. To convert a package:
-
-1. Convert every module of it. `uv run --extra dev python tests/test_docstrings.py --all hcwf/<package>` lists what is
-   left (the package is still pending, hence `--all`).
-2. Remove its line from `PENDING` in `tests/test_docstrings.py`, and its line (`"hcwf/<package>/**" = ["D"]`) from
-   `[tool.ruff.lint.per-file-ignores]` in `pyproject.toml`. A test fails when the two lists differ. The Sphinx
-   build reads `PENDING`, so its warnings for the package become errors at once.
-3. Run the checks above until they pass (`python tests/test_docstrings.py hcwf/<package>`, now without `--all`, must
-   print `total 0`), then the Sphinx build and the full test suite.
