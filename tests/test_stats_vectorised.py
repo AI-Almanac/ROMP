@@ -908,7 +908,7 @@ def test_climatology_as_forecast_matches_loops(max_forecast_day):
     args = (clim, 2020, INITS, observed)
     kwargs = dict(max_forecast_day=max_forecast_day)
     old = _old_compute_climatology_as_forecast(*args, **kwargs)
-    new = compute_climatology_as_forecast(*args, **kwargs)
+    new = compute_climatology_as_forecast(clim, INITS, observed, **kwargs)
 
     # Documented differences: the doy column was an object column of 0-d arrays and is now float64, and
     # rows without a climatological onset now have no climatological_onset_date (the loop repeated the
@@ -929,7 +929,7 @@ def test_climatology_as_forecast_without_valid_cases_is_empty():
     clim = _grid(np.full((len(LATS), len(LONS)), 150.0))
     observed = _grid(np.full((len(LATS), len(LONS)), np.datetime64("NaT"), dtype="datetime64[ns]"), dtype="datetime64[ns]")
     kwargs = dict(max_forecast_day=30)
-    assert compute_climatology_as_forecast(clim, 2020, INITS, observed, **kwargs).empty
+    assert compute_climatology_as_forecast(clim, INITS, observed, **kwargs).empty
     assert _old_compute_climatology_as_forecast(clim, 2020, INITS, observed, **kwargs).empty
 
 

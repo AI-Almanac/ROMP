@@ -404,7 +404,7 @@ def test_climatology_equals_the_scored_table(world):
     total, found = 0, 0
     _, _, _, inputs = _scoring_inputs(world.cfgs["DET"], "DET")
     for year, _, onset_da, _ in inputs:
-        frame = compute_climatology_as_forecast(clim_doy, year, initialization_dates(year, rc.evaluation), onset_da,
+        frame = compute_climatology_as_forecast(clim_doy, initialization_dates(year, rc.evaluation), onset_da,
                                                 max_forecast_day=rc.evaluation.max_forecast_day)
         got = _rows(ds, frame, ["onset_date", "onset_day", "onset_lead", "onset_doy", "status", "scored"])
         _same_dates(got["onset_date"], frame["onset_date"])

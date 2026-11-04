@@ -172,7 +172,7 @@ def test_climatology_reference_is_unchanged(config):
     det = dict(config, probabilistic=False, model="climatology")
     metrics, onsets = compute_metrics(*typed(det))
     init_dates = typed_io.initialization_dates(TARGET, det)
-    direct = compute_climatology_as_forecast(onsets[TARGET], TARGET, init_dates,
+    direct = compute_climatology_as_forecast(onsets[TARGET], init_dates,
                                              _observed(det), max_forecast_day=10)
     assert len(metrics[TARGET]) == direct[["lat", "lon"]].drop_duplicates().shape[0]
 

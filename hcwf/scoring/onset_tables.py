@@ -163,7 +163,7 @@ def _tables_of_years(years, rc, case, select, ens, extra):
         else:  # climatology as forecast
             log.debug("Computing onset for climatology as forecast ...")
             onset_df = compute_climatology_as_forecast(
-                extra["climatological_onset_doy"], year, initialization_dates(year, ev), onset_da,
+                extra["climatological_onset_doy"], initialization_dates(year, ev), onset_da,
                 max_forecast_day=ev.max_forecast_day)
         del read_forecast, imd, history
         out[year] = (onset_df, onset_da)

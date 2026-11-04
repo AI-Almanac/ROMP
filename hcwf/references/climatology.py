@@ -224,7 +224,7 @@ def climatological_onset(rc, case, select=Selection()):
     return climatological_onset_doy
 
 
-def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, observed_onset_da,
+def compute_climatology_as_forecast(climatological_onset_doy, init_dates, observed_onset_da,
                                    *, max_forecast_day):
     """Use climatology as a forecast model for the given initialization dates.
 
@@ -235,8 +235,6 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     climatological_onset_doy : xarray.DataArray or hcwf.onset.climatology.ReferenceOnset
         The climatological onset day of year, or a ``ReferenceOnset`` (its day-of-year field on the grid of
         `observed_onset_da`).
-    year : int
-        The year to evaluate (only logged).
     init_dates : pandas.DatetimeIndex
         The initialization dates.
     observed_onset_da : xarray.DataArray of datetime64
@@ -260,7 +258,6 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     n_cells = int(np.prod([len(coords[d]) for d in spatial]))
 
     log.debug(f"Processing climatology as forecast for {len(init_dates)} init times x {n_cells} {'/'.join(spatial)} points...")
-    log.debug(f"Year: {year}")
 
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
     init_ns = inits.values.astype("datetime64[ns]")

@@ -631,7 +631,7 @@ def collect_climatology(rc: RunConfig) -> xr.Dataset:
     for year, obs_da, init_dates, _ in years:
         if not len(init_dates):
             continue
-        table = compute_climatology_as_forecast(clim_doy, year, init_dates, _stand_in(obs_da),
+        table = compute_climatology_as_forecast(clim_doy, init_dates, _stand_in(obs_da),
                                                 max_forecast_day=ev.max_forecast_day)
         parts.append(_reference_year(table, init_dates, obs_da, _scored(init_dates, obs_da), setup.season))
     ds = xr.concat(parts, dim="init_time", join="exact", data_vars="minimal", coords="minimal")

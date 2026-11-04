@@ -126,12 +126,12 @@ def test_the_climatology_forecast_takes_the_provider_or_its_field():
     observed = xr.DataArray(np.array([["2013-06-10", "2013-06-12"], ["2013-06-20", "2013-06-22"]], dtype="datetime64[ns]"),
                             dims=("lat", "lon"), coords=doy.coords)
     inits = pd.date_range("2013-05-20", periods=5, freq="2D")
-    direct = compute_climatology_as_forecast(doy, 2013, inits, observed, max_forecast_day=20)
+    direct = compute_climatology_as_forecast(doy, inits, observed, max_forecast_day=20)
     stacked = xr.concat([doy, doy], dim="year").assign_coords(year=[1, 2])
-    via = compute_climatology_as_forecast(ReferenceOnset(computed=reduce_onset_days(stacked, "mean")), 2013, inits,
+    via = compute_climatology_as_forecast(ReferenceOnset(computed=reduce_onset_days(stacked, "mean")), inits,
                                           observed, max_forecast_day=20)
     pd.testing.assert_frame_equal(direct, via)
-    fixed = compute_climatology_as_forecast(ReferenceOnset(month_day="05-30"), 2013, inits, observed,
+    fixed = compute_climatology_as_forecast(ReferenceOnset(month_day="05-30"), inits, observed,
                                             max_forecast_day=20)
     assert set(fixed["onset_date"].dropna()) == {"2013-05-30"}
     with pytest.raises(ValueError, match="no day-of-year"):
