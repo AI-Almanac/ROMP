@@ -20,7 +20,8 @@ specification; `check_models` runs several models in parallel threads. Files are
 
 The keyword arguments (``obs_dir``, ``obs_file_pattern``, ``obs_var``, ``obs_unit_cvt``, ``model_dir``,
 ``model_var``, ``unit_cvt``, ``file_pattern``, ``model_dims``, ``probabilistic``, ``members``, ``accumulation``,
-``daily_boundary``, ``region``, ``start_date``, ``end_date``, ``init_days``, ``years``) and, for datasets given as
+``daily_boundary``, ``region``, ``start_date``, ``end_date``, ``init_days``, ``years``, ``date_filter_year``) and,
+for datasets given as
 lists of files, ``obs_paths``, ``obs_files_years``, ``model_paths`` and ``model_files_years``, are those of
 `sample_spec` (a run's model, from its typed specs); the lead-label detection of zarr datasets
 (`hcwf.config.detect`) writes them before a run exists.
@@ -39,6 +40,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import Store, file_identity
+from hcwf.io.forecasts import init_dates
 from hcwf.io.stores import forecast_sources as _year_sources
 from hcwf.io.stores import listed_years, observation_source, open_store, years_in_folder
 from hcwf.config.datasets import is_zarr
@@ -126,7 +128,8 @@ def sample_spec(rc, model: str) -> dict:
             "model_var": source.var, "unit_cvt": source.unit_cvt, "model_dims": source.dims_map(),
             "accumulation": source.accumulation, "daily_boundary": source.daily_boundary,
             "probabilistic": ev.probabilistic, "members": ev.members, "region": rc.area.region,
-            "start_date": ev.start_date, "end_date": ev.end_date, "init_days": ev.init_days, "years": ev.years}
+            "start_date": ev.start_date, "end_date": ev.end_date, "init_days": ev.init_days, "years": ev.years,
+            "date_filter_year": ev.date_filter_year}
 
 
 def _is_store(kw: dict, side: str) -> bool:
@@ -296,7 +299,10 @@ def forecast_sources(kw: dict) -> list:
 
 
 def _candidate_inits(times, kw: dict) -> np.ndarray:
-    """Return the indices of the init times inside the run's years, month-day window and init weekdays.
+    """Return the indices of the init times inside the run's years and among its initialization dates.
+
+    The dates are those the run reads (`hcwf.io.forecasts.init_dates`): the month-days of the window whose weekday in
+    ``date_filter_year`` is an init weekday, moved into each year.
 
     When no init qualifies, or the times cannot be converted to dates, all of them are returned.
 
@@ -306,7 +312,8 @@ def _candidate_inits(times, kw: dict) -> np.ndarray:
         The init times (``datetime64`` or convertible by `pandas.to_datetime`).
     kw : dict
         The keyword arguments of the sampled check: ``years``, ``start_date`` and ``end_date`` (``(year, month, day)``
-        tuples, of which month and day are used) and ``init_days`` (weekdays, Monday is 0).
+        tuples, of which month and day are used), ``init_days`` (weekdays, Monday is 0) and ``date_filter_year`` (the
+        year the weekdays are counted in; the year of ``start_date`` when absent).
 
     Returns
     -------
@@ -318,15 +325,14 @@ def _candidate_inits(times, kw: dict) -> np.ndarray:
     except (TypeError, ValueError):
         return np.arange(len(times))
     keep = np.ones(len(stamps), dtype=bool)
-    start, end = kw.get("start_date"), kw.get("end_date")
+    start, end, init_days = kw.get("start_date"), kw.get("end_date"), kw.get("init_days")
     years = kw.get("years")
     if years:
         keep &= stamps.year.isin(list(years))
-    if start and end:
-        md = stamps.month * 100 + stamps.day
-        keep &= (md >= start[1] * 100 + start[2]) & (md <= end[1] * 100 + end[2])
-    if kw.get("init_days") is not None:
-        keep &= stamps.weekday.isin(list(kw["init_days"]))
+    if start and end and init_days is not None:
+        filter_year = kw.get("date_filter_year") or start[0]
+        keep &= stamps.isin(pd.DatetimeIndex([d for y in (years or sorted(set(stamps.year)))
+                                              for d in init_dates(int(y), filter_year, init_days, start, end)]))
     return np.nonzero(keep)[0] if keep.any() else np.arange(len(stamps))
 
 
@@ -769,7 +775,7 @@ def sample_report(sample: Sample, lead_label: str, *, obs_boundary: str = "", fo
 
 _KEYS = ("obs_dir", "obs_var", "obs_unit_cvt", "obs_paths", "obs_files_years", "model_dir", "model_var", "unit_cvt",
          "model_paths", "model_files_years", "model_dims", "region", "probabilistic", "members", "accumulation",
-         "daily_boundary", "start_date", "end_date", "init_days", "years")
+         "daily_boundary", "start_date", "end_date", "init_days", "years", "date_filter_year")
 """The kwargs the verdict depends on, beside the files and file patterns."""
 
 

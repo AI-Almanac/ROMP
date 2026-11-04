@@ -145,7 +145,7 @@ def ingest_forecast(cube, onset, model, options, select=NO_SELECTION, source=Non
     return forecast
 
 
-def _init_dates(year, date_filter_year, init_days, start_date, end_date):
+def init_dates(year, date_filter_year, init_days, start_date, end_date):
     """Return the initialization dates of a year.
 
     These are the days between ``start_date`` and ``end_date`` (month and day only) whose weekday in ``date_filter_year``
@@ -200,9 +200,9 @@ def initialization_dates(year, ev):
     Returns
     -------
     pandas.DatetimeIndex
-        The dates (see `_init_dates`).
+        The dates (see `init_dates`).
     """
-    return _init_dates(year, ev.date_filter_year, ev.init_days, ev.start_date, ev.end_date)
+    return init_dates(year, ev.date_filter_year, ev.init_days, ev.start_date, ev.end_date)
 
 
 def _forecast_on_units(da, spec: UnitsSpec, keep_ids, unit_cvt):
