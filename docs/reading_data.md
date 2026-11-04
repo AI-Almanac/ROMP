@@ -53,6 +53,24 @@ again by every block along time, is blocked along the axis with the most chunks 
   threads, and a store chunked over many years is read in blocks and sliced per year (`hcwf.io.observations`).
   The same `select` functions read them: their chunk information is the store's.
 
+## Finding and opening files
+
+Every file is found, opened and read through one path:
+
+* **A file pattern** (`file_pattern`, `{}` for the year) is listed by `hcwf.io.stores.pattern_files`: `{}` is exactly four
+  digits and the rest of the name is as written, so `{}.nc` is `2010.nc` and not `2010_old.nc`. `years_in_folder`,
+  `model_sources`, the blend's file listing, detection and the sampled check all use it; `forecast_sources` and
+  `observation_source` give the file of one year.
+* **Listed files** (`paths:`) have no pattern: the year of a file is the first 19xx or 20xx anywhere in its name
+  (`hcwf.config.datasets.file_year`; `year_files`, `listed_years`).
+* **What is a data file** (`.nc` in the name, or ending `.zarr`): `hcwf.io.stores.is_data_file` and `data_files`.
+* **Opening**: `hcwf.config.detect.open_data` (NetCDF, or the run's shared zarr handle from `open_store`; closing what it
+  returns never closes the store). The check (`hcwf.runs.check`), the lead count and the command line use it.
+* **Years of a store**: `hcwf.io.stores.store_years` (``time`` of observations, ``init_time`` with `forecast=True`); a
+  store with no time coordinate raises `ValueError`, and the check reports it as an error.
+* **Dimension names**: `hcwf.io.dims.ROLE_ALIASES` is the only list (latitude and longitude included, mask and centroid
+  names too); `rename_spatial` is the one renaming of them.
+
 ## Checking it
 
 `tests/_decode_count.py` counts the chunks each read of a NetCDF file touches (`count_decodes()`; read the totals with

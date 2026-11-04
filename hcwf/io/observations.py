@@ -340,9 +340,7 @@ def obs_years_of(read: ObsRead, years, hold=True, cells=False) -> Iterator[tuple
         if year in keep:
             with _obs_lock:
                 rainfall = _obs_years.setdefault(locate(year)[0], rainfall.copy(deep=True) if view else rainfall)
-        if select.grid_point:
-            rainfall = rainfall.sel(lat=[select.lat], lon=[select.lon])
-        return rainfall
+        return _at_grid_point(rainfall, select)
 
     try:
         store = locate(years[0])[1]
@@ -462,8 +460,7 @@ def _observation_box(year, read: ObsRead, keep=False):
     try:
         box = region_box(ds[[read.obs.var]], region=read.area.region)
         dims = tuple(box[read.obs.var].dims)
-        if read.select.grid_point:
-            box = box.sel(lat=[read.select.lat], lon=[read.select.lon])
+        box = _at_grid_point(box, read.select)
         kept = implicit_keep(box, read.area, read.select) if keep else None
         return {name: np.asarray(box[name].values) for name in ("lat", "lon")}, dims, kept
     finally:
@@ -692,10 +689,25 @@ def observation_year(year, read: ObsRead):
             with _obs_lock:
                 rainfall = _obs_years.setdefault(key, rainfall)
 
-    if select.grid_point:
-        rainfall = rainfall.sel(lat=[select.lat], lon=[select.lon])
+    return _at_grid_point(rainfall, select)
 
-    return rainfall
+
+def _at_grid_point(data, select):
+    """Return the data cut to the selected grid point, or as it is when the run has none.
+
+    Parameters
+    ----------
+    data : xarray.DataArray or xarray.Dataset
+        Data with ``lat`` and ``lon`` coordinates.
+    select : hcwf.config.model.Selection
+        The run's selection settings (``grid_point``, ``lat``, ``lon``).
+
+    Returns
+    -------
+    xarray.DataArray or xarray.Dataset
+        ``data`` with the one-cell ``lat`` and ``lon`` of the point kept, or ``data`` itself.
+    """
+    return data.sel(lat=[select.lat], lon=[select.lon]) if select.grid_point else data
 
 
 def observation_year_once(year, read: ObsRead):
@@ -718,9 +730,7 @@ def observation_year_once(year, read: ObsRead):
         held = _obs_years.get(_obs_key(year, store, path, read))
     if held is None:
         held = _read_obs_year(year, store, path, read)
-    if read.select.grid_point:
-        held = held.sel(lat=[read.select.lat], lon=[read.select.lon])
-    return held
+    return _at_grid_point(held, read.select)
 
 
 def _read_obs_units(da, spec: UnitsSpec, unit_cvt, read: ObsRead):
