@@ -26,15 +26,12 @@ import gc
 from functools import lru_cache
 import pickle
 import tempfile
-import warnings
 from multiprocessing import get_context
 import numpy as np
 import pandas as pd
-from datetime import date
 from scipy.stats import gaussian_kde
 from scipy.interpolate import interp1d
 
-from .misc import coalesce
 
 
 # ---------------------------------------------------------------------------

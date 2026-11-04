@@ -312,7 +312,7 @@ def _old_compute_climatology_as_forecast(climatological_onset_doy, year, init_da
     # Convert to DataFrame
     climatology_forecast_df = pd.DataFrame(results_list)
 
-    print(f"\nClimatology Forecast Summary:")
+    print("\nClimatology Forecast Summary:")
     print(f"Total potential initializations: {total_potential_inits}")
     print(f"Skipped (no observed onset): {skipped_no_obs}")
     print(f"Skipped (initialized after observed onset): {skipped_late_init}")
@@ -474,7 +474,7 @@ def _old_create_forecast_observation_pairs_with_bins(onset_all_members, onset_da
     print(f"Non-zero probabilities: {(forecast_obs_df['predicted_prob'] > 0).sum()}")
 
     # Show distribution across bins
-    print(f"\nDistribution across bins:")
+    print("\nDistribution across bins:")
     bin_stats = forecast_obs_df.groupby('bin_label').agg({
         'predicted_prob': ['count', 'mean'],
         'observed_onset': 'mean'
@@ -533,7 +533,7 @@ def _old_create_climatological_forecast_obs_pairs(clim_onset, target_year, init_
     print(f"Processing {len(init_dates)} initialization dates")
     print(f"Day bins: {day_bins}")
     print(f"Extended bins include: 'Before day {min_forecast_day}' and 'After day {max_forecast_day}' ")
-    print(f"Using day-of-year method for onset comparison")
+    print("Using day-of-year method for onset comparison")
 
     # Get the actual lat/lon coordinates from the data
     lats = obs_onset_da.lat.values
@@ -729,7 +729,7 @@ def _old_create_climatological_forecast_obs_pairs(clim_onset, target_year, init_
     print(f"Unique locations in output: {unique_locations_in_output}")
 
     # Show distribution across bins
-    print(f"\nDistribution across bins:")
+    print("\nDistribution across bins:")
     bin_stats = forecast_obs_df.groupby('bin_label').agg({
         'predicted_prob': ['count', 'mean'],
         'observed_onset': 'mean',
@@ -762,7 +762,7 @@ def _old_create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
     lats = onset_da_dict[first_year].lat.values
     lons = onset_da_dict[first_year].lon.values
 
-    print(f"Creating spatial FAR, Miss Rate, yearly MAE, and mean MAE maps...")
+    print("Creating spatial FAR, Miss Rate, yearly MAE, and mean MAE maps...")
     print(f"Grid dimensions: {len(lats)} lats x {len(lons)} lons")
     print(f"Years: {list(metrics_df_dict.keys())}")
 

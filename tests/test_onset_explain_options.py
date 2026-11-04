@@ -180,7 +180,7 @@ def test_forecast_options_are_explained():
     """trace_forecast takes the same options (alone and stitched) and equals detect_forecast."""
     rng = np.random.default_rng(7)
     from test_onset_forecast_layer import JJAS, case, hist_with
-    from test_onset_engine import ANY_WET, TWO_WET, definition
+    from test_onset_engine import definition
     vetoed = m.FirstPassage((m.WetDays(m.Span(1, 2), "ge", 2),),
                             (m.Veto(m.DryRun(3), m.Span(3, 8), "begins"),))
     defn = dataclasses.replace(definition(vetoed, JJAS), dry_day=m.Comparison("lt", m.Amount(tenths=5)))

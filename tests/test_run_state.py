@@ -85,9 +85,19 @@ def test_shared_memos_travel_to_the_workers_through_the_registry():
 
 
 def test_the_real_tables_are_registered():
-    import hcwf.config.detect, hcwf.config.onset, hcwf.io.forecasts, hcwf.io.observations, hcwf.io.reference  # noqa: F401
-    import hcwf.io.stores, hcwf.io.thresholds, hcwf.metrics.bins, hcwf.onset.detect, hcwf.onset.observed_cache  # noqa: F401
-    import hcwf.references.climatology, hcwf.scoring.onset_tables, hcwf.spatial.masks  # noqa: F401
+    import hcwf.config.detect
+    import hcwf.config.onset
+    import hcwf.io.forecasts
+    import hcwf.io.observations
+    import hcwf.io.reference  # noqa: F401
+    import hcwf.io.stores
+    import hcwf.io.thresholds
+    import hcwf.metrics.bins
+    import hcwf.onset.detect
+    import hcwf.onset.observed_cache  # noqa: F401
+    import hcwf.references.climatology
+    import hcwf.scoring.onset_tables
+    import hcwf.spatial.masks  # noqa: F401
 
     names = set(cache.memos())
     assert {"io.stores.open", "io.observations.years", "io.reference.held", "io.thresholds.loaded", "io.forecasts.reported",

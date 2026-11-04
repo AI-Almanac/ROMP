@@ -7,7 +7,6 @@ import pandas as pd
 from .nc_utils_filters import ensure_id_col
 from .spatial_id_utils import (
     ensure_spatial_id_col,
-    format_grid_ids,
     normalize_id_series,
     resolve_grid_id_convention,
     working_copy,

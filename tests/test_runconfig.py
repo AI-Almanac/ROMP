@@ -7,7 +7,7 @@ import dataclasses
 import pickle
 import subprocess
 import sys
-from dataclasses import asdict, FrozenInstanceError
+from dataclasses import FrozenInstanceError
 from itertools import product
 
 import pytest

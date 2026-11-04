@@ -10,7 +10,6 @@ import xarray as xr
 from hcwf.onset import explain_cells
 from config_world import configs, world  # noqa: F401  (fixtures)
 from hcwf.config import validate
-from hcwf.errors import HCWFConfigError
 
 
 def rain_year(year):

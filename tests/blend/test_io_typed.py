@@ -17,7 +17,6 @@ from hcwf.config.model import (AreaSpec, EvaluationSpec, ModelSpec, ObsSpec, Ons
                                Window)
 from hcwf.io import forecasts as forecasts_io
 from hcwf.io import observations as observations_io
-from hcwf.io import reference as reference_io
 from hcwf.io import thresholds as thresholds_io
 from hcwf.spatial import onto_units
 from hcwf.config import schema

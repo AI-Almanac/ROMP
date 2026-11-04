@@ -14,7 +14,6 @@ import xarray as xr
 
 import _oracle_land_mask as old
 from hcwf.cache import reset_run_state
-from hcwf.onset import regions
 from hcwf.spatial import masks as new_mask
 from hcwf.config.model import AreaSpec, Selection
 from hcwf.spatial import select as new_region

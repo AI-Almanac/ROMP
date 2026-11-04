@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from hcwf.onset import model as m
-from hcwf.onset import plan as plan_mod
 from hcwf.onset.backends import gpu, numba_cpu
 from test_onset_numba_stitched import (_case, assert_stitched_matches_reference, india_ensemble_case,
                                        reference_on_concatenation)

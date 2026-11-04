@@ -9,7 +9,6 @@ another projection owns (region, obs_day_boundary, ...), as that code does.
 import sys
 from collections import defaultdict
 
-import pytest
 
 from typed_io import flat_config
 from hcwf.config.model import RunConfig

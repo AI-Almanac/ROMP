@@ -24,7 +24,7 @@ from scipy.stats import ks_2samp
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
-from .misc import coalesce, week_labels, interval_bins
+from .misc import coalesce, interval_bins
 
 
 DEFAULT_PIPELINE_INPUT_ROOT = os.path.join(
@@ -383,11 +383,11 @@ def print_formula_summary(spec, cutoff_mode, formulas=None):
         print(f"  {'-' * (width - 2)}")
 
         if yml_text:
-            print(f"  yml shorthand:")
+            print("  yml shorthand:")
             print(f"    {yml_text}")
             print()
 
-        print(f"  Effective formula:")
+        print("  Effective formula:")
         lhs, rhs = expanded.split("~", 1)
         terms = [t.strip() for t in rhs.split("+")]
         lines = []
@@ -486,7 +486,7 @@ def make_raw_preds_from_wide_logit(wide_df, base_col_prefix, holdout_years,
         warnings.warn(f"Skipping raw-logit for {base_col_prefix}; no _week* columns found")
         return None
     if add_cv_earlier and (not earlier_col or earlier_col not in wide_df.columns):
-        raise ValueError(f"unc_clim_raw requires earlier_col and it must exist in wide_df.")
+        raise ValueError("unc_clim_raw requires earlier_col and it must exist in wide_df.")
 
     sub = wide_df[wide_df["year"].isin(holdout_years)].copy()
     week_cols = []

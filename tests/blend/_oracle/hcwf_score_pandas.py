@@ -208,7 +208,7 @@ def calculate_brier_score_climatology(forecast_obs_df):
             'filtered_bins': []
         }
 
-    log.debug(f"Calculating Brier Score excluding 'Before initialization' bin")
+    log.debug("Calculating Brier Score excluding 'Before initialization' bin")
     log.debug(f"Original samples: {len(forecast_obs_df)}, After filtering: {len(filtered_df)}")
 
     # Calculate squared differences

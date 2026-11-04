@@ -9,7 +9,7 @@ from hcwf.onset import model as m
 from hcwf.onset.model import Status
 from hcwf.onset.viz import style
 from hcwf.onset.viz.anatomy import anatomy_plot
-from test_onset_engine import ANY_WET, definition, make_forecast, make_rain, season
+from test_onset_engine import definition, make_rain
 from test_onset_forecast_layer import JJAS, case, hist_with
 
 

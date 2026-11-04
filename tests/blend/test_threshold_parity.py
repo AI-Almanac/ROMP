@@ -10,7 +10,6 @@ import xarray as xr
 
 from _oracle import nc_utils_references as legacy
 from _oracle import thresholds as oracle
-from hcwf.onset import climatology
 from hcwf.onset.climatology import ThresholdCache, compute_threshold
 from hcwf.onset.model import DailyRain, DayRef, ThresholdSpec
 from hcwf.onset.thresholds import (ThresholdScale, read_threshold_grid, read_threshold_table, scale_values,

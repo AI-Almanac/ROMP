@@ -10,7 +10,6 @@ import yaml
 
 from hcwf.config import convert
 from hcwf.config.mapping import build_config
-from hcwf.runs.resolved import write_resolved
 from tests.synthetic_data import write_forecast, write_obs
 
 ROOT = Path(__file__).resolve().parents[1]

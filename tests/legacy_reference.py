@@ -11,7 +11,6 @@ says what it needs); the data below must not change meanwhile.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np

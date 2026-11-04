@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 
 from .spatial_id_utils import (
-    GridIdConvention,
     ensure_spatial_id_col,
     normalize_id_series,
     resolve_grid_id_convention,
@@ -178,7 +177,7 @@ def read_cell_transform(spec):
     w = pd.read_csv(f, dtype={"source_id": str, "target_id": str})
     for col in ("target_id", "source_id", "weight"):
         if col not in w.columns:
-            raise ValueError(f"Transform file must have: target_id, source_id, weight")
+            raise ValueError("Transform file must have: target_id, source_id, weight")
     if w.empty:
         raise ValueError("Cell-transform weights file must not be empty.")
     w["source_id"] = normalize_id_series(

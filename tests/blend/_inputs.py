@@ -1,6 +1,5 @@
 """Synthetic NetCDF inputs of the onset_blending input tests: yearly observations, forecast files with members and
 lead days, an admin-unit (adm3_name) file and weight tables. Imports nothing of hcwf."""
-import datetime as dt
 
 import numpy as np
 import pandas as pd

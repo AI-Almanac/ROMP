@@ -12,7 +12,6 @@ import xarray as xr
 import typed_io
 from hcwf.cache import reset_run_state
 from hcwf.config.model import AreaSpec, Selection
-from hcwf.io import reference as reference_io
 from old_flat_rule import old_rule
 from hcwf.spatial.select import mask_region_loaded, region_select
 
