@@ -82,3 +82,14 @@ def test_colliding_grid_ids_are_refused():
 def test_parse_grid_id():
     assert new.parse_grid_id("10.25_-70") == (10.25, -70.0)
     assert new.parse_grid_id("Abaala") is None and new.parse_grid_id(None) is None
+
+
+def test_unit_id_column_prefers_id_over_adm3_name(tmp_path):
+    from hcwf.onset import thresholds
+    from hcwf.spatial import ids as spatial_ids
+    assert spatial_ids.unit_id_column(["adm3_name", "id"]) == "id"
+    assert spatial_ids.unit_id_column(["adm3_name"]) == "adm3_name"
+    assert spatial_ids.unit_id_column(["lat", "lon"]) is None
+    path = tmp_path / "t.csv"
+    path.write_text("adm3_name,id,onset_thresh\\nname,u1,20\\n".replace("\\n", "\n"))
+    assert thresholds.read_threshold_table(path)["id"].tolist() == ["u1"]

@@ -1,7 +1,7 @@
 """Onset thresholds read from files: one reader for per-unit tables and for gridded NetCDF fields, and the join to units.
 
 A threshold table is a `pandas.DataFrame` with ``onset_thresh`` and either an ``id`` (a unit id) or ``lat`` and ``lon``
-(a grid cell). `read_threshold_table` reads one from a CSV (keyed by a unit id column, ``adm3_name``, ``id``, or
+(a grid cell). `read_threshold_table` reads one from a CSV (keyed by a unit id column, ``id``, ``adm3_name``, or
 lat/lon), a NetCDF file (flattened lat, lon and value variables) or a MATLAB ``.mat`` file (value over the lat x lon
 product). `read_threshold_grid` reads a NetCDF field on the grid, as HCWF's ``threshold_files`` do. Both apply the
 optional `ThresholdScale` (``clip(t * factor + offset, min, max)``) through `scale_values`. `unit_thresholds` joins a
@@ -127,7 +127,7 @@ def read_threshold_table(path, *, scale: ThresholdScale | None = None, id_col: s
                          mat_value_name: str = "onset.day.thres") -> pd.DataFrame:
     """Read a threshold table (id or lat/lon, and ``onset_thresh``) from a CSV, NetCDF or MATLAB file.
 
-    CSV: the unit id is ``id_col`` when given (a `ValueError` is raised if the CSV has no such column), else an ``adm3_name`` column, else ``id``, else the table
+    CSV: the unit id is ``id_col`` when given (a `ValueError` is raised if the CSV has no such column), else an ``id`` column, else ``adm3_name``, else the table
     is keyed by ``lat_col`` and ``lon_col``; ``value_col`` holds the threshold. Values stay text until a join reads them.
     NetCDF (``.nc``, ``.nc4``, ``.netcdf``): the variables ``lat_var``, ``lon_var`` and ``value_var``, each flattened
     (netCDF4 reading, so masked entries show their stored value). ``.mat``: the vectors ``mat_lat_name`` and
@@ -140,7 +140,7 @@ def read_threshold_table(path, *, scale: ThresholdScale | None = None, id_col: s
     scale : ThresholdScale, optional
         Applied to ``onset_thresh``.
     id_col : str, optional
-        The CSV column holding the unit id; None looks for ``adm3_name``, ``id`` or lat/lon.
+        The CSV column holding the unit id; None looks for ``id``, ``adm3_name`` or lat/lon.
     value_col : str, default "onset_thresh"
         The CSV column holding the threshold.
     lat_col : str, default "lat"
@@ -206,7 +206,7 @@ def _read_csv(path: str, id_col: str | None, value_col: str, lat_col: str, lon_c
     path : str
         The CSV file.
     id_col : str or None
-        The column holding the unit id; None looks for ``adm3_name``, ``id`` or lat/lon.
+        The column holding the unit id; None looks for ``id``, ``adm3_name`` or lat/lon.
     value_col : str
         The column holding the threshold.
     lat_col : str
@@ -229,10 +229,9 @@ def _read_csv(path: str, id_col: str | None, value_col: str, lat_col: str, lon_c
         if id_col not in table.columns:
             raise ValueError(f"Configured thresholds.id_col '{id_col}' not found. Found: {table.columns.tolist()}")
         return table.rename(columns={id_col: "id", value_col: "onset_thresh"})[["id", "onset_thresh"]].drop_duplicates()
-    if "adm3_name" in table.columns:
-        return table.rename(columns={"adm3_name": "id", value_col: "onset_thresh"})[["id", "onset_thresh"]].drop_duplicates()
-    if "id" in table.columns:
-        return table.rename(columns={value_col: "onset_thresh"})[["id", "onset_thresh"]].drop_duplicates()
+    key = ids.unit_id_column(table.columns)
+    if key is not None:
+        return table.rename(columns={key: "id", value_col: "onset_thresh"})[["id", "onset_thresh"]].drop_duplicates()
     table = table.rename(columns={lat_col: "lat", lon_col: "lon", value_col: "onset_thresh"})
     return table[["lat", "lon", "onset_thresh"]].drop_duplicates()
 
@@ -340,8 +339,8 @@ def _join_units(thresholds, unit_ids, explicit) -> np.ndarray:
     table = thresholds.copy()
     table.columns = table.columns.str.lower()
     if "id" not in table.columns:
-        if "adm3_name" in table.columns:
-            table["id"] = table["adm3_name"]
+        if ids.unit_id_column(table.columns) is not None:
+            table["id"] = table[ids.unit_id_column(table.columns)]
         elif {"lat", "lon"} <= set(table.columns):
             coords = ids.with_id_column(table[["lat", "lon"]], explicit=explicit, convention=convention,
                                         context="latitude/longitude IDs")

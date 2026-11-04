@@ -86,7 +86,7 @@ def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
         table = source.copy()
     if id_col and id_col not in table.columns:
         raise ValueError(f"centroids id_col '{id_col}' not found. Found: {table.columns.tolist()}")
-    key = id_col or next((c for c in ("target_id", "id", "adm3_name") if c in table.columns), table.columns[0])
+    key = id_col or next((c for c in ("target_id", *unit_ids.UNIT_ID_COLUMNS) if c in table.columns), table.columns[0])
     lat = next((c for c in _LAT_NAMES if c in table.columns), None)
     lon = next((c for c in _LON_NAMES if c in table.columns), None)
     if not lat or not lon:
@@ -135,7 +135,7 @@ def read_id_list(path, id_col: str | None = None, *, explicit=None, authoritativ
         if id_col not in table.columns:
             raise ValueError(f"Configured id_col '{id_col}' not found. Found: {table.columns.tolist()}")
         table = table.rename(columns={id_col: "id"})
-    elif not any(c in table.columns for c in ("id", "adm3_name")) and not {"lat", "lon"} <= set(table.columns):
+    elif unit_ids.unit_id_column(table.columns) is None and not {"lat", "lon"} <= set(table.columns):
         log.warning("%s has no explicit spatial key; using its first column %r", path, table.columns[0])
         table = table.rename(columns={table.columns[0]: "id"})
     convention = unit_ids.resolve(explicit, authoritative_ids=authoritative_ids, context="unit ID handoff")

@@ -359,6 +359,27 @@ def resolve(explicit: GridIdConvention | None = None, lat=None, lon=None, author
     return None
 
 
+UNIT_ID_COLUMNS = ("id", "adm3_name")
+"""The names of a unit id column in a table, in the order they are preferred."""
+
+
+def unit_id_column(columns) -> str | None:
+    """Return the column of a table that holds its unit ids.
+
+    Parameters
+    ----------
+    columns : iterable of str
+        The column names.
+
+    Returns
+    -------
+    str or None
+        The first of `UNIT_ID_COLUMNS` in `columns`, or None when there is none.
+    """
+    names = set(columns)
+    return next((c for c in UNIT_ID_COLUMNS if c in names), None)
+
+
 def normalize(values, context: str = "spatial IDs") -> pd.Series:
     """Normalise ids as stripped strings (never through numbers), refusing missing or empty ones.
 
@@ -470,8 +491,9 @@ def with_id_column(df: pd.DataFrame, id_col: str = "id", explicit: GridIdConvent
     if id_col in out.columns:
         out[id_col] = normalize(out[id_col], context=context)
         return out
-    if "adm3_name" in out.columns:
-        out[id_col] = normalize(out["adm3_name"], context=context)
+    source = unit_id_column(out.columns)
+    if source is not None:
+        out[id_col] = normalize(out[source], context=context)
         return out
     if "lat" not in out.columns or "lon" not in out.columns:
         raise ValueError(f"Cannot create {id_col!r}: need {id_col!r}, 'adm3_name', or both 'lat' and 'lon'.")
