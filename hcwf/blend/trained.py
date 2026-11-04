@@ -45,7 +45,8 @@ from hcwf.errors import BlendFileError
 from hcwf.blend.samples import ObservedOnsets
 from hcwf.cache import atomic_write, file_identity
 from hcwf.config import detect as dataset_detect
-from hcwf.config.datasets import resolve_paths
+from hcwf.config.datasets import is_zarr, resolve_paths
+from hcwf.io import stores
 
 log = logging.getLogger(__name__)
 
@@ -387,6 +388,75 @@ def _weights_frame(transform) -> pd.DataFrame:
                          "weight": matrix.data})
 
 
+def _model_sources(rc, name: str) -> list[str]:
+    """Return what a model's training forecasts are read from: its files or its zarr store.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run config of training.
+    name : str
+        The model's name.
+
+    Returns
+    -------
+    list of str
+        The files, or the one zarr store (see `hcwf.io.stores.model_sources`).
+    """
+    source = rc.model(name)
+    return stores.model_sources(source.dir, source.paths, source.file_pattern)
+
+
+def _observation_sources(rc) -> list[str]:
+    """Return what the training observations are read from: the listed files, the zarr store or the pattern's files.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run config of training.
+
+    Returns
+    -------
+    list of str
+        The files, or the one zarr store.
+    """
+    obs = rc.observations
+    if obs.paths:
+        return [str(p) for p in obs.paths]
+    if is_zarr(obs.dir):
+        return [str(obs.dir)]
+    from hcwf.blend import features
+
+    return [stores.observation_source(year, obs.dir, obs.file_pattern)[1] for year in features.observation_years(rc)]
+
+
+def _training_slices(rc, name: str, entry: dict) -> list[tuple[str, str, int | None]]:
+    """Return the parts of a model's training forecasts that must share one structure: its files, or the years of its store.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run config of training.
+    name : str
+        The model's name.
+    entry : dict
+        The model's dataset keys, as the signature reads them.
+
+    Returns
+    -------
+    list of tuple of (str, str, int or None)
+        For each part the source (file or store), its name for messages and the year of the store it is (None for a file).
+    """
+    out = []
+    for path in _model_sources(rc, name):
+        if not is_zarr(path):
+            out.append((path, Path(path).name, None))
+            continue
+        _, dates = dataset_detect.read_forecast_file(path, entry, selected=False)
+        out += [(path, f"{Path(path).name}[{year}]", year) for year in sorted({d.year for d in dates})]
+    return out
+
+
 def _freeze_units(rc, recipe, name: str, ids) -> FrozenUnits:
     """Return the units of model `name` on its (first) training file's grid, restricted to the trained `ids`.
 
@@ -424,7 +494,7 @@ def _freeze_units(rc, recipe, name: str, ids) -> FrozenUnits:
         return FrozenUnits("cells", None, spec.convention)
     model = recipe.model(name)
     select = Selection(first_lead=model.lead_days[0], last_lead=model.lead_days[1])
-    with forecasts_io.UnitForecast(source.paths[0], source, spec, keep_ids=ids, select=select) as file:
+    with forecasts_io.UnitForecast(_model_sources(rc, name)[0], source, spec, keep_ids=ids, select=select) as file:
         if "unit" in file.da.dims:
             return FrozenUnits(spec.how, None, spec.convention)
         transform = onto_units.unit_transform(file.units, np.asarray(file.da["lat"].values),
@@ -660,10 +730,10 @@ class TrainedBlend:
         signatures, units, problems = {}, {}, []
         for model in recipe.models:
             seen = {}
-            for path in rc.model(model.name).paths:
+            for path, name, year in _training_slices(rc, model.name, entries[model.name]):
                 signature = dataset_detect.forecast_signature(
-                    path, entries[model.name], lead_days=model.lead_days, max_member=model.max_member)
-                seen.setdefault(json.dumps(signature, sort_keys=True), []).append(Path(path).name)
+                    path, entries[model.name], lead_days=model.lead_days, max_member=model.max_member, year=year)
+                seen.setdefault(json.dumps(signature, sort_keys=True), []).append(name)
             if len(seen) > 1:
                 groups = "; ".join(f"{', '.join(names[:4])}{'...' if len(names) > 4 else ''}"
                                    for names in seen.values())
@@ -678,8 +748,8 @@ class TrainedBlend:
             units[model.name] = _freeze_units(rc, recipe, model.name, ids)
         if problems:
             raise BlendFileError("cannot make a trained blend:\n" + "\n".join(f"  - {p}" for p in problems))
-        identities = {"observations": [file_identity(p) for p in rc.observations.paths or ()],
-                      "models": {m.name: [file_identity(p) for p in rc.model(m.name).paths] for m in recipe.models}}
+        identities = {"observations": [file_identity(p) for p in _observation_sources(rc)],
+                      "models": {m.name: [file_identity(p) for p in _model_sources(rc, m.name)] for m in recipe.models}}
         return cls(
             mapping=mapping, run_yaml=run_yaml, definition_text=definition_text, definition_hash=definition_hash,
             recipe=recipe, rc=frozen, model=result.model, observed=inputs.observed, units=ids,

@@ -40,13 +40,12 @@ import xarray as xr
 
 from hcwf.cache import Store, file_identity
 from hcwf.io.stores import forecast_sources as _year_sources
-from hcwf.io.stores import observation_source, open_store
-from hcwf.config.datasets import file_year, is_zarr, resolve_paths
+from hcwf.io.stores import listed_years, observation_source, open_store, years_in_folder
+from hcwf.config.datasets import is_zarr
 from hcwf.onset import ingest as ing
 from hcwf.onset.alignment import (ForecastAlignmentReport, _match_axis, _sqrt_field,
                                   forecast_alignment_from_samples)
 from hcwf.onset.calendar import label_keys
-from hcwf.errors import DatasetError
 
 SAMPLE_INITS = 40
 """Most inits in the sample."""
@@ -98,57 +97,6 @@ def _patterns(value) -> tuple:
     if value is None:
         return ("{}.nc",)
     return (value,) if isinstance(value, str) else tuple(value)
-
-
-def _years_in(folder, pattern: str) -> tuple:
-    """Return the years of the files in a folder that match a file pattern, sorted.
-
-    Parameters
-    ----------
-    folder : str or pathlib.Path
-        The folder to look in.
-    pattern : str
-        The file pattern, ``{}`` standing for the year.
-
-    Returns
-    -------
-    tuple of int
-        The years found, increasing.
-    """
-    import glob
-
-    return tuple(sorted({y for y in (file_year(f, whole_number=True)
-                                     for f in glob.glob(os.path.join(str(folder), pattern.replace("{}", "*"))))
-                         if y is not None}))
-
-
-def _listed_years(paths, base, years_filter) -> tuple:
-    """Return the years of the files a dataset lists in ``paths``, sorted.
-
-    Parameters
-    ----------
-    paths : sequence of str
-        The listed files or globs, as in the dataset specification.
-    base : str, optional
-        The folder relative paths are resolved against.
-    years_filter : sequence of int, optional
-        Keep only the files of these years.
-
-    Returns
-    -------
-    tuple of int
-        The years found, increasing.
-
-    Raises
-    ------
-    ValueError
-        The files cannot be resolved (the message of the `hcwf.errors.DatasetError`).
-    """
-    try:
-        files = resolve_paths(paths, base, years_filter)
-    except DatasetError as exc:
-        raise ValueError(str(exc)) from None
-    return tuple(sorted({y for y in map(file_year, files) if y is not None}))
 
 
 _SIDES = {"obs": ("obs_dir", "obs_paths", "obs_files_years", "obs_file_pattern"),
@@ -218,8 +166,8 @@ def _dataset_years(kw: dict, side: str) -> tuple:
     """
     folder, paths, years_filter, pattern = _SIDES[side]
     if kw.get(paths):
-        return _listed_years(kw[paths], kw.get(folder) or None, kw.get(years_filter))
-    return _years_in(kw[folder], _patterns(kw.get(pattern))[0])
+        return listed_years(kw[paths], kw.get(folder) or None, kw.get(years_filter))
+    return years_in_folder(kw[folder], _patterns(kw.get(pattern))[0])
 
 
 def _box_indices(values: np.ndarray, lo: float, hi: float, wrap: bool = False) -> np.ndarray:

@@ -22,6 +22,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import memo
+from hcwf.config.datasets import is_zarr
 from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import forecast_reach
 from hcwf.io.stores import forecast_sources, open_forecast
@@ -601,7 +602,7 @@ _RUN_VALUES = 1 << 23
 
 
 class UnitForecast:
-    """One forecast file read onto evaluation units, a run of issues at a time (memory stays one run).
+    """One forecast file or zarr store read onto evaluation units, a run of issues at a time (memory stays one run).
 
     Opens the file lazily as `_load_forecast` does (dimension names, lead days, members), keeps every issue, and puts
     the units of `spec` (those among ``keep_ids``) in id order. `runs` yields ``(first, stop, rain)`` with rain over
@@ -613,7 +614,7 @@ class UnitForecast:
     Parameters
     ----------
     path : str or pathlib.Path
-        The NetCDF file.
+        The NetCDF file, or a zarr store (one source holding the issues of every year).
     model : hcwf.config.model.ModelSpec
         The forecast's settings (variable, dimension names, unit factor).
     spec : hcwf.spatial.units.UnitsSpec
@@ -629,7 +630,7 @@ class UnitForecast:
     Attributes
     ----------
     path : str or pathlib.Path
-        The file.
+        The file or store.
     scale : float
         The factor to millimetres of the file's variable.
     days : numpy.ndarray of int64, shape (step,)
@@ -663,7 +664,9 @@ class UnitForecast:
     def __init__(self, path, model, spec: UnitsSpec, *, keep_ids=None, issue_dates=None, select=NO_SELECTION):
         self.path, name = path, Path(path).name
         variable = model.var
-        ds, self._close = open_forecast(None, None, None, None, model.dims_map(), None, file_path=str(path))
+        store = is_zarr(path)   # a store holds every year: its issues are all kept (``issue_dates`` picks among them)
+        ds, self._close = open_forecast(None, str(path) if store else None, None, None, model.dims_map(), None,
+                                        file_path=None if store else str(path))
         try:
             if variable not in ds.variables:
                 raise ValueError(f"{name} has no {variable!r} variable (it has: {', '.join(map(str, ds.variables))})")

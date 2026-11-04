@@ -33,7 +33,7 @@ from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Week
 from hcwf.config.model import Case, Selection, Window
 from hcwf.io import forecasts as forecasts_io
 from hcwf.io import observations as observations_io
-from hcwf.config.datasets import file_year
+from hcwf.io import stores
 from hcwf.onset.climatology import ReferenceOnset
 from hcwf.references import kde
 from hcwf.references.kde import Climatology
@@ -105,12 +105,12 @@ def _season_start(setup) -> str:
 
 
 def observation_years(rc) -> list[int]:
-    """Return the years of the observation files (the season a file holds is the year in its name).
+    """Return the years the observations hold, however they are given (a zarr store, a file pattern or a list of files).
 
     Parameters
     ----------
     rc : hcwf.config.model.RunConfig
-        The run configuration; ``rc.observations.paths`` are read.
+        The run configuration; its ``observations`` are read (see `hcwf.io.stores.dataset_years`).
 
     Returns
     -------
@@ -120,14 +120,13 @@ def observation_years(rc) -> list[int]:
     Raises
     ------
     ValueError
-        A file name has no year.
+        A listed file name has no year, or no year is found.
     """
-    paths = rc.observations.paths
-    years = [file_year(p) for p in paths]
-    if None in years:
-        raise ValueError("an observation file name has no year (19xx or 20xx); observations are read a year at a "
-                         "time: " + ", ".join(p for p, y in zip(paths, years) if y is None))
-    return sorted(set(years))
+    obs = rc.observations
+    years = list(stores.dataset_years(obs.dir, obs.paths, None, obs.file_pattern, strict=True))
+    if not years:
+        raise ValueError(f"no observation year found in {obs.dir}")
+    return years
 
 
 def _observed_year(year, rc, select, thresholds, season_start):
@@ -472,7 +471,7 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
     spec, setup = recipe.model(model), rc.onset
     source = rc.model(model)
     case = Case(source, rc.evaluation.windows[0] if rc.evaluation.windows else Window(1, rc.evaluation.max_forecast_day, 0))
-    paths = source.paths
+    sources = stores.model_sources(source.dir, source.paths, source.file_pattern)
     units = units if units is not None else source.units
     run = replace(rc, onset_options=replace(rc.onset_options, missing=recipe.onset.forecast_missing,
                                             horizon=rc.onset_options.horizon or "truncate"))
@@ -483,8 +482,8 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
         keep_unit_ids=None if keep_ids is None else sorted(keep_ids),
         issue_dates=None if issue_dates is None else tuple(issue_dates))
     series, keep_days = _forecast_needs(recipe, spec, needed_only)
-    infos = [_forecast_file_info(path, case, select, units) for path in paths]
-    files = [(path, info) for path, info in zip(paths, infos) if info is not None]
+    infos = [_forecast_file_info(path, case, select, units) for path in sources]
+    files = [(path, info) for path, info in zip(sources, infos) if info is not None]
     if not files:
         return ForecastOnsets(model=model, data=None)
     ids, days = files[0][1]["ids"], files[0][1]["days"]

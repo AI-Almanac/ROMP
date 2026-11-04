@@ -41,6 +41,14 @@ blend:
     ens: {lead_days: [1, 40], rain_predictors: [{agg: diff}]}
 ```
 
+Observations and models are read as the benchmark reads them: `path` is a folder of yearly files (`file_pattern`, `{}` is the year), a zarr store holding every year (`path: data/obs.zarr`), or `paths` lists files. The same dataset entries therefore work for a benchmark and a blend, and a model's forecasts may be one zarr store of all years:
+
+```yaml
+observations: {path: data/ethiopia/obs.zarr}
+models:
+  - {name: aifs, path: data/ethiopia/models/AIFS_v2.zarr}
+```
+
 ```bash
 hcwf-run -p blend.yaml --check     # the plan, including a "== Blend ==" block (outcomes, years, formulas, tag, artifact folder)
 hcwf-run -p blend.yaml             # train, cross-validate, fit the final model, write blend/
@@ -56,7 +64,7 @@ hcwf-run init --blend --obs /path/to/obs --model /path/to/aifs -o blend.yaml   #
 | Key | Meaning |
 |---|---|
 | `years` | `training` (fit on these), `cv_holdout` (scored by leave-one-year-out cross-validation) and optional `true_holdout` (scored, never fitted). Each a list or text such as `'2000:2024,2026'`. Required. |
-| `formulas` | Name to formula (`outcome ~ prob_clim_qx + diff_<model>_qx`) or `{text, enabled}`. Features: `prob_clim_qx`, `<model>_p_onset_qx`, `diff_<model>_qx`, `max_<model>_<n>day_qx`, or a `_week<n>` variant. |
+| `formulas` | Name to formula (`outcome ~ prob_clim_qx + diff_<model>_qx`) or `{text, enabled}`. Features: `prob_clim_qx`, `<model>_p_onset_qx`, `diff_<model>_qx`, `max_<model>_<n>day_qx`, or a `_week<n>` variant. `diff_<model>` is the model's rain minus the onset definition's named rain threshold, so it needs a definition that names one (`thresholds:` in its rule); a definition such as `icpac`, whose rule gives the amount inline, has none and `--check` reports the `diff` predictor as an error. Use `<model>_p_onset_qx` or a `max`/`min` predictor there. |
 | `final_formula` | The formula fitted on every training year for operations (default: the only enabled formula). |
 | `cutoff_mode`, `fixed_cutoff`, `reference_onset` | Which issue dates are scored (`fixed_cutoff`, `ref_onset`, `no_ref_filter`); the `MM-DD` of the fixed cutoff; the reference onset (`{month_day: MM-DD}` or a table of dates). |
 | `cv_methods` | `global` (default), `local` (one fit per unit), `clusters` (with `cluster_var`). |
@@ -124,9 +132,9 @@ hcwf-run forecast runs/<run>/blend/trained.blend \
     [--issue-date 2026-06-09] [--fewer-members] [--netcdf] [-o forecasts/2026-06-09]
 ```
 
-* `--forecast MODEL=PATH`: one per trained model (the model's name in `models:`); PATH is a file or glob, and a model may be given several times for several files.
+* `--forecast MODEL=PATH`: one per trained model (the model's name in `models:`); PATH is a file, a glob or a zarr store of forecasts (all years in one store: pick the issue with `--issue-date`), and a model may be given several times for several files.
 * The live files may hold more than the blend was trained on (lead days, members, a larger domain) but not less, and must have its units, accumulation, grid spacing and issue hour. Every difference is reported before anything is read, and the command exits with 1. `--fewer-members` lets an ensemble hold only some of the trained members.
-* The issue date is the one the files hold, else the latest; it must lie in the blend's issue window. `--issue-date` picks one issue of files holding several.
+* The issue date is the one the files hold; it must lie in the blend's issue window. Files holding one season forecast every issue in it; `--issue-date` picks one issue of files or of a store holding several, and files or a store holding several seasons need it.
 * Output goes to `-o DIR`, which must be new or empty; default `forecasts/<issue date>/` beside the blend file. With several blend files (one per region) each gets a subfolder of `-o` named after the folder that holds its file, or after the run folder when that folder is `blend` (so `runs/<run>/blend/trained.blend` gives `-o/<run>/`); they are applied in turn to the same live files. If two blends would get the same name the command stops before writing anything and names them; give them separate calls with their own `-o`.
 
 Files written:

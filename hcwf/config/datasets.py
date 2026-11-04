@@ -395,6 +395,8 @@ def parse_year_list(value, origin: str = "years") -> tuple[int, ...]:
 def resolve_paths(paths, base=None, years=None, origin: str = "paths") -> list[Path]:
     """List the files named by ``paths`` (names or globs, ``~`` and ``${ENV_VAR}`` expanded).
 
+    A zarr store (a directory, see `is_zarr`) counts as a file: it is one source holding every year.
+
     The result is sorted by (year in the name, path), as onset_blending lists files, and holds each file once;
     ``years`` keeps only the files of those years (a file whose name has no year is dropped then). A name that is
     not a glob must exist; at least one file must remain.
@@ -429,10 +431,10 @@ def resolve_paths(paths, base=None, years=None, origin: str = "paths") -> list[P
         if not path.is_absolute() and base:
             path = Path(base) / path
         if any(c in text for c in "*?["):
-            hits = sorted(Path(p) for p in glob.glob(str(path)) if Path(p).is_file())
+            hits = sorted(Path(p) for p in glob.glob(str(path)) if Path(p).is_file() or Path(p).is_dir() and is_zarr(p))
             if not hits:
                 missing.append(str(path))
-        elif path.is_file():
+        elif path.is_file() or path.is_dir() and is_zarr(path):
             hits = [path]
         else:
             hits = []

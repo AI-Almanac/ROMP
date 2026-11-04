@@ -7,6 +7,7 @@ and `hcwf.io.dims` supplies the dimension standardisation applied when a forecas
 """
 from __future__ import annotations
 
+import glob
 import logging
 import os
 
@@ -15,7 +16,7 @@ import xarray as xr
 
 from hcwf.cache import memo
 from hcwf.config.datasets import file_year, is_zarr, resolve_paths
-from hcwf.io.dims import dim_fmt_model, dim_fmt_model_ensemble, find_dim
+from hcwf.io.dims import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim
 from hcwf.errors import DatasetError
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,159 @@ def year_files(paths, base, years_filter, year) -> list[str]:
     except DatasetError as exc:
         raise FileNotFoundError(str(exc)) from None
     return [str(f) for f in files if file_year(f) == year]
+
+
+def years_in_folder(folder, pattern: str) -> tuple:
+    """Return the years of the files in a folder that match a file pattern, sorted.
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        The folder to look in.
+    pattern : str
+        The file pattern, ``{}`` standing for the year.
+
+    Returns
+    -------
+    tuple of int
+        The years found, increasing.
+    """
+    import glob
+
+    return tuple(sorted({y for y in (file_year(f, whole_number=True)
+                                     for f in glob.glob(os.path.join(str(folder), pattern.replace("{}", "*"))))
+                         if y is not None}))
+
+
+def listed_years(paths, base, years_filter) -> tuple:
+    """Return the years of the files a dataset lists in ``paths``, sorted.
+
+    Parameters
+    ----------
+    paths : sequence of str
+        The listed files or globs, as in the dataset specification.
+    base : str, optional
+        The folder relative paths are resolved against.
+    years_filter : sequence of int, optional
+        Keep only the files of these years.
+
+    Returns
+    -------
+    tuple of int
+        The years found, increasing.
+
+    Raises
+    ------
+    ValueError
+        The files cannot be resolved (the message of the `hcwf.errors.DatasetError`).
+    """
+    try:
+        files = resolve_paths(paths, base, years_filter)
+    except DatasetError as exc:
+        raise ValueError(str(exc)) from None
+    return tuple(sorted({y for y in map(file_year, files) if y is not None}))
+
+
+def store_years(path) -> tuple:
+    """Return the years a zarr store of observations holds, from its time coordinate.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The zarr store.
+
+    Returns
+    -------
+    tuple of int
+        The distinct years, increasing.
+
+    Raises
+    ------
+    ValueError
+        The store has no time coordinate.
+    """
+    ds = dim_fmt(open_store(path))
+    if "time" not in ds.coords:
+        raise ValueError(f"{path}: the zarr store has no time coordinate")
+    return tuple(sorted({int(y) for y in pd.DatetimeIndex(ds["time"].values).year.unique()}))
+
+
+def dataset_years(folder, paths=None, years_filter=None, file_pattern=None, *, strict: bool = False) -> tuple:
+    """Return the years a dataset holds, however it is given: listed files, a zarr store or a folder of yearly files.
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        The folder of the files (the base of relative ``paths``), or a zarr store.
+    paths : sequence of str, optional
+        The listed files or globs (see `year_files`); they replace the store and the pattern.
+    years_filter : collection of int, optional
+        The years kept among ``paths``.
+    file_pattern : str or sequence of str, optional
+        The file name pattern(s), ``{}`` for the year; the years found under any of them are returned. None means
+        ``"{}.nc"``.
+    strict : bool, default False
+        Raise when a listed file has no year in its name, instead of leaving it out.
+
+    Returns
+    -------
+    tuple of int
+        The years, increasing.
+
+    Raises
+    ------
+    ValueError
+        A listed file cannot be resolved, or (``strict``) has no year in its name, or a store has no time coordinate.
+    """
+    if paths:
+        years = listed_years(paths, folder or None, years_filter)
+        if strict:
+            nameless = [str(f) for f in resolve_paths(paths, folder or None, years_filter) if file_year(f) is None]
+            if nameless:
+                raise ValueError("a file name has no year (19xx or 20xx); files are read a year at a time: "
+                                 + ", ".join(nameless))
+        return years
+    if is_zarr(folder):
+        return store_years(folder)
+    patterns = (file_pattern or "{}.nc",) if file_pattern is None or isinstance(file_pattern, str) else tuple(file_pattern)
+    return tuple(sorted({y for pattern in patterns for y in years_in_folder(folder, pattern)}))
+
+
+def model_sources(folder, paths=None, file_pattern=None) -> list[str]:
+    """Return everything a model's forecasts are read from: the listed files or stores, a zarr store, or the pattern's files.
+
+    A source is a NetCDF file or a zarr store (`hcwf.io.forecasts.UnitForecast` opens either); a store is one source
+    holding every year.
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        The folder of the yearly files, or a zarr store.
+    paths : sequence of str, optional
+        The listed files (or stores), already resolved; they replace the store and the pattern.
+    file_pattern : str, optional
+        The file name with ``{}`` for the year; None means ``"{}.nc"``.
+
+    Returns
+    -------
+    list of str
+        The sources, by year in the name and then path.
+
+    Raises
+    ------
+    FileNotFoundError
+        Nothing is found in the folder.
+    """
+    if paths:
+        return [str(p) for p in paths]
+    if is_zarr(folder):
+        return [str(folder)]
+    pattern = file_pattern or "{}.nc"
+    files = sorted((f for f in glob.glob(os.path.join(str(folder), pattern.replace("{}", "*")))
+                    if file_year(f, whole_number=True) is not None), key=lambda f: (file_year(f, whole_number=True), f))
+    if not files:
+        raise FileNotFoundError(f"No forecast file of the pattern {pattern!r} in {folder}")
+    return files
 
 
 def observation_source(year, obs_dir, obs_file_pattern, paths=None, years_filter=None):

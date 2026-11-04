@@ -1419,15 +1419,18 @@ def _aggregation(ds, variable, lead_dim: str | None) -> dict:
     return {"method": method, "window": window}
 
 
-def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, selected: bool = True) -> tuple[dict, list]:
-    """Read the signature and issue dates of a forecast file.
+def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, selected: bool = True,
+                       year: int | None = None) -> tuple[dict, list]:
+    """Read the signature and issue dates of a forecast file or zarr store.
 
-    The units, accumulation, members and dimension roles are detected from the file.
+    The units, accumulation, members and dimension roles are detected from the file. A zarr store holds every year in
+    one array; ``year`` describes the slice of the issues of that year, so that the years of a store are compared as
+    the files of a model are.
 
     Parameters
     ----------
     path : str or os.PathLike
-        The forecast file.
+        The forecast file, or the zarr store.
     entry : dict
         The dataset keys the file is resolved with: ``variable``, and optionally ``dims`` (role to file dimension) and
         ``unit_cvt``, as `resolve_entry` takes them.
@@ -1438,6 +1441,8 @@ def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, se
     selected : bool, default True
         Give the signature after ``lead_days`` and ``max_member``, as training reads the file; else everything the
         (live) file holds.
+    year : int, optional
+        Describe only the issues of this year (``issue_hours`` and the dates); None describes all the issues.
 
     Returns
     -------
@@ -1453,7 +1458,7 @@ def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, se
         dimensions cannot be told apart.
     """
     path, name = str(path), Path(str(path)).name
-    given = {"paths": [path], "variable": entry["variable"]}
+    given = {"path": path, "variable": entry["variable"]} if is_zarr(path) else {"paths": [path], "variable": entry["variable"]}
     if entry.get("unit_cvt") is not None:
         given["unit_cvt"] = entry["unit_cvt"]
     if entry.get("dims"):
@@ -1490,6 +1495,8 @@ def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, se
             else:
                 found = np.arange(ds.sizes[dim])
             if role == "init_time":
+                if year is not None and found.dtype.kind == "M":
+                    found = found[pd.DatetimeIndex(found).year == year]
                 signature["issue_hours"], dates = _issue_stamps(found)
             elif role == "step":
                 days = _lead_numbers(found)
