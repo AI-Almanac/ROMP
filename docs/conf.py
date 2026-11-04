@@ -259,16 +259,17 @@ html_theme_options = {
 # -- Config classes -----------------------------------------------------------------------------------------------------
 # The config classes (`hcwf.config.Config`, `hcwf.config.Dataset`, `hcwf.config.Mask`, the section classes) are dataclasses
 # whose every argument defaults to the ``UNSET`` marker (a key that was not set). Three things keep them readable:
-#   * the class docstring ends with an ``Attributes`` section that hcwf/config/__init__.py generates from the schema
-#     (type line, help, default), so ``help(Onset)`` shows it too and the schema stays the one source;
-#   * the generated signature, which would list every key "=UNSET", is shown as ``(**keys)``;
+#   * the class docstring ends with a ``Parameters`` section that hcwf/config/__init__.py generates from the schema
+#     (Python type, default, help), so ``help(Onset)`` shows it too and the schema stays the one source;
+#   * the generated signature, which would list every key "=UNSET", is shown as the keyword-only keys with the schema
+#     default or ``...`` (`_keyword_signature`, from the same table as the Parameters section);
 #   * autodoc would also list each dataclass field as an empty attribute "key = UNSET", a second entry next to the one the
-#     Attributes section makes (and a duplicate-object warning); `_skip_unset_fields` drops those. The hook tests the
+#     Parameters section makes (and a duplicate-object warning); `_skip_unset_fields` drops those. The hook tests the
 #     value (the ``UNSET`` sentinel, on a class), not the class names, so a new config class needs nothing here.
 
 
 def _skip_unset_fields(app, what, name, obj, skip, options):
-    """Skip a class attribute whose value is the ``UNSET`` sentinel: the Attributes section documents it.
+    """Skip a class attribute whose value is the ``UNSET`` sentinel: the Parameters section documents it.
 
     Parameters
     ----------
@@ -295,8 +296,8 @@ def _skip_unset_fields(app, what, name, obj, skip, options):
     return True if what == "class" and obj is UNSET else None
 
 
-def _unset_signature(app, what, name, obj, options, signature, return_annotation):
-    """Show the signature of a class whose every argument defaults to ``UNSET`` as ``(**keys)``.
+def _keyword_signature(app, what, name, obj, options, signature, return_annotation):
+    """Show a config class's signature as its keyword-only keys, from the schema (never ``=UNSET``).
 
     Parameters
     ----------
@@ -320,15 +321,10 @@ def _unset_signature(app, what, name, obj, options, signature, return_annotation
     tuple of (str, str) or None
         The new signature and return annotation, or None to keep autodoc's.
     """
-    import dataclasses
+    from hcwf.config import _PARAMETERS, keyword_signature
 
-    from hcwf.config import UNSET
-
-    if what != "class" or not dataclasses.is_dataclass(obj):
-        return None
-    fields = dataclasses.fields(obj)
-    if fields and all(f.default is UNSET for f in fields if f.init):
-        return "(**keys)", return_annotation
+    if what == "class" and obj in _PARAMETERS:
+        return keyword_signature(obj), return_annotation
     return None
 
 
@@ -565,7 +561,7 @@ def setup(app):
     app : sphinx.application.Sphinx
         The application.
     """
-    app.connect("autodoc-process-signature", _unset_signature)
+    app.connect("autodoc-process-signature", _keyword_signature)
     app.connect("autodoc-skip-member", _skip_unset_fields)
     app.connect("missing-reference", _literal_for_internal_name)
     app.add_directive("hcwf-cli", HcwfCli)

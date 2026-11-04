@@ -132,6 +132,17 @@ class Field:
         return self.default is REQUIRED
 
     @property
+    def py_type(self) -> str:
+        """The NumPy-style Python type of the value as a keyword argument, e.g. ``str or None``."""
+        text = "{" + ", ".join(repr(c) for c in self.choices) + "}" if self.choices else KINDS[self.kind][2]
+        return text + (" or None" if self.nullable and not text.endswith("None") else "")
+
+    @property
+    def note(self) -> str:
+        """What the kind's wording says beyond the Python type (empty for none), as a sentence."""
+        return KINDS[self.kind][3]
+
+    @property
     def expected(self) -> str:
         """The form of value expected, for error messages and help."""
         text = KINDS[self.kind][0]
@@ -731,22 +742,27 @@ def _thresholds(value):
 
 
 MASK_KEYS = {
-    "land": ("true or false", "keep land cells only (Natural Earth land polygons from cartopy)"),
+    "land": ("true or false", "keep land cells only (Natural Earth land polygons from cartopy)", "bool", ""),
     "country": ("a country name or a list of them", "keep the cells of these countries (Natural Earth "
-                "admin_0_countries; matched on NAME, NAME_LONG or ADM0_A3, any case)"),
-    "file": ("a path", "an existing mask: a 0/1 NetCDF file, or a shapefile / GeoJSON"),
-    "variable": ("text", "the mask variable of a NetCDF file (auto-detected if the file has only one)"),
-    "keep_value": ("a number", "the value of the cells to keep in the NetCDF mask (default 1)"),
+                "admin_0_countries; matched on NAME, NAME_LONG or ADM0_A3, any case)", "str or list of str", ""),
+    "file": ("a path", "an existing mask: a 0/1 NetCDF file, or a shapefile / GeoJSON", "str", ""),
+    "variable": ("text", "the mask variable of a NetCDF file (auto-detected if the file has only one)", "str", ""),
+    "keep_value": ("a number", "the value of the cells to keep in the NetCDF mask (default 1)", "float", ""),
     "condition": ("a mapping {file, variable, above, below}", "a mask made from a field, e.g. "
-                  "{file: dem.nc, variable: elevation, above: 1500}: keeps the cells above and/or below the numbers"),
+                  "{file: dem.nc, variable: elevation, above: 1500}: keeps the cells above and/or below the numbers",
+                  "dict", ""),
     "cell_rule": ("one of 'centre', 'overlap_fraction'", "how a shape picks cells: 'centre' (the cell centre is "
-                  "inside; default) or 'overlap_fraction' (enough of the cell's area is inside)"),
+                  "inside; default) or 'overlap_fraction' (enough of the cell's area is inside)",
+                  "{'centre', 'overlap_fraction'}", ""),
     "overlap_fraction": ("a number in (0, 1]", "the share of a cell's area that must be inside the shape (or, for a "
-                         "mask file with finer cells, covered by kept mask cells); default 0.5"),
+                         "mask file with finer cells, covered by kept mask cells); default 0.5", "float",
+                         "Must be in (0, 1]."),
     "resolution": ("one of '10m', '50m', '110m'", "Natural Earth resolution of land and country shapes "
-                   "(default '50m')"),
+                   "(default '50m')", "{'10m', '50m', '110m'}", ""),
 }
-"""The keys of the ``mask:`` section: expected form and help."""
+"""The keys of the ``mask:`` section: ``(wording, help, python_type, note)`` as in `KINDS`."""
+MASK_DEFAULTS = {"keep_value": 1, "cell_rule": "centre", "overlap_fraction": 0.5, "resolution": "50m"}
+"""The value each ``mask:`` key takes when it is left out (keys not listed: the part is not used)."""
 _MASK_CONDITION_KEYS = ("file", "variable", "above", "below")
 
 
@@ -873,38 +889,67 @@ def _anything(value):
     return value
 
 
-KINDS: dict[str, tuple[str, Callable]] = {
-    "str": ("text", _text),
-    "name": ("a name (text or a whole number)", _name),
-    "path": ("a path (text; ${ENV_VAR} is expanded)", _path),
-    "int": ("a whole number", _integer),
-    "number": ("a number", _number),
-    "bool": ("true or false", _boolean),
-    "workers": ("a whole number of 1 or more", _workers),
-    "date": ("a date, [year, month, day] or 'YYYY-MM-DD'", _date),
-    "month_day": ("a month and day, [month, day] or 'MM-DD'", _month_day),
-    "years": ("a list of years or text such as '2000:2020,2022' (ends included)", _years),
-    "year_pair": ("a pair of years, [first, last] or 'first-last'", _pair),
-    "windows": ("a list of [first, last] day pairs, e.g. [[1, 15], [16, 30]]", _windows),
-    "ints": ("a list of whole numbers, e.g. [3, 5]", _integers),
-    "strs": ("a list of text", _texts),
-    "paths": ("a list of paths", _paths),
-    "patterns": ("a file pattern such as '{}.nc' (quote it), or a list of them", _patterns),
-    "numbers_or_null": ("a list of numbers or null", _numbers_or_null),
-    "dims": ("a mapping from init_time, step, member, lat, lon (or unit) to the file's dimension names", _dims),
-    "dims_list": ("a list of dims mappings or null, one per model", _dims_list),
-    "paths_list": ("a list with one list of paths per model", _paths_list),
-    "members": ("'All', a range like '0-9', or a list of whole numbers", _members),
-    "cells": ("a list of [lat, lon] pairs, e.g. [[9.0, 38.75]]", _cells),
+KINDS: dict[str, tuple[str, Callable, str, str]] = {
+    "str": ("text", _text,
+        "str", ""),
+    "name": ("a name (text or a whole number)", _name,
+        "str or int", ""),
+    "path": ("a path (text; ${ENV_VAR} is expanded)", _path,
+        "str", "``${ENV_VAR}`` in it is expanded."),
+    "int": ("a whole number", _integer,
+        "int", ""),
+    "number": ("a number", _number,
+        "float", ""),
+    "bool": ("true or false", _boolean,
+        "bool", ""),
+    "workers": ("a whole number of 1 or more", _workers,
+        "int", "A whole number of 1 or more."),
+    "date": ("a date, [year, month, day] or 'YYYY-MM-DD'", _date,
+        "list of int or str", "Given as ``[year, month, day]`` or ``'YYYY-MM-DD'``."),
+    "month_day": ("a month and day, [month, day] or 'MM-DD'", _month_day,
+        "list of int or str", "Given as ``[month, day]`` or ``'MM-DD'``."),
+    "years": ("a list of years or text such as '2000:2020,2022' (ends included)", _years,
+        "list of int or str", "Text such as ``'2000:2020,2022'`` is accepted (ends included)."),
+    "year_pair": ("a pair of years, [first, last] or 'first-last'", _pair,
+        "list of int or str", "Given as ``[first, last]`` or ``'first-last'``."),
+    "windows": ("a list of [first, last] day pairs, e.g. [[1, 15], [16, 30]]", _windows,
+        "list of list of int", "Each item is a ``[first, last]`` day pair, e.g. ``[[1, 15], [16, 30]]``."),
+    "ints": ("a list of whole numbers, e.g. [3, 5]", _integers,
+        "list of int", ""),
+    "strs": ("a list of text", _texts,
+        "list of str", ""),
+    "paths": ("a list of paths", _paths,
+        "list of str", ""),
+    "patterns": ("a file pattern such as '{}.nc' (quote it), or a list of them", _patterns,
+        "str or list of str", "A file pattern such as ``'{}.nc'`` (quote it)."),
+    "numbers_or_null": ("a list of numbers or null", _numbers_or_null,
+        "list of float or None", ""),
+    "dims": ("a mapping from init_time, step, member, lat, lon (or unit) to the file's dimension names", _dims,
+        "dict", "Maps init_time, step, member, lat, lon (or unit) to the file's dimension names."),
+    "dims_list": ("a list of dims mappings or null, one per model", _dims_list,
+        "list of dict or None", "One mapping per model."),
+    "paths_list": ("a list with one list of paths per model", _paths_list,
+        "list of list of str", "One list of paths per model."),
+    "members": ("'All', a range like '0-9', or a list of whole numbers", _members,
+        "str or list of int", "Given as ``'All'``, a range like ``'0-9'``, or a list of whole numbers."),
+    "cells": ("a list of [lat, lon] pairs, e.g. [[9.0, 38.75]]", _cells,
+        "list of list of float", "Each item is a ``[lat, lon]`` pair, e.g. ``[[9.0, 38.75]]``."),
     "thresholds": ("a mapping of threshold names to 'path.nc:variable' (a grid), a table file (by unit id) or a "
-                   "number of mm", _thresholds),
+                   "number of mm", _thresholds,
+        "dict", "A threshold is ``'path.nc:variable'`` (a grid), a table file (by unit id) or a number of mm."),
     "mask": ("a mapping of land, country, file, variable, keep_value, condition, cell_rule, overlap_fraction, "
-             "resolution", _mask),
-    "unit_mode": ("one of 'cells', 'regrid', 'cell_transform', or a mapping of source name to one of them",
-                  _unit_mode),
-    "any": ("any value", _anything),
+             "resolution", _mask,
+        "dict", ""),
+    "unit_mode": ("one of 'cells', 'regrid', 'cell_transform', or a mapping of source name to one of them", _unit_mode,
+        "{'cells', 'regrid', 'cell_transform'} or dict of str to str", "A mapping gives one mode per source name."),
+    "any": ("any value", _anything,
+        "object", ""),
 }
-"""Value kinds: a description of the form expected and the function that checks and normalises a value."""
+"""Value kinds: ``(wording, checker, python_type, note)``.
+
+The wording is the YAML form expected (error messages, the CLI, the config-key reference); the checker checks and
+normalises a value; the Python type is the NumPy-style type of the value as a keyword argument; the note is what
+the wording says beyond the type (empty for none)."""
 
 _SIX_BINS = ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30))
 """The default day bins: six of five days."""
@@ -950,7 +995,7 @@ def _fields() -> tuple[Field, ...]:
               "no region defaults; what a converted onset_blending config uses)", REQUIRED, nullable=True),
         Field("nc_mask", "path", "NetCDF mask of 1s and 0s limiting the evaluated cells", None, nullable=True),
         Field("mask", "mask", "cells to evaluate, on each dataset's own grid; the parts given intersect: "
-              + "; ".join(f"{k}: {h}" for k, (_, h) in MASK_KEYS.items()), None, nullable=True, fill=False),
+              + "; ".join(f"{k}: {h}" for k, (_, h, *_rest) in MASK_KEYS.items()), None, nullable=True, fill=False),
         Field("shpfile_dir", "path", "shapefile for the region boundary in maps", None, nullable=True),
         Field("polygon", "bool", "mask and boundary from region polygons (hcwf.onset.regions.polygon_boundary)", False),
         Field("parallel", "bool", "compute years in several worker processes (false: one process); "
