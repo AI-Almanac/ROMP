@@ -314,6 +314,51 @@ def _chunk_runs(da, axis: int, stored: int | None):
     return _tiles(size, stored)
 
 
+def chunk_runs(da, axis: int):
+    """Return the runs of positions along an axis that lie in one stored chunk of the file, or None when it is not chunked.
+
+    The same runs `load_blocks` cuts its blocks at (see `_chunk_runs`): the positions are those of ``da``, so a flipped
+    latitude or a region box that starts inside a chunk is cut at the file's chunk edges.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The array, lazy or not.
+    axis : int
+        The axis.
+
+    Returns
+    -------
+    list of tuple of (int, int) or None
+        The ``(start, stop)`` of each run in positions of ``da``; None when the file stores the variable contiguously
+        (no chunks) or ``da`` has no encoding of them (an array in memory).
+    """
+    chunks = da.encoding.get("chunks") or da.encoding.get("chunksizes")   # zarr, or NetCDF4/HDF5 storage
+    if not chunks or len(chunks) != da.ndim or not chunks[axis]:
+        return None
+    return _chunk_runs(da, axis, chunks[axis])
+
+
+def read_box(da, box):
+    """Read a box of ``da`` into memory: one read of ranges along every dim, through the chunk-aware path.
+
+    A box that lies in one stored chunk (a run of `chunk_runs` along each dim) decodes that chunk once.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The lazy array.
+    box : sequence of tuple of (int, int)
+        The ``(start, stop)`` positions along each dim of ``da``.
+
+    Returns
+    -------
+    numpy.ndarray
+        The values of the box, with the dtype ``da`` decodes to.
+    """
+    return _read_slices(da, [slice(a, b) for a, b in box], 0)
+
+
 def _picked_rows(da, axis=None):
     """Unpick a lazy NetCDF4 selection that picks an increasing list of rows on one axis.
 

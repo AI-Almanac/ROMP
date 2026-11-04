@@ -191,6 +191,8 @@ _SAMPLE_BUDGET = 3_000_000
 """Most values read for the detection sample of one variable (a few MB)."""
 _SAMPLE_CELLS = 96
 """Longest lat or lon stretch read: a centred block of this many cells when the grid is larger."""
+_SAMPLE_MIN_CELLS = 32
+"""Fewest lat or lon cells of the block a chunked file's sample reads: smaller stored chunks are joined to reach it."""
 _SAMPLES = memo("config.detect.samples", maxsize=32)
 """Loaded detection samples, per (file, modification time, variable), for the run."""
 
@@ -238,13 +240,127 @@ def _block_indices(n: int, per_index: int) -> list[np.ndarray]:
     return [np.arange(s0, s0 + length) for s0 in starts]
 
 
+def _cell_positions(n: int, runs) -> np.ndarray:
+    """Return the positions of the block a sample reads along a lat or lon axis.
+
+    An axis of at most ``_SAMPLE_CELLS`` cells is read whole. A longer one is cut to the stored chunk that holds its
+    centre, joined with neighbouring chunks until it holds ``_SAMPLE_MIN_CELLS`` cells and cut to the ``_SAMPLE_CELLS``
+    nearest the centre if that is longer; an axis stored contiguously is cut to a centred block of ``_SAMPLE_CELLS``.
+
+    Parameters
+    ----------
+    n : int
+        The length of the axis.
+    runs : list of tuple of (int, int) or None
+        The stored chunks along the axis (see `hcwf.spatial.select.chunk_runs`); None when it is not chunked.
+
+    Returns
+    -------
+    numpy.ndarray of int64
+        The positions, consecutive and increasing.
+    """
+    if n <= _SAMPLE_CELLS:
+        return np.arange(n)
+    centre = n // 2
+    if runs is None:
+        start = (n - _SAMPLE_CELLS) // 2
+        return np.arange(start, start + _SAMPLE_CELLS)
+    first = next(i for i, (lo, hi) in enumerate(runs) if lo <= centre < hi)
+    lo = hi = first
+    while runs[hi][1] - runs[lo][0] < _SAMPLE_MIN_CELLS and (lo > 0 or hi < len(runs) - 1):
+        if hi < len(runs) - 1 and (lo == 0 or hi - first <= first - lo):
+            hi += 1
+        else:
+            lo -= 1
+    start, stop = runs[lo][0], runs[hi][1]
+    if stop - start > _SAMPLE_CELLS:
+        start = min(max(centre - _SAMPLE_CELLS // 2, start), stop - _SAMPLE_CELLS)
+        stop = start + _SAMPLE_CELLS
+    return np.arange(start, stop)
+
+
+def _sample_pieces(wanted: np.ndarray, runs, how: str) -> list[np.ndarray]:
+    """Split the wanted positions of one axis into the pieces that are each read with one range.
+
+    Parameters
+    ----------
+    wanted : numpy.ndarray of int64
+        The sorted positions the sample holds along the axis.
+    runs : list of tuple of (int, int) or None
+        The stored chunks along the axis; None when it is not chunked.
+    how : {"merged", "runs", "groups"}
+        ``"groups"``: a piece is a run of consecutive wanted positions. ``"merged"``: those, joined when two share a
+        stored chunk (so that the chunk is decoded once). ``"runs"``: a piece is the wanted positions of one stored
+        chunk. An axis that is not chunked is always cut into groups.
+
+    Returns
+    -------
+    list of numpy.ndarray of int64
+        The wanted positions of each piece.
+    """
+    groups = np.split(wanted, np.flatnonzero(np.diff(wanted) > 1) + 1)
+    if runs is None or how == "groups":
+        return groups
+    starts = np.array([lo for lo, _ in runs])
+    if how == "runs":
+        return [piece for piece in np.split(wanted, np.searchsorted(wanted, starts[1:])) if len(piece)]
+    merged = [groups[0]]
+    for group in groups[1:]:
+        if np.searchsorted(starts, merged[-1][-1], side="right") == np.searchsorted(starts, group[0], side="right"):
+            merged[-1] = np.concatenate([merged[-1], group])
+        else:
+            merged.append(group)
+    return merged
+
+
+def _sample_plan(da, wanted: dict, runs: dict, dim: str) -> list[list[np.ndarray]]:
+    """Choose the pieces of every axis so that each stored chunk is decoded once and no read is too big.
+
+    The most joined cut is used unless its biggest read exceeds the block size of `hcwf.spatial.select.load_blocks`
+    (a time chunk longer than the whole file's time steps, say); then the axes other than ``dim`` are cut at the chunk
+    edges, and last ``dim`` is cut into its blocks of time steps (a chunk shared by two of them is then decoded for
+    each).
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The variable.
+    wanted : dict of str to numpy.ndarray
+        The positions the sample holds along each dim.
+    runs : dict of str to list or None
+        The stored chunks along each dim (see `hcwf.spatial.select.chunk_runs`).
+    dim : str
+        The time-like dim.
+
+    Returns
+    -------
+    list of list of numpy.ndarray
+        For each dim of ``da``, the wanted positions of its pieces.
+    """
+    from hcwf.spatial import select
+
+    plan = []
+    for how_dim, how_other in (("merged", "merged"), ("merged", "runs"), ("groups", "runs")):
+        plan = [_sample_pieces(wanted[d], runs[d], how_dim if d == dim else how_other) for d in da.dims]
+        biggest = da.dtype.itemsize * int(np.prod([max(int(p[-1]) + 1 - int(p[0]) for p in pieces)
+                                                   for pieces in plan], dtype=np.int64))
+        if biggest <= select._BLOCK_BYTES:
+            break
+    return plan
+
+
 def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
     """Load a tiny in-memory copy of a variable: a few whole consecutive time steps from its start, middle and end.
 
     The time-like dim is the ``init_time`` (forecasts) or ``time`` (observations) role, else the first dim. Lead is
     read in full (accumulation needs the whole lead series); the member dim is cut to its first member and a grid
-    larger than ``_SAMPLE_CELLS`` is cut to a centred block, so the read stays within ``_SAMPLE_BUDGET`` values (a few
-    MB) and decodes each file chunk once.
+    larger than ``_SAMPLE_CELLS`` is cut to a centred block (`_cell_positions`), so the read stays within
+    ``_SAMPLE_BUDGET`` values (a few MB).
+
+    The read follows the file's chunk grid (`hcwf.spatial.select.chunk_runs`): the block is one stored chunk of lat and
+    lon (more where a chunk is small), and every stored chunk that holds a wanted value, whole, is read once by
+    `hcwf.spatial.select.read_box` (the time steps and the member wanted are then taken in memory). A variable that is
+    stored contiguously is read as ranges of the wanted positions.
 
     Parameters
     ----------
@@ -262,20 +378,36 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
     """
     if key is not None and key in _SAMPLES:
         return _SAMPLES[key]
+    from hcwf.spatial import select
+
     dim = next((roles[r] for r in ("init_time", "time") if roles.get(r) in da.dims), None) or da.dims[0]
-    cut = {}
-    for role in ("lat", "lon"):
-        name = roles.get(role)
-        if name in da.dims and da.sizes[name] > _SAMPLE_CELLS:
-            start = (da.sizes[name] - _SAMPLE_CELLS) // 2
-            cut[name] = slice(start, start + _SAMPLE_CELLS)
-    if roles.get("member") in da.dims:
-        cut[roles["member"]] = slice(0, 1)
-    small = da.isel(cut)
-    per_index = int(np.prod([small.sizes[d] for d in small.dims if d != dim], dtype=np.int64))
-    blocks = [small.isel({dim: idx}).load() for idx in _block_indices(small.sizes[dim], per_index)]
-    out = blocks[0] if len(blocks) == 1 else xr.concat(blocks, dim=dim)
-    out.attrs = dict(da.attrs)
+    runs = {d: select.chunk_runs(da, axis) for axis, d in enumerate(da.dims)}
+    wanted, per_index = {}, 1
+    for d in da.dims:
+        n = da.sizes[d]
+        if d == roles.get("member"):
+            wanted[d] = np.arange(1)
+        elif d in (roles.get("lat"), roles.get("lon")):
+            wanted[d] = _cell_positions(n, runs[d])
+        elif d != dim:
+            wanted[d] = np.arange(n)
+        if d != dim:
+            per_index *= len(wanted[d]) if d not in (roles.get("lat"), roles.get("lon")) else min(n, _SAMPLE_CELLS)
+    wanted[dim] = np.concatenate(_block_indices(da.sizes[dim], per_index))
+    pieces = _sample_plan(da, wanted, runs, dim)   # one range per piece of every axis
+    data = None
+    for corner in np.ndindex(*[len(p) for p in pieces]):
+        parts = [pieces[a][c] for a, c in enumerate(corner)]
+        box = [(int(p[0]), int(p[-1]) + 1) for p in parts]
+        block = select.read_box(da, box)
+        if data is None:
+            data = np.empty(tuple(len(wanted[d]) for d in da.dims), dtype=block.dtype)
+        here = [p - a for (a, _), p in zip(box, parts)]
+        place = [np.searchsorted(wanted[d], p) for d, p in zip(da.dims, parts)]
+        data[np.ix_(*place)] = block[np.ix_(*here)]
+    template = da.isel({d: wanted[d] for d in da.dims})
+    out = xr.DataArray(data, dims=da.dims, coords=template.coords, name=da.name, attrs=dict(da.attrs))
+    out.encoding = dict(da.encoding)
     if key is not None:
         _SAMPLES[key] = out
     return out

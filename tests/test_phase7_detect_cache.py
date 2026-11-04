@@ -6,6 +6,7 @@ import xarray as xr
 from hcwf.cache import reset_run_state
 from hcwf.config import detect
 from hcwf.spatial import masks as mask_mod
+from hcwf.spatial import select
 
 
 
@@ -62,11 +63,14 @@ def test_resolve_netcdf_reads_once(tmp_path, monkeypatch):
     folder.mkdir()
     _forecast().to_dataset().to_netcdf(folder / "2020.nc")
     calls = []
-    real = xr.DataArray.load
-    monkeypatch.setattr(xr.DataArray, "load", lambda self, **k: calls.append(1) or real(self, **k))
+    real = select.read_box
+    monkeypatch.setattr(select, "read_box", lambda da, box: calls.append(1) or real(da, box))
+    loads = []
+    real_load = xr.DataArray.load
+    monkeypatch.setattr(xr.DataArray, "load", lambda self, **k: loads.append(1) or real_load(self, **k))
     res = detect.resolve_entry({"path": str(folder)}, "forecast", detect_lead_label=False)
     assert res.values["units"] == "m" and not res.problems.get("units")
-    assert len(calls) == 3  # three blocks, no further reads
+    assert len(calls) == 3 and not loads  # three blocks, no further reads
 
 
 def test_land_mask_cached_and_identical():
