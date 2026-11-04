@@ -282,8 +282,13 @@ uv run --extra dev ruff check hcwf                       # pydocstyle D rules (n
 uv run --extra dev pydoclint hcwf | grep -v DOC108       # signature and sections (DOC108 is deliberately off)
 uv run --extra dev python tests/test_docstrings.py       # both of the above and the missing-docstring check, filtered
 uv run --extra dev pytest tests/test_docstrings.py       # the guard test
-uv run --extra docs sphinx-build -W --keep-going -b html docs docs/_build/html   # the rendered documentation
+uv run --extra docs sphinx-build -W --keep-going -b html docs docs/_build/html   # while editing: rebuilds only changed pages
+uv run --extra docs sphinx-build -E -W --keep-going -j auto -b html docs docs/_build/html   # final check: full rebuild
 ```
+
+Measured on a 20-core machine: a full build takes about 22 s serial and 17 s with ``-j auto``; a rebuild after one
+docstring edit takes about 4 s serial and 8 s with ``-j auto`` (starting the workers costs more than the few pages
+save). So iterate without ``-E`` and without ``-j``, and use ``-E -j auto`` for the final full build.
 
 `python tests/test_docstrings.py` is the fastest loop: it prints every violation and the count per package
 (`--all` includes the packages not converted yet; a path argument limits it to one file or folder).
