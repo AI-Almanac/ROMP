@@ -1377,12 +1377,12 @@ def _country_record(region, resolution="10m"):
             return country
 
 
-def get_shp(region='Ethiopia', resolution='10m'):
+def get_shp(region, resolution='10m'):
     """Return the Natural Earth country shape named ``region`` (``NAME``, or the registry title of the name).
 
     Parameters
     ----------
-    region : str, default "Ethiopia"
+    region : str
         The region or country name.
     resolution : {"10m", "50m", "110m"}, default "10m"
         The Natural Earth resolution.
@@ -1560,7 +1560,7 @@ def mask_land(da, land=True):
     return _where_keep(da, keep if land else ~keep)
 
 
-def shp_mask(da, region='Ethiopia'):
+def shp_mask(da, region):
     """Set the cells of ``da`` whose centre is not strictly inside the country ``region`` to NaN.
 
     This is the implicit ``shp_only`` mask. A region that is not a country of the shapefile leaves ``da`` as it is.
@@ -1569,7 +1569,7 @@ def shp_mask(da, region='Ethiopia'):
     ----------
     da : xarray.DataArray
         The data, with ``lat`` and ``lon`` coordinates.
-    region : str, default "Ethiopia"
+    region : str
         The country.
 
     Returns

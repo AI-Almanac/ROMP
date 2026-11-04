@@ -165,7 +165,7 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         found, evidence = detect.detect_region(obs_res.extent)
         if found != "unknown":
             region_line = f"region: {regions.load_region(found).title}  # [detected: {evidence}]"
-    region_line = region_line or "region: Ethiopia  # TODO: your region, see `hcwf-run onset regions`"
+    region_line = region_line or "region: <region>  # TODO: your region, see `hcwf-run onset regions`"
     region_name = region_line.split(":")[1].split("#")[0].strip()
     try:
         regions.load_region(region_name)

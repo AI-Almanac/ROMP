@@ -1,7 +1,7 @@
 """Plotting helpers: monthly onset colormap, map basemaps and boxes, and portrait/heatmap plots.
 
 The shared building blocks of the figure modules of `hcwf.figures`: the season colormap (`cbar_season`), the region
-basemap and outlines (`set_basemap`, `shp_outline`, `get_india_outline`, `polygon_outline`, `add_polygon`,
+basemap and outlines (`set_basemap`, `shp_outline`, `shapefile_outline`, `draw_region_outline`, `polygon_outline`, `add_polygon`,
 `box_boundary`) and the portrait plot (`portrait_plot` with `prepare_data`, `heatmap`, `annotate_heatmap`),
 a simplified version of the PCMDI Metrics Package (PMP) portrait plot.
 """
@@ -93,16 +93,10 @@ def set_basemap(ax, spec):
     import cartopy.crs as ccrs
     import matplotlib.ticker as mticker
 
-    # Add Ethiopia boundary
-    if shpfile_dir:
-        region_boundaries = get_india_outline(shpfile_dir)
-        for boundary in region_boundaries:
-            region_lon, region_lat = boundary
-            ax.plot(region_lon, region_lat, color='black', linewidth=1.5)
-    else:
-        shp_outline(ax, region=region)
+    # Add the region outline
+    draw_region_outline(ax, shapefile_outline(shpfile_dir) if shpfile_dir else None, region, 1.5)
 
-    # Set map extent to Ethiopia
+    # Set the map extent to the region's box
     lats, latn, lonw, lone = box(region)
     ax.set_extent([lonw, lone, lats, latn], crs=ccrs.PlateCarree())
 
@@ -810,7 +804,7 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
 
 
 
-def get_india_outline(shpfile_path):
+def shapefile_outline(shpfile_path):
     """Get the region outline coordinates from a shapefile.
 
     Parameters
@@ -824,11 +818,10 @@ def get_india_outline(shpfile_path):
         The ``(lons, lats)`` of the exterior ring of every polygon (the parts of multi-polygons included).
     """
     import geopandas as gpd
-    # Update this path to your India shapefile
-    india_gdf = gpd.read_file(shpfile_path)
+    gdf = gpd.read_file(shpfile_path)
 
     boundaries = []
-    for geom in india_gdf.geometry:
+    for geom in gdf.geometry:
         if hasattr(geom, 'exterior'):
             coords = list(geom.exterior.coords)
             lon_coords = [coord[0] for coord in coords]
@@ -844,7 +837,29 @@ def get_india_outline(shpfile_path):
     return boundaries
 
 
-def shp_outline(ax, region='Ethiopia', resolution='10m'):
+def draw_region_outline(ax, boundaries, region, linewidth):
+    """Draw the region outline on ``ax``: the given boundary lines, or else the region's country outline.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    boundaries : list of tuple or None
+        The ``(lon, lat)`` boundary lines from `shapefile_outline`; None draws the outline of ``region`` with
+        `shp_outline` instead.
+    region : str
+        The region name, for `shp_outline`.
+    linewidth : float
+        The width of the boundary lines.
+    """
+    if boundaries is None:
+        shp_outline(ax, region=region)
+    else:
+        for lon, lat in boundaries:
+            ax.plot(lon, lat, color='black', linewidth=linewidth)
+
+
+def shp_outline(ax, region, resolution='10m'):
     """Add the country boundary of a region to a plot.
 
     On a Cartopy axes the geometry is added with coastlines and borders; on a plain axes its exterior is plotted
@@ -854,7 +869,7 @@ def shp_outline(ax, region='Ethiopia', resolution='10m'):
     ----------
     ax : matplotlib.axes.Axes
         The axes to draw on.
-    region : str, default "Ethiopia"
+    region : str
         The region (country) name, looked up with `hcwf.spatial.masks.get_shp`.
     resolution : str, default "10m"
         The Natural Earth resolution.
