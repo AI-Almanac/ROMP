@@ -2,7 +2,7 @@
 
 ``hcwf-run convert blend.yml -o run.yaml`` and ``hcwf-run convert --specs ... -o run.yaml`` write the equivalent run
 config: the sources, thresholds, units and onset options into HCWF's own sections, the settings only a blend has into
-the `blend:` section (`hcwf.blend.recipe.recipe_from_config` reads it back), and a comment for everything that is not
+the ``blend:`` section (`hcwf.blend.recipe.recipe_from_config` reads it back), and a comment for everything that is not
 carried over. Nothing of onset_blending is imported and no BlendConfig object is kept: the converter reads the YAML
 mapping, fills blending's defaults and writes the HCWF mapping.
 
@@ -24,7 +24,13 @@ What each blending part becomes (the parity options make HCWF read the data exac
   differs becomes the number (blending's ``follow`` is ``follow_days``, the definition's span is one day longer for
   ``followup_anchor: onset_day``).
 * the rest (years, formulas, CV, baselines, MME, forest, climatology, features, reference onset, fixed cutoff, per-model
-  lead days, rain horizon and predictors): the `blend:` section.
+  lead days, rain horizon and predictors): the ``blend:`` section.
+
+The first half of the module converts a BlendConfig (`convert_blend`, `convert_blend_file`, the private `_Convert`);
+the second half ports the legacy spec sets of ``onset_blending.legacy.specs`` (`convert_specs`, `convert_spec_files`,
+the private `_Converter`), which build a BlendConfig mapping and hand it to `convert_blend`. The result is a
+`Conversion`, which ``hcwf-run convert`` writes out. `validate_conversion` checks a conversion against
+`hcwf.config.schema` without reading any data file.
 """
 from __future__ import annotations
 
@@ -45,8 +51,11 @@ __all__ = ["ConvertError", "Conversion", "convert_blend", "convert_blend_file", 
            "is_blend_config", "regex_to_glob", "rule_body", "resolve_rule"]
 
 DERIVED = "derived from the config"
+"""Reason given for dropping a key that the new config derives itself."""
 UNUSED = "no code reads it"
+"""Reason given for dropping a key that no code of the old pipeline read."""
 RUNTIME = "a run setting, not part of the blend"
+"""Reason given for dropping a run setting (workers, parallel) that is not part of the blend."""
 
 
 @dataclass
@@ -54,11 +63,28 @@ class Conversion:
     """The converted run: its mapping (the YAML), a comment per key path, and what was not carried over."""
 
     mapping: dict
+    """The run config as a nested mapping, in the order it is written to YAML."""
     notes: tuple[str, ...] = ()
+    """What was not carried over, one sentence each (written as ``# Not carried over`` comments)."""
     comments: dict = field(default_factory=dict)
+    """A comment per key path: ``(key,)`` for a top-level key or ``(section, key)`` for a key of a section."""
 
     def to_yaml(self, sources: dict[str, str] | None = None, origin: str = "onset_blending") -> str:
-        """The run YAML, headed by where it came from and what was not carried over."""
+        """Render the run YAML, headed by where it came from and what was not carried over.
+
+        Parameters
+        ----------
+        sources : dict of str to str, optional
+            Labelled paths of the files converted (for example ``{"BlendConfig": "configs/a.yml"}``), listed in the
+            header; None lists none.
+        origin : str, default "onset_blending"
+            Name of the project the config came from, in the first header line.
+
+        Returns
+        -------
+        str
+            The YAML text, ending in a newline.
+        """
         lines = [f"# Converted from {origin} by `hcwf-run convert`. Check it, then run:  hcwf-run -p <this file>"]
         lines += [f"#   {label}: {path}" for label, path in (sources or {}).items()]
         if self.notes:
@@ -68,13 +94,36 @@ class Conversion:
 
 
 def _flow(value) -> str:
-    """One value as single-line YAML, keys in the order written."""
+    """Dump one value as single-line YAML, keys in the order written.
+
+    Parameters
+    ----------
+    value : object
+        A YAML-serialisable value.
+
+    Returns
+    -------
+    str
+        The flow-style YAML of `value`, without the document end marker or the trailing newline.
+    """
     text = yaml.safe_dump(value, default_flow_style=True, width=10 ** 9, allow_unicode=True, sort_keys=False)
     return (text[:-5] if text.endswith("\n...\n") else text).strip()
 
 
 def _simple(value) -> bool:
-    """Whether a value reads well on one line: a scalar, or a short list or mapping of scalars."""
+    """Tell whether a value reads well on one line: a scalar, or a short list or mapping of scalars.
+
+    Parameters
+    ----------
+    value : object
+        The value to be written.
+
+    Returns
+    -------
+    bool
+        True for a scalar, a mapping of at most 6 scalars, or a list of at most 40 items that are scalars or lists
+        of at most 2 items.
+    """
     if isinstance(value, dict):
         return len(value) <= 6 and all(not isinstance(v, (dict, list)) for v in value.values())
     if isinstance(value, list):
@@ -84,10 +133,29 @@ def _simple(value) -> bool:
 
 
 def _render(mapping: dict, comments: dict, header: str) -> str:
-    """The run mapping as YAML: a key per line, nested values in block style, a `# comment` where there is one."""
+    """Render the run mapping as YAML: a key per line, nested values in block style, a ``# comment`` where there is one.
+
+    The sections ``observations``, ``onset``, ``units``, ``blend`` and ``evaluation`` are written one key per line under
+    the section name; every other top-level key is written on its own line.
+
+    Parameters
+    ----------
+    mapping : dict
+        The run mapping.
+    comments : dict
+        Comments by key path: ``(key,)`` for a top-level key, ``(section, key)`` for a key of a section.
+    header : str
+        Comment lines written first; empty for none.
+
+    Returns
+    -------
+    str
+        The YAML text, ending in a newline.
+    """
     out = [header.rstrip()] if header else []
 
     def put(indent: str, key, value, note: str | None) -> None:
+        """Append one key (after its comment, if any) to `out`."""
         if note:
             out.append(f"{indent}# {note}")
         if _simple(value):
@@ -172,7 +240,19 @@ _DEFINITION_TOKEN = {"trigger": "trigger", "window": "trigger", "dry_spell": "dr
 
 
 def _unknown(node, spec, path: str, problems: list[str]) -> None:
-    """Report the keys of `node` that the spec of a BlendConfig section does not have."""
+    """Report the keys of `node` that the spec of a BlendConfig section does not have.
+
+    Parameters
+    ----------
+    node : object
+        The loaded YAML value of the section (a mapping, a list of mappings or anything else, which is skipped).
+    spec : dict or list or None
+        The known keys: a dict of key to the spec of its value, a one-item list for a list of mappings.
+    path : str
+        The dotted path of `node`, empty at the top; prefixes the problem messages.
+    problems : list of str
+        Appended with one message per unknown key, with a suggestion when there is a close key.
+    """
     if isinstance(spec, list):
         if node is None:
             return
@@ -189,7 +269,22 @@ def _unknown(node, spec, path: str, problems: list[str]) -> None:
 
 
 def _dig(node, path: str, default=None):
-    """node[a][b]... for 'a.b...', default when any step is missing or null."""
+    """Read ``node[a][b]...`` for the dotted path ``"a.b..."``.
+
+    Parameters
+    ----------
+    node : object
+        The mapping to read from.
+    path : str
+        Dotted keys.
+    default : object, optional
+        What to return when a step is not a mapping, is missing or is null.
+
+    Returns
+    -------
+    object
+        The value at `path`, or `default`.
+    """
     for part in path.split("."):
         if not isinstance(node, dict) or node.get(part) is None:
             return default
@@ -201,9 +296,23 @@ def _dig(node, path: str, default=None):
 
 
 def resolve_rule(definition: dict | None) -> types.SimpleNamespace:
-    """The onset rule of a BlendConfig `onset.definition` mapping with blending's defaults filled in: window,
-    wet_day_min_mm, trigger_rule, min_wet_days, wet_day_comparison, threshold_comparison, follow_days, followup_anchor,
-    mode, min_dry_days, dry_day_min_mm (the wet-day limit unless given), dry_run_contained, sum_window, sum_min_mm."""
+    """Resolve the onset rule of a BlendConfig ``onset.definition`` mapping, with blending's defaults filled in.
+
+    A null value counts as missing and takes the default.
+
+    Parameters
+    ----------
+    definition : dict, optional
+        The ``onset.definition`` mapping (with its ``dry_spell`` sub-mapping); None or empty is all defaults.
+
+    Returns
+    -------
+    types.SimpleNamespace
+        The rule, with attributes ``window``, ``wet_day_min_mm`` (mm), ``trigger_rule``, ``min_wet_days``,
+        ``wet_day_comparison``, ``threshold_comparison``, ``follow_days``, ``followup_anchor``, ``mode``,
+        ``min_dry_days``, ``dry_day_min_mm`` (mm; the wet-day limit unless given), ``dry_run_contained``,
+        ``sum_window`` and ``sum_min_mm`` (mm). Days are ``int``, amounts ``float``.
+    """
     definition = definition or {}
     spell = {**_SPELL_DEFAULTS, **{k: v for k, v in (definition.get("dry_spell") or {}).items() if v is not None}}
     rule = {**_RULE_DEFAULTS, **{k: v for k, v in definition.items() if k != "dry_spell" and v is not None}}
@@ -219,7 +328,26 @@ def resolve_rule(definition: dict | None) -> types.SimpleNamespace:
 
 
 def resolve_token(token: str, rule) -> int:
-    """A rain predictor's window token in days as blending reads it from the rule."""
+    """Resolve a rain predictor's window token to days, as blending reads it from the rule.
+
+    Parameters
+    ----------
+    token : str
+        One of ``trigger``, ``window`` (the rule's ``window``), ``dry_spell``, ``sum_window`` (its ``sum_window``),
+        ``follow`` (its ``follow_days``) or ``min_dry`` (its ``min_dry_days``); case is ignored.
+    rule : types.SimpleNamespace
+        The rule as `resolve_rule` returns it.
+
+    Returns
+    -------
+    int
+        The window in days.
+
+    Raises
+    ------
+    ValueError
+        `token` is not a known token.
+    """
     token = token.lower()
     if token in ("trigger", "window"):
         return rule.window
@@ -233,10 +361,28 @@ def resolve_token(token: str, rule) -> int:
 
 
 def rule_body(r, fixed_total: float | None = None, threshold: tuple | None = None) -> str:
-    """The wet-day, dry-day, thresholds and onset parts of a hcwf definition that search as onset_blending's `find_onsets`
-    does for the rule `r` (see `resolve_rule`): a fixed total amount instead of the `thr` threshold if given; the `thr`
-    threshold over `threshold` = (days, first month-day, last month-day) instead of the mean total over the trigger
-    window (computed from the observations over those days of each year)."""
+    """Write the wet-day, dry-day, thresholds and onset parts of an HCWF definition for the rule `r`.
+
+    The definition searches as onset_blending's ``find_onsets`` does. The total the trigger needs is the threshold
+    ``thr`` unless `fixed_total` is given. ``thr`` is the mean total over the trigger window unless `threshold` says over
+    which days of each year it is computed from the observations.
+
+    Parameters
+    ----------
+    r : types.SimpleNamespace
+        The rule, as `resolve_rule` returns it.
+    fixed_total : float, optional
+        A fixed total amount in mm that replaces the ``thr`` threshold; None uses ``thr``.
+    threshold : tuple of (int, str, str), optional
+        ``(days, first month-day, last month-day)``: ``thr`` is the mean total over ``days`` days during those dates of
+        each year; None is the mean total over the trigger window.
+
+    Returns
+    -------
+    str
+        The YAML text of the definition body (``wet_day``, ``dry_day``, ``thresholds`` and ``onset``), ending in a
+        newline.
+    """
     wet = f"{'at least' if r.wet_day_comparison == 'gte' else 'more than'} {r.wet_day_min_mm} mm"
     cmp_ = "at least" if r.threshold_comparison == "gte" else "more than"
     total = f"{cmp_} {fixed_total} mm" if fixed_total is not None else f"{cmp_} thr"
@@ -266,7 +412,24 @@ def rule_body(r, fixed_total: float | None = None, threshold: tuple | None = Non
 
 
 def _rule_mapping(rule, name: str, season_start: str, threshold: tuple | None) -> dict:
-    """The inline `onset.rule` of a converted config: a complete definition (see `rule_body`)."""
+    """Build the inline ``onset.rule`` of a converted config: a complete definition (see `rule_body`).
+
+    Parameters
+    ----------
+    rule : types.SimpleNamespace
+        The rule, as `resolve_rule` returns it.
+    name : str
+        The name of the BlendConfig; it makes the rule id and title.
+    season_start : str
+        The first ``MM-DD`` of the season (``onset.season_start``).
+    threshold : tuple of (int, str, str), optional
+        The computed-threshold window, as `rule_body` takes it.
+
+    Returns
+    -------
+    dict
+        The definition, parsed from its YAML text.
+    """
     head = (f"id: {re.sub(r'[^a-z0-9_]+', '_', name.lower()).strip('_') or 'blend'}_rule\nversion: 1\n"
             f"title: The onset rule of the onset_blending config {name}\ncitation: onset_blending\n"
             "wording: Converted from onset_blending's onset.definition; see the config it came from.\n"
@@ -284,9 +447,21 @@ _DIGITS = re.compile(r"(?:\\d|\[0-9\])\{(\d+)\}")
 
 
 def regex_to_glob(pattern: str) -> str | None:
-    """The shell glob that matches the same file names as `re.search(pattern, name)`, or None if the regular expression
-    says more than a glob can (alternatives, repeats). Handles literal text (with escaped dots), `.*`, `.`, `^`, `$`,
-    `\\d{n}`, `[0-9]{n}` and `(19|20)\\d{2}`."""
+    r"""Convert a regular expression on file names to the shell glob that matches the same names.
+
+    Handles literal text (with escaped dots), ``.*``, ``.``, ``^``, ``$``, ``\d{n}``, ``[0-9]{n}`` and
+    ``(19|20)\d{2}``. The glob matches the same names as ``re.search(pattern, name)``.
+
+    Parameters
+    ----------
+    pattern : str
+        The regular expression.
+
+    Returns
+    -------
+    str or None
+        The glob, or None when the regular expression says more than a glob can (alternatives, repeats).
+    """
     text = pattern
     start = text.startswith("^")
     text = text[1:] if start else text
@@ -325,7 +500,18 @@ def regex_to_glob(pattern: str) -> str | None:
 
 
 def _years_value(years):
-    """A years list as the compact text parse_years reads ('2000:2024', '2000:2010,2015') or a single year."""
+    """Write a years list as the compact text that ``parse_years`` reads, or as a single year.
+
+    Parameters
+    ----------
+    years : tuple of int
+        The years, ascending and each once (a tuple, as `hcwf.blend.recipe.years_of` returns it); not empty.
+
+    Returns
+    -------
+    int or str
+        The year itself for one year, else runs as text such as ``"2000:2024"`` or ``"2000:2010,2015"``.
+    """
     if len(years) == 1:
         return years[0]
     runs, first = [], years[0]
@@ -340,7 +526,31 @@ def _years_value(years):
 
 
 class _Convert:
-    """One conversion: reads a BlendConfig mapping, keeps the problems and notes found on the way."""
+    """One conversion: reads a BlendConfig mapping, keeps the problems and notes found on the way.
+
+    Parameters
+    ----------
+    data : dict
+        The BlendConfig mapping (what its YAML holds).
+    root : pathlib.Path, optional
+        The folder relative paths start at; None is the working directory.
+    region : str, optional
+        An HCWF region id for the run; None is no region.
+    source : str
+        Where the config came from (kept as ``source``; nothing reads it).
+
+    Attributes
+    ----------
+    problems : list of str
+        What cannot be converted; `_Convert.convert` raises `ConvertError` with them.
+    notes : list of str
+        What is not carried over.
+    comments : dict
+        Comments by key path, filled by `_Convert.convert`.
+    definition_windows : dict
+        The windows of the HCWF definition written from the onset rule, set by `_Convert._onset_with_windows` (empty
+        when the definition cannot be read).
+    """
 
     def __init__(self, data: dict, root: Path | None, region: str | None, source: str):
         self.data, self.root, self.region, self.source = data, root, region, source
@@ -351,19 +561,65 @@ class _Convert:
     # -- small helpers -----------------------------------------------------------------------------------------
 
     def get(self, path: str, default=None):
+        """Read a dotted path of the BlendConfig mapping.
+
+        Parameters
+        ----------
+        path : str
+            Dotted keys, for example ``"evaluation.years.training"``.
+        default : object, optional
+            What to return when a step is missing or null.
+
+        Returns
+        -------
+        object
+            The value, or `default`.
+        """
         return _dig(self.data, path, default)
 
     def path(self, value) -> str:
-        """A configured path anchored at the data root (absolute, as blending's `config.path` joined it)."""
+        """Anchor a configured path at the data root (absolute, as blending's ``config.path`` joined it).
+
+        Parameters
+        ----------
+        value : str or pathlib.Path
+            The path as written in the config.
+
+        Returns
+        -------
+        str
+            The normalised absolute path; a relative one starts at the data root, or the working directory without one.
+        """
         value = Path(str(value))
         if not value.is_absolute():
             value = (self.root or Path.cwd()) / value
         return os.path.normpath(str(value))
 
     def note(self, text: str) -> None:
+        """Record something that is not carried over.
+
+        Parameters
+        ----------
+        text : str
+            The sentence for the ``# Not carried over`` header.
+        """
         self.notes.append(text)
 
     def years(self, value, where: str) -> tuple[int, ...]:
+        """Parse a years value, recording a problem when it is invalid.
+
+        Parameters
+        ----------
+        value : object
+            A list, a year or text such as ``"2000:2024,2026"``; None is no years.
+        where : str
+            The config path named in a problem message.
+
+        Returns
+        -------
+        tuple of int
+            The years, sorted and each once; empty for None or an invalid value.
+        """
         problems: list[str] = []
         years = years_of(value, where, problems)
         self.problems += problems
@@ -372,7 +628,24 @@ class _Convert:
     # -- files ---------------------------------------------------------------------------------------------------
 
     def files(self, node: dict | None, what: str) -> dict:
-        """`paths` and `years` of a blending FileSet: the files, in blending's (year, name) order when listed."""
+        """Convert a blending FileSet to ``paths`` and ``years``: the files, in blending's (year, name) order when listed.
+
+        Exactly one of ``folder`` (with ``pattern``, by default any ``.nc`` file, converted by `regex_to_glob`; a pattern
+        a glob cannot say lists the files that match now) and ``paths`` must be given.
+
+        Parameters
+        ----------
+        node : dict, optional
+            The FileSet mapping (``folder``, ``pattern``, ``paths``, ``years``).
+        what : str
+            The source named in problem and note messages, for example ``"observations"``.
+
+        Returns
+        -------
+        dict
+            ``paths`` (a list of str) and, when given, ``years``; empty when the FileSet is invalid (a problem is
+            recorded).
+        """
         node = node or {}
         folder, listed, pattern = node.get("folder"), node.get("paths"), node.get("pattern", r"\.nc$")
         out: dict = {}
@@ -406,14 +679,37 @@ class _Convert:
 
     @staticmethod
     def dims(rename, roles: dict) -> dict | None:
-        """blending's {file dimension: role} as HCWF's {role: file dimension} (roles blending reads only)."""
+        """Convert blending's ``{file dimension: role}`` to HCWF's ``{role: file dimension}`` (roles blending reads only).
+
+        Parameters
+        ----------
+        rename : dict, optional
+            Blending's rename mapping of a file dimension to its role.
+        roles : dict
+            The role names blending reads (``_OBS_ROLES`` or ``_MODEL_ROLES``) mapped to HCWF's dimension names.
+
+        Returns
+        -------
+        dict or None
+            HCWF dimension name to the name in the files; None when there is none.
+        """
         out = {roles[role]: name for name, role in (rename or {}).items() if role in roles}
         return out or None
 
     # -- onset ---------------------------------------------------------------------------------------------------
 
     def onset(self) -> tuple[dict, tuple, "types.SimpleNamespace"]:
-        """(the `onset:` mapping, the threshold years, the rule). Thresholds follow `onset.threshold`."""
+        """Convert the ``onset`` section: the ``onset:`` mapping of the run, the threshold years and the rule.
+
+        Exactly one of ``mm``, ``file`` and ``climatology`` of ``onset.threshold`` must be given (else a problem is
+        recorded). A computed threshold (``climatology``) uses its own years; the others use the training years.
+
+        Returns
+        -------
+        tuple of (dict, tuple of int or None, types.SimpleNamespace)
+            The ``onset:`` mapping of the run, the ``(first, last)`` years the thresholds are computed from (None when
+            there are none), and the rule as `resolve_rule` returns it.
+        """
         node = self.get("onset", {})
         rule = resolve_rule(node.get("definition"))
         season_start = str(node.get("season_start", "05-01"))
@@ -460,6 +756,19 @@ class _Convert:
     # -- units ---------------------------------------------------------------------------------------------------
 
     def units(self, models: list) -> dict:
+        """Convert the ``domain`` section to the ``units:`` section of the run.
+
+        Parameters
+        ----------
+        models : list of dict
+            The BlendConfig ``models`` entries; each source gets a mode (``cells``, ``regrid`` or ``cell_transform``).
+
+        Returns
+        -------
+        dict
+            The ``units:`` mapping (box or outline, id convention, dissemination and centroids files, shapefile columns,
+            per-source ``mode`` and ``weights``).
+        """
         domain = self.get("domain", {})
         grid = domain.get("grid_ids") or {}
         out: dict = {}
@@ -499,6 +808,7 @@ class _Convert:
         modes, weights = {}, {}
 
         def source(name, transform, model=None):
+            """Record the mode and weights of one source in `modes` and `weights`."""
             if transform is not None:
                 modes[name], weights[name] = "cell_transform", self.path(transform)
             elif regrid is None:
@@ -523,6 +833,14 @@ class _Convert:
     # -- sources -------------------------------------------------------------------------------------------------
 
     def observations(self) -> dict:
+        """Convert the ``observations`` section.
+
+        Returns
+        -------
+        dict
+            The ``observations:`` mapping of the run: ``paths`` and ``years``, ``variable``, ``unit_cvt`` (1.0: blending
+            reads millimetres), ``dims`` and ``day_boundary``.
+        """
         obs = self.get("observations", {})
         for key in ("files", "variable"):
             if key not in obs:
@@ -539,6 +857,21 @@ class _Convert:
         return out
 
     def model_entry(self, model: dict, index: int) -> dict:
+        """Convert one ``models`` entry to a model of the run.
+
+        Parameters
+        ----------
+        model : dict
+            The BlendConfig model entry.
+        index : int
+            Its position in ``models``, for the problem messages.
+
+        Returns
+        -------
+        dict
+            ``name``, ``paths`` and ``years``, ``variable`` (default ``tp``), ``unit_cvt`` (from ``unit_scale``),
+            ``dims`` and ``accumulation`` (``daily``).
+        """
         where = f"models[{index}]"
         if "name" not in model:
             self.problems.append(f"{where}.name: required")
@@ -551,7 +884,24 @@ class _Convert:
         return out
 
     def model_blend(self, model: dict, rule) -> dict:
-        """The `blend.models.<name>` settings of one model: lead days, member limit, rain horizon, predictors."""
+        """Convert the ``blend.models.<name>`` settings of one model: lead days, member limit, rain horizon, predictors.
+
+        A window token of a rain predictor stays a token only where the HCWF definition (``definition_windows``) reads
+        it to the same number of days; otherwise it becomes that number.
+
+        Parameters
+        ----------
+        model : dict
+            The BlendConfig model entry.
+        rule : types.SimpleNamespace
+            The rule, as `resolve_rule` returns it.
+
+        Returns
+        -------
+        dict
+            The keys that are set (``lead_days``, ``max_member``, ``rain_horizon``, ``rain_predictors``,
+            ``rain_transform``); empty when none is.
+        """
         out: dict = {}
         lead = model.get("lead_days") or {}
         if lead:
@@ -579,6 +929,21 @@ class _Convert:
     # -- the blend section ---------------------------------------------------------------------------------------
 
     def blend(self, models: list, rule) -> dict:
+        """Convert what only a blend has to the ``blend:`` section of the run.
+
+        Parameters
+        ----------
+        models : list of dict
+            The BlendConfig ``models`` entries (their per-model settings go to ``blend.models``).
+        rule : types.SimpleNamespace
+            The rule, as `resolve_rule` returns it.
+
+        Returns
+        -------
+        dict
+            The ``blend:`` mapping (years, formulas, cross-validation, baselines, MME, climatology, features,
+            reference onset, fixed cutoff, outputs).
+        """
         out: dict = {}
         evaluation = self.get("evaluation", {})
         years = evaluation.get("years") or {}
@@ -657,6 +1022,18 @@ class _Convert:
     # -- assembly ------------------------------------------------------------------------------------------------
 
     def convert(self) -> Conversion:
+        """Convert the whole BlendConfig.
+
+        Returns
+        -------
+        Conversion
+            The run mapping with its comments and the notes.
+
+        Raises
+        ------
+        ConvertError
+            The config has unknown keys, misses a required key or cannot be converted; the error lists every problem.
+        """
         data = self.data
         _unknown(data, _BLEND_KEYS, "", self.problems)
         for key in ("name", "observations", "models", "onset", "evaluation"):
@@ -691,7 +1068,17 @@ class _Convert:
         return Conversion(mapping, tuple(self.notes), self.comments)
 
     def _onset_with_windows(self):
-        """The onset mapping, and the windows of the HCWF definition it makes (rain-window tokens are checked on them)."""
+        """Convert the onset section and read the windows of the HCWF definition it makes.
+
+        The windows are what the rain-window tokens of the predictors are checked against. Sets ``definition_windows``;
+        when HCWF cannot read the rule written from the config, a problem is recorded and the windows are empty, so
+        that tokens become numbers.
+
+        Returns
+        -------
+        tuple of (dict, tuple of int or None, types.SimpleNamespace)
+            What `_Convert.onset` returns: the ``onset:`` mapping, the threshold years and the rule.
+        """
         from hcwf.onset import definition as definition_mod
 
         onset, years, rule = self.onset()
@@ -705,7 +1092,22 @@ class _Convert:
 
 
 def _year_pair(years, problems: list[str], where: str) -> tuple[int, int] | None:
-    """(first, last) of a years value; a problem when there are none."""
+    """Take the first and last of a years value.
+
+    Parameters
+    ----------
+    years : tuple of int
+        The years, sorted; may be empty.
+    problems : list of str
+        Appended with a problem when there are no years.
+    where : str
+        The config path named in that problem.
+
+    Returns
+    -------
+    tuple of (int, int) or None
+        ``(first, last)``; None when there are no years.
+    """
     if not years:
         problems.append(f"{where}: expected a first and last year")
         return None
@@ -713,9 +1115,26 @@ def _year_pair(years, problems: list[str], where: str) -> tuple[int, int] | None
 
 
 def validate_conversion(conversion: Conversion):
-    """Check a conversion without reading any data file: its sections are flattened and typed as a run config's are, the
-    `blend:` section builds a Recipe and the onset settings resolve. Returns (flat config, Recipe, OnsetSetup); raises
-    ConvertError listing the problems."""
+    """Check a conversion without reading any data file.
+
+    Its sections are flattened and typed as a run config's are, the ``blend:`` section builds a Recipe and the onset
+    settings resolve.
+
+    Parameters
+    ----------
+    conversion : Conversion
+        The conversion to check.
+
+    Returns
+    -------
+    tuple of (dict, hcwf.blend.recipe.Recipe, hcwf.config.onset.OnsetSetup)
+        The flat run config, the recipe built from the ``blend:`` section and the resolved onset settings.
+
+    Raises
+    ------
+    ConvertError
+        The config does not validate, the recipe is invalid or the onset settings are; the error lists the problems.
+    """
     from hcwf.blend.recipe import recipe_from_config
     from hcwf.errors import RecipeError
     from hcwf.config import schema
@@ -738,24 +1157,70 @@ def validate_conversion(conversion: Conversion):
 
 
 def is_blend_config(data) -> bool:
-    """Whether a loaded YAML mapping looks like a BlendConfig (it has observations.files and models[].files)."""
+    """Tell whether a loaded YAML mapping looks like a BlendConfig.
+
+    Parameters
+    ----------
+    data : object
+        The loaded YAML.
+
+    Returns
+    -------
+    bool
+        True for a mapping with ``evaluation``, ``onset`` and a mapping ``observations.files``.
+    """
     return (isinstance(data, dict) and "evaluation" in data and "onset" in data
             and isinstance((data.get("observations") or {}).get("files"), dict))
 
 
 def convert_blend(data: dict, *, data_root=None, region: str | None = None, source: str = "") -> Conversion:
-    """The HCWF run for a BlendConfig given as a mapping (what its YAML holds); raises ConvertError listing every problem.
+    """Convert a BlendConfig given as a mapping (what its YAML holds) to an HCWF run.
 
-    Relative paths start at `data_root` (the config's own `data_root` key unless given; the working directory without
-    either) and are written absolute. `region` is an HCWF region id for the run (None: no region, the data's whole
-    domain, as blending uses it)."""
+    Relative paths start at `data_root` (the config's own ``data_root`` key unless given; the working directory without
+    either) and are written absolute. A problem with the config raises `ConvertError`, which lists every problem.
+
+    Parameters
+    ----------
+    data : dict
+        The BlendConfig mapping.
+    data_root : str or pathlib.Path, optional
+        Where relative paths start; None uses the config's ``data_root``.
+    region : str, optional
+        An HCWF region id for the run; None is no region, the data's whole domain, as blending uses it.
+    source : str, default ""
+        Where the config came from.
+
+    Returns
+    -------
+    Conversion
+        The run mapping, its comments and the notes.
+    """
     root = data_root if data_root is not None else data.get("data_root")
     return _Convert(dict(data), Path(root).resolve() if root else None, region, source).convert()
 
 
 def convert_blend_file(path, *, region: str | None = None) -> Conversion:
-    """`convert_blend` on a BlendConfig YAML file: relative paths start at its `data_root`, itself relative to the file
-    (the file's folder by default)."""
+    """Run `convert_blend` on a BlendConfig YAML file.
+
+    Relative paths start at the config's ``data_root``, itself relative to the file (the file's folder by default).
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The BlendConfig YAML file.
+    region : str, optional
+        An HCWF region id for the run; None is no region.
+
+    Returns
+    -------
+    Conversion
+        The run mapping, its comments and the notes.
+
+    Raises
+    ------
+    ConvertError
+        The file does not hold a mapping (`convert_blend` raises it too for a config that cannot be converted).
+    """
     path = Path(path)
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
@@ -783,7 +1248,26 @@ _DAILY_OUT = {
 
 
 class _Spec:
-    """One old spec that remembers which keys the conversion has read."""
+    """One old spec that remembers which keys the conversion has read.
+
+    Parameters
+    ----------
+    label : str
+        The spec's name in notes, for example ``"ground_truth"`` or ``"forecast[AIFS]"``.
+    data : dict, optional
+        The loaded spec; None is empty.
+    notes : list of str
+        The shared list that `_Spec.drop` appends its notes to.
+
+    Attributes
+    ----------
+    label : str
+        The spec's name in notes.
+    data : dict
+        The loaded spec.
+    read : set of str
+        The dotted paths read so far.
+    """
 
     def __init__(self, label: str, data: dict | None, notes: list[str]):
         self.label = label
@@ -792,23 +1276,65 @@ class _Spec:
         self._notes = notes
 
     def get(self, path: str, default=None):
+        """Read a dotted path of the spec and mark it as read.
+
+        Parameters
+        ----------
+        path : str
+            Dotted keys, for example ``"options.min_day"``.
+        default : object, optional
+            What to return when the path is missing or null.
+
+        Returns
+        -------
+        object
+            The value, or `default`.
+        """
         self.read.add(path)
         node = self._lookup(path)
         return default if node is None else node
 
     def has(self, path: str) -> bool:
+        """Tell whether the spec has a non-null value at a dotted path (without marking it as read).
+
+        Parameters
+        ----------
+        path : str
+            Dotted keys.
+
+        Returns
+        -------
+        bool
+            True when the value exists and is not None.
+        """
         return self._lookup(path) is not None
 
     def drop(self, path: str, reason: str) -> None:
+        """Mark a key as read and record that it is not carried over, if it is set.
+
+        Parameters
+        ----------
+        path : str
+            Dotted keys.
+        reason : str
+            Why the key is dropped, written in the note.
+        """
         if self.has(path):
             self.read.add(path)
             self._notes.append(f"{self.label}: {path} ({reason})")
 
     def unread(self) -> list[str]:
-        """Leaf keys nothing read; reading a key covers everything below it."""
+        """List the leaf keys nothing read; reading a key covers everything below it.
+
+        Returns
+        -------
+        list of str
+            Dotted paths of the leaves of the spec that were not read.
+        """
         leaves: list[str] = []
 
         def walk(node, path):
+            """Collect the unread leaves below `node` into `leaves`."""
             if isinstance(node, dict) and node:
                 for key, value in node.items():
                     walk(value, f"{path}.{key}" if path else str(key))
@@ -819,10 +1345,34 @@ class _Spec:
         return leaves
 
     def _covered(self, path: str) -> bool:
+        """Tell whether a path, or one of its parents, has been read.
+
+        Parameters
+        ----------
+        path : str
+            Dotted keys.
+
+        Returns
+        -------
+        bool
+            True when `path` or a prefix of it is in ``read``.
+        """
         parts = path.split(".")
         return any(".".join(parts[:i]) in self.read for i in range(1, len(parts) + 1))
 
     def _lookup(self, path: str):
+        """Look up a dotted path without marking it as read.
+
+        Parameters
+        ----------
+        path : str
+            Dotted keys.
+
+        Returns
+        -------
+        object
+            The value, or None when a step is missing.
+        """
         node = self.data
         for part in path.split("."):
             if not isinstance(node, dict) or part not in node:
@@ -832,14 +1382,165 @@ class _Spec:
 
 
 def _same_path(a: str | None, b: str | None) -> bool:
+    """Tell whether two paths are the same after normalising.
+
+    Parameters
+    ----------
+    a : str, optional
+        A path.
+    b : str, optional
+        Another path.
+
+    Returns
+    -------
+    bool
+        True when both are given and equal under ``os.path.normpath``.
+    """
     return a is not None and b is not None and os.path.normpath(a) == os.path.normpath(b)
 
 
 def _without_none(mapping: dict) -> dict:
+    """Drop the null values of a mapping.
+
+    Parameters
+    ----------
+    mapping : dict
+        Any mapping.
+
+    Returns
+    -------
+    dict
+        A new dict with the items whose value is not None.
+    """
     return {k: v for k, v in mapping.items() if v is not None}
 
 
+def _grid_id_convention(spec: _Spec | None) -> tuple | None:
+    """Read the grid-id convention a spec states (``grid_id_decimal_digits``, ``grid_id_format``).
+
+    The keys are read under ``geometry`` when the spec has a ``geometry`` mapping (the regrid spec), else at the top.
+    Reading marks them as read in the spec.
+
+    Parameters
+    ----------
+    spec : _Spec, optional
+        A spec; None states nothing.
+
+    Returns
+    -------
+    tuple of (int or None, str) or None
+        ``(decimal digits or None, lower-case format, ``"trimmed"`` when not given)``; None when the spec states
+        neither.
+    """
+    if spec is None:
+        return None
+    base = "geometry." if isinstance(spec.data.get("geometry"), dict) else ""
+    digits = spec.get(base + "grid_id_decimal_digits")
+    fmt = spec.get(base + "grid_id_format")
+    if digits is None and fmt is None:
+        return None
+    return (digits, str(fmt).lower() if fmt is not None else "trimmed")
+
+
+def _train_years(run: dict) -> tuple:
+    """Read the training years of a climatology run.
+
+    Parameters
+    ----------
+    run : dict
+        A ``climatologies`` run of the ground-truth spec.
+
+    Returns
+    -------
+    tuple of (int or None, int or None)
+        ``(train_year_min, train_year_max)``; None for a limit that is not given.
+    """
+    return (run.get("train_year_min"), run.get("train_year_max"))
+
+
+def _climatology_settings(run: dict) -> dict:
+    """Read the settings of a climatology run that connect's conditional and unconditional runs must share.
+
+    Parameters
+    ----------
+    run : dict
+        A ``climatologies`` run of the ground-truth spec.
+
+    Returns
+    -------
+    dict
+        ``onset_col`` (default ``onset_day``), ``season_start`` and ``issue_end`` (``MM-DD`` text), ``forecast_window``,
+        ``horizons`` (a list of ``{start, end, forecast_window}`` or None), ``cv_by_year`` (default True),
+        ``min_onset_years`` (default 10) and ``test_years`` (a ``(min, max)`` tuple, None for a limit not given).
+    """
+    horizons = run.get("horizons")
+    return {
+        "onset_col": run.get("onset_col", "onset_day"),
+        "season_start": str(run.get("season_start_md")),
+        "issue_end": str(run.get("issue_end_md")),
+        "forecast_window": run.get("forecast_window"),
+        "horizons": [
+            {"start": str(h["start_md"]), "end": str(h["end_md"]), "forecast_window": int(h["forecast_window"])}
+            for h in horizons
+        ] if horizons else None,
+        "cv_by_year": bool(run.get("cv_by_year", True)),
+        "min_onset_years": int(run.get("min_onset_years", 10)),
+        "test_years": (run.get("test_year_min"), run.get("test_year_max")),
+    }
+
+
 class _Converter:
+    """One conversion of a legacy spec set (onset_blending's stage specs) to a BlendConfig mapping, then to a run.
+
+    Every spec is wrapped in a `_Spec` so that keys nothing read are reported at the end. Facts stated in several specs
+    must agree (`_Converter.agree`); disagreements are problems. `_Converter.convert` builds the BlendConfig mapping
+    and passes it to `convert_blend`.
+
+    Parameters
+    ----------
+    name : str
+        The project name.
+    ground_truth : dict, optional
+        The ground-truth ``raw_data`` spec.
+    forecasts : dict of str to dict
+        The ``raw_data`` spec of each model, by model name.
+    combine : dict, optional
+        The ``combine`` spec.
+    connect : dict, optional
+        The ``connect`` spec.
+    cv_models : dict, optional
+        The ``cv_models`` spec.
+    regrid : dict, optional
+        The ``regrid`` spec; None when the data is not regridded.
+    connect_onset_spec : dict, optional
+        The ``raw_data`` spec that connect's ``onset_spec`` names when that is not the ground truth.
+    data_root : str, optional
+        The folder the old scripts ran from; relative paths of the specs start there.
+    region : str, optional
+        An HCWF region id for the run.
+
+    Attributes
+    ----------
+    problems : list of str
+        What cannot be converted.
+    notes : list of str
+        What is not carried over.
+    gt : _Spec
+        The wrapped ground-truth spec.
+    forecasts : dict of str to _Spec
+        The wrapped model specs, by model name.
+    combine : _Spec
+        The wrapped ``combine`` spec.
+    connect : _Spec
+        The wrapped ``connect`` spec.
+    cv : _Spec
+        The wrapped ``cv_models`` spec.
+    regrid : _Spec or None
+        The wrapped regrid spec.
+    definition : dict or None
+        The agreed onset definition, set by `_Converter.onset`.
+    """
+
     def __init__(self, *, name, ground_truth, forecasts, combine, connect, cv_models, regrid, connect_onset_spec,
                  data_root=None, region=None):
         self.problems: list[str] = []
@@ -858,7 +1559,21 @@ class _Converter:
     # -- helpers -----------------------------------------------------------
 
     def agree(self, what: str, values: dict[str, Any]):
-        """One fact stated in several specs: the stated values must match."""
+        """Check that one fact stated in several specs has the same value everywhere.
+
+        Parameters
+        ----------
+        what : str
+            The fact, named in the problem.
+        values : dict of str to object
+            The value stated in each spec, by spec label; None means not stated.
+
+        Returns
+        -------
+        object
+            The agreed value, or None when no spec states it (when they disagree, a problem is recorded and the first
+            distinct value is returned).
+        """
         stated = {where: v for where, v in values.items() if v is not None}
         distinct = []
         for value in stated.values():
@@ -870,6 +1585,18 @@ class _Converter:
         return distinct[0] if distinct else None
 
     def years_between(self, spec: _Spec) -> tuple[int, ...]:
+        """Read the years from ``options.min_year`` to ``options.max_year`` of a spec.
+
+        Parameters
+        ----------
+        spec : _Spec
+            A ``raw_data`` spec.
+
+        Returns
+        -------
+        tuple of int
+            The years, inclusive; empty when neither limit is given or only one is (a problem is recorded then).
+        """
         low, high = spec.get("options.min_year"), spec.get("options.max_year")
         if low is None and high is None:
             return ()
@@ -882,13 +1609,26 @@ class _Converter:
 
     @property
     def raw_specs(self) -> list[_Spec]:
+        """The ground-truth spec followed by the forecast specs."""
         return [self.gt, *self.forecasts.values()]
 
     # -- onset -------------------------------------------------------------
 
     @staticmethod
     def onset_definition(spec: _Spec | dict) -> dict:
-        """The onset definition as read_onset_params resolves it."""
+        """Resolve the onset definition as ``read_onset_params`` does, with its defaults.
+
+        Parameters
+        ----------
+        spec : _Spec or dict
+            A ``raw_data`` spec, or the loaded mapping of one.
+
+        Returns
+        -------
+        dict
+            The BlendConfig ``onset.definition`` mapping: ``window``, ``trigger_rule``, ``wet_day_min_mm``,
+            ``wet_day_comparison``, ``follow_days``, ``followup_anchor`` and ``dry_spell``.
+        """
         if isinstance(spec, dict):
             spec = _Spec("onset", spec, [])
         wet = float(spec.get("options.onset_definition.wet_day_min_mm", 1.0))
@@ -910,7 +1650,21 @@ class _Converter:
         }
 
     def threshold(self, spec: _Spec) -> dict | None:
-        """The threshold as onset_utils resolves it, in the new config's shape."""
+        """Resolve the onset threshold as ``onset_utils`` does, in the new config's shape.
+
+        A number (also a number given as the file) is ``mm`` (with a scale applied); otherwise the keys that apply to the
+        file type (NetCDF, MAT or CSV) are read and the others are dropped with a note.
+
+        Parameters
+        ----------
+        spec : _Spec
+            A ``raw_data`` spec.
+
+        Returns
+        -------
+        dict or None
+            The ``onset.threshold`` mapping; None when the spec has no threshold.
+        """
         rule = spec.get("thresholds.rule") or {}
         rule_type = str(rule.get("type", "")).lower()
         if spec.get("thresholds.constant") is not None:
@@ -963,6 +1717,20 @@ class _Converter:
 
     @staticmethod
     def reference_onset(spec: _Spec) -> dict | None:
+        """Read the reference onset of a spec.
+
+        A constant month-day takes precedence over a file; the file keys are then dropped with a note.
+
+        Parameters
+        ----------
+        spec : _Spec
+            A ``raw_data`` spec.
+
+        Returns
+        -------
+        dict or None
+            ``{"month_day": ...}``, or the file and its columns; None when the spec has none.
+        """
         month_day = spec.get("ref_onset.constant_month_day") or spec.get("ref_onset.date")
         if month_day:
             for key in ("file", "date_col", "year_col", "day_col", "base_date", "unit_col"):
@@ -982,6 +1750,22 @@ class _Converter:
         )
 
     def onset(self, uses_ref_series: bool) -> dict:
+        """Convert the onset settings of all the specs to the BlendConfig ``onset`` section.
+
+        The onset definition, the threshold, the reference onset and the fixed cutoff must agree between the specs;
+        ``season_start`` is the ground truth's ``options.cutoff_month_day``. Sets ``definition``.
+
+        Parameters
+        ----------
+        uses_ref_series : bool
+            Whether the evaluation uses the ref series (see `_Converter.uses_ref_series`): then a forecast spec without
+            a ``ref_onset`` is a problem rather than a note.
+
+        Returns
+        -------
+        dict
+            ``threshold``, ``season_start``, ``fixed_cutoff``, ``reference_onset`` and ``definition`` where known.
+        """
         definitions = {s.label: self.onset_definition(s) for s in self.raw_specs}
         definition = self.agree("the onset definition (options.window, options.onset_definition)", definitions)
         self.definition = definition
@@ -1044,6 +1828,25 @@ class _Converter:
     # -- inputs ------------------------------------------------------------
 
     def files(self, spec: _Spec, regrid_source: dict | None, years: tuple[int, ...]) -> dict:
+        """Build the BlendConfig ``files`` entry of a source.
+
+        The regrid writes ``<stem>_adm3.nc`` beside each source file; the new pipeline regrids in memory, so with a
+        regrid entry the sources are read.
+
+        Parameters
+        ----------
+        spec : _Spec
+            The ``raw_data`` spec of the source.
+        regrid_source : dict, optional
+            The regrid entry of the source (``nc_folder``, ``file_regex``); None when it is not regridded.
+        years : tuple of int
+            The years to read; empty for all.
+
+        Returns
+        -------
+        dict
+            ``folder``, ``pattern`` and, when there are years, ``years``.
+        """
         folder = spec.get("input.nc_folder")
         pattern = spec.get("input.file_regex")
         if regrid_source is not None:
@@ -1058,6 +1861,18 @@ class _Converter:
 
     @staticmethod
     def dims(spec: _Spec) -> dict:
+        """Read the dimension renames of a spec, with the wide day dimension renamed ``day``.
+
+        Parameters
+        ----------
+        spec : _Spec
+            A ``raw_data`` spec.
+
+        Returns
+        -------
+        dict of str to str
+            File dimension name to role.
+        """
         rename = dict(spec.get("dimensions.rename", {}) or {})
         day_dim = spec.get("input.wide_day_dim", "day")
         if day_dim != "day":
@@ -1065,6 +1880,18 @@ class _Converter:
         return {str(k): str(v) for k, v in rename.items()}
 
     def cell_transform(self, spec: _Spec) -> str | None:
+        """Read the cell transform file of a spec, if it is enabled.
+
+        Parameters
+        ----------
+        spec : _Spec
+            A ``raw_data`` spec.
+
+        Returns
+        -------
+        str or None
+            The file; None when the transform is not enabled (a problem is recorded when it is enabled without a file).
+        """
         enabled = bool(spec.get("options.cell_transform_enabled", False))
         if enabled:
             path = spec.get("options.cell_transform_file")
@@ -1075,6 +1902,19 @@ class _Converter:
         return None
 
     def regrid_entry(self, folder: str | None) -> dict | None:
+        """Find the entry of the regrid spec for a forecast folder.
+
+        Parameters
+        ----------
+        folder : str, optional
+            The source folder of the forecast.
+
+        Returns
+        -------
+        dict or None
+            The ``forecasts`` entry of the regrid spec with the same ``nc_folder``; None when there is none or no
+            regrid spec.
+        """
         if self.regrid is None:
             return None
         for entry in self.regrid.get("forecasts", []) or []:
@@ -1083,6 +1923,14 @@ class _Converter:
         return None
 
     def observations(self) -> dict:
+        """Convert the ground-truth spec to the BlendConfig ``observations`` section.
+
+        Returns
+        -------
+        dict
+            ``files``, ``variable``, ``dims``, ``missing_rain`` and ``cell_transform`` where set; the regrid spec must
+            agree with the ground truth on folder and variable (a problem otherwise).
+        """
         gt = self.gt
         regrid_source = None
         if self.regrid is not None:
@@ -1113,6 +1961,24 @@ class _Converter:
         return _without_none(out)
 
     def models(self, connect_models: list[dict], onset_definition: dict | None) -> list[dict]:
+        """Convert the forecast specs to the BlendConfig ``models`` section.
+
+        The models are those of connect's ``forecast_models``, in its order. Each needs a ``raw_data`` spec and a
+        ``combine`` entry; ``rain_day_max`` and ``rain_horizon_policy`` must agree between raw data and connect.
+
+        Parameters
+        ----------
+        connect_models : list of dict
+            The ``forecast_models`` entries of the ``connect`` spec.
+        onset_definition : dict, optional
+            The agreed onset definition (`_Converter.onset`); a rain-predictor window token is kept only if it reads
+            the same number of days under it as under connect's definition.
+
+        Returns
+        -------
+        list of dict
+            The BlendConfig model entries.
+        """
         combine_models = self.combine.get("forecasts", {}) or {}
         names = [str(entry.get("name")) for entry in connect_models]
         for name in self.forecasts:
@@ -1218,6 +2084,17 @@ class _Converter:
         return models
 
     def check_combine_columns(self, name: str, combined: dict, first: bool) -> None:
+        """Check the columns the ``combine`` stage writes for a model against what connect reads.
+
+        Parameters
+        ----------
+        name : str
+            The model name.
+        combined : dict
+            Its ``combine`` ``forecasts`` entry (``daily`` and ``constants``).
+        first : bool
+            Whether it is connect's first model, which must have an ``onset_thresh`` constant.
+        """
         for item in combined.get("daily") or []:
             col, out = item.get("col"), item.get("out")
             expected = _DAILY_OUT.get(col)
@@ -1248,7 +2125,14 @@ class _Converter:
             self.notes.append(f"combine: forecasts.{name}.daily[].add_plus (connect never reads the plus columns)")
 
     def connect_token_definition(self) -> dict:
-        """The onset definition connect resolved window tokens against."""
+        """Resolve the onset definition connect resolved window tokens against.
+
+        Returns
+        -------
+        dict
+            The definition of the spec that connect's ``onset_spec`` names (the ground truth when it is not given
+            separately), or the one in connect's own ``options``.
+        """
         if self.connect.get("onset_spec"):
             if self.connect_onset is not None:
                 return self.onset_definition(self.connect_onset)
@@ -1260,6 +2144,25 @@ class _Converter:
         return self.onset_definition(inline)
 
     def rain_predictor(self, predictor, tokens: dict, onset_definition: dict | None, where: str) -> dict | None:
+        """Convert one rain predictor of connect to a BlendConfig ``rain_predictors`` entry.
+
+        Parameters
+        ----------
+        predictor : dict or str
+            ``{agg, window}`` or text such as ``"max_5day"`` or ``"diff_follow"``.
+        tokens : dict
+            The onset definition that the window tokens of connect refer to.
+        onset_definition : dict, optional
+            The agreed onset definition; a token that reads a different number of days under it becomes that number.
+        where : str
+            The config path named in problems.
+
+        Returns
+        -------
+        dict or None
+            ``{"agg": ..., "window": ...}`` with a number of days or a token; None when it is invalid (a problem is
+            recorded).
+        """
         if isinstance(predictor, dict):
             agg = str(predictor.get("agg", "")).lower()
             window = predictor.get("window", "trigger")
@@ -1291,23 +2194,30 @@ class _Converter:
     # -- domain ------------------------------------------------------------
 
     def grid_ids(self) -> dict:
-        def read(spec: _Spec | None) -> tuple | None:
-            if spec is None:
-                return None
-            base = "geometry." if isinstance(spec.data.get("geometry"), dict) else ""
-            digits = spec.get(base + "grid_id_decimal_digits")
-            fmt = spec.get(base + "grid_id_format")
-            if digits is None and fmt is None:
-                return None
-            return (digits, str(fmt).lower() if fmt is not None else "trimmed")
+        """Convert the grid-id convention, which every spec that states it must agree on.
 
-        stated = {s.label: read(s) for s in [self.regrid, *self.raw_specs, self.connect, self.cv] if s is not None}
+        Returns
+        -------
+        dict
+            ``decimal_digits`` and ``format`` (left out when ``trimmed``); empty when no spec states it.
+        """
+        stated = {s.label: _grid_id_convention(s) for s in [self.regrid, *self.raw_specs, self.connect, self.cv] if s is not None}
         agreed = self.agree("the grid-id convention (grid_id_decimal_digits, grid_id_format)", stated)
         if agreed is None:
             return {}
         return _without_none({"decimal_digits": agreed[0], "format": agreed[1] if agreed[1] != "trimmed" else None})
 
     def domain(self) -> dict:
+        """Convert the filters of the specs and the regrid spec to the BlendConfig ``domain`` section.
+
+        The dissemination units, the bounding box and the centroids file must agree between the specs.
+
+        Returns
+        -------
+        dict
+            ``grid_ids``, ``dissemination``, ``dissemination_scope``, ``area_of_interest``, ``centroids`` and
+            ``regrid`` where set.
+        """
         out: dict[str, Any] = {}
         grid_ids = self.grid_ids()
         if grid_ids:
@@ -1365,6 +2275,14 @@ class _Converter:
         return out
 
     def regrid_section(self) -> dict:
+        """Convert the regrid spec to the ``domain.regrid`` section.
+
+        Returns
+        -------
+        dict
+            The shapefile and its columns, ``crs``, the grid coordinate variables, ``clip_to_coverage`` and
+            ``weights``, without the null values.
+        """
         r = self.regrid
         out = {
             "shapefile": r.get("geometry.shapefile"),
@@ -1387,6 +2305,25 @@ class _Converter:
     # -- climatology and features -------------------------------------------
 
     def climatology(self, window_tags: list) -> tuple[dict, list[tuple[int, int]]]:
+        """Convert the ``climatologies`` runs of the ground truth to the BlendConfig ``climatology`` section.
+
+        Connect reads a conditional and an unconditional climatology, and one per window tag, through the prefixes the
+        ``combine`` spec writes them under. The conditional and unconditional runs must agree on their settings and
+        training years, each windowed run on its settings, and its training years must be the window of its tag.
+
+        Parameters
+        ----------
+        window_tags : list
+            The ``climatology.window_tags`` of connect, each ``"<start>_<end>"`` (an unquoted one is read by YAML as a
+            number and is a problem).
+
+        Returns
+        -------
+        dict
+            The ``climatology`` section; empty when a run cannot be found.
+        list of tuple of (int, int)
+            The ``(start, end)`` years of the windowed climatologies.
+        """
         runs = self.gt.get("climatologies", {}) or {}
         prefixes: dict[str, str] = {}
         for key, entry in (self.combine.get("input.climatologies", {}) or {}).items():
@@ -1397,6 +2334,7 @@ class _Converter:
         unc_prefix = self.connect.get("climatology.unconditional_prefix", "clim_unc")
 
         def run_for(prefix: str, what: str) -> tuple[str, dict] | None:
+            """Find the ``climatologies`` run behind a connect prefix, recording a problem when there is none."""
             key = prefixes.get(f"{prefix}_p_onset")
             if key is None:
                 self.problems.append(
@@ -1421,32 +2359,13 @@ class _Converter:
         if unc_run.get("conditional", True):
             self.problems.append(f"climatologies.{unc[0]} feeds the unconditional climatology but is conditional")
 
-        def shared(run: dict) -> dict:
-            horizons = run.get("horizons")
-            return {
-                "onset_col": run.get("onset_col", "onset_day"),
-                "season_start": str(run.get("season_start_md")),
-                "issue_end": str(run.get("issue_end_md")),
-                "forecast_window": run.get("forecast_window"),
-                "horizons": [
-                    {"start": str(h["start_md"]), "end": str(h["end_md"]), "forecast_window": int(h["forecast_window"])}
-                    for h in horizons
-                ] if horizons else None,
-                "cv_by_year": bool(run.get("cv_by_year", True)),
-                "min_onset_years": int(run.get("min_onset_years", 10)),
-                "test_years": (run.get("test_year_min"), run.get("test_year_max")),
-            }
-
-        def train_years(run: dict) -> tuple:
-            return (run.get("train_year_min"), run.get("train_year_max"))
-
         settings = self.agree(
             "climatology settings",
-            {f"climatologies.{base[0]}": shared(base_run), f"climatologies.{unc[0]}": shared(unc_run)},
+            {f"climatologies.{base[0]}": _climatology_settings(base_run), f"climatologies.{unc[0]}": _climatology_settings(unc_run)},
         )
         self.agree(
             "climatology training years",
-            {f"climatologies.{base[0]}": train_years(base_run), f"climatologies.{unc[0]}": train_years(unc_run)},
+            {f"climatologies.{base[0]}": _train_years(base_run), f"climatologies.{unc[0]}": _train_years(unc_run)},
         )
         windows: list[tuple[int, int]] = []
         for tag in window_tags:
@@ -1460,10 +2379,10 @@ class _Converter:
             if found is None:
                 continue
             used.add(found[0])
-            self.agree(f"climatology settings for window {tag}", {"main": settings, f"climatologies.{found[0]}": shared(found[1])})
-            if train_years(found[1]) != window:
+            self.agree(f"climatology settings for window {tag}", {"main": settings, f"climatologies.{found[0]}": _climatology_settings(found[1])})
+            if _train_years(found[1]) != window:
                 self.problems.append(
-                    f"climatologies.{found[0]} trains on {train_years(found[1])}, but its tag says {window}"
+                    f"climatologies.{found[0]} trains on {_train_years(found[1])}, but its tag says {window}"
                 )
             windows.append(window)
         for key in runs:
@@ -1490,7 +2409,7 @@ class _Converter:
             "horizons": settings["horizons"],
             "cv_by_year": settings["cv_by_year"],
             "min_onset_years": settings["min_onset_years"],
-            "train_years": list(train_years(base_run)),
+            "train_years": list(_train_years(base_run)),
             "test_years": list(settings["test_years"]),
             "windows": [list(w) for w in windows] or None,
             "workers": self.gt.get("climatology_runtime.workers"),
@@ -1498,6 +2417,13 @@ class _Converter:
         return _without_none(out), windows
 
     def features(self) -> dict:
+        """Convert the ``connect`` and ``combine`` options to the BlendConfig ``features`` section.
+
+        Returns
+        -------
+        dict
+            ``bins`` (``count`` and ``days``), ``probability_days``, ``trim_after_true_onset`` and ``rain_transform``.
+        """
         c = self.connect
         n_bins = c.get("n_bins") if c.has("n_bins") else c.get("n_weeks", 4)
         cv_bins = self.cv.get("n_bins")
@@ -1521,12 +2447,37 @@ class _Converter:
     # -- evaluation ----------------------------------------------------------
 
     def rename_prefix(self, text: str) -> str:
+        """Rename the climatology feature prefix of connect to the one HCWF writes (``prob_clim``).
+
+        Parameters
+        ----------
+        text : str
+            A formula or column name.
+
+        Returns
+        -------
+        str
+            `text` with each use of connect's ``climatology.output_prefix`` before an underscore replaced.
+        """
         prefix = self.connect.get("climatology.output_prefix", CLIMATOLOGY_FEATURE)
         if prefix == CLIMATOLOGY_FEATURE:
             return text
         return re.sub(rf"(?<![A-Za-z0-9_]){re.escape(prefix)}(?=_)", CLIMATOLOGY_FEATURE, text)
 
     def evaluation(self, windows: list[tuple[int, int]]) -> dict:
+        """Convert the ``cv_models`` spec to the BlendConfig ``evaluation`` section.
+
+        Parameters
+        ----------
+        windows : list of tuple of (int, int)
+            The windowed climatologies (`_Converter.climatology`), which the window variants must be among.
+
+        Returns
+        -------
+        dict
+            ``years``, ``cutoff_mode``, ``cv_methods``, ``cluster_var``, ``formulas``, ``window_variants``,
+            ``climatology_baselines``, ``forecasts``, ``mme`` and, when given, ``external_predictions``.
+        """
         cv = self.cv
         if cv.has("run.input_rds_override"):
             self.problems.append("cv_models: run.input_rds_override was removed (the old code rejects it)")
@@ -1562,6 +2513,14 @@ class _Converter:
         return out
 
     def cv_methods(self) -> list[str]:
+        """Convert ``cv.methods`` of the ``cv_models`` spec.
+
+        Returns
+        -------
+        list of str
+            The methods in HCWF's names (``global``, ``local``, ``clusters``); ``neighbors`` is a problem and an
+            unknown method a note.
+        """
         methods = []
         for method in self.cv.get("cv.methods", ["global"]):
             method = str(method)
@@ -1576,6 +2535,20 @@ class _Converter:
         return methods
 
     def window_variants(self, windows: list[tuple[int, int]]) -> list[dict]:
+        """Convert ``models.window_variants`` of the ``cv_models`` spec.
+
+        Only the replacement ``X_qx`` to ``X{window}_qx`` is supported. A disabled variant is a note.
+
+        Parameters
+        ----------
+        windows : list of tuple of (int, int)
+            The windowed climatologies available; each window of a variant must be among them.
+
+        Returns
+        -------
+        list of dict
+            The BlendConfig ``window_variants`` entries.
+        """
         raw = self.cv.get("models.window_variants")
         if not raw:
             return []
@@ -1617,6 +2590,13 @@ class _Converter:
         return out
 
     def climatology_baselines(self) -> dict:
+        """Convert the ``extras.clim_logits`` tasks of the ``cv_models`` spec to the climatology baselines.
+
+        Returns
+        -------
+        dict
+            ``unconditional`` (always True), ``conditional`` and ``windows`` (a list of ``[start, end]`` years).
+        """
         prefix = self.connect.get("climatology.output_prefix", CLIMATOLOGY_FEATURE)
         tasks = self.cv.get("extras.clim_logits", []) or []
         out = {"unconditional": True, "conditional": False, "windows": []}
@@ -1653,6 +2633,13 @@ class _Converter:
         return out
 
     def forecast_evaluations(self) -> list[dict]:
+        """Convert ``extras.forecasts`` of the ``cv_models`` spec.
+
+        Returns
+        -------
+        list of dict
+            One entry per forecast: ``model``, ``variant``, ``raw``, ``calibrated`` and ``platt_weights``.
+        """
         variants = self.cv.get("extras.forecast_variants") or _OLD_FORECAST_VARIANTS
         for variant, suffix in variants.items():
             if _OLD_FORECAST_VARIANTS.get(variant) != suffix:
@@ -1678,6 +2665,13 @@ class _Converter:
         return out
 
     def mme(self) -> dict:
+        """Convert the ``mme`` options of the ``cv_models`` spec.
+
+        Returns
+        -------
+        dict
+            ``enabled``, ``variants``, ``sources`` and ``optimize`` (``auto`` or ``never``).
+        """
         cv = self.cv
         cv.drop("mme.mc_cores", UNUSED)
         sources = []
@@ -1699,6 +2693,21 @@ class _Converter:
     # -- assembly ------------------------------------------------------------
 
     def convert(self) -> Conversion:
+        """Convert the whole spec set.
+
+        Drops the keys that are derived or run settings, builds the BlendConfig mapping from the specs and converts it
+        with `convert_blend`; the keys nothing read are listed as notes.
+
+        Returns
+        -------
+        Conversion
+            The run mapping, its comments and the notes (those of the spec set first, in pipeline order).
+
+        Raises
+        ------
+        ConvertError
+            The specs disagree or cannot be converted; the error lists every problem.
+        """
         for spec in self.raw_specs:
             for key in ("input.parallel", "input.workers"):
                 spec.drop(key, RUNTIME)
@@ -1741,12 +2750,27 @@ class _Converter:
         return Conversion(converted.mapping, (*self.sorted_notes(), *converted.notes), converted.comments)
 
     def sorted_notes(self) -> list[str]:
-        """Notes grouped by spec, in pipeline order."""
+        """Sort the notes by spec, in pipeline order.
+
+        Returns
+        -------
+        list of str
+            The notes, grouped by the spec label they start with (regrid, ground truth, forecasts, combine, connect,
+            ``cv_models``), others last.
+        """
         order = ["regrid", "ground_truth", *(s.label for s in self.forecasts.values()), "combine", "connect", "cv_models"]
         rank = {label: i for i, label in enumerate(order)}
         return sorted(self.notes, key=lambda note: rank.get(note.split(":", 1)[0], len(order)))
 
     def uses_ref_series(self) -> bool:
+        """Tell whether the evaluation of ``cv_models`` uses the ref series.
+
+        Returns
+        -------
+        bool
+            True for the ``ref_onset`` cutoff mode, a ``ref_onset`` forecast or MME variant, or a formula that reads a
+            ``_p_onset_ref_`` column.
+        """
         if self.cv.data.get("run", {}).get("cutoff_mode", "ref_onset") == "ref_onset":
             return True
         extras = self.cv.data.get("extras") or {}
@@ -1761,10 +2785,34 @@ class _Converter:
 
 
 def _lower(value):
+    """Lower-case and strip a value that may be None.
+
+    Parameters
+    ----------
+    value : object
+        A string, or None.
+
+    Returns
+    -------
+    str or None
+        The stripped lower-case text; None stays None.
+    """
     return None if value is None else str(value).strip().lower()
 
 
 def _rain_transform(value):
+    """Write a rain transform in the BlendConfig form.
+
+    Parameters
+    ----------
+    value : object
+        A transform name, or a mapping with ``power``.
+
+    Returns
+    -------
+    object
+        ``"power:<p>"`` for a mapping with ``power``; otherwise `value` unchanged.
+    """
     if isinstance(value, dict) and "power" in value:
         return f"power:{value['power']}"
     return value
@@ -1785,13 +2833,37 @@ def convert_specs(
     data_root: str | None = None,
     region: str | None = None,
 ) -> Conversion:
-    """The HCWF run (a `Conversion`) for a set of stage specs (as loaded from YAML).
+    """Convert a set of stage specs (as loaded from YAML) to an HCWF run.
 
-    `forecasts` maps each model name (the combine and connect key) to its
-    raw_data spec. `connect_onset_spec` is the raw_data spec connect's
-    `onset_spec` names, when that is not the ground-truth spec. The specs'
-    paths are relative to the directory the old scripts ran from: give it as
-    `data_root`.
+    The specs' paths are relative to the directory the old scripts ran from: give it as `data_root`.
+
+    Parameters
+    ----------
+    name : str
+        The project name.
+    ground_truth : dict
+        The ground-truth ``raw_data`` spec.
+    forecasts : dict of str to dict
+        The ``raw_data`` spec of each model, by model name (the combine and connect key).
+    combine : dict
+        The ``combine`` spec.
+    connect : dict
+        The ``connect`` spec.
+    cv_models : dict
+        The ``cv_models`` spec.
+    regrid : dict, optional
+        The ``regrid`` spec; None when the data is not regridded.
+    connect_onset_spec : dict, optional
+        The ``raw_data`` spec that connect's ``onset_spec`` names, when that is not the ground-truth spec.
+    data_root : str, optional
+        The folder the old scripts ran from.
+    region : str, optional
+        An HCWF region id for the run; None is no region.
+
+    Returns
+    -------
+    Conversion
+        The run mapping, its comments and the notes.
     """
     return _Converter(
         name=name, ground_truth=ground_truth, forecasts=forecasts, combine=combine,
@@ -1801,6 +2873,18 @@ def convert_specs(
 
 
 def _load(path: str | Path | None) -> dict | None:
+    """Load a YAML spec file.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path, optional
+        The file; None loads nothing.
+
+    Returns
+    -------
+    dict or None
+        The mapping (empty for an empty file); None when `path` is None.
+    """
     if path is None:
         return None
     with open(path) as handle:
@@ -1819,8 +2903,37 @@ def convert_spec_files(
     data_root: str | None = None,
     region: str | None = None,
 ) -> Conversion:
-    """`convert_specs` on YAML files; connect's onset_spec is looked up beside
-    the ground-truth spec."""
+    """Run `convert_specs` on YAML files.
+
+    The spec that connect's ``onset_spec`` names is looked up beside the ground-truth spec (``<onset_spec>.yml``) when it
+    is not the ground-truth spec itself.
+
+    Parameters
+    ----------
+    name : str
+        The project name.
+    ground_truth : str or pathlib.Path
+        The ground-truth ``raw_data`` spec file.
+    forecasts : dict of str to (str or pathlib.Path)
+        The ``raw_data`` spec file of each model, by model name.
+    combine : str or pathlib.Path
+        The ``combine`` spec file.
+    connect : str or pathlib.Path
+        The ``connect`` spec file.
+    cv_models : str or pathlib.Path
+        The ``cv_models`` spec file.
+    regrid : str or pathlib.Path, optional
+        The ``regrid`` spec file; None when the data is not regridded.
+    data_root : str, optional
+        The folder the old scripts ran from.
+    region : str, optional
+        An HCWF region id for the run; None is no region.
+
+    Returns
+    -------
+    Conversion
+        The run mapping, its comments and the notes.
+    """
     connect_spec = _load(connect)
     onset_spec = None
     onset_id = (connect_spec or {}).get("onset_spec")

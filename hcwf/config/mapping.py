@@ -1,12 +1,13 @@
 """Turn a nested run-config mapping (the YAML file) into the flat config dict the rest of HCWF uses.
 
-Steps: flatten the sections to flat keys and check types (hcwf.config.schema); describe the
-observations and each model as a dataset, completing what the user left out from the files
-(hcwf.config.detect, every detection reported) and checking what the user wrote against
+`build_config` is the entry. Steps: flatten the sections to flat keys and check types (`hcwf.config.schema`); describe
+the observations and each model as a dataset, completing what the user left out from the files
+(`hcwf.config.detect`, every detection reported) and checking what the user wrote against
 them; detect the region from the data if it is not given; derive what follows from other values
 (climatology years from the region, reference data from the observations); fill defaults.
 Defaults, region values and detections are resolved here at run time, not copied into the file.
-Every problem found is reported together in one ConfigSchemaError.
+Every problem found is reported together in one ``ConfigSchemaError``. `hcwf.config.build` calls it, and
+`hcwf.config.Config.to_flat` is a thin wrapper.
 
 Besides the flat keys the result carries ``dataset_report`` (printable lines saying where each
 dataset value came from) and ``config_sources`` (flat key -> where its value came from).
@@ -26,18 +27,45 @@ YAML_SUFFIXES = (".yaml", ".yml")
 """File suffixes loaded as YAML."""
 _OBS_KEYS = {"obs": "name", "obs_dir": "path", "obs_file_pattern": "file_pattern", "obs_var": "variable",
              "obs_day_boundary": "day_boundary"}
+"""The flat keys of the observations, by the key of their dataset entry."""
 _MODEL_LISTS = ("model_list", "model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list",
                 "model_dims_list")
+"""The per-model list keys that ``models:`` fills (and that cannot be given beside it)."""
 
 
 def is_yaml_path(path) -> bool:
-    """Whether a config path names a YAML config (by its suffix)."""
+    """Return whether a config path names a YAML config (by its suffix).
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The config path.
+
+    Returns
+    -------
+    bool
+        True for a ``.yaml`` or ``.yml`` suffix, in any case.
+    """
     return Path(str(path)).suffix.lower() in YAML_SUFFIXES
 
 
 def _listed_files(values: dict, blend: bool) -> tuple[str, ...]:
-    """The files of a dataset given as ``paths``; for a blend (which reads every file of a source) also the yearly files
-    of ``path`` and ``file_pattern``. Empty when there is nothing to list."""
+    """Return the files of a dataset given as ``paths``.
+
+    For a blend (which reads every file of a source) also the yearly files of ``path`` and ``file_pattern``.
+
+    Parameters
+    ----------
+    values : dict
+        The dataset's resolved values: ``paths``, ``path`` and ``file_pattern`` are read.
+    blend : bool
+        Whether the config has a ``blend:`` section.
+
+    Returns
+    -------
+    tuple of str
+        The files; for the yearly files sorted by year. Empty when there is nothing to list.
+    """
     if values.get("paths"):
         return tuple(str(f) for f in detect.dataset_files(values))
     if blend and values.get("path") and values.get("file_pattern") and "{}" in values["file_pattern"]:
@@ -49,7 +77,18 @@ def _listed_files(values: dict, blend: bool) -> tuple[str, ...]:
 
 
 def _entry_from_dataset(ds: Dataset) -> tuple[dict, dict]:
-    """A dataset-file entry as raw entry keys, with its source text per key."""
+    """Return a dataset-file entry as raw entry keys, with its source text per key.
+
+    Parameters
+    ----------
+    ds : hcwf.config.datasets.Dataset
+        The dataset of a dataset file.
+
+    Returns
+    -------
+    tuple of (dict, dict)
+        The entry keys that the dataset sets (not None), and the text ``dataset '<id>'`` for each of them.
+    """
     entry = {"name": ds.name, "path": ds.path, "file_pattern": ds.file_pattern, "variable": ds.variable,
              "dims": ds.dims, "day_boundary": ds.day_boundary, "lead_label": ds.lead_label, "members": ds.members}
     if ds.units:
@@ -63,7 +102,33 @@ def _entry_from_dataset(ds: Dataset) -> tuple[dict, dict]:
 
 
 def _explicit_entry(given: dict, ref, datasets, kind, written, errors) -> tuple[dict, dict]:
-    """Entry keys for one dataset: values of the referenced dataset file, overridden by the inline keys given."""
+    """Return the entry keys for one dataset: values of the referenced dataset file, overridden by the inline keys given.
+
+    Parameters
+    ----------
+    given : dict
+        The keys written inline in the config.
+    ref : object
+        The ``dataset`` key (an id in a dataset file), or None.
+    datasets : dict
+        The datasets loaded from the dataset files, by id.
+    kind : str
+        ``"observations"`` or ``"forecast"``.
+    written : str
+        How the entry is written in the config (``observations``, ``models[0]``), for messages.
+    errors : list of str
+        Takes the message when the reference is not a known dataset.
+
+    Returns
+    -------
+    tuple of (dict, dict)
+        The entry keys and the source text of each (``"run config"`` for the inline ones).
+
+    Raises
+    ------
+    DatasetError
+        `ref` is not a string; raised inside the function and recorded in `errors`.
+    """
     entry, sources = {}, {}
     if ref is not None:
         try:
@@ -79,13 +144,34 @@ def _explicit_entry(given: dict, ref, datasets, kind, written, errors) -> tuple[
 
 
 def _problems(res: detect.Resolution, written: str, errors: list[str]) -> None:
-    """Move a resolution's problems to errors, naming the key as written in the config."""
+    """Move a resolution's problems to `errors`, naming the key as written in the config.
+
+    Parameters
+    ----------
+    res : hcwf.config.detect.Resolution
+        The resolution of a dataset.
+    written : str
+        How the dataset is written in the config.
+    errors : list of str
+        Takes one message per problem.
+    """
     for key, message in res.problems.items():
         errors.append(f"'{written}.{key}': {message}")
 
 
 def _region_chain(config):
-    """The region named by config['region'] and its ancestors, or [] if it is not a known region."""
+    """Return the region named by ``config["region"]`` and its ancestors.
+
+    Parameters
+    ----------
+    config : collections.abc.Mapping
+        The flat config being built.
+
+    Returns
+    -------
+    list
+        The region and its ancestors, nearest first; empty if it is not a known region.
+    """
     from hcwf.onset import regions
 
     try:
@@ -96,7 +182,18 @@ def _region_chain(config):
 
 
 def _implied_label(config) -> str | None:
-    """The lead label implied by the observation day boundary (the config's, else the region's), or None."""
+    """Return the lead label implied by the observation day boundary (the config's, else the region's).
+
+    Parameters
+    ----------
+    config : collections.abc.Mapping
+        The flat config being built.
+
+    Returns
+    -------
+    str or None
+        ``"start"`` or ``"end"``, or None when there is no boundary or it cannot be parsed.
+    """
     from hcwf.onset.ingest import parse_day_boundary
 
     boundary = config.get("obs_day_boundary")
@@ -109,7 +206,24 @@ def _implied_label(config) -> str | None:
 
 
 def _resolve_observations(config, given_block, datasets, errors):
-    """Resolve the observations dataset; returns its resolution (or None) and writes the flat keys."""
+    """Resolve the observations dataset.
+
+    Parameters
+    ----------
+    config : collections.abc.Mapping
+        The flat config being built: the ``obs_*`` keys are read.
+    given_block : dict
+        The ``observations`` section as written (``units``, ``unit_cvt``, ``dims``, ``paths``, ``years``, ``dataset``).
+    datasets : dict
+        The datasets loaded from the dataset files, by id.
+    errors : list of str
+        Takes the messages of a bad dataset reference.
+
+    Returns
+    -------
+    hcwf.config.detect.Resolution or None
+        The resolution; None when the config gives no observations.
+    """
     given = {entry_key: config[flat] for flat, entry_key in _OBS_KEYS.items() if flat in config}
     if "file_pattern" in given:
         given["file_pattern"] = given["file_pattern"][0]
@@ -125,7 +239,17 @@ def _resolve_observations(config, given_block, datasets, errors):
 
 
 def _finish_observations(res, config, sources):
-    """Write the resolved observation values to the flat keys (after the region fallback for day_boundary)."""
+    """Write the resolved observation values to the flat keys (after the region fallback for ``day_boundary``).
+
+    Parameters
+    ----------
+    res : hcwf.config.detect.Resolution
+        The resolution of the observations.
+    config : dict
+        The flat config being built, changed in place.
+    sources : dict
+        The flat key to its source text, changed in place.
+    """
     values = detect.finalize_units(res.values)
     flat = {"obs": values.get("name"), "obs_dir": expand_path(values["path"]) if values.get("path") else None,
             "obs_var": values.get("variable"), "obs_unit_cvt": values.get("unit_cvt"),
@@ -154,7 +278,18 @@ def _finish_observations(res, config, sources):
 
 
 def _region_default_boundary(config):
-    """The observation day boundary declared by the region (nearest in its chain), with the region id."""
+    """Return the observation day boundary declared by the region (nearest in its chain), with the region id.
+
+    Parameters
+    ----------
+    config : collections.abc.Mapping
+        The flat config being built.
+
+    Returns
+    -------
+    tuple of (str or None, str or None)
+        The boundary and the id of the region that declares it; ``(None, None)`` when none does.
+    """
     for region in _region_chain(config):
         if region.day_boundary:
             return region.day_boundary, region.id
@@ -162,7 +297,30 @@ def _region_default_boundary(config):
 
 
 def _resolve_models(config, sources, models, obs_values, datasets, report, errors):
-    """Resolve the `models:` list into the flat per-model lists."""
+    """Resolve the ``models:`` list into the flat per-model lists.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built, changed in place (the ``*_list`` keys).
+    sources : dict
+        The flat key to its source text, changed in place.
+    models : object
+        The ``models`` section as written: a non-empty list of mappings.
+    obs_values : dict or None
+        The observations' resolved values, used to detect the lead label.
+    datasets : dict
+        The datasets loaded from the dataset files, by id.
+    report : list of str
+        Takes the detection report lines.
+    errors : list of str
+        Takes the messages of invalid entries; the lists are not written when there are entry errors.
+
+    Returns
+    -------
+    None
+        Nothing; the lists are written into `config`.
+    """
     if not isinstance(models, list) or not models:
         errors.append(f"'models': expected a non-empty list of models, got {models!r}. Fix: write one "
                       "'- name: AIFS' item per model, with path, variable and units")
@@ -235,7 +393,21 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
 
 
 def _resolve_reference(config, sources, block, datasets, errors):
-    """Fill the reference keys from a dataset file entry and `units`; whatever is not given is derived later."""
+    """Fill the reference keys from a dataset file entry and ``units``; whatever is not given is derived later.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built, changed in place (the ``ref_model_*`` keys).
+    sources : dict
+        The flat key to its source text, changed in place.
+    block : dict
+        The ``reference`` section as written.
+    datasets : dict
+        The datasets loaded from the dataset files, by id.
+    errors : list of str
+        Takes the messages of a bad dataset reference or units.
+    """
     if "dataset" in block:
         try:
             ds = get_dataset(block["dataset"], datasets)
@@ -259,10 +431,28 @@ def _resolve_reference(config, sources, block, datasets, errors):
 
 
 def _resolve_reference_settings(config, sources, given_units, report):
-    """The accumulation of a reference model's files (and its daily boundary, given only), resolved as a forecast model's
-    are: a given `reference.accumulation` is kept, otherwise it is detected from the first file with the same detection
-    (dataset_detect.resolve_entry), and "auto" (worked out when read) if the files say nothing. A climatology reference
-    has no files of its own and no settings."""
+    """Resolve the accumulation of a reference model's files (and its daily boundary, given only) as a forecast model's are.
+
+    A given ``reference.accumulation`` is kept, otherwise it is detected from the first file with the same detection
+    (`hcwf.config.detect.resolve_entry`), and ``"auto"`` (worked out when read) if the files say nothing. A climatology
+    reference has no files of its own and no settings.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built, changed in place (``ref_model_accumulation`` and its ``_detected`` flag).
+    sources : dict
+        The flat key to its source text, changed in place.
+    given_units : str or None
+        The ``reference.units`` as written, used when no multiplier is set.
+    report : list of str
+        Takes one line about the reference's accumulation.
+
+    Returns
+    -------
+    None
+        Nothing; a climatology reference is left alone.
+    """
     if str(config.get("ref_model", "climatology")).endswith("climatology") or not config.get("ref_model_dir"):
         return
     entry = {"name": config["ref_model"], "path": expand_path(config["ref_model_dir"]),
@@ -288,7 +478,20 @@ def _resolve_reference_settings(config, sources, given_units, report):
 
 
 def _check_blend(config, errors):
-    """Build the blend Recipe from the section as far as the config says, so its problems are reported with the rest."""
+    """Build the blend ``Recipe`` from the section as far as the config says, so its problems are reported with the rest.
+
+    Parameters
+    ----------
+    config : collections.abc.Mapping
+        The flat config being built.
+    errors : list of str
+        Takes one ``blend: ...`` message per recipe problem.
+
+    Returns
+    -------
+    None
+        Nothing; without a ``blend:`` section or models there is nothing to check.
+    """
     if not schema.has_blend(config) or "model_list" not in config:
         return
     from hcwf.blend.recipe import recipe_from_config
@@ -301,8 +504,24 @@ def _check_blend(config, errors):
 
 
 def _derive_blend_years(config, sources):
-    """A blend run names its years in `blend.years`, so the benchmark's dates and climatology years it does not use are
-    taken from them when not given: the dates span the first to the last year, and so do the climatology years."""
+    """Derive the benchmark's dates and climatology years of a blend run from ``blend.years``.
+
+    A blend run names its years in ``blend.years``, so the benchmark's dates and climatology years it does not use are
+    taken from them when not given: the dates span the first to the last year, and so do the climatology years.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built, changed in place (``start_date``, ``end_date``, ``start_year_clim``,
+        ``end_year_clim`` when not given).
+    sources : dict
+        The flat key to its source text, changed in place.
+
+    Returns
+    -------
+    None
+        Nothing; a config without a ``blend:`` section or without years is left alone.
+    """
     if not schema.has_blend(config):
         return
     from hcwf.blend.recipe import years_of
@@ -320,7 +539,17 @@ def _derive_blend_years(config, sources):
 
 
 def _derive(config, sources, errors):
-    """Fill what follows from other values: climatology years, date_filter_year, reference data."""
+    """Fill what follows from other values: climatology years, ``date_filter_year``, reference data.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built, changed in place.
+    sources : dict
+        The flat key to its source text, changed in place.
+    errors : list of str
+        Takes the message of a model reference without its required keys.
+    """
     if "start_year_clim" not in config and "end_year_clim" not in config:
         years = next((r.climatology_years for r in _region_chain(config) if r.climatology_years), None)
         origin = "region default"
@@ -351,7 +580,26 @@ def _derive(config, sources, errors):
 
 
 def _detect_region(config, sources, res, report, errors):
-    """Take the region from the data extent when it is not given; warn if a given region disagrees with it."""
+    """Take the region from the data extent when it is not given; warn if a given region disagrees with it.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built, changed in place (``region``).
+    sources : dict
+        The flat key to its source text, changed in place.
+    res : hcwf.config.detect.Resolution or None
+        The resolution of the observations; its ``extent`` is the data's extent.
+    report : list of str
+        Takes the line about the detected region or the warning.
+    errors : list of str
+        Takes the message when the region is not given and cannot be detected.
+
+    Returns
+    -------
+    None
+        Nothing; without observations or an extent there is nothing to detect.
+    """
     if res is None or res.extent is None:
         return
     found, evidence = detect.detect_region(res.extent)
@@ -371,9 +619,27 @@ def _detect_region(config, sources, res, report, errors):
 
 
 def build_config(raw, source="<config>") -> dict:
-    """Resolve and validate a nested run config given as a Python mapping; returns the flat config dict.
+    """Resolve and validate a nested run config given as a Python mapping.
 
-    Raises ConfigSchemaError listing every problem. source names the file in the message.
+    Every problem found is listed in one ``ConfigSchemaError``, whose ``report`` holds the detection report lines.
+
+    Parameters
+    ----------
+    raw : dict or None
+        The nested run config (as the YAML); None is an empty config.
+    source : str, default "<config>"
+        What the config is called in error messages (the file's path).
+
+    Returns
+    -------
+    dict
+        The flat config, with ``dataset_report`` (the detection report lines) and ``config_sources`` (flat key to where
+        its value came from) added.
+
+    Raises
+    ------
+    ConfigSchemaError
+        `raw` is not a mapping, or any value is invalid or missing.
     """
     errors: list[str] = []
     if raw is None:

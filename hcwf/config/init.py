@@ -1,9 +1,11 @@
-"""Write a starting run config for `hcwf-run init`.
+"""Write a starting run config for ``hcwf-run init``.
 
 The file holds what only the user knows (region, years, datasets). Values HCWF can work out itself (the
 region's onset definition, day boundary and climatology years, schema defaults) are NOT copied in; they are
-resolved at run time. Dataset values detected from paths you pass with --obs/--model are written, each with
-a comment showing the evidence, so you can review and edit them.
+resolved at run time. Dataset values detected from paths you pass with ``--obs``/``--model`` are written, each with
+a comment showing the evidence, so you can review and edit them. `render` builds the text, using `hcwf.config.detect`
+to read the datasets and `hcwf.onset.regions` for the region; `write_init` checks it loads as a `hcwf.config.Config`
+and writes it.
 """
 from __future__ import annotations
 
@@ -22,15 +24,32 @@ _OBS_PLACEHOLDERS = (("file_pattern", '"{}.nc"', "the year placeholder; detected
                      ("units", "mm", "mm, mm/day, m or cm; read from the file's attribute if left out"),
                      ("day_boundary", '"00 UTC, labelled by start"',
                       "when the day starts and which date labels it; the region's if left out"))
+"""The ``(key, example value, comment)`` lines of an observations entry that detection could not fill."""
 _MODEL_PLACEHOLDERS = (("file_pattern", '"{}.nc"', "the year placeholder; detected from the files if left out"),
                        ("variable", "tp", "rainfall variable; detected if it is the only one"),
                        ("units", "m", "mm, mm/day, m or cm; read from the file's attribute if left out"),
                        ("lead_label", "start", "start: lead k is dated init + k - 1; end: init + k. "
                                                "Detected against the observations if left out"))
+"""The ``(key, example value, comment)`` lines of a model entry that detection could not fill."""
 
 
 def _season_bounds(region_name: str | None):
-    """((month, day), (month, day)) of the region's default definition season, or the demo's May to July."""
+    """Return the season of a region's default onset definition, or the demo's May to July.
+
+    Any failure to load the region or its definition falls back to the demo window. A season that wraps into the next
+    year, or a derived one, also falls back.
+
+    Parameters
+    ----------
+    region_name : str or None
+        The region, or None for the demo window.
+
+    Returns
+    -------
+    tuple of (tuple of (int, int), tuple of (int, int), str or None)
+        The ``(month, day)`` of the season's start and of its end, and the id of the region's default definition
+        (None for the demo window).
+    """
     from hcwf.onset import definition as definition_mod
     from hcwf.onset.model import DerivedSeasons
 
@@ -47,7 +66,22 @@ def _season_bounds(region_name: str | None):
 
 
 def _entry_lines(res: detect.Resolution, placeholders, indent: str) -> list[str]:
-    """YAML lines for one dataset: detected/specified values with evidence, TODOs for what cannot be detected."""
+    """Return the YAML lines of one dataset: detected or specified values with evidence, TODOs for what cannot be detected.
+
+    Parameters
+    ----------
+    res : hcwf.config.detect.Resolution
+        The detection result of the dataset.
+    placeholders : tuple of tuple of (str, str, str)
+        The ``(key, example, comment)`` lines of the dataset kind, see `_OBS_PLACEHOLDERS`.
+    indent : str
+        The indentation of each line.
+
+    Returns
+    -------
+    list of str
+        One line per resolved key (with a ``# [how: evidence]`` comment), then a commented ``TODO`` line per problem.
+    """
     lines = []
     shown = set()
     for line in res.lines:
@@ -64,8 +98,22 @@ def _entry_lines(res: detect.Resolution, placeholders, indent: str) -> list[str]
 
 
 def _blend_lines(names, years) -> list[str]:
-    """The `blend:` skeleton of a starting config: years, one formula and the models' rain features, as
-    `hcwf-run convert` writes them from an onset_blending config."""
+    """Return the ``blend:`` skeleton of a starting config: years, one formula and the models' rain features.
+
+    These are the lines ``hcwf-run convert`` writes from an ``onset_blending`` config.
+
+    Parameters
+    ----------
+    names : list of str
+        The model names (the first one names the formula's feature; ``MODEL`` when empty).
+    years : tuple of (int, int)
+        The first and last year; the training and cross-validation years end the year before the last.
+
+    Returns
+    -------
+    list of str
+        The YAML lines.
+    """
     lead = names[0] if names else "MODEL"
     lines = ["blend:  # trains an onset blend instead of benchmarking; `hcwf-run convert blend.yml` writes one from an "
              "onset_blending config",
@@ -79,9 +127,28 @@ def _blend_lines(names, years) -> list[str]:
 
 
 def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None, blend=False) -> str:
-    """The text of a starting run config; obs and models are folders (or None for placeholders).
+    """Return the text of a starting run config.
 
-    blend adds a `blend:` section skeleton."""
+    Parameters
+    ----------
+    region : str, optional
+        The region; detected from the observations' extent if None and they are given.
+    obs : str, optional
+        The folder of the observations; None writes placeholders.
+    models : iterable of str, default ()
+        The folders of the forecast models; an empty one (or a None entry) writes a placeholder model.
+    years : tuple of (int, int), default (2019, 2024)
+        The first and last year evaluated.
+    definition : str, optional
+        An onset definition (registry id or path) to write; None writes a comment saying the region's is used.
+    blend : bool, default False
+        Add a ``blend:`` section skeleton.
+
+    Returns
+    -------
+    str
+        The YAML text, with a comment on each detected value and a ``TODO`` on what is left to fill in.
+    """
     obs_res = None
     obs_lines: list[str]
     if obs:
@@ -149,7 +216,29 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
 
 
 def write_init(target, force=False, **kwargs) -> Path:
-    """Render and write the starting config to target (or print it for '-'); refuses to overwrite unless force."""
+    """Render the starting config and write it to `target` (or print it for ``"-"``).
+
+    The text is loaded as a `hcwf.config.Config` first, so a starting config that does not load is never written.
+
+    Parameters
+    ----------
+    target : str or pathlib.Path
+        The file to write; ``"-"`` prints the text to the standard output.
+    force : bool, default False
+        Overwrite `target` when it exists.
+    **kwargs : dict
+        Passed on to `render`.
+
+    Returns
+    -------
+    pathlib.Path
+        `target`, or ``Path("-")`` when the text was printed.
+
+    Raises
+    ------
+    FileExistsError
+        `target` exists and `force` is false.
+    """
     from hcwf.config import Config
 
     text = render(**kwargs)

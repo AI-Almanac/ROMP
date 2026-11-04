@@ -33,7 +33,6 @@ PACKAGE = ROOT / "hcwf"
 PENDING = {
     "hcwf/blend",
     "hcwf/cli",
-    "hcwf/config",
     "hcwf/figures",
     "hcwf/io",
     "hcwf/metrics",

@@ -1,28 +1,34 @@
 """Complete a dataset description from its files, and check what the user wrote against them.
 
-``resolve_entry`` takes the keys a user gave for one dataset (path, file_pattern, variable,
-units (mm or m), dims, day_boundary, lead_label, members) and returns every key filled in.
-A key the user gave always wins; a missing key is detected by opening the first matching
-file lazily and is reported with its evidence, never silently. A key that cannot be detected
-reliably (several candidate variables, units missing from the file, day boundary, a lead label
-the observations do not settle) is a *problem* naming the key to set. A key the user gave that
-the files contradict (units "mm" with values that look like metres, a dim that does not exist)
-is an error for names and a warning for units.
+`resolve_entry` takes the keys a user gave for one dataset (``path``, ``file_pattern``, ``variable``,
+``units`` (``"mm"`` or ``"m"``), ``dims``, ``day_boundary``, ``lead_label``, ``members``) and returns every key
+filled in. A key the user gave always wins; a missing key is detected by opening the first matching file lazily and
+is reported with its evidence, never silently. A key that cannot be detected reliably (several candidate variables,
+units missing from the file, day boundary, a lead label the observations do not settle) is a *problem* naming the key
+to set. A key the user gave that the files contradict (``units: mm`` with values that look like metres, a dim that
+does not exist) is an error for names and a warning for units.
 
 What is detected, and how:
-  zarr store    a ``.zarr`` path is one dataset holding every year: no file_pattern; the years come from the
-                time/init coordinate, the rest from the store's metadata and a tiny slice
-  file_pattern  the year-like number in the file names in ``path``, replaced by {}
-  kind          forecast if the data has a lead/step dimension, else observations (checked, not set)
-  variable      the only gridded variable, else the only precipitation-like one
-  units         the file's ``units`` attribute (mm or m), sanity-checked against the values
-  dims          known dimension names (as hcwf.onset.ingest), role by role
-  members       the size of the member dimension
-  accumulation  daily or since_init, from how the values grow along the lead (hcwf.onset.ingest.detect_accumulation)
-  lead_label    forecast against observations at day lags -3..+3 (hcwf.onset.alignment; the sampled
-                hcwf.onset.sample_alignment when a dataset is a zarr store)
-  day_boundary  only an explicit ``day_boundary`` attribute in the file
-  region        the lat/lon extent against the domains in hcwf/onset/regions
+
+* zarr store: a ``.zarr`` path is one dataset holding every year: no ``file_pattern``; the years come from the
+  time/init coordinate, the rest from the store's metadata and a tiny slice.
+* ``file_pattern``: the year-like number in the file names in ``path``, replaced by ``{}``.
+* kind: forecast if the data has a lead/step dimension, else observations (checked, not set).
+* ``variable``: the only gridded variable, else the only precipitation-like one.
+* ``units``: the file's ``units`` attribute (mm or m), sanity-checked against the values.
+* ``dims``: known dimension names (as `hcwf.onset.ingest`), role by role.
+* ``members``: the size of the member dimension.
+* ``accumulation``: daily or since_init, from how the values grow along the lead
+  (`hcwf.onset.ingest.detect_accumulation`).
+* ``lead_label``: forecast against observations at day lags -3..+3 (`hcwf.onset.alignment`; the sampled
+  `hcwf.onset.sample_alignment` when a dataset is a zarr store).
+* ``day_boundary``: only an explicit ``day_boundary`` attribute in the file.
+* region: the lat/lon extent against the domains in ``hcwf/onset/regions`` (`detect_region`).
+
+The second half of the module (forecast signatures: `read_forecast_file`, `forecast_signature`,
+`signature_differences`) describes what a forecast file holds, so that a trained blend can compare it with every live
+file. The datasets' file handling lives in `hcwf.config.datasets`; the result of `resolve_entry` is cached on disk
+through `hcwf.cache.Store`.
 """
 from __future__ import annotations
 
@@ -46,24 +52,38 @@ from hcwf.io.dims import matches
 from hcwf.errors import DatasetError
 
 _PRECIP_RE = re.compile(r"(?i)precip|rain|prcp|(^|_)(tp|pr)($|_)")
+"""Variable (or long/standard name) patterns that mark a precipitation-like variable."""
 _ORDER = ("path", "paths", "years", "file_pattern", "variable", "units", "unit_cvt", "dims", "day_boundary",
           "lead_label", "accumulation", "daily_boundary", "members")
+"""The order in which the keys of a dataset are reported."""
 _ALIGN_INITS = 40
+"""The most issue dates read for the lead-label alignment check."""
 _NULLABLE = ("day_boundary", "lead_label")
 """Keys where an explicit null is a choice (the region's boundary; derive the label)."""
 
 
 @dataclass
 class Line:
-    """One resolved key: its value, how it was obtained ('specified', 'detected', 'from dataset ...'), evidence."""
+    """One resolved key: its value, how it was obtained, and the evidence."""
 
     key: str
+    """The config key, e.g. ``"variable"``."""
     value: Any
+    """The resolved value."""
     how: str
+    """How it was obtained: ``"specified"``, ``"detected"``, ``"detected (cached)"``, ``"default"`` or a dataset-file
+    source such as ``"dataset 'x'"``."""
     evidence: str = ""
+    """What the detection saw (empty when the key was specified)."""
 
     def text(self) -> str:
-        """The report line, e.g. ``variable: tp  [detected: only gridded variable in 2020.nc]``."""
+        """Return the report line, e.g. ``variable: tp  [detected: only gridded variable in 2020.nc]``.
+
+        Returns
+        -------
+        str
+            ``"<key>: <value>  [<how>[: <evidence>]]"``.
+        """
         note = self.how + (f": {self.evidence}" if self.evidence else "")
         return f"{self.key}: {self.value}  [{note}]"
 
@@ -73,14 +93,27 @@ class Resolution:
     """The outcome for one dataset: completed values, a report line per key, problems and warnings."""
 
     values: dict
+    """The dataset's keys, as given and as detected."""
     lines: list[Line] = field(default_factory=list)
+    """One `Line` per resolved key, in the order they were resolved."""
     problems: dict = field(default_factory=dict)
+    """Key (or ``dims.<role>``) to the message of a key that could not be resolved; empty when all is well."""
     warnings: list[str] = field(default_factory=list)
+    """Messages about values that look wrong but do not stop the run."""
     extent: tuple | None = None
+    """``(lat0, lat1, lon0, lon1)`` of the sampled file's coordinates (floats), or None when not read."""
     checked: bool = False
+    """Whether a data file was found and opened (only such a resolution is cached)."""
 
     def report(self) -> list[str]:
-        """Printable lines: every key with its provenance, then warnings and problems."""
+        """Return the printable lines: every key with its provenance, then warnings and problems.
+
+        Returns
+        -------
+        list of str
+            ``Line.text`` for each line, then ``warning: ...`` for each warning, then ``PROBLEM <key>: ...`` for each
+            problem.
+        """
         out = [line.text() for line in self.lines]
         out += [f"warning: {w}" for w in self.warnings]
         out += [f"PROBLEM {k}: {m}" for k, m in self.problems.items()]
@@ -88,7 +121,18 @@ class Resolution:
 
 
 def find_pattern(names: list[str]) -> tuple[str | None, str]:
-    """The file pattern shared by names (year replaced by {}) and the evidence, or (None, reason)."""
+    """Find the file pattern shared by file names, with the year replaced by ``{}``.
+
+    Parameters
+    ----------
+    names : list of str
+        The file names (not paths) of a dataset's folder.
+
+    Returns
+    -------
+    tuple of (str or None, str)
+        ``(pattern, evidence)``; ``(None, reason)`` when no name holds a year or the names follow several patterns.
+    """
     patterns = Counter()
     for name in names:
         match = year_match(name, whole_number=True)
@@ -105,7 +149,22 @@ def find_pattern(names: list[str]) -> tuple[str | None, str]:
 def _roles(da: xr.DataArray, kind: str, problems: dict) -> dict:
     """Map each dim role of the data to the file's dim name; ambiguous or missing roles go to problems.
 
-    A string unit dimension (admin units, role "unit") stands in for lat and lon.
+    A string unit dimension (admin units, role ``"unit"``) stands in for lat and lon.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The variable whose dims are classified.
+    kind : {"observations", "forecast"}
+        Which roles are wanted: ``time`` for observations; ``init_time``, ``step`` and ``member`` for forecasts
+        (``member`` is optional), plus ``lat`` and ``lon`` (or ``unit``).
+    problems : dict
+        Filled in place with ``dims.<role>`` to message for a role that is ambiguous or missing.
+
+    Returns
+    -------
+    dict of str to str
+        The role to the file's dim name, for each role found once.
     """
     dims = [str(d) for d in da.dims]
     unit = matches(dims, "unit")
@@ -137,17 +196,40 @@ _SAMPLES = memo("config.detect.samples", maxsize=32)
 
 
 def open_data(path: str) -> xr.Dataset:
-    """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) with xr.open_zarr."""
+    """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) with `xarray.open_zarr`.
+
+    Parameters
+    ----------
+    path : str
+        The NetCDF file or zarr directory.
+
+    Returns
+    -------
+    xarray.Dataset
+        The lazily opened dataset (a zarr store is opened unchunked). The caller closes it.
+    """
     if is_zarr(path):
         return xr.open_zarr(path, chunks=None)
     return xr.open_dataset(path)
 
 
 def _block_indices(n: int, per_index: int) -> list[np.ndarray]:
-    """Index blocks (start, middle, end of a length-n dim), each a run of consecutive positions.
+    """Return index blocks (start, middle, end of a length-n dim), each a run of consecutive positions.
 
-    The run length is at most _SAMPLE_BLOCK_LEN and shrinks so the blocks stay within _SAMPLE_BUDGET values
-    (per_index values per position), but is never below 1.
+    The run length is at most ``_SAMPLE_BLOCK_LEN`` and shrinks so the blocks stay within ``_SAMPLE_BUDGET`` values
+    (`per_index` values per position), but is never below 1.
+
+    Parameters
+    ----------
+    n : int
+        The length of the dimension.
+    per_index : int
+        The number of values one position of the dimension holds.
+
+    Returns
+    -------
+    list of numpy.ndarray of int64
+        The positions of each block; a single block of every position when the dim is short.
     """
     length = int(max(1, min(_SAMPLE_BLOCK_LEN, _SAMPLE_BUDGET // max(1, _SAMPLE_BLOCKS * per_index))))
     if n <= _SAMPLE_BLOCKS * length:
@@ -157,12 +239,26 @@ def _block_indices(n: int, per_index: int) -> list[np.ndarray]:
 
 
 def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
-    """A tiny in-memory copy of da, read once: a few whole consecutive time steps from its start, middle and end.
+    """Load a tiny in-memory copy of a variable: a few whole consecutive time steps from its start, middle and end.
 
-    The time-like dim is the init_time (forecasts) or time (observations) role, else the first dim. Lead is read
-    in full (accumulation needs the whole lead series); the member dim is cut to its first member and a grid
-    larger than _SAMPLE_CELLS is cut to a centred block, so the read stays within _SAMPLE_BUDGET values (a few MB)
-    and decodes each file chunk once. key (e.g. (path, variable)) caches the result in this process.
+    The time-like dim is the ``init_time`` (forecasts) or ``time`` (observations) role, else the first dim. Lead is
+    read in full (accumulation needs the whole lead series); the member dim is cut to its first member and a grid
+    larger than ``_SAMPLE_CELLS`` is cut to a centred block, so the read stays within ``_SAMPLE_BUDGET`` values (a few
+    MB) and decodes each file chunk once.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The (lazy) variable.
+    roles : dict of str to str
+        The role to dim name map of `da` (see ``_roles``).
+    key : hashable, optional
+        A cache key, e.g. ``(path, mtime, variable)``; when given the result is kept in this process for the run.
+
+    Returns
+    -------
+    xarray.DataArray
+        The loaded sample, with the attributes of `da`.
     """
     if key is not None and key in _SAMPLES:
         return _SAMPLES[key]
@@ -186,9 +282,22 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
 
 
 def _sample(da: xr.DataArray, roles: dict) -> np.ndarray:
-    """A small spread-out sample of the data values as a flat array, with fill values removed.
+    """Sample the data values, spread out, as a flat array with fill values removed.
 
-    Cheap on an in-memory DataArray (see load_sample); on lazy data it would decode chunks repeatedly.
+    Cheap on an in-memory DataArray (see `load_sample`); on lazy data it would decode chunks repeatedly. At most 40
+    positions along lat and lon and 12 along any other dim are taken.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The variable, preferably loaded.
+    roles : dict of str to str
+        The role to dim name map of `da`.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (value,)
+        The finite values with magnitude below ``1e5``.
     """
     index = {}
     for dim in da.dims:
@@ -200,14 +309,39 @@ def _sample(da: xr.DataArray, roles: dict) -> np.ndarray:
 
 
 def _units_from_attr(text) -> str | None:
-    """'mm' or 'm' for a units attribute HCWF can convert, else None."""
+    """Return ``"mm"`` or ``"m"`` for a units attribute HCWF can convert, else None.
+
+    Parameters
+    ----------
+    text : object
+        The ``units`` attribute of the file; it is lower-cased and whitespace-normalised before the lookup in
+        ``ingest.MM_PER_UNIT``.
+
+    Returns
+    -------
+    str or None
+        ``"mm"`` for a factor of 1, ``"m"`` for any other known factor, None for an unknown unit.
+    """
     key = " ".join(str(text).lower().split())
     factor = ingest.MM_PER_UNIT.get(key)
     return None if factor is None else ("mm" if factor == 1.0 else "m")
 
 
 def _check_magnitude(values: np.ndarray, implied: str | None) -> str | None:
-    """A warning if the values contradict the units (mm or m), else None."""
+    """Return a warning if the values contradict the units (mm or m), else None.
+
+    Parameters
+    ----------
+    values : numpy.ndarray of float64, shape (value,)
+        The sampled values (see ``_sample``).
+    implied : {"mm", "m"} or None
+        The units the file is read in.
+
+    Returns
+    -------
+    str or None
+        The warning: no finite values; ``"mm"`` with a peak below 0.5; ``"m"`` with a peak above 5. None when they agree.
+    """
     if values.size == 0:
         return "the sampled values are all missing; units could not be checked against them"
     peak = float(values.max())
@@ -219,9 +353,18 @@ def _check_magnitude(values: np.ndarray, implied: str | None) -> str | None:
 
 
 def detect_region(extent: tuple) -> tuple[str, str]:
-    """The region whose domain best overlaps the data extent (lat0, lat1, lon0, lon1), with the evidence.
+    """Find the region whose domain best overlaps the data extent, with the evidence.
 
-    Returns ("unknown", reason) when no domain overlaps by at least 30% (intersection over union).
+    Parameters
+    ----------
+    extent : tuple of (float, float, float, float)
+        The data extent ``(lat0, lat1, lon0, lon1)`` in degrees.
+
+    Returns
+    -------
+    tuple of (str, str)
+        ``(region id, evidence)``; ``("unknown", reason)`` when no domain overlaps by at least 30% (intersection
+        over union).
     """
     from hcwf.onset import regions
 
@@ -244,7 +387,28 @@ def detect_region(extent: tuple) -> tuple[str, str]:
 
 
 def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str | None, str]:
-    """Detect lead_label by aligning the forecast with the observations; returns (label or None, evidence/reason)."""
+    """Detect ``lead_label`` by aligning the forecast with the observations.
+
+    Reads the first observation file of the sample's year and the first issue dates of the sample forecast file,
+    ingests the forecast under both labels and keeps the label whose alignment check says ``aligned``. Datasets given
+    as zarr stores go to ``_lead_label_sampled``; datasets given by ``paths`` are not checked.
+
+    Parameters
+    ----------
+    values : dict
+        The forecast's resolved keys so far (``variable``, ``units``, ``paths``, ...).
+    sample : str
+        The forecast file read.
+    obs : dict or None
+        The resolved observations entry (needs ``variable`` and ``day_boundary``).
+    roles : dict of str to str
+        The forecast's role to dim name map (``init_time`` and ``step``, optionally ``member``).
+
+    Returns
+    -------
+    tuple of (str or None, str)
+        ``(label, evidence)``, or ``(None, reason)`` when the check cannot run or is not conclusive.
+    """
     from hcwf.onset.alignment import check_forecast_alignment
 
     if obs is None or not obs.get("variable") or not obs.get("day_boundary"):
@@ -295,10 +459,28 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
 
 
 def _lead_label_sampled(values: dict, sample: str, obs: dict, roles: dict, obs_dir: str) -> tuple[str | None, str]:
-    """Detect lead_label with the sampled alignment check (hcwf.onset.sample_alignment), for zarr stores.
+    """Detect ``lead_label`` with the sampled alignment check (`hcwf.onset.sample_alignment`), for zarr stores.
 
     The sample (a few dozen inits and a few thousand cells, all lags at once) is read once and judged under
     both labels; exactly one aligned label settles it, anything else is inconclusive.
+
+    Parameters
+    ----------
+    values : dict
+        The forecast's resolved keys so far.
+    sample : str
+        The forecast file or zarr store.
+    obs : dict
+        The resolved observations entry.
+    roles : dict of str to str
+        The forecast's role to dim name map; only the presence of ``member`` is used.
+    obs_dir : str
+        The expanded observations folder.
+
+    Returns
+    -------
+    tuple of (str or None, str)
+        ``(label, evidence)``, or ``(None, reason)`` when the check cannot run or is not conclusive.
     """
     from hcwf.onset import sample_alignment as align_sample
     from hcwf.config.datasets import unit_factor
@@ -326,17 +508,44 @@ def _lead_label_sampled(values: dict, sample: str, obs: dict, roles: dict, obs_d
 
 
 def cache_dir() -> Path:
-    """The folder of the on-disk detection cache: $HCWF_CACHE_DIR/detect, else ~/.cache/hcwf/detect."""
+    """Return the folder of the on-disk detection cache: ``$HCWF_CACHE_DIR/detect``, else ``~/.cache/hcwf/detect``.
+
+    Returns
+    -------
+    pathlib.Path
+        The ``detect`` folder under `hcwf.cache.global_root`.
+    """
     return global_root() / "detect"
 
 
 def _store() -> Store:
-    """The detection cache: a hcwf.cache.Store of kind "detect" in cache_dir (fresh copies, nothing kept in memory)."""
+    """Return the detection cache: a `hcwf.cache.Store` of kind ``"detect"`` in `cache_dir` (nothing kept in memory).
+
+    Returns
+    -------
+    hcwf.cache.Store
+        The store; every read gives a fresh copy.
+    """
     return Store("detect", cache_dir().parent, label="Dataset detection", memory=False)
 
 
 def dataset_files(entry: dict) -> list[Path]:
-    """The files a dataset entry reads: its ``paths`` (see resolve_paths), the zarr store, or the NetCDF files in its folder."""
+    """Return the files a dataset entry reads: its ``paths`` (see `resolve_paths`), the zarr store, or the NetCDF files.
+
+    Parameters
+    ----------
+    entry : dict
+        The dataset keys: ``path`` and/or ``paths`` and ``years``.
+
+    Returns
+    -------
+    list of pathlib.Path
+        The listed files, or the zarr store, or the sorted ``.nc`` files and zarr stores in the folder.
+
+    Notes
+    -----
+    A missing ``path`` without ``paths`` surfaces as the ``TypeError`` of ``Path(None)``; callers check it first.
+    """
     base = expand_path(entry["path"]) if entry.get("path") else None
     if entry.get("paths"):
         return resolve_paths(entry["paths"], base, entry.get("years"))
@@ -346,9 +555,24 @@ def dataset_files(entry: dict) -> list[Path]:
 
 
 def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> dict | None:
-    """What detection depends on: the user's keys, and the identity (path, size, mtime) of the dataset's files.
+    """Return what detection depends on: the user's keys, and the identity (path, size, mtime) of the dataset's files.
 
-    None when the folder cannot be listed or a file read (nothing to cache against).
+    Parameters
+    ----------
+    entry : dict
+        The keys the user gave for the dataset.
+    kind : {"observations", "forecast"}
+        The kind of the dataset.
+    lead_label_default : bool
+        Whether an unset ``lead_label`` is left to be derived from the day boundary.
+    sources : dict, optional
+        Where a key came from if not the user.
+
+    Returns
+    -------
+    dict or None
+        The parts of the cache fingerprint; None when the folder cannot be listed or a file read (nothing to cache
+        against).
     """
     try:
         files = dataset_files(entry)
@@ -363,7 +587,24 @@ def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | Non
 
 
 def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> str | None:
-    """The cache fingerprint of a dataset's detection (see _parts), or None when it cannot be cached."""
+    """Return the cache fingerprint of a dataset's detection (see ``_parts``), or None when it cannot be cached.
+
+    Parameters
+    ----------
+    entry : dict
+        The keys the user gave for the dataset.
+    kind : {"observations", "forecast"}
+        The kind of the dataset.
+    lead_label_default : bool
+        Whether an unset ``lead_label`` is left to be derived from the day boundary.
+    sources : dict, optional
+        Where a key came from if not the user.
+
+    Returns
+    -------
+    str or None
+        The fingerprint, or None when ``_parts`` is None.
+    """
     parts = _parts(entry, kind, lead_label_default, sources)
     return None if parts is None else _store().fingerprint(parts)
 
@@ -374,7 +615,29 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
 
     The cache key is a fingerprint of the user's keys and the file paths, sizes and mtimes; a hit reads no data and
     marks every detected line "detected (cached)" with the same evidence. A resolution that ran the lead-label
-    alignment (it depends on the observations) is not cached. See resolve_entry_uncached for the keys.
+    alignment (it depends on the observations) is not cached. See `resolve_entry_uncached` for the keys.
+
+    Parameters
+    ----------
+    entry : dict
+        The keys the user gave (raw, as in a dataset file).
+    kind : {"observations", "forecast"}
+        The kind of the dataset.
+    sources : dict, optional
+        Where a key came from if not the user (``"dataset 'x'"``).
+    obs : dict, optional
+        The resolved observations entry, needed to detect a forecast's ``lead_label``.
+    detect_lead_label : bool, default True
+        Whether to detect ``lead_label`` by the alignment check when it is not given.
+    lead_label_default : bool, default False
+        Leave an unset ``lead_label`` to be derived from the day boundary instead of making it a problem.
+    use_cache : bool, default True
+        Whether to read and write the on-disk cache.
+
+    Returns
+    -------
+    Resolution
+        The completed values, report lines, problems and warnings.
     """
     runs_alignment = kind == "forecast" and detect_lead_label and "lead_label" not in entry
     parts = _parts(entry, kind, lead_label_default, sources) if use_cache and not runs_alignment else None
@@ -397,11 +660,28 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
                            detect_lead_label: bool = True, lead_label_default: bool = False) -> Resolution:
     """Resolve one dataset: validate what is given, detect what is missing, report every key.
 
-    lead_label_default: when the lead_label is not given and not detected (detect_lead_label False), leave it unset
-    ("derived from the day boundary") instead of making it a problem.
-    entry holds the keys the user gave (raw, as in a dataset file); kind is 'observations' or 'forecast';
-    sources says where a key came from if not the user ("dataset 'x'"); obs is the resolved observations
-    entry, needed to detect a forecast's lead_label. Never raises for problems with the data: see Resolution.
+    Never raises for problems with the data: they are collected in `Resolution.problems`.
+
+    Parameters
+    ----------
+    entry : dict
+        The keys the user gave (raw, as in a dataset file).
+    kind : {"observations", "forecast"}
+        The kind of the dataset.
+    sources : dict, optional
+        Where a key came from if not the user (``"dataset 'x'"``).
+    obs : dict, optional
+        The resolved observations entry, needed to detect a forecast's ``lead_label``.
+    detect_lead_label : bool, default True
+        Whether to detect ``lead_label`` by the alignment check when it is not given.
+    lead_label_default : bool, default False
+        When ``lead_label`` is not given and not detected (`detect_lead_label` false), leave it unset ("derived from
+        the day boundary") instead of making it a problem.
+
+    Returns
+    -------
+    Resolution
+        The completed values, report lines, problems and warnings.
     """
     sources = sources or {}
     res = Resolution(values={k: v for k, v in entry.items() if v is not None or k in _NULLABLE})
@@ -479,9 +759,33 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
 
 
 def _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_label, lead_label_default):
-    """Resolve a dataset that names its files in ``paths``: no file_pattern; everything from the first file.
+    """Resolve a dataset that names its files in ``paths``: no ``file_pattern``; everything from the first file.
 
-    The files are the listed ones (resolve_paths), several per year if they are; the first holds the layout.
+    The files are the listed ones (`resolve_paths`), several per year if they are; the first holds the layout.
+
+    Parameters
+    ----------
+    values : dict
+        The dataset keys (``res.values``).
+    kind : {"observations", "forecast"}
+        The kind of the dataset.
+    res : Resolution
+        The resolution being built; filled in place.
+    specified : callable
+        ``specified(key)`` records a key the user gave.
+    detected : callable
+        ``detected(key, value, evidence)`` records a detected key.
+    obs : dict or None
+        The resolved observations entry.
+    detect_lead_label : bool
+        Whether to detect ``lead_label`` by the alignment check.
+    lead_label_default : bool
+        Whether an unset ``lead_label`` is left to be derived from the day boundary.
+
+    Returns
+    -------
+    Resolution
+        `res`.
     """
     problems = res.problems
     for key in ("paths", "years"):
@@ -506,7 +810,18 @@ def _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_lab
 
 
 def _store_years(ds: xr.Dataset) -> tuple[str, int, int] | None:
-    """(coordinate name, first year, last year) of the first 1-D datetime coordinate of a store, or None."""
+    """Return the name and year range of the first 1-D datetime coordinate of a store.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The opened store.
+
+    Returns
+    -------
+    tuple of (str, int, int) or None
+        ``(coordinate name, first year, last year)``, or None when no such coordinate exists.
+    """
     for name, coord in ds.coords.items():
         if coord.ndim == 1 and np.issubdtype(coord.dtype, np.datetime64) and coord.size:
             years = coord.dt.year
@@ -515,10 +830,34 @@ def _store_years(ds: xr.Dataset) -> tuple[str, int, int] | None:
 
 
 def _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label, lead_label_default):
-    """Resolve a dataset that is one zarr store holding every year: no file_pattern, everything from the metadata.
+    """Resolve a dataset that is one zarr store holding every year: no ``file_pattern``, everything from the metadata.
 
     The years come from the time (or init) coordinate, the variable, units, dims and members from the store's
-    metadata and a tiny slice for the value checks; day_boundary and lead_label are as for NetCDF files.
+    metadata and a tiny slice for the value checks; ``day_boundary`` and ``lead_label`` are as for NetCDF files.
+
+    Parameters
+    ----------
+    folder : pathlib.Path
+        The zarr store.
+    kind : {"observations", "forecast"}
+        The kind of the dataset.
+    res : Resolution
+        The resolution being built; filled in place.
+    specified : callable
+        ``specified(key)`` records a key the user gave.
+    detected : callable
+        ``detected(key, value, evidence)`` records a detected key.
+    obs : dict or None
+        The resolved observations entry.
+    detect_lead_label : bool
+        Whether to detect ``lead_label`` by the alignment check.
+    lead_label_default : bool
+        Whether an unset ``lead_label`` is left to be derived from the day boundary.
+
+    Returns
+    -------
+    Resolution
+        `res`.
     """
     values, problems = res.values, res.problems
     try:
@@ -542,7 +881,39 @@ def _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label
 
 def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, detect_lead_label,
                        lead_label_default=False):
-    """The detections that need the opened sample file (variable, kind, dims, units, members, labels)."""
+    """Run the detections that need the opened sample file (variable, kind, dims, units, members, labels).
+
+    Everything is recorded in `res` (values, lines, problems, warnings, extent); a problem that makes the rest
+    meaningless (unknown variable, wrong kind, ambiguous variable) ends the detection early.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The opened sample file.
+    name : str
+        The file name, for messages.
+    sample : str
+        The path of the sample file.
+    kind : {"observations", "forecast"}
+        The kind of the dataset.
+    res : Resolution
+        The resolution being built; filled in place.
+    specified : callable
+        ``specified(key)`` records a key the user gave.
+    detected : callable
+        ``detected(key, value, evidence)`` records a detected key.
+    obs : dict or None
+        The resolved observations entry.
+    detect_lead_label : bool
+        Whether to detect ``lead_label`` by the alignment check.
+    lead_label_default : bool, default False
+        Whether an unset ``lead_label`` is left to be derived from the day boundary.
+
+    Returns
+    -------
+    None
+        Nothing; the outcome is in `res`.
+    """
     values, problems = res.values, res.problems
     gridded = [v for v in ds.data_vars if ds[v].ndim >= 3]
     if "variable" in values:
@@ -644,10 +1015,32 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
 
 
 def _forecast_accumulation(da, values, res, specified, detected, roles):
-    """Resolve a forecast's accumulation (daily or since_init) and return the units guess (units, evidence) or None.
+    """Resolve a forecast's accumulation (daily or since_init) and return the units guess.
 
-    A given accumulation is kept; otherwise it is detected with ingest.detect_accumulation (an ambiguous series is a
-    problem naming the key). The units guess is ingest.detect_units on the daily totals of that accumulation.
+    A given accumulation is kept; otherwise it is detected with ``ingest.detect_accumulation`` (an ambiguous series is
+    a problem naming the key; one that cannot be read is set to ``"auto"``, to be worked out when loaded). The units
+    guess is ``ingest.detect_units`` on the daily totals of that accumulation.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The loaded sample of the variable.
+    values : dict
+        The dataset keys; ``accumulation`` is set here.
+    res : Resolution
+        The resolution being built; filled in place.
+    specified : callable
+        ``specified(key)`` records a key the user gave.
+    detected : callable
+        ``detected(key, value, evidence)`` records a detected key.
+    roles : dict of str to str
+        The role to dim name map (``step`` is the lead dim).
+
+    Returns
+    -------
+    tuple or None
+        The ``(units, evidence)`` guess, or None when there is no lead dim, the accumulation is ambiguous or
+        ``"auto"``, or the units cannot be guessed.
     """
     lead = roles.get("step")
     kind = values.get("accumulation")
@@ -677,7 +1070,18 @@ def _forecast_accumulation(da, values, res, specified, detected, roles):
 
 
 def _mtime(path) -> int:
-    """Modification time of a file (or zarr directory) in ns, 0 if it cannot be read; part of a sample's cache key."""
+    """Return the modification time of a file (or zarr directory), part of a sample's cache key.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The file or directory.
+
+    Returns
+    -------
+    int
+        ``st_mtime_ns`` in nanoseconds, 0 if it cannot be read.
+    """
     try:
         return os.stat(path).st_mtime_ns
     except OSError:
@@ -685,11 +1089,37 @@ def _mtime(path) -> int:
 
 
 def _units(da, name, values, res, specified, detected, roles, guess=None, loaded=None):
-    """Units (mm or m): given or read from the attribute; contradictions and unknowns are problems naming units.
+    """Resolve the units (mm or m): given or read from the attribute; contradictions and unknowns are problems.
 
-    guess is ingest.detect_units' (units, evidence) for forecasts: it names the likely units when none can be read,
-    and a given or attribute unit that disagrees with it is a warning. loaded is the in-memory sample of da
-    (load_sample); the magnitudes are read from it once, whichever checks need them.
+    `guess` is the ``(units, evidence)`` of ``ingest.detect_units`` for forecasts: it names the likely units when none
+    can be read, and a given or attribute unit that disagrees with it is a warning. `loaded` is the in-memory sample
+    of `da` (`load_sample`); the magnitudes are read from it once, whichever checks need them.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The variable (its ``units`` attribute is read).
+    name : str
+        The file name, for messages.
+    values : dict
+        The dataset keys; ``unit_cvt`` is dropped when the file declares its units.
+    res : Resolution
+        The resolution being built; filled in place.
+    specified : callable
+        ``specified(key)`` records a key the user gave.
+    detected : callable
+        ``detected(key, value, evidence)`` records a detected key.
+    roles : dict of str to str
+        The role to dim name map of `da`.
+    guess : tuple, optional
+        The ``(units, evidence)`` guess from the daily totals (forecasts only).
+    loaded : xarray.DataArray, optional
+        The loaded sample of `da`; `da` itself is sampled when None.
+
+    Returns
+    -------
+    None
+        Nothing; the outcome is in `res` and `values`.
     """
     attr = da.attrs.get("units")
     from_attr = _units_from_attr(attr) if attr is not None else None
@@ -736,7 +1166,18 @@ def _units(da, name, values, res, specified, detected, roles, guess=None, loaded
 
 
 def finalize_units(values: dict) -> dict:
-    """Add unit_cvt (the multiplier to mm the pipeline needs) derived from units; returns values."""
+    """Add ``unit_cvt`` (the multiplier to mm the pipeline needs), derived from ``units``.
+
+    Parameters
+    ----------
+    values : dict
+        The resolved dataset keys; changed in place.
+
+    Returns
+    -------
+    dict
+        `values`, with ``unit_cvt`` set when ``units`` is present.
+    """
     from hcwf.config.datasets import unit_factor
 
     if "units" in values:
@@ -745,7 +1186,13 @@ def finalize_units(values: dict) -> dict:
 
 
 def warn_all(res: Resolution) -> None:
-    """Issue the resolution's warnings as UserWarnings too (so they show in logs and tests)."""
+    """Issue the resolution's warnings as ``UserWarning`` too (so they show in logs and tests).
+
+    Parameters
+    ----------
+    res : Resolution
+        The resolution whose ``warnings`` are issued.
+    """
     for message in res.warnings:
         warnings.warn(message, UserWarning, stacklevel=3)
 
@@ -765,7 +1212,18 @@ _AGGREGATION_PAIR = re.compile(r"([^\s:]+):\s*([^\s:]+)")
 
 
 def _lead_numbers(values) -> list[int]:
-    """The lead days of a step coordinate: whole days, from numbers or timedeltas."""
+    """Return the lead days of a step coordinate: whole days, from numbers or timedeltas.
+
+    Parameters
+    ----------
+    values : array_like
+        The step coordinate values, numbers (days) or ``timedelta64``.
+
+    Returns
+    -------
+    list of int
+        The lead days.
+    """
     values = np.asarray(values).reshape(-1)
     if values.dtype.kind == "m":
         values = values / np.timedelta64(1, "D")
@@ -773,7 +1231,18 @@ def _lead_numbers(values) -> list[int]:
 
 
 def _issue_stamps(values) -> tuple[list[int], list]:
-    """(issue hours, issue dates) of an init-time coordinate (decoded datetimes or cftime objects)."""
+    """Return the issue hours and dates of an init-time coordinate.
+
+    Parameters
+    ----------
+    values : array_like
+        The init-time coordinate values (decoded datetimes or cftime objects).
+
+    Returns
+    -------
+    tuple of (list of int, list of datetime.date)
+        The sorted distinct hours of day, and the sorted distinct dates.
+    """
     import datetime as dt
 
     values = np.asarray(values).reshape(-1)
@@ -785,8 +1254,25 @@ def _issue_stamps(values) -> tuple[list[int], list]:
 
 
 def _aggregation(ds, variable, lead_dim: str | None) -> dict:
-    """How the file says its daily values were made: the cell method over its lead dimension (e.g. sum) and the window
-    its lead coordinate states (e.g. the UTC day ending at the issue time plus the lead); None where it does not say."""
+    """Return how the file says its daily values were made.
+
+    That is the cell method over its lead dimension (e.g. ``sum``) and the window its lead coordinate states (e.g. the
+    UTC day ending at the issue time plus the lead); None where it does not say.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The opened file.
+    variable : xarray.DataArray
+        The rainfall variable (its ``cell_methods`` attribute is read).
+    lead_dim : str or None
+        The file's lead dimension, or None when there is none.
+
+    Returns
+    -------
+    dict of str to str or None
+        ``{"method": ..., "window": ...}``, lower-cased.
+    """
     method = None
     if lead_dim is not None:
         for name, how in _AGGREGATION_PAIR.findall(str(variable.attrs.get("cell_methods", "") or "")):
@@ -801,13 +1287,37 @@ def _aggregation(ds, variable, lead_dim: str | None) -> dict:
 
 
 def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, selected: bool = True) -> tuple[dict, list]:
-    """(signature, issue dates) of a forecast file.
+    """Read the signature and issue dates of a forecast file.
 
-    entry holds the dataset keys the file is resolved with (`variable`, and `dims` as role -> file dimension,
-    `unit_cvt`, as `resolve_entry` takes them); the units, accumulation, members and dimension roles are detected from
-    the file. selected: the signature after the model's lead-day window `lead_days` (first, last) and its `max_member`,
-    as training reads the file; else everything the (live) file holds. Raises ValueError saying why a file cannot be
-    described (no such variable, units that cannot be read, dimensions that cannot be told apart).
+    The units, accumulation, members and dimension roles are detected from the file.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The forecast file.
+    entry : dict
+        The dataset keys the file is resolved with: ``variable``, and optionally ``dims`` (role to file dimension) and
+        ``unit_cvt``, as `resolve_entry` takes them.
+    lead_days : tuple of (int, int), optional
+        The model's lead-day window (first, last), applied when `selected`.
+    max_member : int, optional
+        The model's highest member id, applied when `selected`.
+    selected : bool, default True
+        Give the signature after `lead_days` and `max_member`, as training reads the file; else everything the
+        (live) file holds.
+
+    Returns
+    -------
+    tuple of (dict, list)
+        The signature (``variable``, ``units``, ``accumulation``, ``dims``, ``aggregation`` and, where the file has
+        them, ``issue_hours``, ``lead_days``, ``members``, ``lat``, ``lon``, ``unit_ids``) and the sorted issue
+        dates.
+
+    Raises
+    ------
+    ValueError
+        The file cannot be described: it cannot be opened, has no such variable, its units cannot be read, or its
+        dimensions cannot be told apart.
     """
     path, name = str(path), Path(str(path)).name
     given = {"paths": [path], "variable": entry["variable"]}
@@ -868,19 +1378,49 @@ def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, se
 
 
 def forecast_signature(path, entry: dict, **options) -> dict:
-    """What a forecast file holds, apart from its issue dates (see read_forecast_file)."""
+    """Return what a forecast file holds, apart from its issue dates (see `read_forecast_file`).
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The forecast file.
+    entry : dict
+        The dataset keys, as for `read_forecast_file`.
+    **options : dict
+        Passed to `read_forecast_file`: ``lead_days``, ``max_member``, ``selected``.
+
+    Returns
+    -------
+    dict
+        The signature.
+
+    """
     return read_forecast_file(path, entry, **options)[0]
 
 
 
 
 def signature_differences(trained: dict, live: dict, *, fewer_members: bool = False) -> list[str]:
-    """How a live file fails to cover the trained signature, one reason each (empty when it covers it).
+    """Describe how a live file fails to cover the trained signature, one reason each (empty when it covers it).
 
     It may hold more (longer leads, more members, a larger domain such as the globe): a blend reads only what it was
     trained on. It may not hold less, nor another grid spacing, units, accumulation, daily aggregation, issue hour or
-    variable. Only the fields the trained signature holds are compared. fewer_members: a live ensemble may hold only
-    some of the trained members (any one will do); its onset probabilities are then shares of those.
+    variable. Only the fields the trained signature holds are compared.
+
+    Parameters
+    ----------
+    trained : dict
+        The signature of the training files (see `read_forecast_file`); an older blend may hold fewer fields.
+    live : dict
+        The signature of the live file.
+    fewer_members : bool, default False
+        A live ensemble may hold only some of the trained members (any one will do); its onset probabilities are then
+        shares of those.
+
+    Returns
+    -------
+    list of str
+        One message per difference; empty when the live file covers the trained signature.
     """
     out = []
     for key, label in (
@@ -917,20 +1457,68 @@ def signature_differences(trained: dict, live: dict, *, fewer_members: bool = Fa
 
 
 def _grid_step(values: list) -> float | None:
-    """A grid's spacing (the median gap between its distinct values)."""
+    """Return a grid's spacing, the median gap between its distinct values.
+
+    Parameters
+    ----------
+    values : list of float
+        The coordinate values of one axis.
+
+    Returns
+    -------
+    float or None
+        The spacing in degrees rounded to 6 decimals; None for fewer than two distinct values.
+    """
     distinct = np.unique(values)
     return round(float(np.median(np.diff(distinct))), 6) if len(distinct) > 1 else None
 
 
 def _degrees(step: float | None) -> str:
+    """Format a grid step in degrees for a message.
+
+    Parameters
+    ----------
+    step : float or None
+        The spacing in degrees.
+
+    Returns
+    -------
+    str
+        For example ``"0.25 degrees"`` (with the degree sign); ``"?"`` for None.
+    """
     return "?" if step is None else f"{step:g}\N{DEGREE SIGN}"
 
 
 def _span(values: list) -> str:
+    """Format the extent of a list of coordinate values for a message.
+
+    Parameters
+    ----------
+    values : list of float
+        The coordinate values.
+
+    Returns
+    -------
+    str
+        ``"min-max"`` with an en dash, or ``"none"`` for an empty list.
+    """
     return f"{min(values):g}\N{EN DASH}{max(values):g}" if values else "none"
 
 
 def _brief(value) -> str:
+    """Abbreviate a signature value for a message: a long list becomes a range or a count with its ends.
+
+    Parameters
+    ----------
+    value : object
+        A signature field.
+
+    Returns
+    -------
+    str
+        ``"a-b"`` for a run of consecutive integers longer than 6, ``"n values a...b"`` for another long list,
+        else ``repr(value)``.
+    """
     if isinstance(value, list) and len(value) > 6:
         if all(isinstance(v, int) for v in value) and value == list(range(value[0], value[-1] + 1)):
             return f"{value[0]}\N{EN DASH}{value[-1]}"

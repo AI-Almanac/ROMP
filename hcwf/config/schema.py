@@ -14,21 +14,26 @@ A YAML config is a mapping whose keys are either the flat config keys (e.g.
                    percentage_threshold, explain_cells
     units:         mode, shapefile, unit_id_col, unit_name_col, parent_col, weights, centroids, centroid_id_col,
                    dissemination, dissemination_id_col, dissemination_scope, box, outline, boundary, id_digits,
-                   id_format (evaluation units instead of grid cells; extends the region's `units:`)
+                   id_format (evaluation units instead of grid cells; extends the region's ``units:``)
     blend:         years, cutoff_mode, cv_methods, cluster_var, formulas, final_formula, window_variants,
                    baselines, forecasts, mme, external_predictions, random_forest, fixed_cutoff, reference_onset,
                    bins, probability_days, trim_after_true_onset, rain_transform, climatology, models, outputs
-                   (train an onset blend: hcwf.blend; see `hcwf-run convert` for blending configs)
+                   (train an onset blend: `hcwf.blend`; see ``hcwf-run convert`` for blending configs)
     evaluation:    start_date, end_date, years, start_year_clim, end_year_clim, climatology_years, init_days,
                    date_filter_year, verification_windows, tolerances, max_forecast_day, day_bins, probabilistic, members
     metrics:       FAR, MAE, MR, BS, RPS, AUC, Reliability, skill_score
     output:        data_dir, figure_dir, save_* , plot_*, show_*
 
-``flatten_sections`` maps a section entry to its flat key (``FIELDS`` holds the mapping),
-``normalise`` turns every value into the form the rest of HCWF expects (tuples, not lists;
-dates as (year, month, day)), and ``apply_defaults`` fills the keys left out. All problems
-are collected and raised together as one ConfigSchemaError: unknown keys come with a
+`flatten_sections` maps a section entry to its flat key (`FIELDS` holds the mapping),
+`normalise` turns every value into the form the rest of HCWF expects (tuples, not lists;
+dates as ``(year, month, day)``), and `apply_defaults` fills the keys left out. All problems
+are collected and raised together as one `ConfigSchemaError`: unknown keys come with a
 "did you mean" suggestion, wrongly typed values name the key and the form expected.
+
+The module holds the table of keys (`FIELDS`, built from `Field`), the value kinds that check and normalise a value
+(`KINDS`) and the functions that turn a raw YAML mapping into a validated flat config. `hcwf.config.mapping` builds
+on it to resolve a config, `hcwf.config.model` generates its output and metrics specs from it, and
+`hcwf.config.datasets` supplies the years and path helpers it uses.
 """
 from __future__ import annotations
 
@@ -58,35 +63,52 @@ SECTIONS = {
 
 
 class _Required:
-    """Marker for 'no default: the key must be given'."""
+    """The marker of a `Field` that has no default: the key must be given."""
 
     def __repr__(self):
-        """Print as REQUIRED."""
+        """Return the marker's name.
+
+        Returns
+        -------
+        str
+            ``"REQUIRED"``.
+        """
         return "REQUIRED"
 
 
 REQUIRED = _Required()
+"""The default of a `Field` whose key must be given."""
 
 
 @dataclass(frozen=True)
 class Field:
     """One config key.
 
-    key is the flat key used by HCWF; section/name give where it may be written nested
-    (name defaults to key). fill=False keys are left out when not given (HCWF chooses the
+    ``key`` is the flat key used by HCWF; ``section`` and ``name`` give where it may be written nested
+    (``name`` defaults to ``key``). Keys with ``fill=False`` are left out when not given (HCWF chooses the
     value itself, e.g. by mode); a callable default is called with the config built so far.
     """
 
     key: str
+    """The flat key used by HCWF."""
     kind: str
+    """A key of `KINDS`: how the value is checked and normalised."""
     help: str
+    """What the key does, one line."""
     default: Any = None
+    """The default; `REQUIRED` for none, or a callable that takes the config built so far."""
     section: str | None = None
+    """The section the key may be written in, or None for a top-level key."""
     name: str | None = None
+    """The name inside the section (None: the same as ``key``)."""
     choices: tuple | None = None
+    """The allowed values, or None for any value of the kind."""
     nullable: bool = False
+    """Whether ``null`` is accepted."""
     fill: bool = True
+    """Whether the default is written when the key is left out (False: HCWF chooses the value itself)."""
     internal: bool = False
+    """Whether the key is set by HCWF and refused in a YAML file."""
 
     @property
     def nested_name(self) -> str:
@@ -95,7 +117,7 @@ class Field:
 
     @property
     def path(self) -> str:
-        """The key as written nested, e.g. 'evaluation.start_date', or the flat key when it has no section."""
+        """The key as written nested, e.g. ``evaluation.start_date``, or the flat key when it has no section."""
         return f"{self.section}.{self.nested_name}" if self.section else self.key
 
     @property
@@ -113,64 +135,211 @@ class Field:
 
 
 def _is_int(value) -> bool:
-    """True for a whole number that is not a bool."""
+    """Tell whether a value is a whole number that is not a bool.
+
+    Parameters
+    ----------
+    value : object
+        The value to test.
+
+    Returns
+    -------
+    bool
+        True for an `int` that is not a `bool`.
+    """
     return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _is_number(value) -> bool:
-    """True for an int or float that is not a bool."""
+    """Tell whether a value is a number that is not a bool.
+
+    Parameters
+    ----------
+    value : object
+        The value to test.
+
+    Returns
+    -------
+    bool
+        True for an `int` or `float` that is not a `bool`.
+    """
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _text(value):
-    """Text."""
+    """Check that a value is text.
+
+    Parameters
+    ----------
+    value : object
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    str
+        The value, unchanged.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, str):
         raise ValueError
     return value
 
 
 def _path(value):
-    """A path, with ${ENV_VAR} references expanded."""
+    """Check that a value is a path and expand its environment references.
+
+    A value that is not text raises `ValueError` (from `_text`); an unset variable raises a `hcwf.errors.DatasetError`.
+
+    Parameters
+    ----------
+    value : object
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    str
+        The path with ``${ENV_VAR}`` references expanded (see `hcwf.config.datasets.expand_env`).
+    """
     return expand_env(_text(value))
 
 
 def _name(value):
-    """A name written as text or a whole number (season names may be 1 or 2), returned as text."""
+    """Check that a value is a name: text, or a whole number (season names may be 1 or 2).
+
+    A value of another type raises `ValueError` (from `_text`).
+
+    Parameters
+    ----------
+    value : object
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    str
+        The name as text.
+    """
     if _is_int(value):
         return str(value)
     return _text(value)
 
 
 def _integer(value):
-    """A whole number."""
+    """Check that a value is a whole number (not a bool).
+
+    Parameters
+    ----------
+    value : object
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    int
+        The value, unchanged.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not _is_int(value):
         raise ValueError
     return value
 
 
 def _number(value):
-    """A number."""
+    """Check that a value is a number (not a bool).
+
+    Parameters
+    ----------
+    value : object
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    int or float
+        The value, unchanged.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not _is_number(value):
         raise ValueError
     return value
 
 
 def _workers(value):
-    """A number of workers: a whole number of 1 or more."""
+    """Check that a value is a number of workers: a whole number of 1 or more.
+
+    Parameters
+    ----------
+    value : object
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    int
+        The value, unchanged.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not _is_int(value) or value < 1:
         raise ValueError
     return value
 
 
 def _boolean(value):
-    """True or false."""
+    """Check that a value is true or false.
+
+    Parameters
+    ----------
+    value : object
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    bool
+        The value, unchanged.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, bool):
         raise ValueError
     return value
 
 
 def _date(value):
-    """A date as [year, month, day], 'YYYY-MM-DD' or a YAML date, returned as a (year, month, day) tuple."""
+    """Check a date and return it as a tuple.
+
+    The date is written ``[year, month, day]``, ``"YYYY-MM-DD"`` or as a YAML date. A date that does not
+    exist (30 February) is also a `ValueError`.
+
+    Parameters
+    ----------
+    value : datetime.date or str or sequence of int
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of (int, int, int)
+        The date as ``(year, month, day)``.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if isinstance(value, datetime.date):
         return (value.year, value.month, value.day)
     if isinstance(value, str):
@@ -187,7 +356,26 @@ def _date(value):
 
 
 def _month_day(value):
-    """A month and day as [month, day] or 'MM-DD', returned as a (month, day) tuple."""
+    """Check a month and day and return them as a tuple.
+
+    The day is written ``[month, day]`` or ``"MM-DD"``. A day that does not exist in a year (30 February) is
+    also a `ValueError`; 29 February is accepted.
+
+    Parameters
+    ----------
+    value : str or sequence of int
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of (int, int)
+        The day as ``(month, day)``.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if isinstance(value, str):
         match = re.fullmatch(r"\s*(\d{1,2})-(\d{1,2})\s*", value)
         parts = tuple(int(g) for g in match.groups()) if match else None
@@ -202,7 +390,26 @@ def _month_day(value):
 
 
 def _years(value):
-    """A non-empty list of years (a list, or text such as '2000:2020,2022'), sorted, each once."""
+    """Check a years setting and return the years sorted.
+
+    The setting is a list of years, or text such as ``"2000:2020,2022"`` (see
+    `hcwf.config.datasets.parse_year_list`); it must not be empty.
+
+    Parameters
+    ----------
+    value : int or str or sequence
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of int
+        The years, ascending, each once.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     try:
         years = parse_year_list(value)
     except DatasetError:
@@ -213,7 +420,27 @@ def _years(value):
 
 
 def _pair(value, sep="-"):
-    """A pair of whole numbers as [a, b] or 'a-b', returned as a tuple."""
+    """Check a pair of whole numbers and return it as a tuple.
+
+    The pair is written ``[a, b]`` or as text ``"a-b"`` (with `sep` between the numbers).
+
+    Parameters
+    ----------
+    value : str or sequence of int
+        The raw value from the YAML file.
+    sep : str, default "-"
+        The separator of the text form (used inside a regular expression).
+
+    Returns
+    -------
+    tuple of (int, int)
+        The pair ``(a, b)``.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if isinstance(value, str):
         match = re.fullmatch(rf"\s*(\d+)\s*{sep}\s*(\d+)\s*", value)
         if match:
@@ -224,66 +451,225 @@ def _pair(value, sep="-"):
 
 
 def _windows(value):
-    """A list of [first, last] day pairs (or 'first-last' strings), returned as a tuple of tuples."""
+    """Check a list of day windows and return it as a tuple of pairs.
+
+    Each window is ``[first, last]`` or ``"first-last"`` (see `_pair`); the list must not be empty.
+
+    Parameters
+    ----------
+    value : sequence
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of tuple of (int, int)
+        The ``(first, last)`` windows, in the order given.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, (list, tuple)) or not value:
         raise ValueError
     return tuple(_pair(v) for v in value)
 
 
 def _integers(value):
-    """A non-empty list of whole numbers, returned as a tuple."""
+    """Check a non-empty list of whole numbers and return it as a tuple.
+
+    Parameters
+    ----------
+    value : sequence of int
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of int
+        The numbers, in the order given.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, (list, tuple)) or not value or not all(_is_int(v) for v in value):
         raise ValueError
     return tuple(value)
 
 
 def _texts(value):
-    """A list of text, returned as a tuple."""
+    """Check a list of text and return it as a tuple.
+
+    Parameters
+    ----------
+    value : sequence of str
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of str
+        The texts, in the order given (possibly none).
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
         raise ValueError
     return tuple(value)
 
 
 def _paths(value):
-    """A list of paths with ${ENV_VAR} expanded, returned as a tuple."""
+    """Check a list of paths and return them expanded as a tuple.
+
+    A value that is not a list of text raises `ValueError` (see `_texts`).
+
+    Parameters
+    ----------
+    value : sequence of str
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of str
+        The paths with ``${ENV_VAR}`` references expanded.
+    """
     return tuple(_path(v) for v in _texts(value))
 
 
 def _patterns(value):
-    """One file pattern or a list of them, returned as a tuple."""
+    """Check one file pattern or a list of them and return a tuple.
+
+    A value that is not text or a list of text raises `ValueError` (see `_text`, `_texts`).
+
+    Parameters
+    ----------
+    value : str or sequence of str
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of str
+        The patterns.
+    """
     return (_text(value),) if isinstance(value, str) else _texts(value)
 
 
 def _numbers_or_null(value):
-    """A list of numbers or null (no conversion), returned as a tuple."""
+    """Check a list of numbers or null (no conversion) and return it as a tuple.
+
+    Parameters
+    ----------
+    value : sequence
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of (int or float or None)
+        The items, in the order given.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, (list, tuple)) or not all(v is None or _is_number(v) for v in value):
         raise ValueError
     return tuple(value)
 
 
 def _dims(value):
-    """A mapping of canonical dimension names (init_time, step, member, lat, lon) to the file's names."""
+    """Check a mapping of canonical dimension names to the names in the files.
+
+    The keys are ``init_time``, ``step``, ``member``, ``lat``, ``lon``, ``unit`` or ``time``; the values are
+    non-empty text.
+
+    Parameters
+    ----------
+    value : dict
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    dict of str to str
+        A copy of the mapping.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, dict) or not all(k in DIM_NAMES + ("time",) and isinstance(v, str) and v for k, v in value.items()):
         raise ValueError
     return dict(value)
 
 
 def _paths_list(value):
-    """A list with one list of paths per model, returned as a tuple of tuples."""
+    """Check a list with one list of paths per model and return a tuple of tuples.
+
+    Parameters
+    ----------
+    value : sequence of sequence of str
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of tuple of str
+        The paths of each model, with ``${ENV_VAR}`` references expanded.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, (list, tuple)):
         raise ValueError
     return tuple(_paths(v) for v in value)
 
 
 def _dims_list(value):
-    """A list with one dims mapping (or null) per model, returned as a tuple."""
+    """Check a list with one dims mapping (or null) per model and return a tuple.
+
+    Parameters
+    ----------
+    value : sequence of (dict or None)
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    tuple of (dict or None)
+        The mappings (see `_dims`), None where the model has none.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, (list, tuple)):
         raise ValueError
     return tuple(None if v is None else _dims(v) for v in value)
 
 
 def _members(value):
-    """'All', a range such as '0-9', or a list of whole numbers (returned as a tuple)."""
+    """Check the ensemble members: ``"All"``, a range such as ``"0-9"``, or a list of whole numbers.
+
+    Parameters
+    ----------
+    value : str or sequence of int
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    str or tuple of int
+        The text for ``"All"`` or a range (unchanged), else the numbers as a tuple.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if isinstance(value, str):
         if value == "All" or re.fullmatch(r"\s*\d+\s*-\s*\d+\s*", value):
             return value
@@ -292,7 +678,23 @@ def _members(value):
 
 
 def _cells(value):
-    """A list of [lat, lon] pairs, returned as a list of tuples."""
+    """Check a list of ``[lat, lon]`` pairs and return a list of tuples.
+
+    Parameters
+    ----------
+    value : sequence of sequence of float
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    list of tuple of (float, float)
+        The cells, in the order given.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, (list, tuple)) or not all(
             isinstance(c, (list, tuple)) and len(c) == 2 and all(_is_number(v) for v in c) for c in value):
         raise ValueError
@@ -300,7 +702,23 @@ def _cells(value):
 
 
 def _thresholds(value):
-    """A mapping of threshold names to 'path.nc:variable' text, a table file, or a number of mm."""
+    """Check a mapping of threshold names to ``"path.nc:variable"`` text, a table file, or a number of mm.
+
+    Parameters
+    ----------
+    value : dict
+        The raw value from the YAML file.
+
+    Returns
+    -------
+    dict of str to (str or float)
+        A copy of the mapping.
+
+    Raises
+    ------
+    ValueError
+        The value does not have the expected form.
+    """
     if not isinstance(value, dict) or not all(isinstance(k, str) and (isinstance(v, str) or _is_number(v))
                                               for k, v in value.items()):
         raise ValueError
@@ -328,10 +746,27 @@ _MASK_CONDITION_KEYS = ("file", "variable", "above", "below")
 
 
 def _mask(value):
-    """A mask section: a mapping of land, country, file, variable, keep_value, condition, cell_rule, ...
+    """Check a ``mask:`` section and return the keys given.
 
-    Returns a plain mapping of the keys given (country always as a list, file paths with ${ENV_VAR} expanded).
-    A bare ValueError message explains what is wrong.
+    The section is a mapping of ``land``, ``country``, ``file``, ``variable``, ``keep_value``, ``condition``,
+    ``cell_rule``, ``overlap_fraction`` and ``resolution`` (see `MASK_KEYS`); it must select something and
+    ``variable`` and ``keep_value`` need ``file``.
+
+    Parameters
+    ----------
+    value : dict
+        The raw section.
+
+    Returns
+    -------
+    dict
+        The keys given, normalised (``country`` always a list, file paths with ``${ENV_VAR}`` expanded).
+
+    Raises
+    ------
+    ValueError
+        The section is not a mapping, has an unknown key or an invalid value, or selects nothing; the message says what
+        is wrong.
     """
     if not isinstance(value, dict):
         raise ValueError(f"expected a mapping with {', '.join(MASK_KEYS)}")
@@ -387,11 +822,29 @@ def _mask(value):
 
 
 UNIT_MODES = ("cells", "regrid", "cell_transform")
-"""How rain reaches the units (`units.mode`)."""
+"""How rain reaches the units (``units.mode``)."""
 
 
 def _unit_mode(value):
-    """One of 'cells', 'regrid', 'cell_transform', or a mapping of source name ('observations', a model's name, '*') to one."""
+    """Check a ``units.mode``: one of `UNIT_MODES`, or a mapping of source name to one.
+
+    The source is ``"observations"``, a model's name or ``"*"``.
+
+    Parameters
+    ----------
+    value : str or dict of str to str
+        The raw mode.
+
+    Returns
+    -------
+    str or dict of str to str
+        The mode, or a copy of the mapping.
+
+    Raises
+    ------
+    ValueError
+        The value is not a mode or a non-empty mapping of names to modes.
+    """
     if isinstance(value, str) and value in UNIT_MODES:
         return value
     if isinstance(value, dict) and value and all(isinstance(k, str) and v in UNIT_MODES for k, v in value.items()):
@@ -400,7 +853,18 @@ def _unit_mode(value):
 
 
 def _anything(value):
-    """Any value."""
+    """Accept any value.
+
+    Parameters
+    ----------
+    value : object
+        The raw value.
+
+    Returns
+    -------
+    object
+        The value, unchanged.
+    """
     return value
 
 
@@ -438,6 +902,7 @@ KINDS: dict[str, tuple[str, Callable]] = {
 """Value kinds: a description of the form expected and the function that checks and normalises a value."""
 
 _SIX_BINS = ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30))
+"""The default day bins: six of five days."""
 _TOGGLES = (
     ("save_fig", "write figures (PNG/PDF)", True),
     ("save_nc_spatial_far_mr_mae", "save the spatial FAR, MR and MAE as NetCDF", True),
@@ -454,10 +919,18 @@ _TOGGLES = (
     ("show_plot", "show each model's plot interactively", False),
     ("show_panel", "show the panel plot interactively", False),
 )
+"""The yes/no keys of the ``output`` section: ``(key, help, default)``."""
 
 
 def _fields() -> tuple[Field, ...]:
-    """Build the table of every config key."""
+    """Build the table of every config key.
+
+    Returns
+    -------
+    tuple of Field
+        Every key, in documentation order: top-level keys, then the observations, reference, onset, units, blend,
+        evaluation, metrics and output sections.
+    """
     top = [
         Field("project_name", "str", "name shown in the run banner", "HCWF run"),
         Field("dataset_files", "paths", "YAML files describing your datasets, referenced by id with `dataset:`", ()),
@@ -701,33 +1174,69 @@ def _fields() -> tuple[Field, ...]:
 FIELDS = _fields()
 """Every config key, in documentation order."""
 BY_KEY = {f.key: f for f in FIELDS}
+"""The `Field` of each flat key."""
 BY_PATH = {(f.section, f.nested_name): f for f in FIELDS if f.section}
+"""The `Field` of each key written nested, by ``(section, name)``."""
 SPECIAL_SUBKEYS = {"observations": ("dataset", "units", "unit_cvt", "dims", "paths", "years"),
                    "reference": ("dataset", "units")}
 """Section entries that are not config keys: the dataset file entry to take values from, units, dims, listed files."""
 MODEL_ENTRY_KEYS = ("dataset", "name", "path", "paths", "years", "file_pattern", "variable", "units", "unit_cvt", "dims",
                     "lead_label", "accumulation", "daily_boundary", "members")
-"""Keys of one entry of the `models:` list."""
+"""Keys of one entry of the ``models:`` list."""
 
 
 BLEND_KEYS = tuple(f.key for f in FIELDS if f.section == "blend")
-"""The flat keys of the `blend:` section; a config that sets any of them trains a blend."""
+"""The flat keys of the ``blend:`` section; a config that sets any of them trains a blend."""
 
 
 def has_blend(config) -> bool:
-    """Whether a flat config (or any mapping of flat keys) has a `blend:` section, i.e. sets any of its keys."""
+    """Tell whether a flat config has a ``blend:`` section, i.e. sets any of its keys.
+
+    Parameters
+    ----------
+    config : collections.abc.Mapping
+        A flat config, or any mapping of flat keys.
+
+    Returns
+    -------
+    bool
+        True when any key of `BLEND_KEYS` is present and not None.
+    """
     return any(config.get(key) is not None for key in BLEND_KEYS)
 
 
 def section_names(section: str) -> list[str]:
-    """The names a section accepts."""
+    """Return the names a section accepts.
+
+    Parameters
+    ----------
+    section : str
+        A key of `SECTIONS`.
+
+    Returns
+    -------
+    list of str
+        For ``models`` the keys of `MODEL_ENTRY_KEYS`; otherwise the names of the section's fields followed by its
+        `SPECIAL_SUBKEYS`.
+    """
     if section == "models":
         return list(MODEL_ENTRY_KEYS)
     return [f.nested_name for f in FIELDS if f.section == section] + list(SPECIAL_SUBKEYS.get(section, ()))
 
 
 def _where(name: str) -> str:
-    """Where a bare key name belongs when written at the top level by mistake, e.g. 'section observations'."""
+    """Say where a bare key name belongs when it is written at the top level by mistake.
+
+    Parameters
+    ----------
+    name : str
+        The key.
+
+    Returns
+    -------
+    str
+        The sections that accept it, comma separated (``"observations, models"``), or an empty string.
+    """
     homes = [f.section for f in FIELDS if f.section and f.nested_name == name]
     if name in MODEL_ENTRY_KEYS:
         homes.append("models")
@@ -749,7 +1258,22 @@ REMOVED_KEYS = {
 
 
 def unknown_key_message(name: str, section: str | None = None) -> str:
-    """Error text for an unknown key, with a 'did you mean' suggestion and where it may belong."""
+    """Return the error text for an unknown key.
+
+    The text carries a "did you mean" suggestion (see `hcwf.config.datasets.suggest`) and where the key may belong.
+
+    Parameters
+    ----------
+    name : str
+        The unknown key.
+    section : str, optional
+        The section it was written in; None for a top-level key.
+
+    Returns
+    -------
+    str
+        The message.
+    """
     if section:
         candidates = section_names(section)
         return (f"unknown key '{section}.{name}'.{suggest(name, candidates)} "
@@ -767,16 +1291,28 @@ def unknown_key_message(name: str, section: str | None = None) -> str:
 def flatten_sections(raw: dict, errors: list[str]) -> tuple[dict, dict, dict]:
     """Flatten a YAML mapping to flat config keys.
 
-    Returns (flat, origin, special): flat holds the raw values by flat key, origin the path each
-    was written under (for messages), special the catalog-aware blocks {"observations": {...},
-    "reference": {...}, "models": [...] or None}. Problems are appended to errors.
+    Parameters
+    ----------
+    raw : dict
+        The mapping read from YAML: flat keys and sections.
+    errors : list of str
+        Receives a message for each problem (unknown keys, a key set twice, a section that is not a mapping).
+
+    Returns
+    -------
+    flat : dict
+        The raw values by flat key.
+    origin : dict of str to str
+        The path each flat key was written under, for messages.
+    special : dict
+        The catalog-aware blocks: ``{"observations": dict, "reference": dict, "models": list or None}``.
     """
     flat: dict = {}
     origin: dict = {}
     special: dict = {"observations": {}, "reference": {}, "models": None}
 
     def put(field: Field, value, written: str):
-        """Store a raw value under its flat key, once."""
+        """Store a raw value under its flat key, once; report a second setting in `errors`."""
         if field.key in flat:
             errors.append(f"'{written}' sets {field.key} again; it is already set by '{origin[field.key]}'. "
                           "Fix: give it once")
@@ -819,7 +1355,24 @@ def flatten_sections(raw: dict, errors: list[str]) -> tuple[dict, dict, dict]:
 
 
 def normalise_value(field: Field, value, written: str, errors: list[str]):
-    """Check one value against its field and return it in HCWF's form; a problem is appended to errors."""
+    """Check one value against its field and return it in HCWF's form.
+
+    Parameters
+    ----------
+    field : Field
+        The key's field.
+    value : object
+        The raw value.
+    written : str
+        The key as written, for messages.
+    errors : list of str
+        Receives a message when the value is not valid.
+
+    Returns
+    -------
+    object
+        The normalised value; None for a null value and, with a message in `errors`, for an invalid one.
+    """
     if value is None:
         if field.nullable or field.kind == "any":
             return None
@@ -841,7 +1394,22 @@ def normalise_value(field: Field, value, written: str, errors: list[str]):
 
 
 def normalise(flat: dict, origin: dict, errors: list[str]) -> dict:
-    """Normalise every given value; keys that failed are dropped (the error is in errors)."""
+    """Normalise every given value.
+
+    Parameters
+    ----------
+    flat : dict
+        The raw values by flat key.
+    origin : dict of str to str
+        The path each key was written under (see `flatten_sections`).
+    errors : list of str
+        Receives a message for each invalid value.
+
+    Returns
+    -------
+    dict
+        The normalised values; a key that failed is dropped.
+    """
     out = {}
     for key, value in flat.items():
         field = BY_KEY[key]
@@ -853,7 +1421,23 @@ def normalise(flat: dict, origin: dict, errors: list[str]) -> dict:
 
 
 def apply_defaults(config: dict, errors: list[str], skip=()) -> dict:
-    """Fill defaults into config (a new dict); missing required keys (except those in skip) go to errors."""
+    """Fill the defaults into a config.
+
+    Parameters
+    ----------
+    config : dict
+        The normalised values by flat key.
+    errors : list of str
+        Receives a message for each missing required key.
+    skip : iterable of str, default ()
+        Required keys that may stay missing without an error.
+
+    Returns
+    -------
+    dict
+        A new dict with the default of every key left out (callable defaults are called with the dict built so far);
+        keys with ``fill=False`` stay out.
+    """
     out = dict(config)
     for field in FIELDS:
         if field.key in out:
@@ -869,7 +1453,20 @@ def apply_defaults(config: dict, errors: list[str], skip=()) -> dict:
 
 
 def raise_errors(errors: list[str], source: str) -> None:
-    """Raise one ConfigSchemaError listing every error, if there are any."""
+    """Raise one error listing every problem found, if there are any.
+
+    Parameters
+    ----------
+    errors : list of str
+        The messages collected.
+    source : str
+        What was read (a file name), named in the message.
+
+    Raises
+    ------
+    ConfigSchemaError
+        `errors` is not empty.
+    """
     if errors:
         report = "\n".join(f"  • {e}" for e in errors)
         raise ConfigSchemaError(f"Invalid config {source}:\n{report}")

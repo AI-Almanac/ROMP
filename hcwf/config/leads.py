@@ -1,7 +1,10 @@
-"""Shorten the lead window so that every forecast search sees the whole rule (no CENSORED results).
+"""Shorten the lead window so that every forecast search sees the whole rule (no ``CENSORED`` results).
 
-A candidate on lead k needs the leads up to k + R - 1, where R is how many days
-from the candidate the definition reads; the last usable lead is n_leads - R + 1.
+A candidate on lead ``k`` needs the leads up to ``k + R - 1``, where ``R`` is how many days
+from the candidate the definition reads; the last usable lead is ``n_leads - R + 1``. `apply_lead_window` clips the
+flat config's windows and bins to that lead, using `hcwf.config.onset` for the reach of the definition and
+`hcwf.config.model.evaluation_years` for the year whose file is counted; `hcwf.config.build` calls it when it finishes
+a config.
 """
 from __future__ import annotations
 
@@ -18,12 +21,38 @@ from hcwf.errors import OnsetConfigError
 
 
 def usable_last_lead(n_leads: int, reach: int) -> int:
-    """The last lead a candidate can be on when the rule reads `reach` days from the candidate."""
+    """Return the last lead a candidate can be on when the rule reads `reach` days from the candidate.
+
+    Parameters
+    ----------
+    n_leads : int
+        The number of leads of the forecasts.
+    reach : int
+        The days from the candidate that the definition reads.
+
+    Returns
+    -------
+    int
+        ``n_leads - reach + 1`` (below 1 when no lead can be searched).
+    """
     return n_leads - reach + 1
 
 
 def available_years(folder: str, pattern: str) -> list[int]:
-    """The years that have a file in `folder` named by `pattern` (a format string with the year): [] when none are found."""
+    """Return the years that have a file in `folder` named by `pattern`.
+
+    Parameters
+    ----------
+    folder : str
+        The folder of the yearly files; a folder that does not exist has no years.
+    pattern : str
+        The file name as a format string with the year placeholder, e.g. ``"{}.nc"``.
+
+    Returns
+    -------
+    list of int
+        The years found, ascending; empty when none are found.
+    """
     if not os.path.isdir(folder):
         return []
     found = re.compile("^" + re.sub(r"\\\{[^}]*\\\}", lambda _: r"(\d{4})", re.escape(pattern)) + "$")
@@ -31,14 +60,45 @@ def available_years(folder: str, pattern: str) -> list[int]:
 
 
 def _years_text(years: list[int]) -> str:
-    """The years as text for a message: "2006-2020" for a run of years, else the list."""
+    """Return the years as text for a message: ``"2006-2020"`` for a run of years, else the list.
+
+    Parameters
+    ----------
+    years : list of int
+        The years, ascending.
+
+    Returns
+    -------
+    str
+        The text; ``"none found"`` when the list is empty.
+    """
     if not years:
         return "none found"
     return f"{years[0]}-{years[-1]}" if years == list(range(years[0], years[-1] + 1)) else ", ".join(map(str, years))
 
 
 def count_leads(dic: dict, index: int) -> int:
-    """Number of forecast leads (steps of at least 1) of model_list[index]: from the first year's file, or from the zarr store."""
+    """Count the forecast leads (steps of at least 1) of ``model_list[index]``.
+
+    The count is read from the first evaluated year's file, or from the zarr store.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    index : int
+        The model's position in ``model_list``.
+
+    Returns
+    -------
+    int
+        The number of steps that are 1 or more.
+
+    Raises
+    ------
+    OnsetConfigError
+        No year is evaluated, or the first year's file does not exist.
+    """
     from hcwf.config.datasets import is_zarr
     from hcwf.io.stores import open_store
 
@@ -66,16 +126,47 @@ def count_leads(dic: dict, index: int) -> int:
 
 
 def _clip(pairs, last: int):
-    """Indices kept and the windows clipped to `last`; windows starting after it are dropped."""
+    """Clip windows to the lead `last`; windows starting after it are dropped.
+
+    Parameters
+    ----------
+    pairs : iterable of tuple of (int, int)
+        The ``(first, last)`` lead days of each window or bin.
+    last : int
+        The last usable lead.
+
+    Returns
+    -------
+    tuple of (list of int, tuple of tuple of (int, int))
+        The indices kept and the clipped ``(first, last)`` pairs.
+    """
     kept = [i for i, (a, _) in enumerate(pairs) if a <= last]
     return kept, tuple((pairs[i][0], min(pairs[i][1], last)) for i in kept)
 
 
 def apply_lead_window(dic: dict, n_leads=count_leads) -> dict:
-    """Clip max_forecast_day, verification_window_list, tolerance_days_list and day_bins to the usable leads.
+    """Clip ``max_forecast_day``, ``verification_window_list``, ``tolerance_days_list`` and ``day_bins`` to the usable leads.
 
-    The run uses the shortest usable window over the models; the
-    printable lines (one per model) go to dic["onset_lead_lines"] and the window to dic["lead_window"].
+    The run uses the shortest usable window over the models; the printable lines (one per model) go to
+    ``dic["onset_lead_lines"]`` and the window to ``dic["lead_window"]``.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config, changed in place.
+    n_leads : callable, default `count_leads`
+        ``n_leads(dic, index)`` gives the number of leads of the model at `index`; a test passes its own.
+
+    Returns
+    -------
+    dict
+        `dic`.
+
+    Raises
+    ------
+    OnsetConfigError
+        The forecasts are too short for the definition, or every verification window starts after the last usable
+        lead.
     """
     setup = onset_setup(dic)
     reach = forecast_reach(setup)

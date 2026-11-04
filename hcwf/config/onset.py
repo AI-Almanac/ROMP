@@ -1,7 +1,9 @@
 """Resolve HCWF's onset settings (definition, season, years, day boundary, lead label, backend) from a config dict.
 
-Order of precedence for every setting: the explicit config value, then the
-region's default (hcwf.onset.regions), then an error naming the missing key.
+This module holds `OnsetSetup`, the resolved settings, and `onset_setup`, which builds it from the flat config
+(memoized per run). Order of precedence for every setting: the explicit config value, then the region's default
+(`hcwf.onset.regions`), then an error naming the missing key. `hcwf.config.model` builds the run's setup with it and
+`hcwf.config.leads` reads the reach of the definition from it (`forecast_reach`).
 """
 from __future__ import annotations
 
@@ -18,35 +20,50 @@ from hcwf.onset.model import Definition, DerivedSeasons, FirstPassage
 from hcwf.errors import DefinitionError, RegionError
 
 BACKENDS = ("numba", "reference", "gpu")
+"""The onset engines a config may ask for."""
 FORECAST_BOUNDARY = "00 UTC, labelled by {label}"
-"""Declared day boundary of forecast accumulations: 24 h after a 00 UTC init, labelled per lead_label."""
+"""Declared day boundary of forecast accumulations: 24 h after a 00 UTC init, labelled per ``lead_label``."""
 
 
 class Thresholds(dict):
-    """Named per-cell thresholds ({name: DataArray(lat, lon)}), plus the season climatology of derived seasons."""
+    """Named per-cell thresholds (``{name: DataArray(lat, lon)}``), plus the season climatology of derived seasons."""
 
     season_climatology = None
+    """The season climatology of derived seasons, or None when the definition has none."""
 
 
 @dataclass(frozen=True)
 class OnsetSetup:
-    """The resolved onset settings; sources says where each value came from."""
+    """The resolved onset settings; `sources` says where each value came from."""
 
     definition: Definition
+    """The onset definition, with the overrides and the dry-spell choice applied."""
     season: str
+    """The name of the season searched (a number as text for derived seasons)."""
     threshold_years: tuple[int, int] | None
+    """The ``(first, last)`` years the thresholds are computed from, or None when not needed."""
     threshold_files: tuple[tuple[str, str, str], ...]
+    """The ``(name, path, variable)`` of the thresholds read from files; the variable is None for a table."""
     obs_day_boundary: str
+    """The day boundary of the observations, e.g. ``"00 UTC, labelled by start"``."""
     lead_label: str
+    """How forecast leads are labelled, ``"start"`` or ``"end"``."""
     backend: str
+    """The onset engine in use, one of `BACKENDS` (``"reference"`` when the requested one is not available)."""
     check_alignment: bool
+    """Whether the alignment of the observations and the forecasts is checked."""
     dry_check: str = "on"
+    """``"on"``, ``"off"`` or ``"none in this definition"``: whether the definition's dry-spell vetoes apply."""
     overrides: tuple[str, ...] = field(default=(), compare=False)
+    """The keys of the definition that the config overrides, for the summary lines."""
     forecast_history: str = "none"
+    """``"observed"`` (observed rain before the forecast is used) or ``"none"`` (forecasts are taken as given)."""
     threshold_source: str = "observations"
+    """``"observations"`` or ``"model"``: what computed thresholds are derived from."""
     sources: dict = field(default_factory=dict, compare=False)
+    """Setting name to the text saying where its value came from."""
     threshold_constants: tuple[tuple[str, float], ...] = ()
-    """Thresholds given as a number of mm: (name, mm). `threshold_files` entries without a variable are tables."""
+    """Thresholds given as a number of mm: ``(name, mm)``. `threshold_files` entries without a variable are tables."""
 
     @property
     def uses_thresholds(self) -> bool:
@@ -64,7 +81,13 @@ class OnsetSetup:
         return FORECAST_BOUNDARY.format(label=self.lead_label)
 
     def lines(self) -> list[str]:
-        """Printable summary: one line per setting with where it came from."""
+        """Return a printable summary: one line per setting with where it came from.
+
+        Returns
+        -------
+        list of str
+            The lines, from the definition to the backend, each ending with ``[source]``.
+        """
         d = self.definition
         src = self.sources
         out = []
@@ -83,7 +106,18 @@ class OnsetSetup:
 
 
 def _chain(cfg):
-    """The region named by cfg['region'] and its ancestors (nearest first), or ([], error text)."""
+    """Return the region named by ``cfg["region"]`` and its ancestors, nearest first.
+
+    Parameters
+    ----------
+    cfg : collections.abc.Mapping
+        The flat config.
+
+    Returns
+    -------
+    tuple of (list, str or None)
+        The regions (empty when there is no region or it is unknown) and, then, the text saying why; None otherwise.
+    """
     name = cfg.get("region")
     if not isinstance(name, str):
         return [], "no region is set"
@@ -95,7 +129,20 @@ def _chain(cfg):
 
 
 def _region_value(chain, attr):
-    """The nearest non-None attribute of the region chain, with the region's id."""
+    """Return the nearest non-None attribute of the region chain, with the region's id.
+
+    Parameters
+    ----------
+    chain : list
+        The region and its ancestors, nearest first.
+    attr : str
+        The name of the region attribute.
+
+    Returns
+    -------
+    tuple of (object, str or None)
+        The value and the id of the region it came from; ``(None, None)`` when no region has it.
+    """
     for region in chain:
         value = getattr(region, attr)
         if value is not None:
@@ -104,7 +151,25 @@ def _region_value(chain, attr):
 
 
 def _years(value, key: str) -> tuple[int, int]:
-    """Validate a (first, last) year pair."""
+    """Validate a ``(first, last)`` year pair.
+
+    Parameters
+    ----------
+    value : iterable of int
+        The two years.
+    key : str
+        The config key, for the error message.
+
+    Returns
+    -------
+    tuple of (int, int)
+        The first and last year.
+
+    Raises
+    ------
+    OnsetConfigError
+        `value` is not a pair of years, or the first is after the last.
+    """
     try:
         first, last = (int(v) for v in value)
     except (TypeError, ValueError):
@@ -115,10 +180,26 @@ def _years(value, key: str) -> tuple[int, int]:
 
 
 def _threshold_files(value, definition: Definition):
-    """Validate the thresholds mapping against the definition: (files, constants).
+    """Validate the thresholds mapping against the definition.
 
-    A value is "path.nc:variable" (a grid), a table file without a variable (by unit id), or a number of mm.
-    files are (name, path, variable or None for a table); constants are (name, mm).
+    A value is ``"path.nc:variable"`` (a grid), a table file without a variable (by unit id), or a number of mm.
+
+    Parameters
+    ----------
+    value : dict or None
+        The ``thresholds`` mapping of the config, name to value; empty or None for none.
+    definition : hcwf.onset.model.Definition
+        The definition whose thresholds the names must match.
+
+    Returns
+    -------
+    tuple of (tuple, tuple)
+        The files, as ``(name, path, variable or None for a table)``, and the constants, as ``(name, mm)``.
+
+    Raises
+    ------
+    OnsetConfigError
+        `value` is not a mapping, names a threshold the definition does not use, or has a malformed reference.
     """
     if not value:
         return (), ()
@@ -144,7 +225,23 @@ def _threshold_files(value, definition: Definition):
 
 
 def _backend(requested):
-    """Validate the backend name and fall back to 'reference' (with a warning) when it cannot be loaded."""
+    """Validate the backend name and fall back to ``"reference"`` (with a warning) when it cannot be loaded.
+
+    Parameters
+    ----------
+    requested : str
+        The backend asked for, one of `BACKENDS`.
+
+    Returns
+    -------
+    tuple of (str, str or None)
+        The backend to use and, when it fell back, the text of the warning (None otherwise).
+
+    Raises
+    ------
+    OnsetConfigError
+        `requested` is not one of `BACKENDS`.
+    """
     if requested not in BACKENDS:
         raise OnsetConfigError(f"onset_backend = {requested!r} is unknown. Fix: use one of {', '.join(BACKENDS)}")
     if requested == "reference":
@@ -173,17 +270,61 @@ _SETUP_KEYS = ("onset_definition", "onset_season", "threshold_years", "threshold
 
 
 def setup_key(cfg) -> str:
-    """Text identifying the onset setup of a config (definition mode): equal for equal settings, in any process."""
+    """Return the text identifying the onset setup of a config (definition mode).
+
+    It is equal for equal settings, in any process.
+
+    Parameters
+    ----------
+    cfg : collections.abc.Mapping
+        The flat config.
+
+    Returns
+    -------
+    str
+        The ``repr`` of the values of `_SETUP_KEYS`.
+    """
     return repr([cfg.get(k) for k in _SETUP_KEYS])
 
 
 def onset_setup(cfg) -> OnsetSetup:
-    """Resolve the onset settings of a config mapping (memoized)."""
+    """Resolve the onset settings of a config mapping (memoized).
+
+    Parameters
+    ----------
+    cfg : collections.abc.Mapping
+        The flat config.
+
+    Returns
+    -------
+    OnsetSetup
+        The resolved setup; one per `setup_key` is kept for the run. A setting that is invalid or missing raises
+        ``OnsetConfigError``, see `_definition_setup`.
+    """
     return _cache.get_or_make(setup_key(cfg), lambda: _definition_setup(cfg))
 
 
 def _dry_check(definition: Definition, cfg) -> tuple[Definition, str, str]:
-    """Apply dry_spell_check: the definition to use, "on", "off" or "none in this definition", and its source."""
+    """Apply ``dry_spell_check`` to the definition.
+
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The loaded definition.
+    cfg : collections.abc.Mapping
+        The flat config.
+
+    Returns
+    -------
+    tuple of (hcwf.onset.model.Definition, str, str)
+        The definition to use (without its dry-spell vetoes when the check is off), ``"on"``, ``"off"`` or
+        ``"none in this definition"``, and where the choice came from.
+
+    Raises
+    ------
+    OnsetConfigError
+        ``dry_spell_check`` is not a boolean.
+    """
     wanted = cfg.get("dry_spell_check", True)
     if not isinstance(wanted, bool):
         raise OnsetConfigError(f"dry_spell_check = {wanted!r} must be True or False")
@@ -199,7 +340,29 @@ def _dry_check(definition: Definition, cfg) -> tuple[Definition, str, str]:
 
 
 def _choices(cfg, key, allowed, default):
-    """Validate forecast_history / threshold_source and say where the value came from."""
+    """Validate ``forecast_history`` / ``threshold_source`` and say where the value came from.
+
+    Parameters
+    ----------
+    cfg : collections.abc.Mapping
+        The flat config.
+    key : str
+        The config key.
+    allowed : tuple of str
+        The values allowed.
+    default : str
+        The value used when the config has none.
+
+    Returns
+    -------
+    tuple of (str, str)
+        The value and where it came from (``"default"`` or ``"config <key>"``).
+
+    Raises
+    ------
+    OnsetConfigError
+        The value is not one of `allowed`.
+    """
     value = cfg.get(key)
     if value is None:
         return default, "default"
@@ -209,15 +372,39 @@ def _choices(cfg, key, allowed, default):
 
 
 def history_lookback(definition: Definition) -> int:
-    """How many days before the candidate any requirement or veto of the rule reads (0 if none)."""
+    """Return how many days before the candidate any requirement or veto of the rule reads (0 if none).
+
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The onset definition.
+
+    Returns
+    -------
+    int
+        The look-back in days, 0 or more.
+    """
     compiled = plan_mod.compile(definition)
     firsts = [c.first for c in compiled.conditions if not c.since_start] + [v.first for v in compiled.vetoes]
     return max(0, -min(firsts, default=0))
 
 
 def history_needs_previous_year(setup: OnsetSetup) -> bool:
-    """Whether the observed history of a year may start in the previous year: a wrapping season, or a season start
-    closer to 1 January than the rule's look-back."""
+    """Return whether the observed history of a year may start in the previous year.
+
+    That is the case for a wrapping season, or a season start closer to 1 January than the rule's look-back. It is
+    never the case for derived seasons, or when the forecast history is not ``"observed"``.
+
+    Parameters
+    ----------
+    setup : OnsetSetup
+        The resolved onset setup.
+
+    Returns
+    -------
+    bool
+        True when the previous year's observations are needed.
+    """
     import datetime
 
     seasons = setup.definition.seasons
@@ -232,7 +419,18 @@ def history_needs_previous_year(setup: OnsetSetup) -> bool:
 
 
 def _changed_keys(changes: dict) -> list[str]:
-    """The keys an override changes: top-level names, or the names inside a changed block (e.g. 'reject if')."""
+    """Return the keys an override changes: top-level names, or the names inside a changed block (e.g. ``"reject if"``).
+
+    Parameters
+    ----------
+    changes : dict
+        The ``onset.override`` mapping.
+
+    Returns
+    -------
+    list of str
+        The names of the changed keys.
+    """
     out = []
     for key, value in changes.items():
         out.extend(str(k) for k in value) if isinstance(value, dict) and value else out.append(str(key))
@@ -240,8 +438,25 @@ def _changed_keys(changes: dict) -> list[str]:
 
 
 def _load_definition(cfg, ref):
-    """Load the definition (registry id, file path or inline rule) and apply onset_override; returns it with
-    the list of changed keys."""
+    """Load the definition (registry id, file path or inline rule) and apply ``onset_override``.
+
+    Parameters
+    ----------
+    cfg : collections.abc.Mapping
+        The flat config: ``onset_rule``, ``onset_override`` and ``rain_resolution`` are read.
+    ref : str
+        The registry id or the file path of the definition (ignored with an inline ``onset_rule``).
+
+    Returns
+    -------
+    tuple of (hcwf.onset.model.Definition, tuple of str)
+        The definition and the keys the override changed.
+
+    Raises
+    ------
+    OnsetConfigError
+        The rule or the override is not a mapping, or the definition does not load.
+    """
     import yaml
 
     fine = cfg.get("rain_resolution") == "exact"   # exact rain lets a definition state amounts finer than 0.1 mm
@@ -266,7 +481,25 @@ def _load_definition(cfg, ref):
 
 
 def _definition_setup(cfg) -> OnsetSetup:
-    """Resolve every setting: explicit value, else region default, else an error."""
+    """Resolve every setting: explicit value, else region default, else an error.
+
+    Parameters
+    ----------
+    cfg : collections.abc.Mapping
+        The flat config.
+
+    Returns
+    -------
+    OnsetSetup
+        The resolved setup, with where each setting came from.
+
+    Raises
+    ------
+    OnsetConfigError
+        A setting is missing with no region default, or is invalid: the definition (also given twice), the season,
+        the thresholds and their years, the day boundary, the lead label, the history or threshold source, or
+        a threshold the model's climatology cannot compute.
+    """
     chain, region_problem = _chain(cfg)
     sources: dict = {}
     ref = cfg.get("onset_definition")
@@ -370,7 +603,18 @@ def _definition_setup(cfg) -> OnsetSetup:
 
 
 def forecast_reach(setup: OnsetSetup) -> int:
-    """The largest number of days after the candidate (candidate included) any requirement or veto reads."""
+    """Return the largest number of days after the candidate (candidate included) any requirement or veto reads.
+
+    Parameters
+    ----------
+    setup : OnsetSetup
+        The resolved onset setup.
+
+    Returns
+    -------
+    int
+        The reach in days, 1 or more.
+    """
     compiled = plan_mod.compile(setup.definition)
     reach = 1
     for cond in compiled.conditions:

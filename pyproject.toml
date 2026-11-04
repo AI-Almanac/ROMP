@@ -88,7 +88,6 @@ extend-select = ["D401", "D417"]
 # Packages whose docstrings are not converted yet; keep equal to PENDING in tests/test_docstrings.py (one line each).
 "hcwf/blend/**" = ["D"]
 "hcwf/cli/**" = ["D"]
-"hcwf/config/**" = ["D"]
 "hcwf/figures/**" = ["D"]
 "hcwf/io/**" = ["D"]
 "hcwf/metrics/**" = ["D"]

@@ -1,10 +1,11 @@
 """Convert between the flat config dict and the nested YAML run config; translate the old flat onset keys.
 
-``flat_to_mapping`` turns the flat dict the pipeline uses into the nested mapping of a run YAML
-(sections, a `models:` list); ``render_yaml`` writes a mapping as readable YAML, optionally with
-a comment per value saying where it came from (used for resolved_config.yaml). ``convert_flat_onset``
-is the only reader of the flat onset keys (wet_init, wet_spell, ...) of earlier versions; `hcwf-run convert` uses it
-to write the equivalent onset definition.
+`flat_to_mapping` turns the flat dict the pipeline uses into the nested mapping of a run YAML
+(sections, a ``models:`` list); `render_yaml` writes a mapping as readable YAML, optionally with
+a comment per value saying where it came from (used for ``resolved_config.yaml``). `convert_flat_onset`
+is the only reader of the flat onset keys (``wet_init``, ``wet_spell``, ...) of earlier versions; ``hcwf-run convert``
+uses it to write the equivalent onset definition. The schema (`hcwf.config.schema`) says which key belongs to which
+section; `hcwf.config.Config` uses `plain` and `render_yaml` to write itself.
 """
 from __future__ import annotations
 
@@ -18,19 +19,44 @@ from hcwf.config.datasets import suggest
 from hcwf.errors import ConfigSchemaError
 
 SECTION_ORDER = ("observations", "reference", "models", "onset", "units", "blend", "evaluation", "metrics", "output")
+"""The sections of a run YAML, in the order they are written."""
 INTERNAL_KEYS = ("dataset_report", "config_sources", "lead_window", "onset_lead_lines", "run_paths",
                  "config_file", "cache_dir", "short_names", "run_overrides", "accumulation_detected",
                  "ref_model_accumulation_detected")
 """Keys the loader adds; they are not part of a run config."""
 _MODEL_LISTS = ("model_list", "model_dir_list", "model_var_list", "unit_cvt_list", "file_pattern_list",
                 "model_dims_list", "model_paths_list")
+"""The per-model list keys that `flat_to_mapping` writes as the ``models:`` list."""
 _UNIT_KEYS = ("obs_unit_cvt", "ref_model_unit_cvt")
+"""The multiplier keys that are written as ``units`` of the observations and the reference."""
 _OBS_LISTED = {"obs_paths": "paths", "obs_dims": "dims"}
+"""The flat keys of the observations that are written into the ``observations`` section, by their section name."""
 _MODEL_EXTRA = ("accumulation_list", "daily_boundary_list", "accumulation_detected")
+"""The per-model keys that `flat_to_mapping` writes into each ``models:`` entry itself."""
 
 
 def units_from_cvt(cvt, where: str) -> str:
-    """'mm' or 'm' for an old unit_cvt multiplier (None or 1 -> mm, 1000 -> m); anything else is an error."""
+    """Return the units, ``"mm"`` or ``"m"``, for an old ``unit_cvt`` multiplier.
+
+    ``None`` or 1 is ``"mm"`` and 1000 is ``"m"``; anything else is an error.
+
+    Parameters
+    ----------
+    cvt : float or None
+        The multiplier to mm.
+    where : str
+        The key the multiplier came from, for the error message.
+
+    Returns
+    -------
+    str
+        ``"mm"`` or ``"m"``.
+
+    Raises
+    ------
+    ConfigSchemaError
+        `cvt` is not None, 1 or 1000.
+    """
     if cvt is None or cvt == 1:
         return "mm"
     if cvt == 1000:
@@ -40,7 +66,19 @@ def units_from_cvt(cvt, where: str) -> str:
 
 
 def plain(value):
-    """Tuples to lists and Paths to text, recursively, so the value dumps as plain YAML."""
+    """Convert tuples to lists and paths to text, recursively, so the value dumps as plain YAML.
+
+    Parameters
+    ----------
+    value : object
+        A value, a tuple or list, a dict, a path, or an object with a ``to_mapping`` method (a `hcwf.config.Dataset`
+        or a section object).
+
+    Returns
+    -------
+    object
+        The same structure of lists, dicts and strings; other values are returned unchanged.
+    """
     if hasattr(value, "to_mapping"):
         return plain(value.to_mapping())
     if isinstance(value, (tuple, list)):
@@ -53,10 +91,27 @@ def plain(value):
 
 
 def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict]:
-    """The nested run-config mapping equivalent to a flat config dict, with a comment per path.
+    """Return the nested run-config mapping equivalent to a flat config dict, with a comment per path.
 
-    Returns (mapping, comments) where comments maps a path tuple such as ('onset', 'definition') to the
-    source text of its value. Keys that are not config keys raise ConfigSchemaError with a suggestion.
+    Keys that are not config keys raise ``ConfigSchemaError`` with a suggestion.
+
+    Parameters
+    ----------
+    flat : dict
+        The flat config.
+    sources : dict, optional
+        Flat key to the text telling where its value came from (``config_sources``).
+
+    Returns
+    -------
+    tuple of (dict, dict)
+        The mapping and the comments, which maps a path tuple such as ``("onset", "definition")`` to the source text
+        of its value.
+
+    Raises
+    ------
+    ConfigSchemaError
+        A key of `flat` is neither a config key nor an internal one, or the multiplier of a source is not 1 or 1000.
     """
     sources = sources or {}
     top: dict = {}
@@ -133,7 +188,18 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
 
 
 def _flow(value) -> str:
-    """One value as single-line YAML."""
+    """Dump one value as single-line YAML.
+
+    Parameters
+    ----------
+    value : object
+        A YAML-able value.
+
+    Returns
+    -------
+    str
+        The value in flow style on one line.
+    """
     text = yaml.safe_dump(value, default_flow_style=True, width=10 ** 9, allow_unicode=True)
     if text.endswith("\n...\n"):
         text = text[:-5]
@@ -141,12 +207,27 @@ def _flow(value) -> str:
 
 
 def render_yaml(mapping: dict, comments: dict | None = None, header: str = "") -> str:
-    """Write a run-config mapping as YAML text, one value per line, with `# source` comments where known."""
+    """Write a run-config mapping as YAML text, one value per line, with ``# source`` comments where known.
+
+    Parameters
+    ----------
+    mapping : dict
+        The nested run-config mapping, see `flat_to_mapping`.
+    comments : dict, optional
+        Path tuple to the comment of the value there, as `flat_to_mapping` returns.
+    header : str, default ""
+        Text put first.
+
+    Returns
+    -------
+    str
+        The YAML text, ending with a newline.
+    """
     comments = comments or {}
     lines = [header.rstrip()] if header else []
 
     def note(path):
-        """The trailing comment for a path."""
+        """Return the trailing comment for a path ("" when there is none)."""
         text = comments.get(path)
         return f"  # {text}" if text else ""
 
@@ -166,15 +247,33 @@ def render_yaml(mapping: dict, comments: dict | None = None, header: str = "") -
 
 FLAT_ONSET_KEYS = ("wet_init", "wet_threshold", "wet_spell", "dry_threshold", "dry_spell", "dry_extent",
                    "thresh_file", "thresh_var", "earliest_onset_date", "mok")
-"""The flat onset keys earlier versions read at the top level of a run config; only `hcwf-run convert` reads them now."""
+"""The flat onset keys earlier versions read at the top level of a run config; only ``hcwf-run convert`` reads them now."""
 EXTEND_END_DAYS = 47
-"""The old observed search read rain this many days past end_date; the converted season ends where the last wet spell fit."""
+"""The old observed search read rain this many days past ``end_date``; the converted season ends where the last wet spell fit."""
 THRESHOLD_NAME = "legacy_threshold"
-"""The name the converted definition gives the per-cell threshold of a thresh_file."""
+"""The name the converted definition gives the per-cell threshold of a ``thresh_file``."""
 
 
 def _tenths(flat: dict, key: str) -> int:
-    """The value of `key` in whole tenths of a mm, or an error if it is finer than 0.1 mm."""
+    """Return the value of `key` in whole tenths of a mm.
+
+    Parameters
+    ----------
+    flat : dict
+        The flat config.
+    key : str
+        The key of an amount in mm.
+
+    Returns
+    -------
+    int
+        The amount in tenths of a mm.
+
+    Raises
+    ------
+    ConfigSchemaError
+        The value is not a number, or is finer than 0.1 mm.
+    """
     value = flat[key]
     try:
         tenths = round(float(value) * 10)
@@ -188,12 +287,43 @@ def _tenths(flat: dict, key: str) -> int:
 
 
 def _mm(tenths: int) -> str:
-    """An amount in tenths of a mm as definition text, e.g. 'at least 20 mm'."""
+    """Return an amount in tenths of a mm as definition text, e.g. ``"20 mm"`` or ``"0.5 mm"``.
+
+    Parameters
+    ----------
+    tenths : int
+        The amount in tenths of a mm.
+
+    Returns
+    -------
+    str
+        Whole mm without a decimal, otherwise one decimal.
+    """
     return f"{tenths // 10} mm" if tenths % 10 == 0 else f"{tenths / 10:.1f} mm"
 
 
 def _days(flat: dict, key: str, minimum: int) -> int:
-    """The value of `key` as a whole number of at least `minimum`."""
+    """Return the value of `key` as a whole number of at least `minimum`.
+
+    Parameters
+    ----------
+    flat : dict
+        The flat config.
+    key : str
+        The key of a number of days.
+    minimum : int
+        The smallest value allowed.
+
+    Returns
+    -------
+    int
+        The number of days.
+
+    Raises
+    ------
+    ConfigSchemaError
+        The value is not a whole number of at least `minimum`.
+    """
     value = flat[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value or value < minimum:
         raise ConfigSchemaError(f"{key} = {value!r} must be a whole number of at least {minimum}")
@@ -201,8 +331,26 @@ def _days(flat: dict, key: str, minimum: int) -> int:
 
 
 def _normalised(flat: dict) -> dict:
-    """`flat` without null values and with its dates in the forms the old schema accepted ('YYYY-MM-DD', 'MM-DD',
-    lists, YAML dates) turned into (year, month, day) and (month, day) tuples by the schema's own kinds."""
+    """Return `flat` without null values and with its dates normalised.
+
+    The dates in the forms the old schema accepted (``"YYYY-MM-DD"``, ``"MM-DD"``, lists, YAML dates) are turned into
+    ``(year, month, day)`` and ``(month, day)`` tuples by the schema's own kinds.
+
+    Parameters
+    ----------
+    flat : dict
+        The flat config.
+
+    Returns
+    -------
+    dict
+        A new dict.
+
+    Raises
+    ------
+    ConfigSchemaError
+        A date key does not hold a date.
+    """
     flat = {key: value for key, value in flat.items() if value is not None}
     for key, kind in (("start_date", "date"), ("end_date", "date"), ("earliest_onset_date", "month_day"),
                       ("mok", "month_day")):
@@ -215,11 +363,30 @@ def _normalised(flat: dict) -> dict:
 
 
 def _season_end(end_date, window: int, start: tuple[int, int]) -> datetime.date:
-    """The last day of the season as a month-day (in 2001): end_date plus the old read-ahead, less the wet spell.
+    """Return the last day of the season as a month-day (in 2001): ``end_date`` plus the old read-ahead, less the wet spell.
 
     The old search counted these days in each file's own calendar. A fixed month-day is the same only when no
-    29 February lies in between, so an end_date from 15 January to 28 February is refused; a season that ends after
+    29 February lies in between, so an ``end_date`` from 15 January to 28 February is refused; a season that ends after
     the year turns is kept only when it ends before it starts (a season may wrap into the next year but not exceed it).
+
+    Parameters
+    ----------
+    end_date : tuple of (int, int, int)
+        The old ``end_date`` as ``(year, month, day)``; only the month and day are used.
+    window : int
+        The length of the wet spell, in days.
+    start : tuple of (int, int)
+        The ``(month, day)`` on which the season starts.
+
+    Returns
+    -------
+    datetime.date
+        The last day, in the year 2001.
+
+    Raises
+    ------
+    ConfigSchemaError
+        `end_date` is 29 February, the season end would differ in leap years, or the season is longer than a year.
     """
     days = EXTEND_END_DAYS - (window - 1)
     try:
@@ -242,16 +409,34 @@ def _season_end(end_date, window: int, start: tuple[int, int]) -> datetime.date:
 
 
 def flat_onset_to_rule(flat: dict) -> tuple[dict, dict]:
-    """The onset definition (a mapping, for `onset.rule`) and the `onset.thresholds` the old flat onset keys describe.
+    """Return the onset definition and the ``onset.thresholds`` that the old flat onset keys describe.
 
-    Needs wet_init, wet_spell, dry_spell, dry_extent and end_date (a date in any form the old schema read) and, without
-    thresh_file, wet_threshold; reads start_date (1 January if absent), earliest_onset_date (or its old name mok),
-    thresh_file and thresh_var (required with thresh_file). The rule reproduces the old detection with these
-    differences: dry_threshold was never used and is dropped; the old forecast dry window was one day shorter than the
-    observed one, the observed one (days 2 to dry_extent + 1 after the candidate) is used for both; the season ends
-    where the old observed search ended, the last candidate whose wet spell fit in the data read up to end_date + 47
-    days (a season end after the year turns wraps into the next year). The old run also took forecasts as given
-    (`forecast_history: none`) and labelled leads by `end`; `convert_flat_onset` writes both next to the rule.
+    Needs ``wet_init``, ``wet_spell``, ``dry_spell``, ``dry_extent`` and ``end_date`` (a date in any form the old
+    schema read) and, without ``thresh_file``, ``wet_threshold``; reads ``start_date`` (1 January if absent),
+    ``earliest_onset_date`` (or its old name ``mok``), ``thresh_file`` and ``thresh_var`` (required with
+    ``thresh_file``). The rule reproduces the old detection with these differences: ``dry_threshold`` was never used and
+    is dropped; the old forecast dry window was one day shorter than the observed one, the observed one (days 2 to
+    ``dry_extent + 1`` after the candidate) is used for both; the season ends where the old observed search ended, the
+    last candidate whose wet spell fit in the data read up to ``end_date + 47`` days (a season end after the year turns
+    wraps into the next year). The old run also took forecasts as given (``forecast_history: none``) and labelled leads
+    by ``end``; `convert_flat_onset` writes both next to the rule.
+
+    Parameters
+    ----------
+    flat : dict
+        The flat onset keys (and the dates), see `FLAT_ONSET_KEYS`.
+
+    Returns
+    -------
+    tuple of (dict, dict)
+        The definition mapping, for ``onset.rule``, and the thresholds mapping (empty without ``thresh_file``), for
+        ``onset.thresholds``.
+
+    Raises
+    ------
+    ConfigSchemaError
+        Both ``mok`` and ``earliest_onset_date`` are set, a required key is missing, ``thresh_var`` is missing with
+        ``thresh_file``, or a value is invalid (see `_tenths`, `_days` and `_season_end`).
     """
     flat = _normalised(flat)
     if "mok" in flat:
@@ -293,19 +478,42 @@ def flat_onset_to_rule(flat: dict) -> tuple[dict, dict]:
 
 
 _OLD_RUN_SETTINGS = {"forecast_history": ("forecast_history", "none"), "lead_label": ("model_lead_label", "end")}
-"""onset keys the old flat-key run always used: forecasts as given (no observed rain stitched before them) and leads
-labelled by `end`; the second item is the flat key a config may also write them under."""
+"""The ``onset`` keys the old flat-key run always used: forecasts as given (no observed rain stitched before them) and
+leads labelled by ``end``; the second item is the flat key a config may also write them under."""
 _OLD_YEARS = {"years": "years", "years_clim": "climatology_years"}
-"""Old flat keys for explicit years and their `evaluation` names."""
+"""Old flat keys for explicit years and their ``evaluation`` names."""
 
 
 def convert_flat_onset(source, target, force: bool = False) -> Path:
-    """Write a copy of the run config `source` with its flat onset keys turned into an `onset: {rule: ...}` section.
+    """Write a copy of the run config `source` with its flat onset keys turned into an ``onset: {rule: ...}`` section.
 
-    The keys are the ones earlier versions read at the top level (FLAT_ONSET_KEYS); the rule is checked by loading it
-    as a definition. The old run took forecasts as given and labelled leads by `end`, so `onset.forecast_history: none`
-    and `onset.lead_label: end` are written too unless the config sets them. Old `years` / `years_clim` become
-    `evaluation.years` / `evaluation.climatology_years`. Refuses to overwrite target unless force.
+    The keys are the ones earlier versions read at the top level (`FLAT_ONSET_KEYS`); the rule is checked by loading
+    it as a definition. The old run took forecasts as given and labelled leads by ``end``, so
+    ``onset.forecast_history: none`` and ``onset.lead_label: end`` are written too unless the config sets them. Old
+    ``years`` / ``years_clim`` become ``evaluation.years`` / ``evaluation.climatology_years``. A comment header lists
+    what changed.
+
+    Parameters
+    ----------
+    source : str or pathlib.Path
+        The run config with flat onset keys.
+    target : str or pathlib.Path
+        The file to write.
+    force : bool, default False
+        Overwrite `target` when it exists.
+
+    Returns
+    -------
+    pathlib.Path
+        `target`.
+
+    Raises
+    ------
+    FileExistsError
+        `target` exists and `force` is false.
+    ConfigSchemaError
+        `source` is not a mapping, has no flat onset keys, already has ``onset.definition`` or ``onset.rule``, or
+        its flat keys cannot be converted (see `flat_onset_to_rule`).
     """
     from hcwf.onset import definition as definition_mod
 
