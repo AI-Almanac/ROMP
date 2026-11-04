@@ -7,11 +7,11 @@ reads::
 
     from hcwf.config import Config, Dataset, Onset, Evaluation
     cfg = Config(
-        region="ethiopia",
-        observations=Dataset(path="/data/chirps", variable="precip", units="mm"),
-        models=[Dataset(name="AIFS", path="/data/aifs", units="m")],
-        onset=Onset(definition="icpac", override={"season": {"from": "05-15"}}),
-        evaluation=Evaluation(start_date=(2019, 5, 1), end_date=(2024, 7, 31)),
+        region="<region>",
+        observations=Dataset(path="/path/to/observations", variable="<rain variable>", units="mm"),
+        models=[Dataset(name="<model>", path="/path/to/forecasts", units="m")],
+        onset=Onset(definition="<onset definition>", override={"season": {"from": "<MM-DD>"}}),
+        evaluation=Evaluation(start_date="<YYYY-MM-DD>", end_date="<YYYY-MM-DD>"),
     )
     flat = cfg.to_flat()          # validated and resolved flat dict, as the pipeline uses it
     cfg.to_yaml("run.yaml")       # the same config as a YAML file; Config.from_yaml reads it back
@@ -25,6 +25,7 @@ same name; see `hcwf.config.schema` for each key's type, default and help. Unset
 from __future__ import annotations
 
 import dataclasses
+import re
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,83 @@ UNSET = _Unset()
 """The sentinel of a config key that was not set."""
 
 
+def _prose(text: str) -> str:
+    """Return schema help text with its single backticks made literals.
+
+    The schema writes key names in single backticks; in a docstring they would be object references.
+
+    Parameters
+    ----------
+    text : str
+        The help text.
+
+    Returns
+    -------
+    str
+        The text with every single-backtick span in double backticks.
+    """
+    return re.sub(r"(?<!`)`([^`]+)`(?!`)", r"``\1``", text)
+
+
+def _field_entry(field: schema.Field) -> tuple[str, str]:
+    """Describe a schema field as the type line and the description of a config attribute.
+
+    Parameters
+    ----------
+    field : hcwf.config.schema.Field
+        The schema field of the attribute.
+
+    Returns
+    -------
+    tuple of (str, str)
+        The type line (the field's expected form, with its choices and ``null``) and the description (the help, then the
+        default, ``Required`` or the note that HCWF sets the key itself).
+    """
+    text = _prose(field.help)
+    if field.internal:
+        text += "; set by HCWF, refused in a YAML file"
+    if field.required:
+        text += ". Required."
+    elif field.fill and field.default is not None and not callable(field.default):
+        text += f". Default {field.default!r}."
+    elif not text.endswith("."):
+        text += "."
+    return field.expected, text
+
+
+def _attributes_section(entries: dict[str, tuple[str, str]]) -> str:
+    """Return a NumPy ``Attributes`` section for the given attributes.
+
+    Parameters
+    ----------
+    entries : dict of str to tuple of (str, str)
+        Attribute name to its type line and description.
+
+    Returns
+    -------
+    str
+        The section text, one ``name : type`` line and an indented description per attribute.
+    """
+    lines = ["Attributes", "----------"]
+    for name, (kind, text) in entries.items():
+        lines += [f"{name} : ``{kind}``", f"    {text}"]
+    return "\n".join(lines)
+
+
+def _document(cls: type, entries: dict[str, tuple[str, str]]) -> None:
+    """Append the generated ``Attributes`` section to a config class's docstring.
+
+    Parameters
+    ----------
+    cls : type
+        The config class; every dataclass field must be in ``entries``.
+    entries : dict of str to tuple of (str, str)
+        Attribute name to its type line and description, taken from the schema where it has the key.
+    """
+    names = [f.name for f in dataclasses.fields(cls)]
+    cls.__doc__ = (cls.__doc__ or "").rstrip() + "\n\n" + _attributes_section({n: entries[n] for n in names})
+
+
 @dataclasses.dataclass
 class Dataset:
     """An observation or forecast dataset: where it is and how to read it.
@@ -77,35 +155,20 @@ class Dataset:
     """
 
     path: Any = UNSET
-    """The folder of the files (required unless `paths` lists them)."""
     paths: Any = UNSET
-    """The files to read: names or globs relative to `path`, any number per year (a list of lists, one per year)."""
     years: Any = UNSET
-    """The years whose files to keep (the others are left out)."""
     name: Any = UNSET
-    """The model name used in output files (models only)."""
     dataset: Any = UNSET
-    """The name of an entry of a dataset file (``dataset_files`` in the config)."""
     file_pattern: Any = UNSET
-    """The file name pattern of the yearly files; detected when `UNSET`."""
     variable: Any = UNSET
-    """The name of the rainfall variable in the files; detected when `UNSET`."""
     units: Any = UNSET
-    """The units of the rainfall, ``mm`` or ``m``; detected when `UNSET`."""
     unit_cvt: Any = UNSET
-    """The multiplier to mm of files that declare no units."""
     dims: Any = UNSET
-    """The names of the dimensions in the files, by canonical name; detected when `UNSET`."""
     day_boundary: Any = UNSET
-    """The boundary of the observed day (observations only); detected when `UNSET`."""
     lead_label: Any = UNSET
-    """How the lead dimension is labelled (forecasts only); detected when `UNSET`."""
     accumulation: Any = UNSET
-    """Whether the forecast rain is accumulated over the lead (forecasts only); detected when `UNSET`."""
     daily_boundary: Any = UNSET
-    """The boundary of the forecast day (forecasts only); detected when `UNSET`."""
     members: Any = UNSET
-    """The ensemble members to use (forecasts only); detected when `UNSET`."""
 
     def to_mapping(self) -> dict:
         """Return the keys that are set, as a plain mapping.
@@ -132,23 +195,14 @@ class Mask:
     """
 
     land: Any = UNSET
-    """Keep the Natural Earth land cells."""
     country: Any = UNSET
-    """A country name or a list of names to keep."""
     file: Any = UNSET
-    """A 0/1 NetCDF file (with `variable` and `keep_value`) or a shapefile / GeoJSON to keep."""
     variable: Any = UNSET
-    """The variable of the NetCDF `file` or of the `condition` file."""
     keep_value: Any = UNSET
-    """The value of the NetCDF mask variable that marks the cells to keep."""
     condition: Any = UNSET
-    """A mapping ``{file, variable, above, below}`` that keeps the cells meeting the thresholds."""
     cell_rule: Any = UNSET
-    """``"centre"`` or ``"overlap_fraction"``: how a cell is tested against a shape."""
     overlap_fraction: Any = UNSET
-    """The share of the cell that must overlap with ``cell_rule: overlap_fraction`` (default 0.5)."""
     resolution: Any = UNSET
-    """The Natural Earth resolution: ``"10m"``, ``"50m"`` (default) or ``"110m"``."""
 
     def to_mapping(self) -> dict:
         """Return the keys that are set, as a plain mapping.
@@ -161,6 +215,57 @@ class Mask:
         """
         return {f.name: plain(getattr(self, f.name)) for f in dataclasses.fields(self)
                 if getattr(self, f.name) is not UNSET}
+
+
+def _dataset_entry(kind: str, text: str, choices=None) -> tuple[str, str]:
+    """Describe a `Dataset` attribute: the schema's description of its kind, and a hand-written description.
+
+    The dataset keys are shared by observations and models, so the schema's per-key help (written for one of them) does
+    not fit; the type line still comes from the schema's `hcwf.config.schema.KINDS`.
+
+    Parameters
+    ----------
+    kind : str
+        A key of `hcwf.config.schema.KINDS`.
+    text : str
+        The description of the attribute.
+    choices : tuple, optional
+        The allowed values, if the kind is narrowed to some.
+
+    Returns
+    -------
+    tuple of (str, str)
+        The type line and the description.
+    """
+    return schema.Field("_", kind, "", choices=choices).expected, text
+
+
+_DATASET_ENTRIES = {
+    "path": _dataset_entry("path", "The folder of the files (required unless ``paths`` lists them)."),
+    "paths": _dataset_entry("paths", "The files to read: names or globs relative to ``path``, any number per year (a "
+                                     "list of lists, one per year, for several models)."),
+    "years": _dataset_entry("years", "The years whose files to keep (the others are left out)."),
+    "name": _dataset_entry("str", "The model name used in output files (models only)."),
+    "dataset": _dataset_entry("str", "The name of an entry of a dataset file (``dataset_files`` in the config)."),
+    "file_pattern": _dataset_entry("patterns", "The file name pattern of the yearly files; detected when `UNSET`."),
+    "variable": _dataset_entry("str", "The name of the rainfall variable in the files; detected when `UNSET`."),
+    "units": _dataset_entry("str", "The units of the rainfall; detected when `UNSET`.", choices=("mm", "m")),
+    "unit_cvt": _dataset_entry("number", "The multiplier to mm of files that declare no units."),
+    "dims": _dataset_entry("dims", "The names of the dimensions in the files, by canonical name; detected when "
+                                   "`UNSET`."),
+    "day_boundary": _dataset_entry("str", "The boundary of the observed day (observations only); detected when "
+                                          "`UNSET`."),
+    "lead_label": _dataset_entry("str", "How the lead dimension is labelled (forecasts only); detected when `UNSET`.",
+                                 choices=schema.BY_PATH[("onset", "lead_label")].choices),
+    "accumulation": _dataset_entry("str", "Whether the forecast rain is accumulated over the lead (forecasts only); "
+                                          "detected when `UNSET`."),
+    "daily_boundary": _dataset_entry("str", "The boundary of the forecast day (forecasts only); detected when "
+                                            "`UNSET`."),
+    "members": _dataset_entry("members", "The ensemble members to use (forecasts only); detected when `UNSET`."),
+}
+"""The type line and description of each `Dataset` attribute."""
+_document(Dataset, _DATASET_ENTRIES)
+_document(Mask, {k: (t, _prose(h) + ".") for k, (t, h) in schema.MASK_KEYS.items()})
 
 
 def _section(name: str, extra=()):
@@ -179,15 +284,17 @@ def _section(name: str, extra=()):
         A dataclass named after the section (``Onset``), with one attribute per key, all `UNSET` by default, and a
         ``to_mapping`` method that returns the keys that are set.
     """
-    names = [f.nested_name for f in schema.FIELDS if f.section == name] + list(extra)
+    fields = [f for f in schema.FIELDS if f.section == name]
+    names = [f.nested_name for f in fields] + list(extra)
     cls = dataclasses.make_dataclass(
         name.capitalize(), [(n, Any, dataclasses.field(default=UNSET)) for n in names],
         namespace={"__doc__": f"The ``{name}:`` section of a run config ({schema.SECTIONS[name]}).\n\n"
-                              "One attribute per key: " + ", ".join(f"``{n}``" for n in names)
-                              + ". Unset keys are ``UNSET``.",
+                              "One attribute per key of the section, described by the schema. Unset keys are "
+                              "`UNSET`.",
                    "to_mapping": lambda self: {f.name: plain(getattr(self, f.name)) for f in dataclasses.fields(self)
                                                if getattr(self, f.name) is not UNSET}})
     cls.__module__ = __name__
+    _document(cls, {**{n: _DATASET_ENTRIES[n] for n in extra}, **{f.nested_name: _field_entry(f) for f in fields}})
     return cls
 
 
@@ -352,10 +459,16 @@ Config = dataclasses.make_dataclass(
        ("evaluation", Any, dataclasses.field(default=UNSET)), ("metrics", Any, dataclasses.field(default=UNSET)),
        ("output", Any, dataclasses.field(default=UNSET))],
     bases=(_ConfigMethods,),
-    namespace={"__doc__": "An HCWF run config.\n\nOne attribute per top-level key: "
-               + ", ".join(f"``{k}``" for k in _TOP_KEYS)
-               + ", and the sections ``observations`` (a `Dataset`), ``reference``, ``models`` (a list of `Dataset`), "
-               "``onset``, ``units``, ``blend``, ``evaluation``, ``metrics``, ``output``. Unset keys are ``UNSET`` "
-               "and take their default (or the region's, or are detected from the files) when resolved by "
-               "``to_flat()``."})
+    namespace={"__doc__": "An HCWF run config.\n\nOne attribute per top-level key and per section, described by the "
+               "schema. Unset keys are `UNSET` and take their default (or the region's, or are detected from the "
+               "files) when resolved by ``to_flat()``."})
 Config.__module__ = __name__
+_document(Config, {
+    **{f.key: _field_entry(f) for f in schema.FIELDS if f.section is None},
+    "observations": ("a Dataset", f"The ``observations:`` section: {schema.SECTIONS['observations']}."),
+    "reference": ("a Reference", f"The ``reference:`` section: {schema.SECTIONS['reference']}."),
+    "models": ("a list of Dataset", f"The ``models:`` list: {schema.SECTIONS['models']}, one `Dataset` each."),
+    **{name: (f"an {name.capitalize()}" if name[0] in "oe" else f"a {name.capitalize()}",
+              f"The ``{name}:`` section: {schema.SECTIONS[name]}.")
+       for name in ("onset", "units", "blend", "evaluation", "metrics", "output")},
+})

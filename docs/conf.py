@@ -104,7 +104,9 @@ GoogleDocstring._parse_attribute_docstring = _attribute_docstring_without_inline
 # at the commas into fragments such as "shape (case" and "bin)", which are not objects. Two small patches keep them
 # out of the cross-reference machinery without touching a docstring:
 #   * a shape group is rendered as a literal;
-#   * a "(" or ")" around an object is kept as text, so ``(int, int)`` still links both ``int``.
+#   * a "(" or ")" around an object is kept as text, so ``(int, int)`` still links both ``int``;
+#   * a type line that is one literal (``like this``) is kept whole: the config classes of hcwf.config list each attribute
+#     with the schema's description of the value expected ("a whole number of 1 or more"), which is text, not an object.
 # Everything else (dtype words, array_like, ...) is resolved with ``napoleon_type_aliases`` below.
 import sphinx.ext.napoleon.docstring as _napoleon_docstring  # noqa: E402
 
@@ -134,6 +136,8 @@ def _convert_type_spec_with_shapes(_type, translations=None, debug_location=None
     str
         The reST of the type line.
     """
+    if _type.startswith("``") and _type.endswith("``") and _type.count("``") == 2:
+        return _type  # a free-text type line, written as a literal (the generated attributes of hcwf.config)
     shapes = []
 
     def mark(match):
@@ -252,9 +256,42 @@ html_theme_options = {
 }
 
 # -- Config classes -----------------------------------------------------------------------------------------------------
-# The config classes (`hcwf.config.Config`, its sections) are dataclasses whose every argument defaults to the
-# ``UNSET`` marker (a key that was not set). Their generated signature lists every key "=UNSET", which says nothing
-# the attribute list below it does not; it is shown as ``(**keys)`` instead.
+# The config classes (`hcwf.config.Config`, `hcwf.config.Dataset`, `hcwf.config.Mask`, the section classes) are dataclasses
+# whose every argument defaults to the ``UNSET`` marker (a key that was not set). Three things keep them readable:
+#   * the class docstring ends with an ``Attributes`` section that hcwf/config/__init__.py generates from the schema
+#     (type line, help, default), so ``help(Onset)`` shows it too and the schema stays the one source;
+#   * the generated signature, which would list every key "=UNSET", is shown as ``(**keys)``;
+#   * autodoc would also list each dataclass field as an empty attribute "key = UNSET", a second entry next to the one the
+#     Attributes section makes (and a duplicate-object warning); `_skip_unset_fields` drops those. The hook tests the
+#     value (the ``UNSET`` sentinel, on a class), not the class names, so a new config class needs nothing here.
+
+
+def _skip_unset_fields(app, what, name, obj, skip, options):
+    """Skip a class attribute whose value is the ``UNSET`` sentinel: the Attributes section documents it.
+
+    Parameters
+    ----------
+    app : sphinx.application.Sphinx
+        The application.
+    what : str
+        The kind of object whose member this is.
+    name : str
+        The member's name.
+    obj : object
+        The member.
+    skip : bool
+        Whether autodoc would skip the member.
+    options : dict
+        The autodoc options.
+
+    Returns
+    -------
+    bool or None
+        True for a dataclass field defaulting to ``UNSET``; None to leave autodoc's choice.
+    """
+    from hcwf.config import UNSET
+
+    return True if what == "class" and obj is UNSET else None
 
 
 def _unset_signature(app, what, name, obj, options, signature, return_annotation):
@@ -295,7 +332,7 @@ def _unset_signature(app, what, name, obj, options, signature, return_annotation
 
 
 def setup(app):
-    """Connect the signature hook.
+    """Connect the config-class hooks.
 
     Parameters
     ----------
@@ -303,3 +340,4 @@ def setup(app):
         The application.
     """
     app.connect("autodoc-process-signature", _unset_signature)
+    app.connect("autodoc-skip-member", _skip_unset_fields)
