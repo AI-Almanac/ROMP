@@ -644,7 +644,7 @@ class UnitForecast:
         The member labels (``[0]`` for a single member).
     spec : hcwf.spatial.units.UnitsSpec
         How the cells turn into units.
-    units : hcwf.spatial.units.Units
+    units : hcwf.spatial.units.EvaluationUnits
         The built units.
     positions : numpy.ndarray of int64
         The positions of the kept units among `units`.
