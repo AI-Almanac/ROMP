@@ -161,6 +161,56 @@ def floor_probabilities(p_raw, target_sum, lb: float = MIN_PROB, eps: float = EP
     return out
 
 
+def lead_probabilities(cdf_values) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Turn the CDF at the issue day and at each of the next ``length`` days into the floored probabilities.
+
+    Column 0 of ``cdf_values`` is F(d), column k is F(d + k). The unconditional probability of lead k is
+    F(d + k) - F(d + k - 1) and the conditional one that over 1 - F(d), each floored by `floor_probabilities` to keep
+    its row sum; where (almost) all the mass lies before the issue day the conditional probabilities fall back to the
+    unconditional shape.
+
+    Parameters
+    ----------
+    cdf_values : array_like of float, shape (row, length + 1)
+        The CDF at the issue day and the ``length`` days after it.
+
+    Returns
+    -------
+    conditional : numpy.ndarray of float64, shape (row, length)
+        The conditional probabilities of the leads 1 to ``length``.
+    base : numpy.ndarray of float64, shape (row,)
+        P(onset by the issue day), the unconditional probability of lead 0.
+    unconditional : numpy.ndarray of float64, shape (row, length)
+        The unconditional probabilities of the leads 1 to ``length``.
+    """
+    cdf_values = np.asarray(cdf_values, dtype=float)
+    num = cdf_values[:, 1:] - cdf_values[:, :-1]
+    num = np.maximum(num, 0.0)
+    num = np.where(np.isfinite(num), num, 0.0)
+
+    base_prob = cdf_values[:, 0]
+    unconditional = floor_probabilities(num, num.sum(axis=1))
+
+    denom = 1.0 - base_prob
+    cond = np.empty_like(num)
+    fallback = (~np.isfinite(denom)) | (denom <= EPS)
+    if fallback.any():
+        cond[fallback] = floor_probabilities(num[fallback], num[fallback].sum(axis=1))
+    regular = ~fallback
+    if regular.any():
+        p_raw = num[regular] / denom[regular, None]
+        p_raw = np.maximum(p_raw, 0.0)
+        p_raw = np.where(np.isfinite(p_raw), p_raw, 0.0)
+        target_sum = p_raw.sum(axis=1)
+        empty = (~np.isfinite(target_sum)) | (target_sum <= EPS)
+        cond_regular = np.empty_like(p_raw)
+        cond_regular[empty] = 0.0
+        if (~empty).any():
+            cond_regular[~empty] = floor_probabilities(p_raw[~empty], target_sum[~empty])
+        cond[regular] = cond_regular
+    return cond, base_prob, unconditional
+
+
 def onset_probabilities(kde, issue_days, horizon: int, horizons=None) -> tuple[np.ndarray, np.ndarray]:
     """Compute the conditional and unconditional onset probabilities from one KDE.
 
@@ -211,32 +261,9 @@ def onset_probabilities(kde, issue_days, horizon: int, horizons=None) -> tuple[n
     for length in np.unique(windows[windows > 0]):
         rows = np.flatnonzero(windows == length)
         length = int(length)
-        days = np.arange(1, length + 1)
-        num = cdf(d0[rows, None] + days) - cdf(d0[rows, None] + days - 1)
-        num = np.maximum(num, 0.0)
-        num = np.where(np.isfinite(num), num, 0.0)
-
-        base_prob = cdf(d0[rows])
+        cond, base_prob, uncond = lead_probabilities(cdf(d0[rows, None] + np.arange(length + 1)))
         unconditional[rows, 0] = base_prob
-        unconditional[rows, 1:length + 1] = floor_probabilities(num, num.sum(axis=1))
-
-        denom = 1.0 - base_prob
-        cond = np.empty_like(num)
-        fallback = (~np.isfinite(denom)) | (denom <= EPS)
-        if fallback.any():
-            cond[fallback] = floor_probabilities(num[fallback], num[fallback].sum(axis=1))
-        regular = ~fallback
-        if regular.any():
-            p_raw = num[regular] / denom[regular, None]
-            p_raw = np.maximum(p_raw, 0.0)
-            p_raw = np.where(np.isfinite(p_raw), p_raw, 0.0)
-            target_sum = p_raw.sum(axis=1)
-            empty = (~np.isfinite(target_sum)) | (target_sum <= EPS)
-            cond_regular = np.empty_like(p_raw)
-            cond_regular[empty] = 0.0
-            if (~empty).any():
-                cond_regular[~empty] = floor_probabilities(p_raw[~empty], target_sum[~empty])
-            cond[regular] = cond_regular
+        unconditional[rows, 1:length + 1] = uncond
         conditional[rows, :length] = cond
     return conditional, unconditional
 
@@ -245,10 +272,195 @@ UNITS_PER_TASK = 200
 """Units per process task: enough to amortise a task, few enough to spread."""
 
 
+GRID_POINTS = 512
+"""The number of points of the grid a KDE's CDF is built on."""
+BLOCK_ELEMENTS = 2_000_000
+"""The most (unit, key, lead) elements a block of units computes at once (about 16 MB per float64 array)."""
+FIT_CHUNK = 2048
+"""The most KDE fits evaluated on their grids at once (2048 x 512 float64 is 8 MB per temporary)."""
+
+
+def _cdf_on_days(data: np.ndarray, valid: np.ndarray, first_day: int, n_days: int) -> np.ndarray:
+    """Evaluate the KDE CDFs of many samples at consecutive integer days, like `fit_kde` with `onset_cdf`.
+
+    Each sample is fitted as ``gaussian_kde(x, bw_method="scott")`` and its CDF built as `onset_cdf` does, then
+    interpolated as ``interp1d`` does, with the same operations in the same order as scipy and numpy
+    (samples of equal size are processed together so that every reduction runs over the same elements), so the
+    results equal the per-sample computation bit for bit (with this scipy and numpy). A sample that `fit_kde` would
+    not fit (fewer than `MIN_ONSETS` days, or a singular covariance) gives NaN. The few samples whose variance is
+    so small that rounding could decide whether scipy fits them are left to `fit_kde`.
+
+    Parameters
+    ----------
+    data : numpy.ndarray of float64, shape (fit, day)
+        The sample days of each fit; the entries where ``valid`` is false are ignored.
+    valid : numpy.ndarray of bool, shape (fit, day)
+        Which entries belong to the sample.
+    first_day : int
+        The first day to evaluate.
+    n_days : int
+        The number of consecutive days to evaluate.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (fit, n_days)
+        The CDF at ``first_day`` to ``first_day + n_days - 1``, NaN for a fit that fails.
+    """
+    n_fit = len(data)
+    days = first_day + np.arange(n_days, dtype=float)
+    out = np.full((n_fit, n_days), np.nan)
+    count = valid.sum(axis=1)
+    # each sample's days first, in their order (scipy's dataset), the rest padding
+    packed = np.take_along_axis(data, np.argsort(~valid, axis=1, kind="stable"), axis=1)
+    for n in np.unique(count[count >= MIN_ONSETS]):
+        members = np.flatnonzero(count == n)
+        weights = np.ones(n) / n
+        factor = np.power(1 / np.vecdot(weights, weights), -1.0 / 5.0)   # Scott's factor, neff ** (-1 / (d + 4))
+        weight_sum = weights.sum()
+        fact = weight_sum - 1 * np.sum(weights * weights) / weight_sum      # numpy.cov's normalisation, ddof = 1
+        for start in range(0, len(members), FIT_CHUNK):
+            rows = members[start:start + FIT_CHUNK]
+            sample = np.ascontiguousarray(packed[rows, :n])
+            # per sample, as numpy.cov(aweights=weights) and numpy.std do (numpy's 2-D row sums add in another order)
+            variance, spread = np.empty(len(rows)), np.empty(len(rows))
+            for i in range(len(rows)):
+                one = sample[i:i + 1]
+                centred = one - (np.multiply(one, weights).sum(axis=1) / weight_sum)[:, None]
+                variance[i] = np.dot(centred, (centred * weights).T)[0, 0]
+                spread[i] = np.std(sample[i], ddof=1)
+            variance *= np.true_divide(1, fact)
+            scale = np.abs(sample).max(axis=1)
+            fine = variance > 1e-12 * (scale ** 2 + 1.0)
+            for i in np.flatnonzero(~fine):      # rounding may decide whether scipy fits it: ask scipy
+                kde = fit_kde(sample[i])
+                if kde is not None:
+                    out[rows[i]] = onset_cdf(kde)(days)
+            rows, sample, variance, spread = rows[fine], sample[fine], variance[fine], spread[fine]
+            if not len(rows):
+                continue
+            cho = np.sqrt(variance) * factor
+            bandwidth = factor * spread
+            low = sample.min(axis=1) - 3 * bandwidth
+            high = sample.max(axis=1) + 3 * bandwidth
+            grid = np.linspace(low, high, GRID_POINTS, axis=1)
+            whitening = 1.0 / cho
+            norm = np.power(2 * np.pi, -0.5) / cho
+            whitened_grid = grid * whitening[:, None]
+            whitened = sample * whitening[:, None]
+            pdf = np.zeros_like(grid)
+            for j in range(n):
+                residual = whitened[:, j, None] - whitened_grid
+                pdf += weights[j] * (np.exp(-(residual * residual) / 2.0) * norm[:, None])
+            total = np.array([row.sum() for row in pdf])   # one 1-D sum per row: numpy's 2-D row sums add in another order
+            cdf = np.cumsum(pdf, axis=1) / total[:, None]
+            out[rows] = _interpolate(grid, cdf, days)
+    return out
+
+
+def _interpolate(grid: np.ndarray, cdf: np.ndarray, days: np.ndarray) -> np.ndarray:
+    """Interpolate each row's CDF on its grid at ``days``, as ``interp1d`` does with the end values held outside.
+
+    Parameters
+    ----------
+    grid : numpy.ndarray of float64, shape (fit, point)
+        Each fit's increasing grid.
+    cdf : numpy.ndarray of float64, shape (fit, point)
+        The CDF on each grid.
+    days : numpy.ndarray of float64, shape (day,)
+        The points to evaluate at, the same for every fit.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (fit, day)
+        The interpolated values.
+    """
+    last = grid.shape[1] - 1
+    span = (grid[:, -1] - grid[:, 0])[:, None] / last
+    # numpy.searchsorted(grid, day) (the first point not below the day), found by estimate and correction
+    above = np.clip(np.ceil((days[None, :] - grid[:, :1]) / span), 1, last).astype(np.int64)
+    for _ in range(2):
+        above -= (above > 1) & (np.take_along_axis(grid, above - 1, axis=1) >= days[None, :])
+        above += (above < last) & (np.take_along_axis(grid, above, axis=1) < days[None, :])
+    x_lo, x_hi = np.take_along_axis(grid, above - 1, axis=1), np.take_along_axis(grid, above, axis=1)
+    y_lo, y_hi = np.take_along_axis(cdf, above - 1, axis=1), np.take_along_axis(cdf, above, axis=1)
+    inside = (y_hi - y_lo) / (x_hi - x_lo) * (days[None, :] - x_lo) + y_lo
+    inside = np.where(days[None, :] < grid[:, :1], cdf[:, :1], inside)
+    return np.where(days[None, :] > grid[:, -1:], cdf[:, -1:], inside)
+
+
+def _unit_block(years_by_unit: list, days_by_unit: list, d0: np.ndarray, windows: np.ndarray,
+                key_years: np.ndarray, max_h: int, cv: bool) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the probabilities of some units at every key, all at once.
+
+    Equivalent to `onset_probabilities` on each unit's `fit_kde` (refitted per key year with ``cv``), as arrays over
+    (unit, key year, day) for the CDFs and (unit, key, lead) for the rest.
+
+    Parameters
+    ----------
+    years_by_unit : list of numpy.ndarray of int or None
+        The onset years of each unit (only read with ``cv``).
+    days_by_unit : list of numpy.ndarray of float
+        The onset days of each unit.
+    d0 : numpy.ndarray of int, shape (key,)
+        The issue day of each key.
+    windows : numpy.ndarray of int, shape (key,)
+        The horizon of each key.
+    key_years : numpy.ndarray of int, shape (key,)
+        The year of each key.
+    max_h : int
+        The width of the lead axis.
+    cv : bool
+        Fit each key year's KDE without that year's onset.
+
+    Returns
+    -------
+    conditional : numpy.ndarray of float64, shape (unit, key, max_h)
+        The conditional probabilities.
+    unconditional : numpy.ndarray of float64, shape (unit, key, max_h + 1)
+        The unconditional probabilities.
+    """
+    n_unit, n_key = len(days_by_unit), len(d0)
+    width = max(1, *(len(days) for days in days_by_unit))
+    data = np.full((n_unit, width), np.nan)
+    unit_years = np.zeros((n_unit, width), dtype=np.int64)
+    for u, days in enumerate(days_by_unit):
+        data[u, :len(days)] = days
+        if cv:
+            unit_years[u, :len(days)] = years_by_unit[u]
+    present = ~np.isnan(data)
+    if cv:
+        distinct, year_index = np.unique(key_years, return_inverse=True)
+        valid = present[:, None, :] & (unit_years[:, None, :] != distinct[None, :, None])
+    else:
+        distinct, year_index = np.zeros(1, dtype=np.int64), np.zeros(n_key, dtype=np.int64)
+        valid = present[:, None, :]
+    n_year = len(distinct)
+    first = int(d0.min())
+    n_days = int(d0.max()) - first + max_h + 1
+    fits = _cdf_on_days(np.broadcast_to(data[:, None, :], valid.shape).reshape(-1, width), valid.reshape(-1, width),
+                        first, n_days).reshape(n_unit, n_year, n_days)
+
+    at = (d0 - first)[:, None] + np.arange(max_h + 1)[None, :]
+    cdf = fits[np.arange(n_unit)[:, None, None], year_index[None, :, None], at[None, :, :]]
+    cdf = cdf.reshape(n_unit * n_key, max_h + 1)
+    length = np.tile(windows, n_unit)
+    live = (length > 0) & np.isfinite(cdf[:, 0])
+    conditional = np.full((n_unit * n_key, max_h), np.nan)
+    unconditional = np.full((n_unit * n_key, max_h + 1), np.nan)
+    for size in np.unique(length[live]):
+        rows = np.flatnonzero(live & (length == size))
+        cond, base, uncond = lead_probabilities(cdf[rows, :size + 1])
+        unconditional[rows, 0] = base
+        unconditional[rows, 1:size + 1] = uncond
+        conditional[rows, :size] = cond
+    return conditional.reshape(n_unit, n_key, max_h), unconditional.reshape(n_unit, n_key, max_h + 1)
+
+
 def _unit_task(task: tuple, keys: pd.DataFrame, max_h: int, cv: bool) -> tuple[np.ndarray, np.ndarray]:
     """Compute the probabilities of a run of units at each key (year, d0, window).
 
-    Module-level so that the process pool can pickle it.
+    Module-level so that the process pool can pickle it. The units go through `_unit_block` in blocks that keep
+    the arrays within `BLOCK_ELEMENTS`.
 
     Parameters
     ----------
@@ -269,19 +481,20 @@ def _unit_task(task: tuple, keys: pd.DataFrame, max_h: int, cv: bool) -> tuple[n
         The unconditional probabilities.
     """
     years_by_unit, days_by_unit = task
+    n_unit, n_key = len(days_by_unit), len(keys)
+    conditional = np.full((n_unit, n_key, max_h), np.nan)
+    unconditional = np.full((n_unit, n_key, max_h + 1), np.nan)
+    if n_unit == 0 or n_key == 0:
+        return conditional, unconditional
     d0 = keys["d0"].to_numpy(dtype=int)
     windows = keys["window"].to_numpy(dtype=int)
-    conditional = np.full((len(days_by_unit), len(keys), max_h), np.nan)
-    unconditional = np.full((len(days_by_unit), len(keys), max_h + 1), np.nan)
     key_years = keys["year"].to_numpy(dtype=int)
-    for u, (unit_years, onset_days) in enumerate(zip(years_by_unit, days_by_unit)):
-        if not cv:
-            conditional[u], unconditional[u] = onset_probabilities(fit_kde(onset_days), d0, max_h, windows)
-            continue
-        for year in np.unique(key_years):
-            rows = np.flatnonzero(key_years == year)
-            kde = fit_kde(onset_days[unit_years != year])
-            conditional[u, rows], unconditional[u, rows] = onset_probabilities(kde, d0[rows], max_h, windows[rows])
+    block = max(1, BLOCK_ELEMENTS // (n_key * (max_h + 1)))
+    for start in range(0, n_unit, block):
+        stop = min(start + block, n_unit)
+        conditional[start:stop], unconditional[start:stop] = _unit_block(
+            years_by_unit[start:stop], [np.asarray(days, dtype=float) for days in days_by_unit[start:stop]],
+            d0, windows, key_years, max_h, cv)
     return conditional, unconditional
 
 
@@ -712,12 +925,15 @@ def probabilities_for_issues(onsets: pd.DataFrame, grid: pd.DataFrame, by_year: 
     keys = grid[columns].drop_duplicates().reset_index(drop=True)
     if not by_year:
         keys["year"] = 0
-    units = onsets["id"].unique()
-    grouped = onsets.groupby("id", sort=False)
-    per_unit = [grouped.get_group(u) for u in units]
+    codes, units = pd.factorize(onsets["id"])   # integer unit codes in order of appearance
+    order = np.argsort(codes, kind="stable")    # rows grouped by unit, each unit's rows in their original order
+    edges = np.searchsorted(codes[order], np.arange(len(units) + 1))
+    all_years = onsets["year"].to_numpy(dtype=int)[order]
+    all_days = onsets["onset_day"].to_numpy(dtype=float)[order]
     conditional, unconditional = unit_probabilities(
-        [g["year"].to_numpy(dtype=int) for g in per_unit], [g["onset_day"].to_numpy(dtype=float) for g in per_unit],
-        keys, max_h, cv=cv_by_year, workers=workers)
+        [all_years[a:b] for a, b in zip(edges[:-1], edges[1:])],
+        [all_days[a:b] for a, b in zip(edges[:-1], edges[1:])], keys, max_h, cv=cv_by_year, workers=workers)
+    units = np.asarray(units)
 
     season_day = np.unique(keys["d0"].to_numpy())
     day = np.searchsorted(season_day, keys["d0"].to_numpy())
