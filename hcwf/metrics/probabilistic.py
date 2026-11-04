@@ -25,6 +25,8 @@ Conventions are options, never second implementations:
 
 from __future__ import annotations
 
+import warnings
+
 import numba
 import numpy as np
 import pandas as pd
@@ -436,21 +438,34 @@ def pietra(P: np.ndarray, Y: np.ndarray) -> float:
     return np.nan
 
 
-def skill_score(score, reference):
+def skill_score(score, reference, what: str = "score"):
     """Compute ``1 - score/reference``: positive when the score beats the reference (both scores lower-is-better).
+
+    A zero reference gives NaN, with one warning for the call.
 
     Parameters
     ----------
-    score : float or numpy.ndarray
+    score : float or numpy.ndarray or pandas.Series
         The score being judged.
-    reference : float or numpy.ndarray
+    reference : float or numpy.ndarray or pandas.Series
         The reference score.
+    what : str, default "score"
+        What the reference is, named in the warning (for example ``"fair Brier score"``).
 
     Returns
     -------
-    float or numpy.ndarray
-        The skill score; ``inf``, ``-inf`` or NaN when ``reference`` is 0 (floats follow numpy division).
+    float or numpy.ndarray or pandas.Series
+        The skill score, NaN where ``reference`` is 0.
     """
+    zero = np.asarray(reference == 0)
+    if zero.any():
+        warnings.warn(f"the reference's {what} is zero: skill set to NaN")
+        if isinstance(reference, (pd.Series, pd.DataFrame)):
+            reference = reference.where(~zero)
+        elif np.ndim(reference):
+            reference = np.where(zero, np.nan, reference)
+        else:
+            reference = np.nan
     return 1 - (score / reference)
 
 
@@ -640,7 +655,7 @@ def pooled_skill(cells: pd.DataFrame, baseline: str = "unc_clim_raw") -> pd.Data
     if reference.empty:
         raise ValueError(f"Baseline model '{baseline}' not found in all_cells.")
     reference = reference.iloc[0]
-    pooled["brier_skill"] = 1.0 - (pooled["brier"] / reference["brier"])
-    pooled["rps_skill"] = 1.0 - (pooled["rps"] / reference["rps"])
+    pooled["brier_skill"] = skill_score(pooled["brier"], reference["brier"], "pooled Brier score")
+    pooled["rps_skill"] = skill_score(pooled["rps"], reference["rps"], "pooled RPS")
     pooled["AUC diff"] = (pooled["auc"] - reference["auc"]) * 100.0
     return pooled

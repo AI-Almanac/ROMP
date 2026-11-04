@@ -401,3 +401,20 @@ def test_hcwf_skill_score_against_a_perfect_reference_is_nan_with_a_warning():
     with pytest.warns(UserWarning, match="fair Brier score is zero"):
         skill = score.calculate_skill_scores(brier, {"fair_rps": 0.5}, clim, {"fair_rps": 1.0})
     assert np.isnan(skill["fair_brier_skill_score"]) and skill["fair_rps_skill_score"] == 0.5
+
+
+def test_every_skill_score_has_a_zero_reference_guard():
+    brier = {"fair_brier_score": 0.2, "bin_fair_brier_scores": {"Days 1-5": 0.1}}
+    clim = {"fair_brier_score": 0.4, "bin_fair_brier_scores": {"Days 1-5": 0.0}}
+    with pytest.warns(UserWarning, match="Days 1-5 is zero"):
+        skill = score.calculate_skill_scores(brier, {"fair_rps": 0.5}, clim, {"fair_rps": 0.0})
+    assert np.isnan(skill["fair_rps_skill_score"]) and np.isnan(skill["bin_fair_brier_skill_scores"]["Days 1-5"])
+    assert skill["fair_brier_skill_score"] == 0.5
+    with pytest.warns(UserWarning):
+        got = prob.skill_score(np.array([1.0, 2.0]), np.array([0.0, 4.0]))
+    assert np.isnan(got[0]) and got[1] == 0.5
+    cells = pd.DataFrame({"id": ["ALL", "ALL"], "model": ["a", "b"], "brier": [0.0, 0.1], "rps": [1.0, 0.5],
+                          "auc": [0.5, 0.6]})
+    with pytest.warns(UserWarning, match="pooled Brier score is zero"):
+        pooled = prob.pooled_skill(cells, baseline="a")
+    assert np.isnan(pooled["brier_skill"]).all() and list(pooled["rps_skill"]) == [0.0, 0.5]
