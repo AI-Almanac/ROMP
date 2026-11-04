@@ -1,4 +1,8 @@
-"""Spatial map of climatological onset day of year."""
+"""Spatial map of climatological onset day of year.
+
+`plot_spatial_climatology_onset` draws the climatological onset with `hcwf.figures.field.draw_field` on the basemap
+of `hcwf.figures.visual`, and shares the date formatting of `hcwf.figures.func_map`.
+"""
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -20,8 +24,33 @@ log = logging.getLogger(__name__)
 
 def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=False,
                                    domain_mask=False, rect_box=False):
-    """
-    Plot spatial maps of climatology onset day of year (saved to spec.dir_fig, shown if spec.show_plot)
+    """Plot the map of the climatological onset day of year.
+
+    The figure is saved to ``spec.dir_fig`` (300 dpi) and shown if ``spec.show_plot`` is true.
+
+    Parameters
+    ----------
+    onset_da_dict : dict of str to xarray.DataArray
+        The climatological onset day of year, over ``(lat, lon)`` or ``(unit,)``; only the first entry is drawn.
+    spec : object
+        The run's ``FigureSpec``: ``polygon``, ``dir_fig``, ``region``, ``show_plot`` and what `set_basemap` reads.
+    years_clim : tuple of (int, int)
+        The climatology years, named in the output file.
+    cbar_ssn : bool, default False
+        Use the season colormap of `hcwf.figures.visual.cbar_season`.
+    domain_mask : bool, default False
+        Mask the cells outside the country boundary (grid fields only).
+    rect_box : bool, default False
+        Draw the rectangular boundary box.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+    ax : matplotlib.axes.Axes
+        The axes.
+    plot_path : str
+        The output file path in ``spec.dir_fig`` (raises ``UnboundLocalError`` here when ``spec.dir_fig`` is empty).
     """
     polygon, dir_fig, region = spec.polygon, spec.dir_fig, spec.region
 

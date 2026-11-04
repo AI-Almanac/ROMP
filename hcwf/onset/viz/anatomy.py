@@ -1,9 +1,10 @@
-"""The anatomy plot: daily rain, the candidates the search evaluated and the rolling total (or anomaly) behind its decision.
+"""The anatomy plot: daily rain, the candidates the search evaluated and the rolling total behind its decision.
 
-One figure per Anatomy (hcwf.onset.explain). Panels share the date axis and each has a single y-axis:
-(a) daily rain with the search window, trigger window, dry spells and the onset day; (b) one marker per
-evaluated candidate by outcome; (c) the window total with its threshold, or the cumulative anomaly with
-its minimum. Colours come from hcwf.onset.viz.style roles, never from hard-coded hues.
+One figure per `hcwf.onset.explain.Anatomy`. Panels share the date axis and each has a single y-axis: (a) daily rain
+with the search window, trigger window, dry spells and the onset day; (b) one marker per evaluated candidate by
+outcome; (c) the window total with its threshold, or the cumulative anomaly with its minimum. Colours come from the
+roles of `hcwf.onset.viz.style`, never from hard-coded hues. `anatomy_plot` draws a whole figure; `anatomy_panels` and
+`draw_anatomy` let `hcwf.onset.viz.maps` place the panels in its own layout.
 """
 from __future__ import annotations
 
@@ -23,7 +24,18 @@ _MONTH_STEPS = (1, 2, 3, 5, 7, 10, 14, 21)
 
 
 def _coord_text(location: dict) -> str:
-    """Latitude and longitude as "9.0°N 38.75°E"."""
+    """Format a latitude and longitude as ``"9°N 38.75°E"``.
+
+    Parameters
+    ----------
+    location : dict
+        The coordinates by dim name; ``lat`` and ``lon`` are used when present, in degrees.
+
+    Returns
+    -------
+    str
+        The absolute values in ``%g`` format with a hemisphere letter, joined by a space; empty without either.
+    """
     parts = []
     if "lat" in location:
         parts.append(f"{abs(location['lat']):g}°{'N' if location['lat'] >= 0 else 'S'}")
@@ -33,7 +45,18 @@ def _coord_text(location: dict) -> str:
 
 
 def _title(a: Anatomy) -> str:
-    """Definition and place (plus the year, or the init and member)."""
+    """Return the figure title: the definition and place, plus the year, or the init and member.
+
+    Parameters
+    ----------
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+
+    Returns
+    -------
+    str
+        The parts joined by a spaced hyphen.
+    """
     place = _coord_text(a.location)
     if a.is_forecast:
         member = f", member {a.member}" if a.member is not None else ""
@@ -44,7 +67,18 @@ def _title(a: Anatomy) -> str:
 
 
 def _result_text(a: Anatomy) -> str:
-    """The result in words, without the status icon."""
+    """Return the result in words, without the status icon.
+
+    Parameters
+    ----------
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+
+    Returns
+    -------
+    str
+        For example ``"onset 18 May 2020, lead 3"``.
+    """
     r = a.result
     noun = "forecast" if a.is_forecast else "data"
     lead = f", lead {r.onset_lead}" if r.onset_lead is not None else ""
@@ -60,7 +94,22 @@ def _result_text(a: Anatomy) -> str:
 
 
 def _tick_positions(a: Anatomy, n: int) -> tuple[list[int], list[str]]:
-    """Tick offsets and labels: month starts for long ranges, else a regular day step."""
+    """Return the x ticks: month starts for long ranges, else a regular day step.
+
+    Parameters
+    ----------
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+    n : int
+        The number of days on the axis.
+
+    Returns
+    -------
+    positions : list of int
+        Tick offsets in days from the first plotted day.
+    labels : list of str
+        The date label of each tick.
+    """
     first = int(a.days[0])
     if n > 70:
         positions = [i for i in range(n) if date_ymd(a.date_of(first + i))[2] == 1]
@@ -71,7 +120,18 @@ def _tick_positions(a: Anatomy, n: int) -> tuple[list[int], list[str]]:
 
 
 def _first_total(a: Anatomy):
-    """Index of the first total requirement of the rule, or None when it has none."""
+    """Return the index of the first total requirement of the rule.
+
+    Parameters
+    ----------
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+
+    Returns
+    -------
+    int or None
+        The requirement's ``index``; None when the rule has no total requirement.
+    """
     for c in a.candidates:
         for check in c.checks:
             if check.role == "require" and check.kind == "total":
@@ -80,13 +140,42 @@ def _first_total(a: Anatomy):
 
 
 def _status_label(status: Status, is_forecast: bool, mode: str = "light") -> tuple[str, str, str]:
-    """(colour, icon, label) of a status, with the label saying "data" instead of "forecast" for observations."""
+    """Return the colour, icon and label of a status, saying "data" instead of "forecast" for observations.
+
+    Parameters
+    ----------
+    status : hcwf.onset.model.Status
+        The status.
+    is_forecast : bool
+        Whether the series is a forecast; if not, ``"forecast"`` in the label becomes ``"data"``.
+    mode : {"light", "dark"}, default "light"
+        The colour mode.
+
+    Returns
+    -------
+    tuple of (str, str, str)
+        The hex colour, the icon character and the label.
+    """
     colour, icon, label = style.status_style(status, mode)
     return colour, icon, label if is_forecast else label.replace("forecast", "data")
 
 
 def _washes(ax, a: Anatomy, p: style.Palette, x0: int, handles: dict) -> None:
-    """Search-window, trigger-window and veto-span washes behind the bars."""
+    """Draw the search-window, trigger-window and veto-span washes behind the bars.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    x0 : int
+        Day index of the first plotted day (x is the day index minus `x0`).
+    handles : dict
+        Legend handles by label; this adds the washes drawn.
+    """
     ax.axvspan(a.first_candidate - x0 - 0.5, a.last_candidate - x0 + 0.5, color=p.wash, lw=0, zorder=0)
     handles["Search window"] = Patch(facecolor=p.wash, edgecolor=p.axis, lw=style.HAIRLINE)
     onset = next((c for c in a.candidates if c.state == "T"), None)
@@ -102,7 +191,18 @@ def _washes(ax, a: Anatomy, p: style.Palette, x0: int, handles: dict) -> None:
 
 
 def _vetoing_spells(a: Anatomy) -> list[tuple[int, int, int]]:
-    """Distinct dry spells (first, last, length) that ruled out candidates, in date order."""
+    """Return the distinct dry spells that ruled out candidates, in date order.
+
+    Parameters
+    ----------
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+
+    Returns
+    -------
+    list of tuple of (int, int, int)
+        The day index of the first and last day and the length in days of each spell.
+    """
     seen = {}
     for c in a.candidates:
         spell = c.checks[c.decisive].spell if c.state == "F" and c.checks[c.decisive].role == "veto" else None
@@ -113,7 +213,29 @@ def _vetoing_spells(a: Anatomy) -> list[tuple[int, int, int]]:
 
 def _lane_label(ax, text: str, bars: list, y: float, days_per_inch: float, n: int, ink: dict,
                 only: int | None = None, avoid: tuple = ()) -> None:
-    """Label a baseline lane beside its first bar (or the bar `only`), on whichever side has room."""
+    """Label a baseline lane beside its first bar (or the bar `only`), on whichever side has room.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    text : str
+        The label.
+    bars : list of tuple of (float, float)
+        The ``(left, right)`` x extent of each bar of the lane.
+    y : float
+        The y position of the label.
+    days_per_inch : float
+        The x scale, used to estimate the width of the text.
+    n : int
+        The number of days on the axis.
+    ink : dict
+        The text keyword arguments (size and colour).
+    only : int, optional
+        Index of the bar to label; None labels the first.
+    avoid : tuple of tuple of (float, float), default ()
+        Extra x extents the label must not cover.
+    """
     lo, hi = bars[0] if only is None else bars[only]
     width = len(text) * 8 * 0.56 / 72 * days_per_inch
     others = [b for b in bars if b != (lo, hi)] + list(avoid)
@@ -125,7 +247,23 @@ def _lane_label(ax, text: str, bars: list, y: float, days_per_inch: float, n: in
 
 
 def _rain_panel(ax, a: Anatomy, p: style.Palette, x0: int, n: int, handles: dict) -> None:
-    """Daily rain bars with the lanes, hairlines and direct labels of panel (a)."""
+    """Draw the daily rain bars with the lanes, hairlines and direct labels of panel (a).
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    x0 : int
+        Day index of the first plotted day.
+    n : int
+        The number of days on the axis.
+    handles : dict
+        Legend handles by label; this adds the rain series drawn.
+    """
     x = a.days - x0
     _washes(ax, a, p, x0, handles)
     forecast = a.source == "forecast"
@@ -175,7 +313,23 @@ def _rain_panel(ax, a: Anatomy, p: style.Palette, x0: int, n: int, handles: dict
 
 
 def _forecast_marker(ax, a: Anatomy, p: style.Palette, x0: int, n: int, top: float) -> None:
-    """A hairline where the forecast begins (lead 1), labelled with its date."""
+    """Draw a hairline where the forecast begins (lead 1), labelled with its date.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    x0 : int
+        Day index of the first plotted day.
+    n : int
+        The number of days on the axis.
+    top : float
+        The top of the y axis, in mm, used to place the label.
+    """
     if a.split < int(a.days[0]):
         return
     fx = a.split - x0 - 0.5
@@ -186,7 +340,21 @@ def _forecast_marker(ax, a: Anatomy, p: style.Palette, x0: int, n: int, top: flo
 
 
 def _candidate_panel(ax, a: Anatomy, p: style.Palette, x0: int, handles: dict) -> None:
-    """One marker per evaluated candidate, on a row by how it was decided."""
+    """Draw one marker per evaluated candidate, on a row by how it was decided.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    x0 : int
+        Day index of the first plotted day.
+    handles : dict
+        Legend handles by label; this adds the markers drawn.
+    """
     rows = {"require": 0, "veto": 1}
     for c in a.candidates:
         x = c.day - x0
@@ -212,6 +380,15 @@ def _headroom(ax, values: np.ndarray, floor: float | None = None) -> None:
     """Set y-limits that keep a margin around the data so markers on the extremes are not cut by the axes edge.
 
     With a floor (the rolling totals are never below 0) the ticks below it are dropped.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    values : numpy.ndarray of float64
+        The values plotted (``NaN`` allowed); the limits cover their finite range.
+    floor : float, optional
+        A value the range always includes; the ticks below it are dropped.
     """
     finite = values[np.isfinite(values)]
     lo, hi = (float(finite.min()), float(finite.max())) if len(finite) else (0.0, 1.0)
@@ -224,7 +401,21 @@ def _headroom(ax, values: np.ndarray, floor: float | None = None) -> None:
 
 
 def _total_panel(ax, a: Anatomy, p: style.Palette, x0: int, index: int) -> None:
-    """The rolling window total of the first total requirement for every candidate, against its threshold."""
+    """Draw the rolling window total of the first total requirement for every candidate, against its threshold.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    x0 : int
+        Day index of the first plotted day.
+    index : int
+        The ``index`` of the total requirement to plot.
+    """
     days, values, check0 = [], [], None
     for c in a.candidates:
         check = next(ch for ch in c.checks if ch.role == "require" and ch.index == index)
@@ -247,7 +438,19 @@ def _total_panel(ax, a: Anatomy, p: style.Palette, x0: int, index: int) -> None:
 
 
 def _curve_panel(ax, a: Anatomy, p: style.Palette, x0: int) -> None:
-    """The cumulative anomaly with its minimum marked and labelled."""
+    """Draw the cumulative anomaly with its minimum marked and labelled.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw into.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy (its ``curve`` must be set).
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    x0 : int
+        Day index of the first plotted day.
+    """
     c = a.curve
     ax.plot(c.days - x0, c.cumulative_mm, color=p.observed, lw=style.LINE_WIDTH, zorder=3)
     ax.axhline(0, color=p.ink_muted, lw=style.HAIRLINE, zorder=2)
@@ -262,7 +465,21 @@ def _curve_panel(ax, a: Anatomy, p: style.Palette, x0: int) -> None:
 
 
 def _subtitle(fig: Figure, a: Anatomy, left: float, y: float, p: style.Palette) -> None:
-    """The result line: the status icon in its colour, then its label and detail in ink."""
+    """Write the result line: the status icon in its colour, then its label and detail in ink.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure to write on.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+    left : float
+        Left edge of the line, in figure fraction.
+    y : float
+        Vertical position of the line, in figure fraction.
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    """
     colour, icon, label = _status_label(a.result.status, a.is_forecast, p.mode)
     icon_text = fig.text(left, y, icon, size=10, weight="bold", color=colour, va="center")
     fig.canvas.draw()
@@ -276,7 +493,18 @@ PANEL_RATIOS = {"rain": 3.6, "candidates": 1.1, "curve": 2.0, "total": 2.0}
 
 
 def anatomy_panels(a: Anatomy) -> list[str]:
-    """Names of the panels an Anatomy has, top to bottom: "rain", then "candidates", then "curve" or "total"."""
+    """Return the names of the panels an anatomy has, top to bottom.
+
+    Parameters
+    ----------
+    a : hcwf.onset.explain.Anatomy
+        The anatomy.
+
+    Returns
+    -------
+    list of str
+        ``"rain"``, then ``"candidates"`` when it has candidates, then ``"curve"`` or ``"total"`` when the rule has one.
+    """
     panels = ["rain"]
     if a.candidates:
         panels.append("candidates")
@@ -286,10 +514,18 @@ def anatomy_panels(a: Anatomy) -> list[str]:
 
 
 def draw_anatomy(axes: dict, a: Anatomy, p: style.Palette) -> None:
-    """Draw the panels of an Anatomy into given axes.
+    """Draw the panels of an anatomy into given axes.
 
-    axes maps the names from anatomy_panels to Axes that share the x axis. Their positions must already
-    be final, because direct labels are placed by the width of the axes.
+    The positions of the axes must already be final, because direct labels are placed by the width of the axes.
+
+    Parameters
+    ----------
+    axes : dict of str to matplotlib.axes.Axes
+        The axes by the names from `anatomy_panels`; they share the x axis.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy to draw.
+    p : hcwf.onset.viz.style.Palette
+        The palette of the figure.
     """
     total_index = _first_total(a)
     x0 = int(a.days[0])
@@ -325,8 +561,22 @@ def draw_anatomy(axes: dict, a: Anatomy, p: style.Palette) -> None:
 def anatomy_plot(a: Anatomy, *, mode: str = "light", figsize: tuple[float, float] | None = None) -> Figure:
     """Draw the anatomy of one onset search as stacked panels sharing the date axis.
 
-    mode is "light" or "dark". The figure has the daily rain, the candidate strip (first-passage rules)
-    and the rolling total or cumulative anomaly (when the rule has one).
+    The figure has the daily rain, the candidate strip (first-passage rules) and the rolling total or cumulative
+    anomaly (when the rule has one).
+
+    Parameters
+    ----------
+    a : hcwf.onset.explain.Anatomy
+        The anatomy, from `hcwf.onset.explain.trace_observed` or `hcwf.onset.explain.trace_forecast`.
+    mode : {"light", "dark"}, default "light"
+        The colour mode.
+    figsize : tuple of (float, float), optional
+        The figure size in inches; None sizes it to the number of panels.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure, not shown or saved.
     """
     panels = anatomy_panels(a)
     size = figsize or (9.2, 2.2 + 0.85 * sum(PANEL_RATIOS[k] for k in panels))

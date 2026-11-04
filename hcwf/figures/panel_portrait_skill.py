@@ -1,4 +1,8 @@
-"""Side-by-side portrait (heatmap) panels of binned BSS and AUC for each model."""
+"""Side-by-side portrait (heatmap) panels of binned BSS and AUC for each model.
+
+`panel_portrait_bss_auc` draws two `hcwf.figures.visual.portrait_plot` panels with a climatology row from the binned
+scores; `extract_binned_dict` turns those into arrays.
+"""
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,11 +15,27 @@ log = logging.getLogger(__name__)
 
 
 def extract_binned_dict(dic, second_level_key, bin_key="clean_bins"):
-    """
-    extract a 2-D array from a 2-level nested dictionary
-    given a specific 2nd-level key, e.g. "Fair_Brier_Skill_Score"
-    Extract all 1st-level keys
-    And get one specified 2nd-level key values, e.g., "clean_bins" [(1,5),(6,10)]
+    """Extract one binned score per model from a 2-level nested dictionary.
+
+    The binned scores are saved as lists without bin keys; the bins are named by the list under `bin_key`.
+
+    Parameters
+    ----------
+    dic : dict of str to dict
+        The binned scores per model: first-level keys are the models, second-level keys the score names.
+    second_level_key : str
+        The score to extract, e.g. ``"Fair_Brier_Skill_Score"``; each entry is a sequence over the bins.
+    bin_key : str, default "clean_bins"
+        The second-level key holding the bin labels, e.g. ``[(1, 5), (6, 10)]``; read from the first model.
+
+    Returns
+    -------
+    array_2d : numpy.ndarray, shape (model, bin)
+        The score of each model in each bin.
+    first_level_keys : list of str
+        The first-level keys (the models).
+    bins : list or None
+        The bin labels; None when `bin_key` is absent.
     """
     # 1st-level keys
     first_level_keys = list(dic.keys())
@@ -33,11 +53,26 @@ def extract_binned_dict(dic, second_level_key, bin_key="clean_bins"):
 
 
 def panel_portrait_bss_auc(result_binned, verification_window, spec):
-    """
-    Draw portrait plots of binned BSS (%) and AUC, with a climatology row, for each model.
+    """Draw portrait plots of binned BSS (percent) and AUC, with a climatology row, for each model.
 
-    The figure is shown if ``spec.show_panel`` is True and always saved to ``spec.dir_fig``.
-    Returns ``(fig, (ax1, ax2))``.
+    The figure is shown if ``spec.show_panel`` is true and always saved to ``spec.dir_fig`` (300 dpi).
+
+    Parameters
+    ----------
+    result_binned : dict of str to dict
+        The binned scores per model, each with ``Fair_Brier_Skill_Score``, ``AUC``, ``AUC_ref`` and ``clean_bins``.
+        The climatology AUC row is read from the first model.
+    verification_window : tuple of (int, int)
+        The verification window, in days; named in the file.
+    spec : object
+        The run's ``FigureSpec``: ``show_panel`` and ``dir_fig``.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+    axes : tuple of (matplotlib.axes.Axes, matplotlib.axes.Axes)
+        The BSS and AUC panels.
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 3))
 

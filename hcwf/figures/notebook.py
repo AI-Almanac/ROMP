@@ -1,5 +1,9 @@
-"""Notebook helpers: the observed-onset map of a year (`spatial_onset`) and the rainfall time series with the detected
-onset at a grid point (`obs_onset_analysis`)."""
+"""Notebook helpers: the observed-onset map of a year and the rainfall time series at a grid point.
+
+`spatial_onset` maps the observed onset of a year (through `hcwf.figures.func_map.spatial_metrics_map`);
+`obs_onset_analysis` plots the rainfall time series with the detected onset at a grid point (through
+`hcwf.figures.rainfall_time_series`). Both read the run's observations, thresholds and onset definition.
+"""
 import logging
 import os
 
@@ -17,9 +21,19 @@ log = logging.getLogger(__name__)
 
 
 def spatial_onset(year, rc):
-    """Detect observed onset for a year, map it as day of year, and return the day-of-year DataArray.
+    """Detect the observed onset of a year, map it as day of year and return it.
 
-    rc is the run (a RunConfig): its observations, onset definition and thresholds.
+    Parameters
+    ----------
+    year : int
+        The observation year.
+    rc : hcwf.config.model.RunConfig
+        The run: its observations, onset definition and thresholds (those of the first model).
+
+    Returns
+    -------
+    xarray.DataArray
+        The onset day of year, ``float64`` over ``(lat, lon)``, ``NaN`` where there is no onset.
     """
     thresh_slice = thresholds_of(rc, rc.models[0])
 
@@ -42,7 +56,19 @@ def spatial_onset(year, rc):
 
 
 def _season_window(rc):
-    """The ((month, day), (month, day)) window to plot: the chosen season's fixed bounds; None (the whole record) for derived seasons."""
+    """Return the window of the season to plot.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run; its ``onset`` setup names the season.
+
+    Returns
+    -------
+    tuple of (tuple of (int, int), tuple of (int, int)) or None
+        ``((month, day), (month, day))``: the fixed bounds of the chosen season. None (the whole record) for derived
+        seasons.
+    """
     setup = rc.onset
     if setup.derived_seasons:
         return None
@@ -51,9 +77,31 @@ def _season_window(rc):
 
 
 def obs_onset_analysis(year, rc, lat_select=11, lon_select=39, incl_clim=True):
-    """Detect observed onset for a year, plot the rainfall time series at the grid point nearest lat_select/lon_select, and return (rainfall within the season window, onset dates).
+    """Detect the observed onset of a year and plot the rainfall time series at a grid point.
 
-    rc is the run (a RunConfig); its climatology years give the climatological onset."""
+    The grid point is the one nearest to `lat_select` and `lon_select`. The figure is saved in
+    ``rc.output.figure_dir`` as ``onset_time_series_lat<lat>_lon<lon>_<year>.png``.
+
+    Parameters
+    ----------
+    year : int
+        The observation year.
+    rc : hcwf.config.model.RunConfig
+        The run; its climatology years give the climatological onset.
+    lat_select : float, default 11
+        Latitude of the grid point, in degrees north.
+    lon_select : float, default 39
+        Longitude of the grid point, in degrees east.
+    incl_clim : bool, default True
+        Add the climatological rainfall and onset to the figure.
+
+    Returns
+    -------
+    da_sub : xarray.DataArray
+        The observed rainfall within the season window.
+    onset_da : xarray.DataArray
+        The detected onset dates.
+    """
     # load onset precip threshold, 2-D or scalar
     thresh_da = thresholds_of(rc, rc.models[0])
 

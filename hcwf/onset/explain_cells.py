@@ -1,4 +1,9 @@
-"""Write the anatomy plot and explain() log of the observed onset for the cells named in explain_cells."""
+"""Write the anatomy plot and `explain` log of the observed onset for the cells named in ``explain_cells``.
+
+`write_explain_cells` is the run-level entry point: for each evaluation year it ingests the observations, traces the
+observed onset at every configured cell with `hcwf.onset.explain.trace_observed` and writes a PNG
+(`hcwf.onset.viz.anatomy.anatomy_plot`) and a text log (`hcwf.onset.explain.explain`) per cell and year.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,12 +20,43 @@ _GRID_TOLERANCE = 1e-3
 
 
 def _tag(lat: float, lon: float) -> str:
-    """A file-name tag such as "9N_38.75E"."""
+    """Return a file-name tag for a cell, such as ``"9N_38.75E"``.
+
+    Parameters
+    ----------
+    lat : float
+        Latitude in degrees north (negative is south).
+    lon : float
+        Longitude in degrees east (negative is west).
+
+    Returns
+    -------
+    str
+        The absolute coordinates in ``%g`` format, each followed by its hemisphere letter, joined by ``_``.
+    """
     return f"{abs(lat):g}{'N' if lat >= 0 else 'S'}_{abs(lon):g}{'E' if lon >= 0 else 'W'}"
 
 
 def _on_grid(thresholds, lat, lon):
-    """The named thresholds on the rainfall grid (cells they lack become NaN)."""
+    """Return the named thresholds reindexed onto the rainfall grid.
+
+    Thresholds that have both ``lat`` and ``lon`` dims are reindexed to the nearest grid point within
+    ``_GRID_TOLERANCE`` degrees, so cells they lack become ``NaN``; other thresholds pass through unchanged.
+
+    Parameters
+    ----------
+    thresholds : mapping of str to xarray.DataArray, optional
+        The named thresholds; ``None`` or empty gives an empty result.
+    lat : xarray.DataArray
+        The rainfall latitudes to reindex to.
+    lon : xarray.DataArray
+        The rainfall longitudes to reindex to.
+
+    Returns
+    -------
+    dict of str to xarray.DataArray
+        The thresholds on the rainfall grid, under the same names.
+    """
     out = {}
     for name, da in dict(thresholds or {}).items():
         if "lat" in da.dims and "lon" in da.dims:
@@ -30,10 +66,22 @@ def _on_grid(thresholds, lat, lon):
 
 
 def write_explain_cells(rc) -> list[Path]:
-    """Write dir_fig/explain/<definition>_<cell>_<year>.png and .txt for every cell and year; returns the PNG paths.
+    """Write the explanation PNG and text log of the observed onset for every configured cell and year.
 
-    Does nothing when explain_cells is unset.
-    Each explanation uses the same observations, thresholds and settings as the run's observed onset.
+    The files are ``<figure_dir>/explain/<definition>_<cell>_<year>.png`` and ``.txt``. Does nothing when
+    ``explain_cells`` is unset. Each explanation uses the same observations, thresholds and settings as the run's
+    observed onset. A year without observations, or a cell the trace rejects with `ValueError`, is skipped and logged.
+
+    Parameters
+    ----------
+    rc : hcwf.config.RunConfig
+        The run configuration: ``onset_options.explain_cells`` (list of ``(lat, lon)``), ``onset``, ``output``,
+        ``models``, ``evaluation.years``.
+
+    Returns
+    -------
+    list of pathlib.Path
+        The PNG paths written, in year then cell order (empty when ``explain_cells`` is unset).
     """
     from hcwf.onset.viz.anatomy import anatomy_plot
 

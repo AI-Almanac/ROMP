@@ -1,4 +1,8 @@
-"""Reliability diagram of forecast probabilities against observed onset frequency."""
+"""Reliability diagram of forecast probabilities against observed onset frequency.
+
+`plot_reliability_diagram` bins the forecast-observation pairs of one case into ten probability bins and draws the
+observed frequency of each, with the forecast frequency on a log axis.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -10,9 +14,31 @@ import logging
 log = logging.getLogger(__name__)
 
 def plot_reliability_diagram(pairs, case, spec):
-    """Plot reliability diagram of one case from its forecast-observation pairs (PairArrays of the case window's bins).
+    """Plot the reliability diagram of one case from its forecast-observation pairs.
 
-    Saved to spec.dir_fig if spec.save_fig; shown if spec.show_plot."""
+    The pairs are put into ten equal-width probability bins (the first includes 0). The figure is saved to
+    ``spec.dir_fig`` if ``spec.save_fig`` is true (300 dpi) and shown if ``spec.show_plot`` is true.
+
+    Parameters
+    ----------
+    pairs : object
+        The ``PairArrays`` of the case window's bins: ``prob`` (forecast probability) and ``observed`` (0 or 1)
+        arrays of the same shape.
+    case : object
+        The case drawn; ``case.model.name`` and ``case.window.span`` are named in the file.
+    spec : object
+        The run's ``FigureSpec``: ``save_fig``, ``dir_fig`` and ``show_plot``.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+    ax : matplotlib.axes.Axes
+        The reliability axes (the frequency bars are on a twin axis).
+    results_df : pandas.DataFrame
+        One row per probability bin: ``Bin_Range``, ``N_Forecasts``, ``Mean_Forecast_Prob``, ``Observed_Frequency``,
+        ``Frequency`` and ``Error_Bar``, rounded to three decimals.
+    """
     model, verification_window = case.model.name, case.window.span
 
     predicted, observed = pairs.prob.ravel(), pairs.observed.ravel()

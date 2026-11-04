@@ -1,4 +1,8 @@
-"""Portrait panels of MAE, FAR and MR differences from climatology, per model and forecast window."""
+"""Portrait panels of MAE, FAR and MR differences from climatology, per model and forecast window.
+
+`panel_portrait_mae_far_mr` draws three `hcwf.figures.visual.portrait_plot` panels from the nested results of a run;
+`nested_dict_to_array` turns those results into the arrays drawn.
+"""
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,25 +14,28 @@ log = logging.getLogger(__name__)
 
 
 def nested_dict_to_array(nested_dict, metric_key):
-    """
-    Convert a 2-level nested dict to a 2D NumPy array based on the first two levels.
+    """Convert a 3-level nested dict to a 2D array over its first two levels.
+
+    Every cell is the mean of the value at `metric_key` (an array-like with a ``mean`` method). A cell whose model or
+    window is absent from `nested_dict` falls back to ``NaN``, but a leaf without `metric_key` makes the fallback
+    fail: a plain float has no ``mean``.
 
     Parameters
     ----------
-    nested_dict : dict
-        Nested dictionary with at least two levels.
-        Example: results[model][window]['mae']
+    nested_dict : dict of str to dict
+        Nested dictionary: ``results[model][window][metric_key]``. The columns are the second-level keys of the
+        first row; all rows are assumed to share them.
     metric_key : str
-        The key at the leaf level to extract (e.g., 'mae').
+        The key at the leaf level to extract (e.g. ``"mean_mae"``).
 
     Returns
     -------
-    arr : np.ndarray
-        2D array with shape (num_top_keys, num_second_keys)
-    row_labels : list
-        List of top-level keys (rows)
+    arr : numpy.ndarray of float64, shape (row, column)
+        The mean of each cell.
+    row_labels : list of str
+        The top-level keys (rows).
     col_labels : list
-        List of second-level keys (columns)
+        The second-level keys (columns).
     """
     # Top-level keys → rows
     row_labels = list(nested_dict.keys())
@@ -51,13 +58,26 @@ def nested_dict_to_array(nested_dict, metric_key):
 
 
 def panel_portrait_mae_far_mr(results, spec):
-    """
-    Draw portrait plots of mean MAE, FAR and MR as differences from the last row (climatology).
+    """Draw portrait plots of mean MAE, FAR and MR as differences from the last row (climatology).
 
-    Each metric is taken from ``results`` via ``nested_dict_to_array``; the last row is subtracted
-    from the others. The figure is shown if ``spec.show_panel`` is True and always saved to ``spec.dir_fig``,
-    named from the run's first model and max_forecast_day.
-    Returns ``(fig, (ax1, ax2, ax3))``.
+    Each metric is taken from `results` via `nested_dict_to_array`; the last row is subtracted from the others.
+    The figure is shown if ``spec.show_panel`` is true and always saved to ``spec.dir_fig`` (300 dpi), named from the
+    run's first model and ``max_forecast_day``.
+
+    Parameters
+    ----------
+    results : dict of str to dict
+        ``results[model][window]`` holds ``mean_mae``, ``false_alarm_rate`` and ``miss_rate``; the last model is
+        the climatology.
+    spec : object
+        The run's ``FigureSpec``: ``show_panel``, ``models``, ``max_forecast_day`` and ``dir_fig``.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+    axes : tuple of (matplotlib.axes.Axes, matplotlib.axes.Axes, matplotlib.axes.Axes)
+        The MAE, FAR and MR panels.
     """
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(8, 3))
 

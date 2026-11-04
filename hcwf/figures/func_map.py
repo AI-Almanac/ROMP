@@ -1,4 +1,8 @@
-"""Spatial map plotting of gridded onset or metric fields with CMZ statistics and date helpers."""
+"""Spatial map plotting of gridded onset or metric fields with CMZ statistics and date helpers.
+
+`spatial_metrics_map` draws one field on a basemap (`hcwf.figures.visual`) with `hcwf.figures.field.draw_field`;
+`doy_to_mmm_dd` formats the day-of-year ticks and is reused by `hcwf.figures.onset_map`.
+"""
 import numpy as np
 import os
 import pandas as pd
@@ -26,20 +30,65 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
                     onset_plot=False, cbar_ssn=False, domain_mask=False, polygon_only=False,
                     show_ylabel=True, title=None, panel=False, text_scale=1.0, 
                     vmin=None, vmax=None, rect_box=False):
-    """
-    Plot a spatial map of a gridded 2D field (e.g. onset day of year or a spatial metric).
+    """Plot a spatial map of a gridded 2D field (e.g. onset day of year or a spatial metric).
 
-    Draws the map on the given or a new figure, optionally prints values in cells and the
-    CMZ mean onset, and shows it unless ``panel`` is True. The figure is not saved.
+    Draws the map on the given or a new figure, optionally prints the values in the cells and the CMZ mean onset,
+    and shows it unless `panel` is true. The figure is not saved: the file path it would have is returned.
 
-    spec is the run's FigureSpec; window the verification window (named in the would-be file).
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The field, with dims ``(lat, lon)`` or ``(unit,)``; its ``name`` labels the colorbar.
+    model_name : str
+        The model (or title) written at the top right and part of the file name.
+    spec : object
+        The run's ``FigureSpec``: ``polygon``, ``region``, ``dir_fig`` and what `set_basemap` reads.
+    window : tuple of (int, int), optional
+        The verification window, named in the would-be file.
+    fig : matplotlib.figure.Figure, optional
+        The figure to draw on; a new 8 by 6 inch figure when None.
+    ax : matplotlib.axes.Axes, optional
+        The axes to draw on; a new PlateCarree axes on `fig` when None.
+    cmap : str, default "YlOrRd"
+        The colormap name.
+    n_colors : int, default 10
+        The number of discrete colours; 0 or less gives a continuous map from `vmin` to `vmax`.
+    int_bin : bool, default True
+        Use integer bin edges between the floor of `vmin` and the ceiling of `vmax`.
+    onset_plot : bool, default False
+        The field is an onset day of year: cell values are printed as integers and the CMZ mean onset is shown.
+    cbar_ssn : bool, default False
+        Use the season colormap of `hcwf.figures.visual.cbar_season`.
+    domain_mask : bool, default False
+        Mask the cells outside the country boundary (grid fields only).
+    polygon_only : bool, default False
+        Mask the cells outside the CMZ polygon (grid fields only).
+    show_ylabel : bool, default True
+        Show the latitude labels.
+    title : str, optional
+        Text written above the top left corner of the map.
+    panel : bool, default False
+        The map is a panel of a larger figure: draw no colorbar and do not show the figure.
+    text_scale : float, default 1.0
+        Factor on all text sizes.
+    vmin : float, optional
+        Lower colour limit; if `vmin` or `vmax` is None the 10 % and 90 % quantiles of `da` are used for both.
+    vmax : float, optional
+        Upper colour limit.
+    rect_box : bool, default False
+        Draw the rectangular boundary box.
 
     Returns
     -------
-    fig, ax, im, plot_path
-        Figure, axes, the pcolormesh handle and the would-be output file path.
+    fig : matplotlib.figure.Figure
+        The figure.
+    ax : matplotlib.axes.Axes
+        The axes.
+    im : matplotlib.cm.ScalarMappable
+        The handle of the drawn field.
+    plot_path : str
+        The would-be output file path in ``spec.dir_fig``.
     """
-
     polygon, region = spec.polygon, spec.region
 
     # Get coordinates (the bounds of the polygons on evaluation units)
@@ -214,7 +263,20 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
 
 
 def doy_to_mmm_dd(doy, date_filter_year=2024):
-    """Convert day of year to 'MMM DD' format"""
+    """Convert a day of year to the ``"MMM DD"`` format.
+
+    Parameters
+    ----------
+    doy : float
+        The day of year, 1 to 366 (truncated to an integer).
+    date_filter_year : int, default 2024
+        The year the day is counted in; the default is a leap year, so every day of year exists.
+
+    Returns
+    -------
+    str
+        The date, for example ``"Jun 01"``.
+    """
     # 2024 is a leap year, so every day of year 1-366 exists
     date = pd.to_datetime(f"{date_filter_year}-{int(doy):03d}", format="%Y-%j")
     return date.strftime("%b %d")

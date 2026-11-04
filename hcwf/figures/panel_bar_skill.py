@@ -1,4 +1,8 @@
-"""Horizontal bar panel comparing BSS, RPSS and AUC across models for one verification window."""
+"""Horizontal bar panel comparing BSS, RPSS and AUC across models for one verification window.
+
+`panel_bar_bss_rpss_auc` draws the panel from the overall scores of the models, which `extract_overall_dict` turns
+into arrays; the file is written to the run's figure folder.
+"""
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,11 +14,21 @@ log = logging.getLogger(__name__)
 
 
 def extract_overall_dict(dic, second_level_key):
-    """
-    extract a 1-D array from a 2-level nested dictionary
-    given a specific 2nd-level key,
-    Extract all 1st-level keys
-    And get all 2nd-level values
+    """Extract one value per entry of a 2-level nested dictionary.
+
+    Parameters
+    ----------
+    dic : dict of str to dict
+        The scores per model: first-level keys are the models, second-level keys the score names.
+    second_level_key : str
+        The score to extract from every first-level entry.
+
+    Returns
+    -------
+    array_1d : numpy.ndarray, shape (model,)
+        The value of `second_level_key` of each first-level entry, in the order of the keys.
+    first_level_keys : list of str
+        The first-level keys (the models).
     """
     # 1st-level keys
     first_level_keys = list(dic.keys())
@@ -26,11 +40,29 @@ def extract_overall_dict(dic, second_level_key):
 
 
 def panel_bar_bss_rpss_auc(result_overall, verification_window, spec, *, legend=True):
-    """
-    Draw horizontal bars of BSS, RPSS (bottom axis, %) and AUC (top axis) for each model.
+    """Draw horizontal bars of BSS, RPSS (bottom axis, percent) and AUC (top axis) for each model.
 
-    Climatology AUC is drawn as a vertical line. The figure is shown if ``spec.show_panel`` is
-    True and always saved to ``spec.dir_fig``. Returns ``(fig, (ax, ax2))``.
+    The climatology AUC is drawn as a vertical line. The figure is shown if ``spec.show_panel`` is true and always
+    saved to ``spec.dir_fig`` (300 dpi).
+
+    Parameters
+    ----------
+    result_overall : dict of str to dict
+        The overall scores per model, each with ``Fair_Brier_Skill_Score``, ``Fair_RPS_Skill_Score``, ``AUC`` and
+        ``AUC_ref`` (scalars; the climatology AUC is read from the first model).
+    verification_window : tuple of (int, int)
+        The verification window, in days; named in the title and the file.
+    spec : object
+        The run's ``FigureSpec``: ``show_panel`` and ``dir_fig``.
+    legend : bool, default True
+        Draw the legend.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+    axes : tuple of (matplotlib.axes.Axes, matplotlib.axes.Axes)
+        The bottom axis (skill scores) and the top axis (AUC).
     """
     fig, ax = plt.subplots(figsize=(8, 5))
 

@@ -31,8 +31,6 @@ PACKAGE = ROOT / "hcwf"
 
 # Packages not converted to the docstring conventions yet, one per line, alphabetic. Remove a line when its package passes.
 PENDING = {
-    "hcwf/figures",
-    "hcwf/onset",
 }
 
 # pydoclint cannot allow optional signature annotations: with ``arg-type-hints-in-signature = false`` it reports DOC108 for

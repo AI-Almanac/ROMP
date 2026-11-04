@@ -1,4 +1,8 @@
-"""Compare several onset definitions on one cell and year: the rain, and where each definition puts the onset."""
+"""Compare several onset definitions on one cell and year: the rain, and where each definition puts the onset.
+
+`compare_definitions` is the entry point: it runs ``engine.detect_observed`` for each definition on the one cell and
+draws the daily rain above a dot plot of the onset dates, in the colours of `hcwf.onset.viz.style`.
+"""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -16,11 +20,37 @@ from hcwf.onset.viz import style
 
 _STANDARD = {"standard", "gregorian", "proleptic_gregorian"}
 ROW_IN = 0.42
+"""Height in inches of one definition's row in the dot plot."""
 PAD_DAYS = 12
+"""Days of room kept right of the last onset date, for its label."""
 
 
 def _nearest(rain: DailyRain, lat: float, lon: float) -> tuple[tuple[slice, ...], float, float]:
-    """Index (one-cell slices over the spatial dims) and coordinates of the grid cell nearest lat/lon."""
+    """Return the one-cell slices and coordinates of the grid cell nearest ``(lat, lon)``.
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The gridded rain; it needs ``lat`` and ``lon`` dims.
+    lat : float
+        Wanted latitude, in degrees.
+    lon : float
+        Wanted longitude, in degrees.
+
+    Returns
+    -------
+    slices : tuple of slice
+        One slice per spatial dim of `rain`, of length 1 along ``lat`` and ``lon``.
+    lat : float
+        Latitude of the cell, in degrees.
+    lon : float
+        Longitude of the cell, in degrees.
+
+    Raises
+    ------
+    ValueError
+        `rain` lacks a ``lat`` or ``lon`` dim, or the point is farther than one grid step from the nearest cell.
+    """
     index = []
     found = {}
     for dim, target in (("lat", lat), ("lon", lon)):
@@ -41,7 +71,20 @@ def _nearest(rain: DailyRain, lat: float, lon: float) -> tuple[tuple[slice, ...]
 
 
 def _cell_rain(rain: DailyRain, slices: tuple[slice, ...]) -> DailyRain:
-    """The rain restricted to one grid cell (dims kept, length 1)."""
+    """Return the rain restricted to one grid cell (dims kept, length 1).
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The gridded rain.
+    slices : tuple of slice
+        One slice per spatial dim, as returned by `_nearest`.
+
+    Returns
+    -------
+    hcwf.onset.model.DailyRain
+        The rain of the cell.
+    """
     coords = dict(rain.coords)
     for dim, sl in zip(rain.dims[:-1], slices):
         coords[dim] = np.asarray(rain.coords[dim])[sl]
@@ -50,7 +93,22 @@ def _cell_rain(rain: DailyRain, slices: tuple[slice, ...]) -> DailyRain:
 
 
 def _cell_thresholds(values: dict, dims: tuple[str, ...], slices: tuple[slice, ...]) -> dict:
-    """Restrict given thresholds to the chosen cell."""
+    """Restrict the given thresholds to the chosen cell.
+
+    Parameters
+    ----------
+    values : dict
+        The thresholds by name, each an `xarray.DataArray` (cut by dim name) or an array-like over the spatial dims.
+    dims : tuple of str
+        The spatial dims of the rain.
+    slices : tuple of slice
+        One slice per spatial dim, as returned by `_nearest`.
+
+    Returns
+    -------
+    dict
+        The thresholds of the cell, under the same names.
+    """
     out = {}
     for name, v in values.items():
         if hasattr(v, "isel"):
@@ -61,7 +119,18 @@ def _cell_thresholds(values: dict, dims: tuple[str, ...], slices: tuple[slice, .
 
 
 def _labels(definitions: list[Definition]) -> list[str]:
-    """Row labels: definition ids, told apart by the title's last parenthesis (or a number) when they repeat."""
+    """Return the row labels: definition ids, told apart by the title's last parenthesis (or a number) when they repeat.
+
+    Parameters
+    ----------
+    definitions : list of hcwf.onset.model.Definition
+        The definitions, in row order.
+
+    Returns
+    -------
+    list of str
+        One label per definition.
+    """
     ids = [d.id for d in definitions]
     labels = []
     seen: dict[str, int] = {}
@@ -77,7 +146,34 @@ def _labels(definitions: list[Definition]) -> list[str]:
 
 
 def _detect(definition: Definition, cell: DailyRain, year: int, thresholds, threshold_years, season):
-    """Run detect_observed for one definition on the cell; return a list of (season name, status, date or None)."""
+    """Run ``detect_observed`` for one definition on the cell.
+
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The definition to run.
+    cell : hcwf.onset.model.DailyRain
+        The rain of the one cell.
+    year : int
+        The year to detect.
+    thresholds : dict, optional
+        The thresholds by definition id, each a mapping of name to array; used when it has this definition.
+    threshold_years : tuple of (int, int), optional
+        The first and last year from which missing thresholds (and derived seasons) are computed.
+    season : str, optional
+        Keep this season only; None keeps every season of the definition.
+
+    Returns
+    -------
+    list of tuple of (str, hcwf.onset.model.Status, pandas.Timestamp or None)
+        The season name, status and onset date (None without an onset), one per season.
+
+    Raises
+    ------
+    ValueError
+        The definition needs thresholds or derived seasons and `threshold_years` is None, or `season` is not one of
+        its seasons.
+    """
     needs = bool(definition.thresholds)
     values = None
     if needs:
@@ -114,7 +210,24 @@ def _detect(definition: Definition, cell: DailyRain, year: int, thresholds, thre
 
 
 def _bars(cell: DailyRain, lo: pd.Timestamp, hi: pd.Timestamp):
-    """Dates and rain in mm for the cell's days within [lo, hi], skipping missing days."""
+    """Return the dates and rain in mm of the cell's days within ``[lo, hi]``, skipping missing days.
+
+    Parameters
+    ----------
+    cell : hcwf.onset.model.DailyRain
+        The rain of the one cell.
+    lo : pandas.Timestamp
+        First date, inclusive.
+    hi : pandas.Timestamp
+        Last date, inclusive.
+
+    Returns
+    -------
+    dates : numpy.ndarray of datetime64
+        The dates kept.
+    mm : numpy.ndarray of float64
+        The daily rain in mm on those dates.
+    """
     dates = pd.to_datetime({"year": cell.year, "month": cell.month, "day": cell.day})
     mm = cell.tenths.reshape(-1, cell.tenths.shape[-1])[0] / 10.0
     keep = (dates >= lo) & (dates <= hi) & ~cell.missing.reshape(-1, cell.tenths.shape[-1])[0]
@@ -124,14 +237,43 @@ def _bars(cell: DailyRain, lo: pd.Timestamp, hi: pd.Timestamp):
 def compare_definitions(definitions: list[Definition], rain: DailyRain, *, lat: float, lon: float, year: int,
                         thresholds: dict | None = None, threshold_years: tuple[int, int] | None = None,
                         season: str | None = None, mode: str = "light") -> Figure:
-    """Daily rain for one cell and year above a dot plot of each definition's onset date.
+    """Draw the daily rain for one cell and year above a dot plot of each definition's onset date.
 
-    One row per definition (labelled with its id); each onset is a dot with its date.
-    A definition with no onset shows its status icon and label at the row end. Dates
-    come from engine.detect_observed. thresholds maps definition id to {name: DataArray};
-    definitions that need thresholds and are not in it get them computed from `rain`
-    over threshold_years (also needed for derived seasons). season picks one season by
-    name (default: every season of the definition). Needs a standard calendar.
+    One row per definition (labelled with its id); each onset is a dot with its date. A definition with no onset shows
+    its status icon and label at the row end. Dates come from ``engine.detect_observed``. Needs a standard calendar.
+
+    Parameters
+    ----------
+    definitions : list of hcwf.onset.model.Definition
+        The definitions to compare, one row each.
+    rain : hcwf.onset.model.DailyRain
+        The gridded observed rain, with ``lat`` and ``lon`` dims.
+    lat : float
+        Latitude of the cell, in degrees.
+    lon : float
+        Longitude of the cell, in degrees.
+    year : int
+        The year to show.
+    thresholds : dict, optional
+        Maps a definition id to ``{name: xarray.DataArray}``; definitions that need thresholds and are not in it get
+        them computed from `rain` over `threshold_years`.
+    threshold_years : tuple of (int, int), optional
+        The first and last year of the climatology for computed thresholds (also needed for derived seasons).
+    season : str, optional
+        Show one season by name; None shows every season of each definition.
+    mode : {"light", "dark"}, default "light"
+        The colour mode.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure, not shown or saved.
+
+    Raises
+    ------
+    ValueError
+        `definitions` is empty, the calendar is not standard, or the cell, thresholds or season cannot be resolved
+        (see `_nearest` and `_detect`).
     """
     definitions = list(definitions)
     if not definitions:
@@ -169,7 +311,25 @@ def compare_definitions(definitions: list[Definition], rain: DailyRain, *, lat: 
 
 
 def _draw_dots(fig: Figure, ax, pal: style.Palette, results, labels: list[str], lo, hi) -> None:
-    """One row per definition: a dot and its date per onset, status text at the row end otherwise."""
+    """Draw one row per definition: a dot and its date per onset, status text at the row end otherwise.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure that owns the axes.
+    ax : matplotlib.axes.Axes
+        The dot-plot axes.
+    pal : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    results : list of list of tuple
+        For each definition the ``(season name, status, date or None)`` entries of `_detect`.
+    labels : list of str
+        The row labels, one per definition.
+    lo : pandas.Timestamp
+        First date of the x axis.
+    hi : pandas.Timestamp
+        Last date of the x axis.
+    """
     n = len(results)
     ax.set_ylim(n - 0.5, -0.5)
     ax.set_yticks(range(n))
@@ -199,7 +359,23 @@ def _draw_dots(fig: Figure, ax, pal: style.Palette, results, labels: list[str], 
 
 
 def _label_dot(ax, renderer, pal: style.Palette, date, row: int, text: str) -> None:
-    """Write the date right of its dot, or left of it when the right side is out of the axis."""
+    """Write the date right of its dot, or left of it when the right side is out of the axis.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The dot-plot axes.
+    renderer : matplotlib.backend_bases.RendererBase
+        The renderer used to measure the text.
+    pal : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    date : pandas.Timestamp
+        The date of the dot.
+    row : int
+        The row of the dot.
+    text : str
+        The label text.
+    """
     x = mdates.date2num(date)
     label = ax.text(x, row, "  " + text, ha="left", va="center", fontsize=8.5, color=pal.ink, zorder=4)
     right_edge = ax.get_window_extent(renderer).x1

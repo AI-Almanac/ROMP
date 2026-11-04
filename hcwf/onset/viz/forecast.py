@@ -1,9 +1,10 @@
 """Forecast onset dates against the observed onset: one dot per member and init, with the ensemble median.
 
-x is the init date and y the onset date of each ensemble member (engine.detect_forecast with the observed
-history stitched in before every forecast). Onsets below the "init date" diagonal are back-dated into the
-history; inits whose onset was already decided by the history alone (PRIOR) get the status marker; the
-members without an onset are counted per init above the axes.
+x is the init date and y the onset date of each ensemble member (``engine.detect_forecast`` with the observed history
+stitched in before every forecast). Onsets below the "init date" diagonal are back-dated into the history; inits whose
+onset was already decided by the history alone (``PRIOR``) get the status marker; the members without an onset are
+counted per init above the axes. `forecast_vs_truth` is the entry point; it shares the cell-location helpers of
+`hcwf.onset.explain` and the colours of `hcwf.onset.viz.style`.
 """
 from __future__ import annotations
 
@@ -32,7 +33,34 @@ _FIG_WIDTH = 9.6
 
 
 def _one_cell(forecast: ForecastRain, history: DailyRain, lat: float, lon: float, thresholds):
-    """The forecast, history and thresholds cut to the cell nearest (lat, lon), with every dim kept (length 1)."""
+    """Cut the forecast, history and thresholds to the cell nearest ``(lat, lon)``, keeping every dim (length 1).
+
+    A cell that cannot be located raises `ValueError` (see `hcwf.onset.explain._cell_of`).
+
+    Parameters
+    ----------
+    forecast : hcwf.onset.model.ForecastRain
+        The gridded forecast.
+    history : hcwf.onset.model.DailyRain
+        The gridded observed history.
+    lat : float
+        Latitude of the cell, in degrees.
+    lon : float
+        Longitude of the cell, in degrees.
+    thresholds : mapping of str to xarray.DataArray, optional
+        The named thresholds; gridded ones are cut to the cell.
+
+    Returns
+    -------
+    fc1 : hcwf.onset.model.ForecastRain
+        The forecast of the cell.
+    hist1 : hcwf.onset.model.DailyRain
+        The history of the cell.
+    thresholds : dict or None
+        The thresholds of the cell; None when none were given.
+    place : dict of str to float
+        The forecast cell's coordinates by dim name, in degrees.
+    """
     n_lead = 1 + ("member" in forecast.dims)
     f_dims = forecast.dims[n_lead:-1]
     f_cell = _cell_of(f_dims, forecast.coords, lat, lon)
@@ -58,19 +86,54 @@ def _one_cell(forecast: ForecastRain, history: DailyRain, lat: float, lon: float
 
 
 def _inits(forecast: ForecastRain) -> np.ndarray:
-    """The init dates as datetime64[D]."""
+    """Return the init dates of a forecast.
+
+    Parameters
+    ----------
+    forecast : hcwf.onset.model.ForecastRain
+        The forecast.
+
+    Returns
+    -------
+    numpy.ndarray of datetime64[D], shape (init_time,)
+        The init dates.
+    """
     return pd.to_datetime({"year": forecast.init_year, "month": forecast.init_month,
                            "day": forecast.init_day}).to_numpy().astype("datetime64[D]")
 
 
 def _days(dates: np.ndarray) -> np.ndarray:
-    """Dates (NaT allowed) as float days since 1970-01-01, NaN for NaT."""
+    """Convert dates to float days since 1970-01-01.
+
+    Parameters
+    ----------
+    dates : numpy.ndarray of datetime64
+        The dates; ``NaT`` allowed.
+
+    Returns
+    -------
+    numpy.ndarray of float64
+        The days, ``NaN`` for ``NaT``; same shape as `dates`.
+    """
     values = dates.astype("datetime64[D]")
     return np.where(np.isnat(values), np.nan, values.astype("int64").astype(float))
 
 
 def _median_days(days: np.ndarray, keep: np.ndarray) -> np.ndarray:
-    """Per-init median of the days of the kept members (NaN where none are kept)."""
+    """Return the per-init median of the days of the kept members.
+
+    Parameters
+    ----------
+    days : numpy.ndarray of float64, shape (init_time, member)
+        The onset day of each member, ``NaN`` without an onset.
+    keep : numpy.ndarray of bool, shape (init_time, member)
+        Which members count.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (init_time,)
+        The median, ``NaN`` where no member is kept.
+    """
     masked = np.where(keep, days, np.nan)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -78,9 +141,28 @@ def _median_days(days: np.ndarray, keep: np.ndarray) -> np.ndarray:
 
 
 def _climatology_cell(climatology: xr.Dataset, hist1: DailyRain, season: int) -> tuple[xr.Dataset, int]:
-    """The season climatology cut to the history's single cell (every dim kept, length 1) and that cell's season count.
+    """Cut the season climatology to the history's single cell (every dim kept, length 1) and count that cell's seasons.
 
-    Raises ValueError when the cell has fewer than `season` seasons.
+    Parameters
+    ----------
+    climatology : xarray.Dataset
+        The season climatology (``n_seasons``, ``onset_doy``, ``cessation_doy``) with ``season`` and spatial dims.
+    hist1 : hcwf.onset.model.DailyRain
+        The history of the one cell.
+    season : int
+        The 1-based season number asked for.
+
+    Returns
+    -------
+    cell : xarray.Dataset
+        The climatology of the cell.
+    n : int
+        The number of seasons the cell has.
+
+    Raises
+    ------
+    ValueError
+        The cell has fewer than `season` seasons.
     """
     dims = hist1.dims[:-1]
     cell = climatology.sel({d: [float(hist1.coords[d][0])] for d in dims}, method="nearest")
@@ -92,7 +174,28 @@ def _climatology_cell(climatology: xr.Dataset, hist1: DailyRain, season: int) ->
 
 
 def _observed_onsets(definition, hist1, thresholds, years, season_name, season_climatology=None):
-    """{year: (status, date or None)} of the observed onset of each year at the cell."""
+    """Return the observed onset of each year at the cell.
+
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The onset definition.
+    hist1 : hcwf.onset.model.DailyRain
+        The history of the one cell.
+    thresholds : dict, optional
+        The thresholds of the cell.
+    years : list of int
+        The years to detect.
+    season_name : str
+        The season to read from the result.
+    season_climatology : xarray.Dataset, optional
+        The season climatology of the cell, for derived seasons.
+
+    Returns
+    -------
+    dict of int to tuple of (hcwf.onset.model.Status, pandas.Timestamp or None)
+        The status and onset date (None without an onset) by year.
+    """
     obs = engine.detect_observed(definition, hist1, thresholds=thresholds, years=years,
                                  season_climatology=season_climatology)
     out = {}
@@ -105,7 +208,22 @@ def _observed_onsets(definition, hist1, thresholds, years, season_name, season_c
 
 
 def _thin(positions: list[float], priority: list[float], gap: float) -> list[int]:
-    """Indices to label: higher priority first, skipping any closer than `gap` to one already kept."""
+    """Return the indices to label: higher priority first, skipping any closer than `gap` to one already kept.
+
+    Parameters
+    ----------
+    positions : list of float
+        The position of each item.
+    priority : list of float
+        The priority of each item; larger is labelled first.
+    gap : float
+        The least distance between two kept positions.
+
+    Returns
+    -------
+    list of int
+        The kept indices, in order of decreasing priority.
+    """
     kept: list[int] = []
     for i in sorted(range(len(positions)), key=lambda j: -priority[j]):
         if all(abs(positions[i] - positions[j]) >= gap for j in kept):
@@ -114,7 +232,21 @@ def _thin(positions: list[float], priority: list[float], gap: float) -> list[int
 
 
 def _count_rows(fig, ax, init_x, status, mode: str = "light") -> None:
-    """Small icon-and-count labels per init above the axes, one row per status present, thinned to stay legible."""
+    """Write small icon-and-count labels per init above the axes, one row per status present, thinned to stay legible.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure, already drawn (the text is measured).
+    ax : matplotlib.axes.Axes
+        The main axes.
+    init_x : numpy.ndarray of float64, shape (init_time,)
+        The x position of each init.
+    status : numpy.ndarray of int, shape (init_time, member)
+        The status of each member.
+    mode : {"light", "dark"}, default "light"
+        The colour mode.
+    """
     present = [s for s in _NO_ONSET if (status == s).any()]
     renderer = fig.canvas.get_renderer()
     x_to_px = ax.transData.transform([(x, 0) for x in init_x])[:, 0]
@@ -136,20 +268,52 @@ def _count_rows(fig, ax, init_x, status, mode: str = "light") -> None:
 def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history: DailyRain, lat: float, lon: float,
                       season: str | int | None = None, thresholds=None, lead_window: tuple[int, int] = (1, 30),
                       season_climatology: xr.Dataset | None = None, mode: str = "light") -> Figure:
-    """Onset date of every ensemble member against the init date, with the observed onset as a line.
+    """Draw the onset date of every ensemble member against the init date, with the observed onset as a line.
 
-    The dates come from engine.detect_forecast on the cell nearest (lat, lon) with `history` stitched in
-    before lead 1, and the observed onset from engine.detect_observed on the history. Each member with an
-    onset is a dot; the median of the members that have one is the ink marker joined by a thin line; inits
-    whose onset the history alone had decided (PRIOR) carry the status marker. Dots below the diagonal are
-    back-dated into the history. Members without an onset are counted per init above the axes. season picks
-    one season by name (default: the first); thresholds are as for detect_forecast. Needs a standard
-    calendar.
+    The dates come from ``engine.detect_forecast`` on the cell nearest ``(lat, lon)`` with `history` stitched in
+    before lead 1, and the observed onset from ``engine.detect_observed`` on the history. Each member with an onset is
+    a dot; the median of the members that have one is the ink marker joined by a thin line; inits whose onset the
+    history alone had decided (``PRIOR``) carry the status marker. Dots below the diagonal are back-dated into the
+    history. Members without an onset are counted per init above the axes. Needs a standard calendar.
 
-    Derived (per-cell) seasons need season_climatology (n_seasons, onset_doy, cessation_doy, as from
-    climatology.harmonic_seasons) and take `season` as 1 or 2 (default 1; ValueError when the cell has fewer).
-    The forecast and the observed onset both use that cell's derived season (engine.detect_forecast with
-    season_climatology), and the subtitle names the season.
+    Derived (per-cell) seasons need `season_climatology` (``n_seasons``, ``onset_doy``, ``cessation_doy``, as from
+    ``climatology.harmonic_seasons``) and take `season` as 1 or 2 (default 1; `ValueError` when the cell has fewer).
+    The forecast and the observed onset both use that cell's derived season (``engine.detect_forecast`` with
+    `season_climatology`), and the subtitle names the season.
+
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The onset definition.
+    forecast : hcwf.onset.model.ForecastRain
+        The gridded forecast.
+    history : hcwf.onset.model.DailyRain
+        The observed history stitched in before lead 1 of every init.
+    lat : float
+        Latitude of the cell, in degrees.
+    lon : float
+        Longitude of the cell, in degrees.
+    season : str or int, optional
+        The season by name (default the first); for derived seasons 1 or 2 (default 1).
+    thresholds : mapping of str to xarray.DataArray, optional
+        The named thresholds, as for ``detect_forecast``.
+    lead_window : tuple of (int, int), default (1, 30)
+        The first and last lead day of the search window.
+    season_climatology : xarray.Dataset, optional
+        The season climatology, required for derived seasons.
+    mode : {"light", "dark"}, default "light"
+        The colour mode.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure, not shown or saved.
+
+    Raises
+    ------
+    ValueError
+        The calendar is not standard, derived seasons lack `season_climatology`, `season` is below 1 or beyond the
+        cell's seasons, or the cell or season cannot be found.
     """
     if forecast.calendar not in _STANDARD:
         raise ValueError(f"forecast_vs_truth needs a standard calendar, got '{forecast.calendar}'")
@@ -264,7 +428,21 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
 
 
 def _diagonal_label(ax, pal, lo: float, hi: float, back_dated: bool) -> None:
-    """Label the init-date diagonal along the line, saying that onsets below it are back-dated."""
+    """Label the init-date diagonal along the line, saying that onsets below it are back-dated.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The main axes.
+    pal : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    lo : float
+        Start of the diagonal on both axes, in days since 1970-01-01.
+    hi : float
+        End of the diagonal on both axes, in days since 1970-01-01.
+    back_dated : bool
+        Whether any onset lies below the diagonal; adds the explanation to the label.
+    """
     (x0, y0), (x1, y1) = ax.transData.transform([(lo, lo), (hi, hi)])
     angle = float(np.degrees(np.arctan2(y1 - y0, x1 - x0)))
     (xl, xr), (yl, yr) = ax.get_xlim(), ax.get_ylim()

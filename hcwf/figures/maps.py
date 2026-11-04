@@ -1,4 +1,8 @@
-"""CMZ averaging helper and a three-panel spatial map of MAE, false alarm rate and miss rate."""
+"""CMZ averaging helper and a three-panel spatial map of MAE, false alarm rate and miss rate.
+
+`plot_spatial_metrics` draws the metrics of one case with the field drawing of `hcwf.figures.field` and the basemap
+helpers of `hcwf.figures.visual`; `calculate_cmz_averages` is also used by `hcwf.figures.func_map`.
+"""
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -13,7 +17,22 @@ log = logging.getLogger(__name__)
 
 
 def calculate_cmz_averages(da, polygon_lon, polygon_lat):
-    """Calculate spatial average within the CMZ polygon"""
+    """Compute the spatial average of a field within the CMZ polygon.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The field, with dims ``(lat, lon)``.
+    polygon_lon : sequence of float
+        Longitudes of the polygon vertices.
+    polygon_lat : sequence of float
+        Latitudes of the polygon vertices.
+
+    Returns
+    -------
+    float
+        The ``nan``-skipping mean of the grid points inside the polygon; ``NaN`` when none lies inside.
+    """
     from matplotlib.path import Path
 
     # Get coordinates
@@ -35,13 +54,98 @@ def calculate_cmz_averages(da, polygon_lon, polygon_lat):
         return np.nan
 
 
-def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_box=True):
-    """
-    Plot spatial maps of Mean MAE, False Alarm Rate, and Miss Rate for one model in a 1x3 subplot
-    with region boundary, CMZ polygon, grid values displayed, and CMZ averages.
+def _mae_stats_across_years(spatial_metrics, polygon_lon, polygon_lat, polygon_defined):
+    """Compute the mean and standard error across years of the yearly MAE maps.
 
-    Saves the figure to ``spec.dir_fig`` (if given), prints the CMZ averages, and shows the
-    figure if ``spec.show_plot`` is True. Returns ``(fig, axes)``.
+    The spatial average of each year's map is taken (inside the CMZ polygon and over the whole map), then the mean
+    and standard error across years. Years are the ``mae_<year>`` entries of `spatial_metrics` (``mae_combined`` is
+    skipped).
+
+    Parameters
+    ----------
+    spatial_metrics : dict of str to xarray.DataArray
+        The spatial metrics, with the yearly ``mae_<year>`` maps over ``(lat, lon)``, in days.
+    polygon_lon : sequence of float or None
+        Longitudes of the CMZ polygon vertices; None to skip the CMZ average.
+    polygon_lat : sequence of float or None
+        Latitudes of the CMZ polygon vertices; None to skip the CMZ average.
+    polygon_defined : bool
+        Whether the CMZ polygon exists; when false the CMZ statistics are ``NaN``.
+
+    Returns
+    -------
+    cmz_mean : float
+        The mean across years of the CMZ average, in days; ``NaN`` without a polygon or years.
+    cmz_se : float
+        Its standard error (0 for a single year).
+    overall_mean : float
+        The mean across years of the whole-map average, in days.
+    overall_se : float
+        Its standard error (0 for a single year).
+    """
+    yearly_mae_keys = [key for key in spatial_metrics.keys() if key.startswith('mae_') and key != 'mae_combined']
+
+    if not yearly_mae_keys:
+        log.warning("No yearly MAE maps found")
+        return np.nan, np.nan, np.nan, np.nan
+
+    cmz_yearly_averages = []
+    overall_yearly_averages = []
+
+    for mae_key in yearly_mae_keys:
+        year_mae_map = spatial_metrics[mae_key]
+
+        if polygon_defined and polygon_lon is not None:
+            cmz_avg = calculate_cmz_averages(year_mae_map, polygon_lon, polygon_lat)
+            if not np.isnan(cmz_avg):
+                cmz_yearly_averages.append(cmz_avg)
+
+        overall_avg = np.nanmean(year_mae_map.values)
+        if not np.isnan(overall_avg):
+            overall_yearly_averages.append(overall_avg)
+
+    if len(cmz_yearly_averages) > 0 and polygon_defined:
+        cmz_mean = np.mean(cmz_yearly_averages)
+        cmz_se = np.std(cmz_yearly_averages, ddof=1) / np.sqrt(len(cmz_yearly_averages)) if len(cmz_yearly_averages) > 1 else 0
+    else:
+        cmz_mean, cmz_se = np.nan, np.nan
+
+    if len(overall_yearly_averages) > 0:
+        overall_mean = np.mean(overall_yearly_averages)
+        overall_se = np.std(overall_yearly_averages, ddof=1) / np.sqrt(len(overall_yearly_averages)) if len(overall_yearly_averages) > 1 else 0
+    else:
+        overall_mean, overall_se = np.nan, np.nan
+
+    return cmz_mean, cmz_se, overall_mean, overall_se
+
+
+def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_box=True):
+    """Plot maps of mean MAE, false alarm rate and miss rate for one case in a 1x3 subplot.
+
+    The panels show the region boundary, the CMZ polygon, the grid values and the CMZ averages. The figure is saved
+    to ``spec.dir_fig`` (if given), the CMZ averages are logged, and the figure is shown if ``spec.show_plot`` is
+    true.
+
+    Parameters
+    ----------
+    spatial_metrics : dict of str to xarray.DataArray
+        The spatial metrics over ``(lat, lon)`` or ``(unit,)``: ``mean_mae`` (days), ``false_alarm_rate`` and
+        ``miss_rate`` (fractions, shown as percent) and the yearly ``mae_<year>`` maps.
+    case : object
+        The case drawn; its ``name`` is part of the output file name.
+    spec : object
+        The run's ``FigureSpec``: ``polygon``, ``dir_fig``, ``region``, ``shpfile_dir`` and ``show_plot``.
+    figsize : tuple of (float, float), default (18, 6)
+        The figure size in inches.
+    rect_box : bool, default True
+        Draw the rectangular boundary box on each panel.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+    axes : numpy.ndarray of matplotlib.axes.Axes, shape (3,)
+        The three panels.
     """
     polygon, dir_fig, region, shpfile_dir = spec.polygon, spec.dir_fig, spec.region, spec.shpfile_dir
 
@@ -67,56 +171,19 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
         if len(polygon1_lat) > 0 and len(polygon1_lon) > 0:
             polygon_defined = True
 
-    def calculate_mae_stats_across_years(spatial_metrics, polygon_lon, polygon_lat):
-        """Calculate MAE statistics: spatial average for each year, then mean ± SE across years"""
-        yearly_mae_keys = [key for key in spatial_metrics.keys() if key.startswith('mae_') and key != 'mae_combined']
-
-        if not yearly_mae_keys:
-            log.warning("No yearly MAE maps found")
-            return np.nan, np.nan, np.nan, np.nan
-
-        cmz_yearly_averages = []
-        overall_yearly_averages = []
-
-        for mae_key in yearly_mae_keys:
-            year_mae_map = spatial_metrics[mae_key]
-
-            if polygon_defined and polygon_lon is not None:
-                cmz_avg = calculate_cmz_averages(year_mae_map, polygon_lon, polygon_lat)
-                if not np.isnan(cmz_avg):
-                    cmz_yearly_averages.append(cmz_avg)
-
-            overall_avg = np.nanmean(year_mae_map.values)
-            if not np.isnan(overall_avg):
-                overall_yearly_averages.append(overall_avg)
-
-        if len(cmz_yearly_averages) > 0 and polygon_defined:
-            cmz_mean = np.mean(cmz_yearly_averages)
-            cmz_se = np.std(cmz_yearly_averages, ddof=1) / np.sqrt(len(cmz_yearly_averages)) if len(cmz_yearly_averages) > 1 else 0
-        else:
-            cmz_mean, cmz_se = np.nan, np.nan
-
-        if len(overall_yearly_averages) > 0:
-            overall_mean = np.mean(overall_yearly_averages)
-            overall_se = np.std(overall_yearly_averages, ddof=1) / np.sqrt(len(overall_yearly_averages)) if len(overall_yearly_averages) > 1 else 0
-        else:
-            overall_mean, overall_se = np.nan, np.nan
-
-        return cmz_mean, cmz_se, overall_mean, overall_se
-
     fig, axes = plt.subplots(1, 3, figsize=figsize)
 
     # Calculate statistics (only calculate CMZ stats if polygon is defined)
     if polygon_defined:
-        cmz_mae_mean, cmz_mae_se, _, _ = calculate_mae_stats_across_years(
-            spatial_metrics, polygon1_lon, polygon1_lat
+        cmz_mae_mean, cmz_mae_se, _, _ = _mae_stats_across_years(
+            spatial_metrics, polygon1_lon, polygon1_lat, polygon_defined
         )
 
         cmz_far = calculate_cmz_averages(spatial_metrics['false_alarm_rate'] * 100, polygon1_lon, polygon1_lat)
         cmz_mr = calculate_cmz_averages(spatial_metrics['miss_rate'] * 100, polygon1_lon, polygon1_lat)
     else:
-        cmz_mae_mean, cmz_mae_se, _, _ = calculate_mae_stats_across_years(
-            spatial_metrics, None, None
+        cmz_mae_mean, cmz_mae_se, _, _ = _mae_stats_across_years(
+            spatial_metrics, None, None, polygon_defined
         )
         cmz_far = np.nan
         cmz_mr = np.nan

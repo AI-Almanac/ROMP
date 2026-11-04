@@ -1,4 +1,8 @@
-"""Drill-down figure: a map of observed onset day of year with the anatomy of one marked cell beside it."""
+"""Drill-down figure: a map of observed onset day of year with the anatomy of one marked cell beside it.
+
+`drill_down` is the entry point. It draws the map here and the anatomy panels with `hcwf.onset.viz.anatomy`, using the
+colours of `hcwf.onset.viz.style`.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -23,7 +27,20 @@ _MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 
 def _ramp(pal: style.Palette) -> LinearSegmentedColormap:
-    """A single-hue sequential ramp in the observed hue: light to dark on the light surface, dark to light on the dark one."""
+    """Return a single-hue sequential ramp in the observed hue.
+
+    The ramp runs light to dark on the light surface and dark to light on the dark one.
+
+    Parameters
+    ----------
+    pal : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+
+    Returns
+    -------
+    matplotlib.colors.LinearSegmentedColormap
+        A three-colour colormap named ``"onset_doy"``.
+    """
     hue = np.array(to_rgb(pal.observed))
     tint = hue * 0.3 + 0.7
     shade = hue * 0.45
@@ -32,7 +49,24 @@ def _ramp(pal: style.Palette) -> LinearSegmentedColormap:
 
 
 def _month_ticks(year: int, lo: float, hi: float) -> tuple[list[float], list[str]]:
-    """Day-of-year values of the month starts (and labels) between lo and hi, thinned to about six."""
+    """Return the day-of-year values of the month starts (and labels) between two days, thinned to about six.
+
+    Parameters
+    ----------
+    year : int
+        The year whose calendar gives the day-of-year values.
+    lo : float
+        First day of year of the range.
+    hi : float
+        Last day of year of the range.
+
+    Returns
+    -------
+    ticks : list of float
+        Day of year of each tick.
+    labels : list of str
+        The tick labels, such as ``"1 May"``.
+    """
     starts = [(pd.Timestamp(year, m, 1).dayofyear, f"1 {_MONTH_NAMES[m - 1]}") for m in range(1, 13)]
     inside = [(d, t) for d, t in starts if lo <= d <= hi]
     step = max(1, int(np.ceil(len(inside) / 6)))
@@ -41,7 +75,27 @@ def _month_ticks(year: int, lo: float, hi: float) -> tuple[list[float], list[str
 
 
 def _draw_map(fig: Figure, ax, cax, pal: style.Palette, result: xr.Dataset, a: Anatomy, map_h: float) -> None:
-    """The onset day-of-year map with non-onset cells in grey, the cell marked, and the colourbar and status legend."""
+    """Draw the onset day-of-year map, with the colourbar and status legend.
+
+    Cells without an onset are grey and the cell of the anatomy is marked.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure that owns the axes.
+    ax : matplotlib.axes.Axes
+        The map axes.
+    cax : matplotlib.axes.Axes
+        The axes of the horizontal colourbar.
+    pal : hcwf.onset.viz.style.Palette
+        The palette of the figure.
+    result : xarray.Dataset
+        The observed result with ``status`` and ``onset_date`` over ``(year, season, lat, lon)``.
+    a : hcwf.onset.explain.Anatomy
+        The anatomy that gives the year, season and the cell to mark.
+    map_h : float
+        The height of the map axes in inches, used to place the legend below the colourbar.
+    """
     sel = result.sel(year=a.year, season=a.season)
     status = sel["status"]
     onset = pd.DatetimeIndex(sel["onset_date"].values.reshape(-1)).dayofyear.to_numpy().astype(float)
@@ -81,12 +135,31 @@ def _draw_map(fig: Figure, ax, cax, pal: style.Palette, result: xr.Dataset, a: A
 
 
 def drill_down(result: xr.Dataset, anatomy: Anatomy, *, mode: str = "light") -> Figure:
-    """An onset map (day of year) with the anatomy of one marked cell beside it.
+    """Draw an onset map (day of year) with the anatomy of one marked cell beside it.
 
-    result is a detect_observed Dataset (dims year, season, lat, lon) and anatomy a trace_observed
-    Anatomy of one of its cells and years; the map shows the anatomy's year and season, cells without an
-    onset in neutral grey (the legend gives each status with its icon and count), and the anatomy's cell
-    is outlined. The anatomy panels share the figure on the right.
+    `result` is a ``detect_observed`` dataset (dims ``year, season, lat, lon``) and `anatomy` a
+    `hcwf.onset.explain.trace_observed` anatomy of one of its cells and years; the map shows the anatomy's year and
+    season, cells without an onset in neutral grey (the legend gives each status with its icon and count), and the
+    anatomy's cell is outlined. The anatomy panels share the figure on the right.
+
+    Parameters
+    ----------
+    result : xarray.Dataset
+        The observed result, with variables ``status`` and ``onset_date`` over ``(year, season, lat, lon)``.
+    anatomy : hcwf.onset.explain.Anatomy
+        The anatomy of one cell and year of `result`.
+    mode : {"light", "dark"}, default "light"
+        The colour mode.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure, not shown or saved.
+
+    Raises
+    ------
+    ValueError
+        `anatomy` is of a forecast or has no year, or `result` lacks ``lat`` or ``lon`` dims.
     """
     if anatomy.is_forecast or anatomy.year is None:
         raise ValueError("drill_down needs an observed Anatomy (trace_observed)")

@@ -1,4 +1,10 @@
-"""Plotting helpers: monthly onset colormap, map basemaps and boxes, and portrait/heatmap plots."""
+"""Plotting helpers: monthly onset colormap, map basemaps and boxes, and portrait/heatmap plots.
+
+The shared building blocks of the figure modules of `hcwf.figures`: the season colormap (`cbar_season`), the region
+basemap and outlines (`set_basemap`, `shp_outline`, `get_india_outline`, `polygon_outline`, `add_polygon`,
+`box_boundary`) and the portrait plot (`portrait_plot` with `prepare_data`, `heatmap`, `annotate_heatmap` and
+`add_legend`), a simplified version of the PCMDI Metrics Package (PMP) portrait plot.
+"""
 import sys
 
 import matplotlib
@@ -11,7 +17,20 @@ log = logging.getLogger(__name__)
 
 
 def cbar_season():
-    """ Create the custom monthly colormap (May to September) """
+    """Create the custom monthly colormap (May to September).
+
+    Each month has its own sequential colormap, sliced into 8 steps; the steps are the colours of the days of year
+    121 to 273.
+
+    Returns
+    -------
+    cmap_jjas : matplotlib.colors.ListedColormap
+        The colormap of 40 colours.
+    norm_jjas : matplotlib.colors.BoundaryNorm
+        The norm mapping day of year onto `cmap_jjas`.
+    bounds : list of float
+        The 41 boundaries of the norm, in day of year.
+    """
     from matplotlib.colors import ListedColormap, BoundaryNorm
 
     month_cmaps = {
@@ -54,9 +73,23 @@ def cbar_season():
 
 
 def set_basemap(ax, spec):
-    """Draw the region outline and set the map extent on a Cartopy axis; return (ax, gridliner).
+    """Draw the region outline, set the map extent and add the gridlines of a Cartopy axis.
 
-    `spec` is the run's FigureSpec: its region and shpfile_dir give the outline and the extent."""
+    Parameters
+    ----------
+    ax : cartopy.mpl.geoaxes.GeoAxes
+        The axes to draw on.
+    spec : object
+        The run's ``FigureSpec``: its ``region`` gives the extent (and the outline), and ``shpfile_dir`` (a
+        shapefile path) the outline when set.
+
+    Returns
+    -------
+    ax : cartopy.mpl.geoaxes.GeoAxes
+        The axes.
+    gl : cartopy.mpl.gridliner.Gridliner
+        The gridliner, with labels on the left and bottom, every 5 degrees.
+    """
     region, shpfile_dir = spec.region, spec.shpfile_dir
     from hcwf.onset.regions import box
     import cartopy.crs as ccrs
@@ -91,9 +124,34 @@ def set_basemap(ax, spec):
 def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
                     linestyle='-', fill=False, alpha=1.0,
                     zorder=10):
-    """
-    Draw a lat/lon rectangle on a Cartopy GeoAxes.
-    Returns the Rectangle patch.
+    """Draw a lat/lon rectangle on an axes (in PlateCarree coordinates on a Cartopy GeoAxes).
+
+    Nothing is drawn for the placeholder name ``"rect_boundary"`` or when the region has coordinates outside
+    ``[-180, 360]``.
+
+    Parameters
+    ----------
+    rect_boundary : str
+        The region name whose box is drawn (see `hcwf.onset.regions.box`).
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    edgecolor : str, default "black"
+        The edge colour.
+    linewidth : float, default 2
+        The edge width.
+    linestyle : str, default "-"
+        The edge line style.
+    fill : bool, default False
+        Fill the rectangle.
+    alpha : float, default 1.0
+        The opacity.
+    zorder : float, default 10
+        The drawing order.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        `ax` (the rectangle is added to it).
     """
     import matplotlib.patches as mpatches
     from hcwf.onset.regions import box
@@ -178,60 +236,96 @@ def portrait_plot(
     legend_fontsize=14,
     debug=False,
 ):
-    """
+    """Draw a portrait plot: a heatmap of a 2D array with labelled rows and columns.
+
+    Only the heatmap style (a single 2D array) is drawn; stacked arrays (2 or 4, meant as triangles) pass the
+    checks but draw nothing and fail at the return. The function exits the program with a message (`sys.exit`)
+    when the inputs are inconsistent. This is a simplified version of the PMP ``portrait_plot()``.
+
     Parameters
     ----------
-    - `data`: 2d numpy array, a list of 2d numpy arrays, or a 3d numpy array (i.e. stacked 2d numpy arrays)
-    - `xaxis_labels`: list of strings, labels for xaixs. Number of list element must consistent to x-axis,
-                      or 0 (empty list) to turn off xaxis tick labels
-    - `yaxis_labels`: list of strings, labels for yaxis. Number of list element must consistent to y-axis,
-                      or 0 (empty list) to turn off yaxis tick labels
-    - `fig`: `matplotlib.figure` instance to which the portrait plot is plotted.
-             If not provided, use current axes or create a new one.  Optional.
-    - `ax`: `matplotlib.axes.Axes` instance to which the portrait plot is plotted.
-            If not provided, use current axes or create a new one.  Optional.
-    - `annotate`: bool, default=False, add annotating text if true,
-                  but work only for heatmap style map (i.e., no triangles)
-    - `annotate_data`: 2d numpy array, default=None. If None, the image's data is used.  Optional.
-    - `annotate_textcolors`: Tuple. A pair of colors for annotation text. Default is ("black", "white")
-    - `annotate_textcolors_threshold`: Tuple or float. Value in data units according to which the colors from textcolors are applied. Default=None
-    - `annotate_fontsize`: number (int/float), default=15. Font size for annotation
-    - `annotate_format`: format for annotate value, default="{x:.2f}"
-    - `figsize`: tuple of two numbers (width, height), default=(12, 10), figure size in inches
-    - `vrange`: tuple of two numbers, range of value for colorbar.  Optional.
-    - `xaxis_fontsize`: number, default=12, font size for xaxis tick labels.  Optional.
-    - `yaxis_fontsize`: number, default=12, font size for yaxis tick labels.  Optional.
-    - `xaxis_tick_labels_top_and_bottom`: bool, default=False, if true duplicate xaxis tick label to the other side.  Optional.
-    - `xticklabel_rotation`: int or float, default=45, degree of angle to rotate x-axis tick label.  Optional
-    - `cmap`: string, default="RdBu_r", name of matplotlib colormap.  Optional.
-    - `cmap_bounds`: list of numbers.  If given, discrete colors are applied.  Optional.
-    - `cbar_label`: string, default=None, label for colorbar.  Optional.
-    - `cbar_label_fontsize`: number, default=15, font size for colorbar labels.  Optional.
-    - `cbar_tick_fontsize`: number, default=12, font size for colorbar tick labels.  Optional.
-    - `cbar_kw`: A dictionary with arguments to `matplotlib.Figure.colorbar`.  Optional.
-    - `colorbar_off`: Trun off colorbar if True.  Optional.
-    - `missing_color`: color, default="grey", `matplotlib.axes.Axes.set_facecolor` parameter.  Optional.
-    - `invert_yaxis`: bool, default=True, place y=0 at top on the plot.  Optional.
-    - `box_as_square`: bool, default=False, make each box as square.  Optional.
-    - `legend_on`: bool, default=False, show legend (only for 2 or 4 triangles portrait plot).  Optional.
-    - `legend_labels`: list of strings, legend labels for triangls.  Optional.
-    - `legend_box_xy`: tuple of numbers, position of legend box's upper-left corner.  Optional.
-                       (lower-left if `invert_yaxis=False`), in `axes` coordinate.  Optional.
-    - `legend_box_size`: number, size of legend box.  Optional.
-    - `legend_lw`: number, line width of legend, default=1.  Optional.
-    - `legend_fontsize`: number, font size for legend, default=14.  Optional.
-    - `debug`: bool, default=False, if true print more message when running that help debugging.  Optional.
+    data : numpy.ndarray or list of numpy.ndarray
+        A 2D array, a list of 2D arrays, or a 3D array (stacked 2D arrays), with shape (row, column).
+    xaxis_labels : list of str
+        The column labels; the length equals the number of columns, or is 0 to turn off the labels.
+    yaxis_labels : list of str
+        The row labels; the length equals the number of rows, or is 0 to turn off the labels.
+    fig : matplotlib.figure.Figure, optional
+        The figure to plot on. When None a new figure is created.
+    ax : matplotlib.axes.Axes, optional
+        The axes to plot on. When None a new subplot of `fig` is created.
+    annotate : bool, default False
+        Add the value as text in each cell (heatmap style only).
+    annotate_data : numpy.ndarray, optional
+        The values written in the cells. None uses `data`.
+    annotate_textcolors : tuple of (str, str), default ("black", "white")
+        The text colours below and above `annotate_textcolors_threshold`.
+    annotate_textcolors_threshold : tuple or float, optional
+        The value in data units where the text colour switches. Currently not passed on (see `annotate_heatmap`).
+    annotate_fontsize : float, default 15
+        The font size of the annotations (divided by half the number of columns).
+    annotate_format : str, default "{x:.2f}"
+        The format of the annotated values.
+    figsize : tuple of (float, float), default (12, 10)
+        The figure size in inches, when a figure is created.
+    vrange : tuple of (float, float), optional
+        The range of the colour scale. None uses the minimum and maximum of `data`.
+    xaxis_fontsize : float, default 12
+        The font size of the column tick labels (and the title).
+    yaxis_fontsize : float, default 12
+        The font size of the row tick labels.
+    xaxis_tick_labels_top_and_bottom : bool, default False
+        Put the column tick labels on top and bottom instead of the bottom only.
+    xticklabel_rotation : float, default 45
+        The rotation of the column tick labels, in degrees.
+    title : str, default ""
+        The title of the axes.
+    cmap : str, default "RdBu_r"
+        The matplotlib colormap name.
+    cmap_bounds : list of float, optional
+        Boundaries of discrete colours. None gives a continuous scale.
+    cbar_label : str, optional
+        The colorbar label.
+    cbar_label_fontsize : float, default 15
+        The font size of the colorbar label.
+    cbar_tick_fontsize : float, default 12
+        The font size of the colorbar tick labels.
+    cbar_kw : dict, default {}
+        Keywords of `matplotlib.figure.Figure.colorbar`.
+    colorbar_off : bool, default False
+        Draw no colorbar.
+    missing_color : str, default "grey"
+        The background colour, seen at NaN cells.
+    invert_yaxis : bool, default True
+        Put the first row at the top.
+    box_as_square : bool, default False
+        Make each cell square.
+    legend_on : bool, default False
+        Show a legend (for 2 or 4 triangles only).
+    legend_labels : list of str, optional
+        The legend labels; required when `legend_on` is true.
+    legend_box_xy : tuple of (float, float), optional
+        The upper-left corner of the legend box in axes coordinates (lower-left if `invert_yaxis` is false).
+    legend_box_size : float, optional
+        The size of the legend box.
+    legend_lw : float, default 1
+        The line width of the legend.
+    legend_fontsize : float, default 14
+        The font size of the legend.
+    debug : bool, default False
+        Log more messages.
 
-    Return
-    ------
-    - `fig`: matplotlib component for figure
-    - `ax`: matplotlib component for axis
-    - `cbar`: matplotlib component for colorbar (returned if colorbar_off=False)
-    - `im`: figure handle for customizing common colorbar (returned if colorbar_off=True)
-
-    This function is a simplified version of the PMP portrait_plot()
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+    ax : matplotlib.axes.Axes
+        The axes.
+    im : matplotlib.collections.QuadMesh
+        The drawn mesh, for a common colorbar.
+    cbar : matplotlib.colorbar.Colorbar
+        The colorbar; returned (as a fourth value) only when `colorbar_off` is false.
     """
-
     # ----------------
     # Prepare plotting
     # ----------------
@@ -418,9 +512,28 @@ def portrait_plot(
 # Prepare data
 # ----------------------------------------------------------------------
 def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
-    """Convert `data` to a numpy array, check its shape against the labels, and return (data, num_divide).
+    """Convert `data` to a numpy array and check its shape against the labels.
 
-    `num_divide` is the number of stacked 2D arrays (1 for a single 2D array).
+    The program exits (`sys.exit`) with a message when the data are not a 2D or 3D array, a list that is not made
+    of 2D arrays, or when the labels do not match the shape (an empty label list matches anything).
+
+    Parameters
+    ----------
+    data : numpy.ndarray or list of numpy.ndarray
+        A 2D array, a list of 2D arrays, or a 3D array of stacked 2D arrays, with shape (row, column).
+    xaxis_labels : list of str
+        The column labels.
+    yaxis_labels : list of str
+        The row labels.
+    debug : bool, default False
+        Log the type and shape of the data.
+
+    Returns
+    -------
+    data : numpy.ndarray
+        The data as an array, shape (row, column) or (stack, row, column).
+    num_divide : int
+        The number of stacked 2D arrays (1 for a single 2D array).
     """
     # In case data was given as list of arrays, convert it to numpy (stacked) array
     if isinstance(data, list):
@@ -469,26 +582,30 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
 # (Inspired from: https://matplotlib.org/devdocs/gallery/images_contours_and_fields/image_annotated_heatmap.html)
 # ----------------------------------------------------------------------
 def heatmap(data, xaxis_labels, yaxis_labels, ax=None, invert_yaxis=False, **kwargs):
-    """
-    Create a heatmap from a numpy array and two lists of labels.
+    """Create a heatmap from a numpy array and two lists of labels.
 
     Parameters
     ----------
-    data
-        A 2D numpy array of shape (M, N).
-    yaxis_labels
-        A list or array of length M with the labels for the rows.
-    xaxis_labels
-        A list or array of length N with the labels for the columns.
-    ax
-        A `matplotlib.axes.Axes` instance to which the heatmap is plotted.  If
-        not provided, use current axes or create a new one.  Optional.
-    invert_yaxis
-        A bool to decide top-down or bottom-up order on y-axis
-    **kwargs
-        All other arguments are forwarded to `pcolormesh`.
-    """
+    data : numpy.ndarray, shape (M, N)
+        The values.
+    xaxis_labels : list of str
+        The N labels of the columns.
+    yaxis_labels : list of str
+        The M labels of the rows.
+    ax : matplotlib.axes.Axes, optional
+        The axes to plot on. None uses the current axes.
+    invert_yaxis : bool, default False
+        Put the first row at the top instead of the bottom.
+    **kwargs : dict
+        Passed on to `matplotlib.axes.Axes.pcolormesh`.
 
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+        The axes.
+    im : matplotlib.collections.QuadMesh
+        The drawn mesh.
+    """
     if ax is None:
         ax = plt.gca()
 
@@ -519,33 +636,38 @@ def annotate_heatmap(
     threshold=None,
     **textkw,
 ):
-    """
-    A function to annotate a heatmap.
+    """Annotate a heatmap with the value of each cell.
+
+    The text colour is black or white, whichever contrasts with the cell colour (`contrast_text_color`, against a
+    norm from the 10 % and 90 % quantiles of `data`); with a tuple `threshold` it is picked from `textcolors`
+    instead. The font size is ``fontsize * 2 / number of columns``, so `fontsize` must be given in `textkw`.
 
     Parameters
     ----------
-    im
-        The AxesImage to be labeled.
-    ax
-        Matplotlib axis
-    data
-        Data used to color in the image.  If None, the image's data is used.  Optional.
-    annotate_data
-        Data used to annotate.  If None, the image's data is used.  Optional.
-    valfmt
-        The format of the annotations inside the heatmap.  This should either
-        use the string format method, e.g. "$ {x:.2f}", or be a
-        `matplotlib.ticker.Formatter`.  Optional.
-    textcolors
-        A pair of colors.  The first is used for values below a threshold,
-        the second for those above.  Optional.
-    threshold
-        Value in data units according to which the colors from textcolors are
-        applied.  If None (the default) uses the middle of the colormap as
-        separation.  Optional.
-    **kwargs
-        All other arguments are forwarded to each call to `text` used to create
-        the text labels.
+    im : matplotlib.collections.QuadMesh
+        The drawn heatmap to label. Its array is used when `data` is not a list or array.
+    ax : matplotlib.axes.Axes
+        The axes of the heatmap.
+    data : numpy.ndarray, shape (row, column), optional
+        The data the image is coloured with.
+    cmap : str or matplotlib.colors.Colormap, optional
+        The colormap of the image.
+    annotate_data : numpy.ndarray, shape (row, column), optional
+        The values written in the cells. None uses `data`.
+    valfmt : str or matplotlib.ticker.Formatter, default "{x:.2f}"
+        The format of the annotations: a `str.format` string with ``x``, or a formatter.
+    textcolors : tuple of (str, str), default ("black", "white")
+        The colours of values inside and outside a tuple `threshold` (``(low, high)``).
+    threshold : tuple of (float, float) or float, optional
+        With a tuple, the cells outside ``[min, max]`` get the second colour. Otherwise unused for the colour (the
+        contrast rule applies).
+    **textkw : dict
+        Passed on to `matplotlib.axes.Axes.text` for every cell; must contain ``fontsize``.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        `ax`, with a text per cell.
     """
     if not isinstance(data, (list, np.ndarray)):
         data = im.get_array().reshape(im._meshHeight, im._meshWidth)
@@ -602,7 +724,24 @@ def annotate_heatmap(
 
 
 def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
-    """Return black or white, whichever contrasts better with the colormap color at `value`."""
+    """Return black or white, whichever contrasts better with the colormap colour at a value.
+
+    Parameters
+    ----------
+    value : float
+        The data value of the cell.
+    cmap_obj : matplotlib.colors.Colormap
+        The colormap.
+    norm : matplotlib.colors.Normalize
+        The norm mapping `value` to the colormap.
+    threshold : float, default 0.5
+        The luminance (WCAG perceived luminance, 0 to 1) above which the background counts as light.
+
+    Returns
+    -------
+    str
+        ``"black"`` on a light background, ``"white"`` on a dark one.
+    """
     r, g, b, _ = cmap_obj(norm(value))  # background color
     luminance = 0.2126*r + 0.7152*g + 0.0722*b  # perceived luminance (WCAG standard)
     return 'black' if luminance > threshold else 'white'
@@ -614,7 +753,25 @@ def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
 def add_legend(
     num_divide, ax, box_xy=None, box_size=None, labels=None, lw=1, fontsize=14
 ):
-    """Draw a legend box divided into 2 or 4 labelled triangles next to the portrait plot."""
+    """Draw a legend box divided into 2 or 4 labelled triangles next to the portrait plot.
+
+    Parameters
+    ----------
+    num_divide : int
+        The number of triangles: 2 or 4 (anything else draws nothing).
+    ax : matplotlib.axes.Axes
+        The axes of the portrait plot.
+    box_xy : tuple of (float, float), optional
+        The upper-left corner of the box in axes coordinates. None puts it right of the axes.
+    box_size : float, optional
+        The size of the box in data units; default 1.5.
+    labels : list of str, optional
+        The triangle labels; defaults ``["TOP", "RIGHT", "BOTTOM", "LEFT"]`` (4) or ``["UPPER", "LOWER"]`` (2).
+    lw : float, default 1
+        The line width of the box.
+    fontsize : float, default 14
+        The font size of the labels.
+    """
     if box_xy is None:
         box_x = ax.get_xlim()[1] * 1.25
         box_y = ax.get_ylim()[1]
@@ -761,7 +918,26 @@ def add_legend(
 # ----------------------------------------------------------------------------------------------------------
 
 def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
-    """ add polygon boundary to basemap """
+    """Add a polygon boundary to a basemap.
+
+    The polygon is added as a feature with a high zorder so that it appears above the gridlines of Cartopy.
+
+    Parameters
+    ----------
+    ax : cartopy.mpl.geoaxes.GeoAxes
+        The axes to draw on.
+    polygon1_lon : sequence of float
+        Longitudes of the polygon vertices.
+    polygon1_lat : sequence of float
+        Latitudes of the polygon vertices.
+    linewidth : float, default 1.25
+        The outline width.
+
+    Returns
+    -------
+    cartopy.mpl.geoaxes.GeoAxes
+        `ax`.
+    """
     import cartopy.crs as ccrs
     from shapely.geometry import Polygon as ShapelyPolygon
     from cartopy.feature import ShapelyFeature
@@ -788,9 +964,31 @@ def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
 
 
 def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
-    """Draw the polygon boundary for `da` on `ax` when `polygon` is truthy and a boundary is defined.
+    """Draw the polygon boundary for a field on `ax` when `polygon` is truthy and a boundary is defined.
 
-    Returns `ax`, or (ax, polygon_lat, polygon_lon, polygon_defined) if `return_polygon` is True.
+    Parameters
+    ----------
+    ax : cartopy.mpl.geoaxes.GeoAxes
+        The axes to draw on.
+    da : xarray.DataArray
+        The field; the boundary depends on its grid (see `hcwf.onset.regions.polygon_boundary`).
+    polygon : bool
+        Draw the boundary; with a false value nothing is drawn (and `return_polygon` must be false).
+    return_polygon : bool, default False
+        Also return the polygon vertices.
+    linewidth : float, default 1.25
+        The outline width.
+
+    Returns
+    -------
+    ax : cartopy.mpl.geoaxes.GeoAxes
+        The axes.
+    polygon_lat : numpy.ndarray
+        Latitudes of the polygon vertices; only with `return_polygon`.
+    polygon_lon : numpy.ndarray
+        Longitudes of the polygon vertices; only with `return_polygon`.
+    polygon_defined : bool
+        Whether the polygon exists for this grid; only with `return_polygon`.
     """
     from hcwf.onset.regions import polygon_boundary
 
@@ -815,8 +1013,17 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
 
 
 def get_india_outline(shpfile_path):
-    """
-    Get region outline coordinates from shapefile.
+    """Get the region outline coordinates from a shapefile.
+
+    Parameters
+    ----------
+    shpfile_path : str or pathlib.Path
+        The shapefile, read with `geopandas.read_file`.
+
+    Returns
+    -------
+    list of tuple of (list of float, list of float)
+        The ``(lons, lats)`` of the exterior ring of every polygon (the parts of multi-polygons included).
     """
     import geopandas as gpd
     # Update this path to your India shapefile
@@ -840,8 +1047,25 @@ def get_india_outline(shpfile_path):
 
 
 def shp_outline(ax, region='Ethiopia', resolution='10m'):
-    """ add shapefile country boundaries to plot"""
+    """Add the country boundary of a region to a plot.
 
+    On a Cartopy axes the geometry is added with coastlines and borders; on a plain axes its exterior is plotted
+    as lines. A region that is not found is logged as a warning and nothing is drawn.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    region : str, default "Ethiopia"
+        The region (country) name, looked up with `hcwf.spatial.masks.get_shp`.
+    resolution : str, default "10m"
+        The Natural Earth resolution.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        `ax`.
+    """
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
 

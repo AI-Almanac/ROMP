@@ -1,13 +1,16 @@
 """CuPy backend: the reference algorithm (prefix tables, full candidate masks, first non-False via argmax) on the GPU.
 
-Integer rain (tenths) is exact integer arithmetic; float rain (rain_resolution
-"exact") is summed in time order by a one-thread-per-row kernel, because a
-parallel scan would round differently. Either way results are bit-identical to
-the reference backend. Prefix tables for all series live on the device; jobs are
-processed in blocks of (jobs x candidates) cells sized from free device memory.
+Integer rain (tenths) is exact integer arithmetic; float rain (``rain_resolution: exact``) is summed in time order by
+a one-thread-per-row kernel, because a parallel scan would round differently. Either way results are bit-identical to
+the reference backend. Prefix tables for all series live on the device; jobs are processed in blocks of
+``(jobs, candidates)`` cells sized from free device memory.
 
-detect_stitched does the same over observed history followed by a forecast, joining
-separate history and forecast tables at each job's split instead of copying history.
+`detect_stitched` does the same over observed history followed by a forecast, joining separate history and forecast
+tables at each job's split instead of copying history.
+
+The module mirrors `hcwf.onset.backends.reference` (the oracle) function by function, with ``cupy`` arrays in place
+of NumPy ones; per-window amounts are handled by `hcwf.onset.backends.windowed`. `available` says whether CuPy and
+a CUDA device are usable.
 """
 from __future__ import annotations
 
@@ -23,7 +26,9 @@ except ImportError:
     cp = None
 
 TRUE, FALSE, UNKNOWN = 1, 0, -1
+"""The three-valued codes of a requirement, a veto or a candidate: True, False and Unknown."""
 MISSING_FLAG, HORIZON_FLAG = 1, 2
+"""The bits of the flags that say why a code is Unknown: missing data (1) and the data horizon (2)."""
 
 BLOCK_CELLS: int | None = None
 """Job x candidate cells per block; None sizes blocks from free device memory."""
@@ -39,7 +44,13 @@ MAX_AUTO_CELLS = 100_000_000
 
 
 def available() -> bool:
-    """True when CuPy imports and a CUDA device can run a kernel; never raises."""
+    """Return whether CuPy imports and a CUDA device can run a kernel; never raises.
+
+    Returns
+    -------
+    bool
+        True when a trivial computation on the device succeeds.
+    """
     if cp is None:
         return False
     try:
@@ -49,7 +60,16 @@ def available() -> bool:
 
 
 def _block_cells() -> int:
-    """Cells per block: the BLOCK_CELLS override, else a fraction of free device memory."""
+    """Return the number of job x candidate cells per block.
+
+    Uses the `BLOCK_CELLS` override, else a fraction (`MEMORY_FRACTION`) of the free device memory at
+    `BYTES_PER_CELL` per cell, capped at `MAX_AUTO_CELLS`.
+
+    Returns
+    -------
+    int
+        The cells per block, at least 1.
+    """
     if BLOCK_CELLS is not None:
         return max(1, int(BLOCK_CELLS))
     cp.get_default_memory_pool().free_all_blocks()
@@ -59,9 +79,37 @@ def _block_cells() -> int:
 
 def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[str, np.ndarray],
            jobs: Jobs, *, trace: bool = False, amount_windows=None) -> Detection:
-    """Run every job on the GPU and return the onset day index (-1 if none) and Status per job (NumPy arrays).
+    """Run every job on the GPU and return the onset day index (-1 if none) and `Status` per job (NumPy arrays).
 
-    Amounts may be (S, W) with amount_windows the W window start leads (backends/windowed.py).
+    Amounts may be ``(S, W)`` with `amount_windows` the ``W`` window start leads (`hcwf.onset.backends.windowed`).
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled definition.
+    tenths : numpy.ndarray of int64 or float64, shape (series, time)
+        Daily rain in tenths of mm (int), or in mm (float, exact resolution).
+    missing : numpy.ndarray of bool, shape (series, time)
+        True where the day is missing.
+    amounts : dict of str to numpy.ndarray
+        The resolved amounts by key, shape ``(series,)`` or ``(series, W)``.
+    jobs : hcwf.onset.model.Jobs
+        The jobs: ``series``, ``start``, ``end``, ``data_end`` and optional ``origin``, each of shape ``(jobs,)``.
+    trace : bool, default False
+        Must be false: traces come from the reference backend.
+    amount_windows : array_like of int, optional
+        The ``W`` window start leads when `amounts` have ``W`` columns.
+
+    Returns
+    -------
+    hcwf.onset.model.Detection
+        ``day`` (int64, shape ``(jobs,)``, ``-1`` where none), ``status`` (int8) and ``trace`` (``None``), as NumPy
+        arrays on the host.
+
+    Raises
+    ------
+    NotImplementedError
+        `trace` is true, or a curve rule is run with exact rain resolution.
     """
     if trace:
         raise NotImplementedError("use the reference backend for traces")
@@ -102,10 +150,34 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
 
 
 class _Block:
-    """The jobs of one block plus their candidate grid (days d, validity mask)."""
+    """The jobs of one block plus their candidate grid (days ``d``, validity mask), on the device.
+
+    Every per-job array is stored as a column of shape ``(jobs, 1)`` so that it broadcasts against the candidates.
+
+    Parameters
+    ----------
+    series : cupy.ndarray of int64, shape (jobs,)
+        The row of the tables each job reads.
+    start : cupy.ndarray of int64, shape (jobs,)
+        The first candidate day of each job.
+    end : cupy.ndarray of int64, shape (jobs,)
+        The last candidate day of each job, inclusive.
+    data_end : cupy.ndarray of int64, shape (jobs,)
+        The end of usable data of each job, exclusive.
+    width : int
+        The number of candidate columns (the longest job in the block).
+    origin : cupy.ndarray of int64, shape (jobs,)
+        The day "season to date" spans start from.
+
+    Attributes
+    ----------
+    d : cupy.ndarray of int64, shape (jobs, width)
+        The candidate day of each cell.
+    valid : cupy.ndarray of bool, shape (jobs, width)
+        True where the candidate day is not past the job's ``end``.
+    """
 
     def __init__(self, series, start, end, data_end, width, origin):
-        """Build the (jobs, width) candidate day grid."""
         self.series = series[:, None]
         self.start = start[:, None]
         self.origin = origin[:, None]
@@ -117,14 +189,45 @@ class _Block:
 
 
 class _Tables:
-    """Prefix tables over the series, built once per detect call on the device."""
+    """Prefix tables over the series, built once per `detect` call on the device.
+
+    Uploads the data and builds prefix sums of rain, missing, wet and dry days, plus per-veto spell tables. Rain is
+    int64 tenths, or float64 mm for exact resolution. ``pd`` is kept (for the stitched seam) only when the definition
+    has its own ``dry_day``.
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled definition (wet and dry comparisons, vetoes, horizon and missing policies).
+    tenths : numpy.ndarray of int64 or float64, shape (series, time)
+        Daily rain in tenths of mm (int), or in mm (float, exact resolution).
+    missing : numpy.ndarray of bool, shape (series, time)
+        True where the day is missing; those days count as zero rain.
+    amounts : dict of str to numpy.ndarray
+        The resolved amounts by key, shape ``(series,)``.
+
+    Attributes
+    ----------
+    horizon : str
+        The plan's horizon policy.
+    keep : bool
+        The plan's ``keep_missing`` flag.
+    amounts : dict of str to cupy.ndarray
+        The amounts on the device (float64 for exact rain, else int64).
+    n_time : int
+        The number of days.
+    px, pm, pw : cupy.ndarray, shape (series, time + 1)
+        Prefix sums of rain, missing days and wet days; ``p[:, t]`` sums days ``[0, t)``.
+    pd : cupy.ndarray of int32, shape (series, time + 1) or None
+        Prefix counts of dry days; ``None`` unless the definition has its own ``dry_day``.
+    veto_prefix : list of cupy.ndarray
+        One int32 prefix table of spell start days per veto of the plan.
+    wet_order : cupy.ndarray of int32, shape (series, time) or None
+        The wet days of each series in time order first (stable argsort); ``None`` unless the plan reports the first
+        wet day.
+    """
 
     def __init__(self, plan, tenths, missing, amounts):
-        """Upload the data and build prefix sums of rain, missing, wet and dry days, plus per-veto spell tables.
-
-        Rain is int64 tenths, or float64 mm for exact resolution. pd is kept (for the stitched seam) only
-        when the definition has its own dry_day.
-        """
         exact = np.asarray(tenths).dtype.kind == "f"
         self.horizon, self.keep = plan.horizon, plan.keep_missing
         self.amounts = {k: cp.asarray(v, dtype=cp.float64 if exact else cp.int64) for k, v in amounts.items()}
@@ -155,7 +258,18 @@ class _Tables:
             self.pd = None
 
     def _spell_prefix(self, veto: P.VetoPlan):
-        """Prefix sum over start days u of "a spell of this veto starts at u and lies fully in the data"."""
+        """Return the prefix sum over start days of "a spell of this veto starts here and lies fully in the data".
+
+        Parameters
+        ----------
+        veto : hcwf.onset.plan.VetoPlan
+            The veto: its spell ``length``, ``kind`` (dry run or rain total), ``placement`` and comparison.
+
+        Returns
+        -------
+        cupy.ndarray of int32, shape (series, time + 2)
+            The leading-zero prefix sum of the boolean table of spell start days (length ``time + 1``).
+        """
         n_time, length = self.n_time, veto.length
         holds = cp.zeros((self.x_shape[0], n_time + 1), dtype=cp.bool_)
         if length <= n_time:
@@ -172,7 +286,20 @@ class _Tables:
         return _prefix(holds, cp.int32)
 
     def next_wet(self, series, lo):
-        """First wet day at or after lo in each series, n_time if there is none."""
+        """Return the first wet day at or after `lo` in each series, ``n_time`` if there is none.
+
+        Parameters
+        ----------
+        series : cupy.ndarray of int64, shape (n,)
+            The table row of each query.
+        lo : cupy.ndarray of int64, shape (n,)
+            The first day to look at, within ``[0, n_time - 1]``.
+
+        Returns
+        -------
+        cupy.ndarray of int64, shape (n,)
+            The day index of the next wet day, or ``n_time``.
+        """
         rank = self.pw[series, lo]
         total = self.pw[series, self.n_time]
         found = self.wet_order[series, cp.minimum(rank, self.n_time - 1)].astype(cp.int64)
@@ -180,10 +307,24 @@ class _Tables:
 
 
 _ROW_CUMSUM = None
+"""The compiled `_row_cumsum` CUDA kernel, created on first use."""
 
 
 def _row_cumsum(values):
-    """Float64 prefix sums with a leading zero column, each row added in time order (what np.cumsum does)."""
+    """Return float64 prefix sums with a leading zero column, each row added in time order (as ``np.cumsum`` does).
+
+    One CUDA thread sums one row without fused multiply-add, so the rounding equals NumPy's.
+
+    Parameters
+    ----------
+    values : cupy.ndarray, shape (rows, cols)
+        The values to sum; converted to float64.
+
+    Returns
+    -------
+    cupy.ndarray of float64, shape (rows, cols + 1)
+        The prefix sums.
+    """
     global _ROW_CUMSUM
     if _ROW_CUMSUM is None:
         _ROW_CUMSUM = cp.RawKernel(r'''
@@ -206,7 +347,20 @@ def _row_cumsum(values):
 
 
 def _prefix(values, dtype):
-    """Prefix sums along time with a leading zero column, so table[:, t] sums days [0, t)."""
+    """Return prefix sums along time with a leading zero column, so ``table[:, t]`` sums days ``[0, t)``.
+
+    Parameters
+    ----------
+    values : cupy.ndarray, shape (series, time)
+        The values to sum (bool, int or float).
+    dtype : numpy.dtype or type
+        The dtype of the sums; a float dtype uses `_row_cumsum` for time-ordered rounding.
+
+    Returns
+    -------
+    cupy.ndarray of `dtype`, shape (series, time + 1)
+        The prefix sums.
+    """
     if np.dtype(dtype).kind == "f":
         return _row_cumsum(values)
     out = cp.zeros((values.shape[0], values.shape[1] + 1), dtype=dtype)
@@ -215,12 +369,49 @@ def _prefix(values, dtype):
 
 
 def _gather(table, series, index):
-    """table[series, index] with the index clipped into the table."""
+    """Return ``table[series, index]`` with the index clipped into the table.
+
+    Parameters
+    ----------
+    table : cupy.ndarray, shape (series, n)
+        A prefix table.
+    series : cupy.ndarray of int64, shape (jobs, 1)
+        The row of each job.
+    index : cupy.ndarray of int64, shape (jobs, candidates)
+        The column to read; clipped to ``[0, n - 1]``.
+
+    Returns
+    -------
+    cupy.ndarray, shape (jobs, candidates)
+        The gathered values.
+    """
     return table[series, cp.clip(index, 0, table.shape[1] - 1)]
 
 
 def _observe(tables: _Tables, job: _Block, a, b):
-    """Observability of [a, b): (observable, flags) where flags carry the missing and horizon bits."""
+    """Return whether the span ``[a, b)`` can be observed, with the reason when it cannot.
+
+    A span is not observable when it starts before day 0, contains a missing day (unless missing days are kept), or
+    reaches past the job's data end.
+
+    Parameters
+    ----------
+    tables : _Tables
+        The prefix tables.
+    job : _Block
+        The block of jobs.
+    a : cupy.ndarray of int64, shape (jobs, candidates)
+        The first day of the span.
+    b : cupy.ndarray of int64, shape (jobs, candidates)
+        The end of the span, exclusive.
+
+    Returns
+    -------
+    observable : cupy.ndarray of bool, shape (jobs, candidates)
+        True where the whole span is observed.
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        Bit 1 (`MISSING_FLAG`) for a missing or pre-history day, bit 2 (`HORIZON_FLAG`) for a span past the data end.
+    """
     e = job.data_end
     lo = cp.clip(a, 0, e)
     hi = cp.maximum(cp.minimum(b, e), lo)
@@ -230,7 +421,24 @@ def _observe(tables: _Tables, job: _Block, a, b):
 
 
 def _condition(plan_cond: P.CondPlan, tables: _Tables, job: _Block):
-    """Three-valued code and flags of a Total or WetDays requirement."""
+    """Evaluate a Total or WetDays requirement for every candidate of a block.
+
+    Parameters
+    ----------
+    plan_cond : hcwf.onset.plan.CondPlan
+        The requirement.
+    tables : _Tables
+        The prefix tables.
+    job : _Block
+        The block of jobs.
+
+    Returns
+    -------
+    code : cupy.ndarray of int8, shape (jobs, candidates)
+        The three-valued code (1 True, 0 False, -1 Unknown).
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        The flags, non-zero only where the code is Unknown.
+    """
     a, b = windowed.span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
     ok, flags = _observe(tables, job, a, b)
     if plan_cond.kind == P.TOTAL:
@@ -245,7 +453,28 @@ def _condition(plan_cond: P.CondPlan, tables: _Tables, job: _Block):
 
 
 def _veto(veto: P.VetoPlan, spell_prefix, tables: _Tables, job: _Block):
-    """Code and flags of a veto: TRUE means a spell was confirmed, so the candidate is rejected."""
+    """Evaluate a veto for every candidate of a block.
+
+    A code of ``TRUE`` means a spell was confirmed, so the candidate is rejected.
+
+    Parameters
+    ----------
+    veto : hcwf.onset.plan.VetoPlan
+        The veto.
+    spell_prefix : cupy.ndarray of int32, shape (series, time + 2)
+        The prefix table of spell start days for this veto (`_Tables.veto_prefix`).
+    tables : _Tables
+        The prefix tables.
+    job : _Block
+        The block of jobs.
+
+    Returns
+    -------
+    code : cupy.ndarray of int8, shape (jobs, candidates)
+        The three-valued code.
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        The flags, non-zero only where the code is Unknown.
+    """
     a, b = windowed.span(job, veto.first, veto.last, False)
     length = veto.length
     if veto.placement == P.INSIDE:
@@ -265,7 +494,31 @@ def _veto(veto: P.VetoPlan, spell_prefix, tables: _Tables, job: _Block):
 
 
 def _veto_code(tables, job, b, confirmed, ok, flags):
-    """(code, flags) of a veto from its confirmation and observability, applying the horizon policy."""
+    """Return the code and flags of a veto from its confirmation and observability, applying the horizon policy.
+
+    Parameters
+    ----------
+    tables : _Tables or _StitchedTables
+        The tables; their ``horizon`` policy (``censor``, ``reject`` or other) decides how a span past the data end
+        is coded.
+    job : _Block or _StitchedBlock
+        The block of jobs (its ``data_end`` is read).
+    b : cupy.ndarray of int64, shape (jobs, candidates)
+        The end of the veto's span, exclusive.
+    confirmed : cupy.ndarray of bool, shape (jobs, candidates)
+        True where a spell was found.
+    ok : cupy.ndarray of bool, shape (jobs, candidates)
+        True where the days the veto needs are observable.
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        The flags of the observability check.
+
+    Returns
+    -------
+    code : cupy.ndarray of int8, shape (jobs, candidates)
+        The three-valued code.
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        The flags, non-zero only where the code is Unknown.
+    """
     code = cp.where(confirmed, TRUE, cp.where(ok, FALSE, UNKNOWN)).astype(cp.int8)
     flags = cp.where(code == UNKNOWN, flags, 0).astype(cp.int8)
     if tables.horizon != "censor":
@@ -278,12 +531,40 @@ def _veto_code(tables, job, b, confirmed, ok, flags):
 
 
 def _status_from_flags(flags):
-    """CENSORED when the flags are exactly {horizon}, otherwise INSUFFICIENT_DATA."""
+    """Map flags to a status: ``CENSORED`` when the flags are exactly the horizon bit, else ``INSUFFICIENT_DATA``.
+
+    Parameters
+    ----------
+    flags : cupy.ndarray of int8
+        The flags of the chosen candidates.
+
+    Returns
+    -------
+    cupy.ndarray of int8
+        The `Status` code, same shape as `flags`.
+    """
     return cp.where(flags == HORIZON_FLAG, int(Status.CENSORED), int(Status.INSUFFICIENT_DATA)).astype(cp.int8)
 
 
 def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block):
-    """Evaluate all candidates of a block and pick the first one that is not False; returns (day, status)."""
+    """Evaluate all candidates of a block and pick the first one that is not False.
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled first-passage definition.
+    tables : _Tables
+        The prefix tables.
+    job : _Block
+        The block of jobs.
+
+    Returns
+    -------
+    day : cupy.ndarray of int64, shape (jobs,)
+        The reported day index, ``-1`` for none.
+    status : cupy.ndarray of int8, shape (jobs,)
+        The `Status` code.
+    """
     shape = job.d.shape
     unknown_flags = cp.zeros(shape, dtype=cp.int8)
     any_false = cp.zeros(shape, dtype=cp.bool_)
@@ -333,7 +614,24 @@ def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block):
 
 
 def _curve_block(plan: P.Plan, tables: _Tables, job: _Block):
-    """Evaluate the cumulative-anomaly rule for every job of a block; returns (day, status)."""
+    """Evaluate the cumulative-anomaly rule for every job of a block.
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled curve definition.
+    tables : _Tables
+        The prefix tables.
+    job : _Block
+        The block of jobs.
+
+    Returns
+    -------
+    day : cupy.ndarray of int64, shape (jobs,)
+        The reported day index, ``-1`` for none.
+    status : cupy.ndarray of int8, shape (jobs,)
+        The `Status` code.
+    """
     start, end, series = job.start[:, 0], job.end[:, 0], job.series[:, 0]
     ok, flags = _observe(tables, job, job.start, job.end + 1)
     ok, flags = ok[:, 0], flags[:, 0]
@@ -355,7 +653,24 @@ def _curve_block(plan: P.Plan, tables: _Tables, job: _Block):
 
 
 def _variants(cell: np.ndarray, amount: np.ndarray):
-    """Unique (cell, amount) pairs as (cells, amounts) and each job's index into them."""
+    """Return the unique (cell, amount) pairs and each job's index into them.
+
+    Parameters
+    ----------
+    cell : numpy.ndarray of int64, shape (jobs,)
+        The history row of each job.
+    amount : numpy.ndarray of int64, shape (jobs,)
+        The amount of each job.
+
+    Returns
+    -------
+    cells : numpy.ndarray of int64, shape (variants,)
+        The cell of each unique pair, sorted by cell then amount.
+    amounts : numpy.ndarray of int64, shape (variants,)
+        The amount of each unique pair.
+    inverse : numpy.ndarray of int64, shape (jobs,)
+        The index of each job's pair in `cells` and `amounts`.
+    """
     pairs = np.stack([cell, amount], axis=1)
     unique, inverse = np.unique(pairs, axis=0, return_inverse=True)
     return unique[:, 0].copy(), unique[:, 1].copy(), inverse.reshape(-1).astype(np.int64)
@@ -364,16 +679,47 @@ def _variants(cell: np.ndarray, amount: np.ndarray):
 def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndarray, fc_tenths: np.ndarray,
                     fc_missing: np.ndarray, amounts: dict[str, np.ndarray], jobs: StitchedJobs, *,
                     trace: bool = False, amount_windows=None) -> Detection:
-    """Run stitched jobs (history before each split, then a forecast row) on the GPU without copying history into forecasts.
+    """Run stitched jobs (history, then a forecast row) on the GPU without copying history into forecasts.
 
-    History prefix tables are built once over the cells and columns the jobs can
-    reach, with one wet-day (and dry-window) variant per distinct (cell, amount)
-    pair since amounts are per forecast series. Forecast tables are built over
-    the forecast rows. Any interval is read as P_hist(min(t, split)) plus
-    P_fc(t - split) for t past the split, and spells that start in history and end in
-    the forecast come from a small per-job seam table. The result equals
-    detect on the explicit concatenation and never reads history at or after a split.
-    Per-window amounts work as in detect().
+    History prefix tables are built once over the cells and columns the jobs can reach, with one wet-day (and
+    dry-window) variant per distinct (cell, amount) pair since amounts are per forecast series. Forecast tables are
+    built over the forecast rows. Any interval is read as ``P_hist(min(t, split))`` plus ``P_fc(t - split)`` for ``t``
+    past the split, and spells that start in history and end in the forecast come from a small per-job seam table. The
+    result equals `detect` on the explicit concatenation and never reads history at or after a split. Per-window
+    amounts work as in `detect`.
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled definition.
+    hist_tenths : numpy.ndarray of int64, shape (cell, time)
+        Observed daily rain in tenths of mm.
+    hist_missing : numpy.ndarray of bool, shape (cell, time)
+        True where the observed day is missing.
+    fc_tenths : numpy.ndarray of int64, shape (series, lead)
+        Forecast daily rain in tenths of mm; column ``t`` is lead ``t + 1``.
+    fc_missing : numpy.ndarray of bool, shape (series, lead)
+        True where the forecast day is missing.
+    amounts : dict of str to numpy.ndarray
+        The resolved amounts by key, shape ``(series,)`` or ``(series, W)``.
+    jobs : hcwf.onset.model.StitchedJobs
+        The jobs: ``cell``, ``series``, ``split``, ``start``, ``end``, ``data_end`` and optional ``origin``, each of
+        shape ``(jobs,)``, in stitched days.
+    trace : bool, default False
+        Must be false: traces come from the reference backend.
+    amount_windows : array_like of int, optional
+        The ``W`` window start leads when `amounts` have ``W`` columns.
+
+    Returns
+    -------
+    hcwf.onset.model.Detection
+        ``day`` (int64, shape ``(jobs,)``, stitched day index or ``-1``), ``status`` (int8) and ``trace`` (``None``),
+        as NumPy arrays on the host.
+
+    Raises
+    ------
+    NotImplementedError
+        `trace` is true.
     """
     if trace:
         raise NotImplementedError("use the reference backend for traces")
@@ -413,10 +759,73 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
 
 
 class _StitchedTables:
-    """History tables over the reachable cells and columns, forecast tables, and the per-job row indices into them."""
+    """History tables over the reachable cells and columns, forecast tables, and the per-job row indices into them.
+
+    Builds the forecast tables with `_Tables` and the history tables per cell and per (cell, amount) variant.
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled definition.
+    hist_tenths : numpy.ndarray of int64, shape (cell, time)
+        Observed daily rain in tenths of mm.
+    hist_missing : numpy.ndarray of bool, shape (cell, time)
+        True where the observed day is missing.
+    fc_tenths : numpy.ndarray of int64, shape (series, lead)
+        Forecast daily rain in tenths of mm.
+    fc_missing : numpy.ndarray of bool, shape (series, lead)
+        True where the forecast day is missing.
+    amounts : dict of str to numpy.ndarray
+        The resolved amounts by key, shape ``(series,)``.
+    jobs : hcwf.onset.model.StitchedJobs
+        The jobs, in stitched days.
+    active : numpy.ndarray of bool, shape (jobs,)
+        The jobs that have at least one candidate; only they set the history range.
+
+    Attributes
+    ----------
+    fc : _Tables
+        The forecast tables.
+    n_fc : int
+        The number of forecast days.
+    c0 : int
+        The history day of the first history column.
+    width : int
+        The number of history columns kept.
+    px, pm : cupy.ndarray, shape (cells, width + 1)
+        History prefix sums of rain and missing days over the reachable cells.
+    pw : cupy.ndarray of int32, shape (variants, width + 1)
+        History prefix counts of wet days per (cell, wet amount) variant.
+    hd : cupy.ndarray of int32
+        History prefix counts of dry days (or ``pw`` when the definition has no own ``dry_day``).
+    fd : cupy.ndarray of int32
+        Forecast prefix counts of dry days (or wet days without an own ``dry_day``).
+    use_pd : bool
+        Whether the definition has its own ``dry_day``.
+    wet_order : cupy.ndarray of int32 or None
+        The wet history days of each variant first, in time order; ``None`` unless the plan reports the first wet day.
+    cell, series, split, start, end, origin, data_end : cupy.ndarray of int64, shape (jobs,)
+        The per-job arrays (``cell`` indexes the reachable cells; ``data_end`` is clipped to the forecast end).
+    wet_variant, dry_variant : cupy.ndarray of int64, shape (jobs,)
+        The row of ``pw`` and of ``hd`` of each job.
+    spell_prefix : list of cupy.ndarray of int32
+        One history spell-start prefix table per veto.
+    spell_variant : list of cupy.ndarray of int64
+        The row of ``spell_prefix`` of each job, per veto.
+    amounts : dict of str to cupy.ndarray
+        The amounts on the device.
+    horizon : str
+        The plan's horizon policy.
+    keep : bool
+        The plan's ``keep_missing`` flag.
+
+    Raises
+    ------
+    ValueError
+        A job's split lies outside the history.
+    """
 
     def __init__(self, plan, hist_tenths, hist_missing, fc_tenths, fc_missing, amounts, jobs, active):
-        """Build forecast tables with _Tables and history tables per cell and per (cell, amount) variant."""
         self.fc = _Tables(plan, fc_tenths, fc_missing, amounts)
         self.n_fc = self.fc.n_time
         series_h = np.asarray(jobs.series, dtype=np.int64)
@@ -498,10 +907,34 @@ class _StitchedTables:
 
 
 class _StitchedBlock:
-    """The jobs of one block: row indices, split, window, and the candidate grid (days d, validity mask)."""
+    """The jobs of one block: row indices, split, window, and the candidate grid (days ``d``, validity mask).
+
+    Slices the per-job arrays of the tables into columns of shape ``(jobs, 1)`` and builds the candidate day grid.
+
+    Parameters
+    ----------
+    tables : _StitchedTables
+        The tables holding the per-job arrays.
+    sl : slice
+        The jobs of the block.
+    width : int
+        The number of candidate columns (the longest job in the block).
+
+    Attributes
+    ----------
+    n_time : cupy.ndarray of int64, shape (jobs, 1)
+        The stitched series length of each job (``split`` plus the forecast length).
+    n_jobs : int
+        The number of jobs in the block.
+    variants : list of cupy.ndarray
+        The spell-table row of each job, per veto.
+    d : cupy.ndarray of int64, shape (jobs, width)
+        The candidate day (stitched) of each cell.
+    valid : cupy.ndarray of bool, shape (jobs, width)
+        True where the candidate day is not past the job's ``end``.
+    """
 
     def __init__(self, tables: _StitchedTables, sl: slice, width: int):
-        """Slice the per-job arrays and build the (jobs, width) candidate day grid."""
         self.series = tables.series[sl][:, None]
         self.cell = tables.cell[sl][:, None]
         self.wet_variant = tables.wet_variant[sl][:, None]
@@ -520,14 +953,57 @@ class _StitchedBlock:
 
 
 def _g(tables: _StitchedTables, hist_table, fc_table, hist_row, job: _StitchedBlock, t):
-    """Prefix value at stitched index t: P_hist(min(t, split)) plus P_fc(t - split) once past the split (that table is 0 at 0)."""
+    """Return the prefix value at stitched index `t`.
+
+    The value is ``P_hist(min(t, split))`` plus ``P_fc(t - split)`` once past the split (the forecast table is 0 at
+    0). Only differences of two values are meaningful.
+
+    Parameters
+    ----------
+    tables : _StitchedTables
+        The tables (history offset ``c0``, widths).
+    hist_table : cupy.ndarray, shape (history rows, width + 1)
+        A history prefix table.
+    fc_table : cupy.ndarray, shape (series, n_fc + 1)
+        The matching forecast prefix table.
+    hist_row : cupy.ndarray of int64, shape (jobs, 1)
+        The row of `hist_table` of each job.
+    job : _StitchedBlock
+        The block of jobs.
+    t : cupy.ndarray of int64, shape (jobs, candidates)
+        The stitched day index.
+
+    Returns
+    -------
+    cupy.ndarray, shape (jobs, candidates)
+        The prefix values.
+    """
     h = hist_table[hist_row, cp.clip(cp.minimum(t, job.split) - tables.c0, 0, tables.width)]
     f = fc_table[job.series, cp.clip(t - job.split, 0, tables.n_fc)]
     return h + f
 
 
 def _observe_s(tables: _StitchedTables, job: _StitchedBlock, a, b):
-    """Observability of the stitched interval [a, b): (observable, flags) with the missing and horizon bits."""
+    """Return whether the stitched interval ``[a, b)`` can be observed, with the reason when it cannot.
+
+    Parameters
+    ----------
+    tables : _StitchedTables
+        The tables.
+    job : _StitchedBlock
+        The block of jobs.
+    a : cupy.ndarray of int64, shape (jobs, candidates)
+        The first day of the interval.
+    b : cupy.ndarray of int64, shape (jobs, candidates)
+        The end of the interval, exclusive.
+
+    Returns
+    -------
+    observable : cupy.ndarray of bool, shape (jobs, candidates)
+        True where the whole interval is observed.
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        Bit 1 (`MISSING_FLAG`) for missing or pre-history days, bit 2 (`HORIZON_FLAG`) for a span past the data end.
+    """
     e = job.data_end
     lo = cp.clip(a, 0, e)
     hi = cp.maximum(cp.minimum(b, e), lo)
@@ -537,7 +1013,24 @@ def _observe_s(tables: _StitchedTables, job: _StitchedBlock, a, b):
 
 
 def _condition_s(plan_cond: P.CondPlan, tables: _StitchedTables, job: _StitchedBlock):
-    """Three-valued code and flags of a Total or WetDays requirement on the stitched series."""
+    """Evaluate a Total or WetDays requirement on the stitched series for every candidate of a block.
+
+    Parameters
+    ----------
+    plan_cond : hcwf.onset.plan.CondPlan
+        The requirement.
+    tables : _StitchedTables
+        The tables.
+    job : _StitchedBlock
+        The block of jobs.
+
+    Returns
+    -------
+    code : cupy.ndarray of int8, shape (jobs, candidates)
+        The three-valued code (1 True, 0 False, -1 Unknown).
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        The flags, non-zero only where the code is Unknown.
+    """
     a, b = windowed.span(job, plan_cond.first, plan_cond.last, plan_cond.since_start)
     ok, flags = _observe_s(tables, job, a, b)
     if plan_cond.kind == P.TOTAL:
@@ -553,9 +1046,25 @@ def _condition_s(plan_cond: P.CondPlan, tables: _StitchedTables, job: _StitchedB
 
 
 def _seam(veto: P.VetoPlan, tables: _StitchedTables, job: _StitchedBlock):
-    """Per-job cumulative indicator (jobs, n + 1) of the spells starting in [split - length + 1, split - 1] that hold.
+    """Return the per-job cumulative indicator of the seam spells that hold.
 
-    A begins run also starts at split itself (n = length), and needs the history day before it not to be dry.
+    The seam spells are those starting in ``[split - length + 1, split - 1]``, so they straddle the split. A begins
+    run also starts at the split itself (``n = length``), and needs the history day before it not to be dry.
+
+    Parameters
+    ----------
+    veto : hcwf.onset.plan.VetoPlan
+        The veto.
+    tables : _StitchedTables
+        The tables.
+    job : _StitchedBlock
+        The block of jobs.
+
+    Returns
+    -------
+    cupy.ndarray of int32, shape (jobs, n + 1)
+        The cumulative count of holding starts, ``n = length - 1`` (``length`` for a begins veto); column ``i + 1``
+        counts the starts up to ``split - length + 1 + i``. Shape ``(jobs, 1)`` of zeros when ``n`` is 0.
     """
     length, begin = veto.length, int(veto.placement == P.BEGINS)
     n_seam = length - 1 + begin
@@ -571,7 +1080,7 @@ def _seam(veto: P.VetoPlan, tables: _StitchedTables, job: _StitchedBlock):
     fc_col = cp.clip(fc_len, 0, tables.n_fc)
 
     def hist_diff(table, row):
-        """Sum of the history part [u, split) of a prefix table."""
+        """Return the sum of the history part ``[u, split)`` of a prefix table."""
         return table[row, split_col] - table[row, u_col]
 
     missing = hist_diff(tables.pm, job.cell) + tables.fc.pm[job.series, fc_col]
@@ -595,7 +1104,33 @@ def _seam(veto: P.VetoPlan, tables: _StitchedTables, job: _StitchedBlock):
 
 
 def _veto_s(veto: P.VetoPlan, spell_prefix, variant, fc_prefix, tables: _StitchedTables, job: _StitchedBlock):
-    """Code and flags of a veto on the stitched series: TRUE means a spell was confirmed, so the candidate is rejected."""
+    """Evaluate a veto on the stitched series for every candidate of a block.
+
+    A code of ``TRUE`` means a spell was confirmed, so the candidate is rejected. Spells are counted in history only,
+    in the seam and in the forecast only.
+
+    Parameters
+    ----------
+    veto : hcwf.onset.plan.VetoPlan
+        The veto.
+    spell_prefix : cupy.ndarray of int32, shape (variants, width + 1)
+        The history spell-start prefix table of this veto.
+    variant : cupy.ndarray of int64, shape (jobs, 1)
+        The row of `spell_prefix` of each job.
+    fc_prefix : cupy.ndarray of int32, shape (series, n_fc + 2)
+        The forecast spell-start prefix table of this veto.
+    tables : _StitchedTables
+        The tables.
+    job : _StitchedBlock
+        The block of jobs.
+
+    Returns
+    -------
+    code : cupy.ndarray of int8, shape (jobs, candidates)
+        The three-valued code.
+    flags : cupy.ndarray of int8, shape (jobs, candidates)
+        The flags, non-zero only where the code is Unknown.
+    """
     a, b = windowed.span(job, veto.first, veto.last, False)
     length = veto.length
     if veto.placement == P.INSIDE:
@@ -626,7 +1161,28 @@ def _veto_s(veto: P.VetoPlan, spell_prefix, variant, fc_prefix, tables: _Stitche
 
 
 def _first_wet_day_s(tables: _StitchedTables, job: _StitchedBlock, onset, pick_day, day, report_span):
-    """Replace onset days by the first wet day in the report window (history part first, then the forecast)."""
+    """Replace onset days by the first wet day in the report window (history part first, then the forecast).
+
+    Parameters
+    ----------
+    tables : _StitchedTables
+        The tables.
+    job : _StitchedBlock
+        The block of jobs.
+    onset : cupy.ndarray of bool, shape (jobs,)
+        True for the jobs that found an onset.
+    pick_day : cupy.ndarray of int64, shape (jobs,)
+        The onset candidate day of each job.
+    day : cupy.ndarray of int64, shape (jobs,)
+        The reported days so far.
+    report_span : tuple of (int, int, bool)
+        The report span: first and last offset from the candidate day, and whether it starts at the job's origin.
+
+    Returns
+    -------
+    cupy.ndarray of int64, shape (jobs,)
+        `day` with the onset days moved to the first wet day of the span where there is one.
+    """
     first, last, since = report_span
     a = job.origin[:, 0] if since else pick_day + first
     b = pick_day + last
@@ -651,7 +1207,24 @@ def _first_wet_day_s(tables: _StitchedTables, job: _StitchedBlock, onset, pick_d
 
 
 def _first_passage_block_s(plan: P.Plan, tables: _StitchedTables, job: _StitchedBlock):
-    """Evaluate all candidates of a block of stitched jobs and pick the first one that is not False; returns (day, status)."""
+    """Evaluate all candidates of a block of stitched jobs and pick the first one that is not False.
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled first-passage definition.
+    tables : _StitchedTables
+        The tables.
+    job : _StitchedBlock
+        The block of jobs.
+
+    Returns
+    -------
+    day : cupy.ndarray of int64, shape (jobs,)
+        The reported stitched day index, ``-1`` for none.
+    status : cupy.ndarray of int8, shape (jobs,)
+        The `Status` code.
+    """
     shape = job.d.shape
     unknown_flags = cp.zeros(shape, dtype=cp.int8)
     any_false = cp.zeros(shape, dtype=cp.bool_)
@@ -694,7 +1267,24 @@ def _first_passage_block_s(plan: P.Plan, tables: _StitchedTables, job: _Stitched
 
 
 def _curve_block_s(plan: P.Plan, tables: _StitchedTables, job: _StitchedBlock):
-    """Evaluate the cumulative-anomaly rule for every stitched job of a block; returns (day, status)."""
+    """Evaluate the cumulative-anomaly rule for every stitched job of a block.
+
+    Parameters
+    ----------
+    plan : hcwf.onset.plan.Plan
+        The compiled curve definition.
+    tables : _StitchedTables
+        The tables.
+    job : _StitchedBlock
+        The block of jobs.
+
+    Returns
+    -------
+    day : cupy.ndarray of int64, shape (jobs,)
+        The reported stitched day index, ``-1`` for none.
+    status : cupy.ndarray of int8, shape (jobs,)
+        The `Status` code.
+    """
     start, end, series = job.start[:, 0], job.end[:, 0], job.series[:, 0]
     ok, flags = _observe_s(tables, job, job.start, job.end + 1)
     ok, flags = ok[:, 0], flags[:, 0]

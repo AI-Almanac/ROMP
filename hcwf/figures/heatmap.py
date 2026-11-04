@@ -1,4 +1,8 @@
-"""Heatmap of forecast-bin Brier skill score and AUC for one model."""
+"""Heatmap of forecast-bin Brier skill score and AUC for one model.
+
+`create_heatmap` takes the score results of one case (see `hcwf.metrics.score`) and writes one figure to the run's
+figure folder; it is one of the figure routines listed in `hcwf.figures`.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -13,7 +17,22 @@ log = logging.getLogger(__name__)
 
 
 def create_heatmap(score_results, case, spec):
-    """Create and save the skill score heatmap of one case (always saved to spec.dir_fig; shown if spec.show_plot)."""
+    """Create and save the skill score heatmap of one case.
+
+    The figure has two strips over the target bins: the Brier skill score in percent and the AUC (the climatology AUC
+    in brackets). It is always saved to ``spec.dir_fig`` (300 dpi) and shown if ``spec.show_plot`` is true.
+
+    Parameters
+    ----------
+    score_results : dict
+        The scores of the case: ``AUC`` and ``AUC_ref`` (each with ``bin_auc_scores``, a dict of bin name to
+        float), ``BS`` and ``BS_ref`` (Brier scores per bin) and ``skill_results`` (with
+        ``bin_fair_brier_skill_scores``, a dict of bin name to float).
+    case : object
+        The case drawn; ``case.window.span`` and ``case.model.name`` are part of the output file name.
+    spec : object
+        The run's ``FigureSpec``: ``dir_fig`` and ``show_plot``.
+    """
     auc_forecast =score_results['AUC']
     auc_climatology = score_results['AUC_ref']
     brier_forecast =score_results['BS']
