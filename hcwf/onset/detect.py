@@ -430,7 +430,8 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     cells = "cell" in cube.dims
     spatial = ("cell",) if cells else axes.spatial_dims(cube.dims)
     order = ("init_time",) + (("member",) if "member" in cube.dims else ()) + spatial + ("step",)
-    forecast = ingest_forecast(cube.transpose(*order), setup, case.model, rc.onset_options, select, "forecast")
+    forecast = ingest_forecast(cube.transpose(*order), setup, case.model, rc.onset_options, select,
+                               str(case.model.name or "forecast"))
     coords = {d: forecast.coords[d] for d in spatial}
     if cells:
         cell_lat, cell_lon = np.asarray(cube["lat"].values), np.asarray(cube["lon"].values)
@@ -697,8 +698,8 @@ def ensemble_onset(day, init, threshold):
     n_member = day.shape[1]
     count = (~np.isnan(day)).sum(axis=1)
     fraction = count / n_member if n_member > 0 else np.zeros(count.shape)
-    with np.errstate(invalid="ignore"):
-        mean_day = np.nanmean(day, axis=1) if n_member else np.full(count.shape, np.nan)
+    # the mean over the members with an onset (NaN where none has one, as numpy.nanmean gives, without its warning)
+    mean_day = np.divide(np.nansum(day, axis=1), count, out=np.full(count.shape, np.nan), where=count > 0)
     ensemble_day = np.where(fraction >= threshold, np.round(mean_day), np.nan)
     ensemble_date = axes.broadcast_rows(pd.DatetimeIndex(init).values, ensemble_day.ndim) + (
         np.nan_to_num(ensemble_day, nan=0).astype("int64").astype("timedelta64[D]"))

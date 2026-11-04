@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
+from hcwf.log import Counted
 from hcwf.onset.model import MISSING_POLICIES, RESOLUTIONS, DailyRain, ForecastRain
 from hcwf.io.dims import ROLE_ALIASES, find_dim
 
@@ -446,7 +447,7 @@ def _to_tenths(values: np.ndarray, to_tenths: float, clip_negative: bool,
 
 def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
              positions: np.ndarray | None, clip_negative: bool = False,
-             exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray]:
+             exact: bool = False, keep_negative: bool = False, source: str = "") -> tuple[np.ndarray, np.ndarray]:
     """Convert ``da`` to tenths and missing flags of shape ``out_shape``, reading blocks along its first axis.
 
     With ``positions``, the last axis of ``da`` lands at those indices of the output's last axis and every other output day
@@ -468,6 +469,8 @@ def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
         Return float64 millimetres, unrounded, instead of int32 tenths.
     keep_negative : bool, default False
         Neither clip nor flag negative values.
+    source : str, default ""
+        The label of the data (the dataset the warning about negative values is counted under).
 
     Returns
     -------
@@ -503,11 +506,15 @@ def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
             tenths[rows, ..., positions] = t
             missing[rows, ..., positions] = m
     if n_negative and clip_negative:
-        warnings.warn(f"{n_negative} negative values (lowest {lowest / per_mm:.2f} mm) were set to 0",
-                      UserWarning, stacklevel=3)
+        warnings.warn(Counted(f"{n_negative} negative values (lowest {lowest / per_mm:.2f} mm) were set to 0",
+                              "negative rain set to 0", source or "data", n_negative, lowest / per_mm,
+                              "{dataset}: {count} negative values (lowest {extreme:.2f} mm) were set to 0 "
+                              "({reads} read{s})", info=True), stacklevel=3)
     elif n_negative:
-        warnings.warn(f"{n_negative} values below -0.05 mm (lowest {lowest / per_mm:.2f} mm) were set to missing",
-                      UserWarning, stacklevel=3)
+        warnings.warn(Counted(f"{n_negative} values below -0.05 mm (lowest {lowest / per_mm:.2f} mm) were set to missing",
+                              "rain below the floor set to missing", source or "data", n_negative, lowest / per_mm,
+                              "{dataset}: {count} values below -0.05 mm (lowest {extreme:.2f} mm) were set to missing "
+                              "({reads} read{s})"), stacklevel=3)
     return tenths, missing
 
 
@@ -612,7 +619,7 @@ def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, sou
                       stacklevel=2)
         positions = ordinals - ordinals[0]
     tenths, flags = _convert(da, scale, da.shape[:-1] + (len(full),), positions, exact=rain_resolution == "exact",
-                             keep_negative=negatives == "keep")
+                             keep_negative=negatives == "keep", source=source)
     if missing == "zero":
         flags[...] = False
     time_values, year, month, day = _labels(full, calendar)
@@ -1253,7 +1260,7 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
         ordinals, shift = ordinals[perm], shift[perm]
     ordinals = ordinals + shift
     tenths, flags = _convert(daily, scale, daily.shape, None, clip_negative=True, exact=rain_resolution == "exact",
-                             keep_negative=negatives == "keep")
+                             keep_negative=negatives == "keep", source=source)
     if missing == "zero":
         flags[...] = False
     _, year, month, day = _labels(ordinals, calendar)

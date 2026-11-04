@@ -6,7 +6,9 @@ Modules log with ``log = logging.getLogger(__name__)``; nothing is configured on
 * shows INFO (default), only warnings (``verbosity=-1``, ``--quiet``) or DEBUG (``verbosity=1``, ``--verbose``)
   on the console, without time stamps, writing to whatever ``sys.stdout`` is at that moment;
 * writes everything (DEBUG up, with time stamps and module names) to ``logfile`` when one is given;
-* turns Python warnings into log records (``IngestInfo`` notes as INFO, the rest as warnings);
+* turns Python warnings into log records (``IngestInfo`` notes as INFO, the rest as warnings); the repeats of a `Counted`
+  warning (negative rain set to 0, once per year and worker) are added up and logged as one line per dataset when the
+  session ends;
 * restores the previous logging setup on exit.
 
 Worker processes (see ``hcwf.parallel``) forward their log records and warnings to the process that owns the
@@ -23,6 +25,7 @@ import logging
 import logging.handlers
 import multiprocessing
 import sys
+import threading
 import time
 import warnings
 from collections.abc import Iterator
@@ -58,8 +61,92 @@ class _Console(logging.Handler):
             self.handleError(record)
 
 
+class Counted(UserWarning):
+    """A warning that counts events of one kind in one dataset: a session sums its repeats into one line.
+
+    A reader emits it for each block, year or file it handles (`warnings.warn`); while a session or a worker is active
+    the records are not shown one by one but added up (`Tally`), and the session logs one line per kind and dataset when
+    it ends. Outside a session it is an ordinary `UserWarning` with the text it was made with.
+
+    Parameters
+    ----------
+    text : str
+        The message of one event (shown when the warning is not summed).
+    kind : str
+        What was counted; the dataset's lines of the same kind are summed.
+    dataset : str
+        The dataset the events belong to (the model or "observations").
+    count : int
+        The number of values this event covers.
+    extreme : float, optional
+        The most extreme value of the event (the lowest rain), reported as the lowest over all events.
+    summary : str, optional
+        The line logged at the end, with ``{dataset}``, ``{count}``, ``{extreme}``, ``{reads}`` (events) and ``{s}``
+        (plural ending of reads); None logs ``text`` of the first event.
+    info : bool, default False
+        Log the summary at INFO (an expected note) instead of WARNING.
+    """
+
+    def __init__(self, text, kind, dataset, count, extreme=None, summary=None, info=False):
+        super().__init__(text)
+        self.tally = (str(kind), str(dataset), int(count), extreme, summary, bool(info))
+
+
+class Tally(logging.Filter):
+    """A handler filter that takes the records of `Counted` warnings out of the stream and adds them up.
+
+    `flush` logs the totals. A record is a `Counted` one when it carries a ``tally`` attribute (set by `log_warning`).
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._lock = threading.Lock()
+        self._totals: dict = {}
+
+    def filter(self, record):
+        """Add a counted record to the totals and drop it.
+
+        Parameters
+        ----------
+        record : logging.LogRecord
+            The record; one without ``tally`` passes.
+
+        Returns
+        -------
+        bool
+            False for a counted record, True for any other.
+        """
+        tally = getattr(record, "tally", None)
+        if tally is None:
+            return True
+        if getattr(record, "tallied", False):   # the record already went by another handler of the session
+            return False
+        record.tallied = True
+        kind, dataset, count, extreme, summary, info = tally
+        with self._lock:
+            total = self._totals.setdefault((kind, dataset), {"count": 0, "reads": 0, "extreme": None,
+                                                              "summary": summary or record.getMessage(), "info": info})
+            total["count"] += count
+            total["reads"] += 1
+            if extreme is not None:
+                total["extreme"] = extreme if total["extreme"] is None else min(total["extreme"], extreme)
+        return False
+
+    def flush(self) -> None:
+        """Log one line for each kind and dataset counted, then forget the totals."""
+        with self._lock:
+            totals, self._totals = self._totals, {}
+        logger = logging.getLogger(f"{ROOT}.warnings")
+        for (kind, dataset), total in sorted(totals.items()):
+            line = total["summary"].format(dataset=dataset, count=total["count"], extreme=total["extreme"],
+                                           reads=total["reads"], s="" if total["reads"] == 1 else "s")
+            logger.log(logging.INFO if total["info"] else logging.WARNING, "%s", line)
+
+
 def log_warning(message, category, filename=None, lineno=None, file=None, line=None):
     """Log a Python warning as a ``hcwf.warnings`` record (ingest notes as INFO, the rest as warnings).
+
+    A `Counted` warning is logged with its counts, so that the handlers' `Tally` can add the repeats up.
 
     It has the signature of ``warnings.showwarning`` and replaces it while a session or a worker is active.
 
@@ -80,8 +167,9 @@ def log_warning(message, category, filename=None, lineno=None, file=None, line=N
     """
     from hcwf.onset.ingest import IngestInfo
 
+    extra = {"tally": message.tally} if isinstance(message, Counted) else None
     logging.getLogger(f"{ROOT}.warnings").log(
-        logging.INFO if issubclass(category, IngestInfo) else logging.WARNING, "%s", message)
+        logging.INFO if issubclass(category, IngestInfo) else logging.WARNING, "%s", message, extra=extra)
 
 
 _worker = {"year": None}
@@ -126,6 +214,7 @@ def worker_logging(queue) -> None:
     root.setLevel(logging.DEBUG)
     root.propagate = False
     warnings.showwarning = log_warning
+    warnings.simplefilter("always", Counted)    # every event is counted, not just the first of its text
 
 
 def set_worker_year(year) -> None:
@@ -185,13 +274,16 @@ def session(verbosity: int = NORMAL, logfile=None) -> Iterator[logging.Logger]:
         The ``hcwf`` logger.
     """
     root = logging.getLogger(ROOT)
-    previous = (root.level, list(root.handlers), root.propagate, warnings.showwarning, _state["console_level"])
+    previous = (root.level, list(root.handlers), root.propagate, warnings.showwarning, _state["console_level"],
+                list(warnings.filters))
     level = _LEVELS.get(verbosity, logging.INFO)
     root.setLevel(logging.DEBUG)
     root.propagate = False
     console = _Console()
     console.setLevel(level)
     root.handlers = [console]
+    tally = Tally()
+    console.addFilter(tally)
     _state["console_level"] = level
     file_handler = None
     if logfile is not None:
@@ -200,12 +292,16 @@ def session(verbosity: int = NORMAL, logfile=None) -> Iterator[logging.Logger]:
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
                                                     "%Y-%m-%d %H:%M:%S"))
+        file_handler.addFilter(tally)
         root.addHandler(file_handler)
 
     warnings.showwarning = log_warning
+    warnings.simplefilter("always", Counted)    # every event is counted, not just the first of its text
     try:
         yield root
     finally:
+        tally.flush()
+        warnings.filters[:] = previous[5]
         warnings.showwarning = previous[3]
         if file_handler is not None:
             file_handler.close()
