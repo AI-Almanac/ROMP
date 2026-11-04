@@ -328,12 +328,12 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
 
     # Only print CMZ averages if polygon is defined
     if polygon_defined:
-        log.debug(f"\n=== CORE MONSOON ZONE (CMZ) AVERAGES ===")
+        log.debug("\n=== CORE MONSOON ZONE (CMZ) AVERAGES ===")
 
         if not np.isnan(cmz_mae_mean):
             log.debug(f"CMZ Mean MAE (avg across years): {cmz_mae_mean:.2f} ± {cmz_mae_se:.2f} days")
         else:
-            log.debug(f"CMZ Mean MAE: N/A")
+            log.debug("CMZ Mean MAE: N/A")
 
         log.debug(f"CMZ False Alarm Rate: {cmz_far:.1f} %")
         log.debug(f"CMZ Miss Rate: {cmz_mr:.1f} %")

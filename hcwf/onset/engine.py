@@ -230,9 +230,9 @@ def build_observed_jobs(definition: Definition, rain: DailyRain, years=None,
         names = [s.name for s in definition.seasons]
         firsts, lasts = [], []
         for season in definition.seasons:
-            f, l = cal.fixed_bounds(keys, years, season.start, season.end)
-            firsts.append(np.broadcast_to(f[:, None], (len(years), n_series)))
-            lasts.append(np.broadcast_to(l[:, None], (len(years), n_series)))
+            lo, hi = cal.fixed_bounds(keys, years, season.start, season.end)
+            firsts.append(np.broadcast_to(lo[:, None], (len(years), n_series)))
+            lasts.append(np.broadcast_to(hi[:, None], (len(years), n_series)))
         first, last = np.stack(firsts), np.stack(lasts)
         absent = np.zeros(first.shape, dtype=bool)
     first, last = first.swapaxes(0, 1), last.swapaxes(0, 1)

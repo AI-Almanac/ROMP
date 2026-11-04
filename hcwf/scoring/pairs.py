@@ -104,7 +104,7 @@ def forecast_obs_pairs(rc, model, years, select=Selection()):
     combined_forecast_obs = PairArrays.concat(all_forecast_obs_pairs)
 
     # Print final summary statistics
-    log.debug(f"\nFinal Summary Statistics:")
+    log.debug("\nFinal Summary Statistics:")
     log.debug(f"Years processed: {list(years)}")
     return combined_forecast_obs, tables
 

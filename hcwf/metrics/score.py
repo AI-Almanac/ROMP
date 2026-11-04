@@ -220,7 +220,7 @@ def calculate_brier_score_climatology(pairs):
             'filtered_bins': []
         }
 
-    log.debug(f"Calculating Brier Score excluding 'Before initialization' bin")
+    log.debug("Calculating Brier Score excluding 'Before initialization' bin")
     log.debug(f"Original samples: {pairs.prob.size}, After filtering: {filtered.prob.size}")
 
     brier_results = _brier_results(filtered, filtered.members_with_onset)
@@ -311,7 +311,7 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
     # Bin-wise Fair Brier Skill Scores
     bin_fair_bss = {}
 
-    log.debug(f"\nBin-wise Fair Brier Skill Scores:")
+    log.debug("\nBin-wise Fair Brier Skill Scores:")
     for bin_label in target_bins:
         if bin_label in brier_forecast['bin_fair_brier_scores'] and bin_label in brier_climatology['bin_fair_brier_scores']:
             forecast_fair_brier_bin = brier_forecast['bin_fair_brier_scores'][bin_label]
@@ -338,7 +338,7 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
     table_width = 30 + 18 + 12 * len(target_bins)
 
     # Summary table
-    log.debug(f"\n" + "="*table_width)
+    log.debug("\n" + "="*table_width)
     log.debug("SKILL SCORE SUMMARY TABLE")
     log.debug("="*table_width)
     log.debug(header)
@@ -362,14 +362,14 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
     log.debug("-"*table_width)
 
     # Add interpretation guide
-    log.debug(f"\nInterpretation Guide:")
-    log.debug(f"• Positive skill scores indicate forecast is better than climatology")
-    log.debug(f"• Negative skill scores indicate forecast is worse than climatology")
-    log.debug(f"• Skill score = 0 means forecast equals climatology")
-    log.debug(f"• Perfect score = 1.0")
+    log.debug("\nInterpretation Guide:")
+    log.debug("• Positive skill scores indicate forecast is better than climatology")
+    log.debug("• Negative skill scores indicate forecast is worse than climatology")
+    log.debug("• Skill score = 0 means forecast equals climatology")
+    log.debug("• Perfect score = 1.0")
 
     # Additional detailed results
-    log.debug(f"\n" + "="*60)
+    log.debug("\n" + "="*60)
     log.debug("DETAILED RESULTS")
     log.debug("="*60)
 
@@ -381,7 +381,7 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
     log.debug(f"Climatology Fair RPS : {rps_climatology['fair_rps']:.4f}")
     log.debug(f"Fair RPS Skill Score: {fair_rpss_overall:.4f}")
 
-    log.debug(f"\nBin-wise Fair Brier Score Comparisons:")
+    log.debug("\nBin-wise Fair Brier Score Comparisons:")
     for bin_name in target_bins:
         if bin_name in brier_forecast['bin_fair_brier_scores'] and bin_name in brier_climatology['bin_fair_brier_scores']:
             forecast_val = brier_forecast['bin_fair_brier_scores'][bin_name]

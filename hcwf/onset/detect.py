@@ -338,7 +338,7 @@ def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selec
     columns["onset_status"] = _names(out["status"][at]).tolist()
     onset_df = pd.DataFrame(columns) if len(i) else pd.DataFrame([])
     total, with_obs = out["totals"]
-    log.debug(f"\nProcessing Summary:")
+    log.debug("\nProcessing Summary:")
     log.debug(f"Total potential initializations: {total}")
     log.debug(f"Skipped (no observed onset): {total - with_obs * len(out['init'])}")
     log.debug(f"Skipped (initialized after observed onset): {with_obs * len(out['init']) - len(i)}")
@@ -428,7 +428,7 @@ def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     onset_df["onset_status"] = _names(out["status"][member_at])
     ensemble_df["onset_status"] = _ensemble_status(out["status"][(ei, slice(None), *ens_where)], threshold, has_onset)
 
-    log.debug(f"\nProcessing Summary:")
+    log.debug("\nProcessing Summary:")
     log.debug(f"Generated {len(onset_df)} member-forecast combinations")
     log.debug(f"Found onset in {int(np.sum(~np.isnan(member_values)))} cases")
     log.debug(f"Onset rate: {np.mean(~np.isnan(member_values)):.3f}" if len(member_values) else "Onset rate: nan")

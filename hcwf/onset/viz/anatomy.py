@@ -108,7 +108,7 @@ def _vetoing_spells(a: Anatomy) -> list[tuple[int, int, int]]:
         spell = c.checks[c.decisive].spell if c.state == "F" and c.checks[c.decisive].role == "veto" else None
         if spell is not None:
             seen.setdefault((spell.first, spell.last), spell.length)
-    return sorted((f, l, n) for (f, l), n in seen.items())
+    return sorted((lo, hi, n) for (lo, hi), n in seen.items())
 
 
 def _lane_label(ax, text: str, bars: list, y: float, days_per_inch: float, n: int, ink: dict,
@@ -152,7 +152,7 @@ def _rain_panel(ax, a: Anatomy, p: style.Palette, x0: int, n: int, handles: dict
                     days_per_inch, n, ink, avoid=avoid)
     if spells:
         bottom -= 1.6 * lane
-        bars = [(f - x0 - 0.5, l - x0 + 0.5) for f, l, _ in spells]
+        bars = [(lo - x0 - 0.5, hi - x0 + 0.5) for lo, hi, _ in spells]
         for lo, hi in bars:
             ax.add_patch(Rectangle((lo, bottom + 0.3 * lane), hi - lo, 0.9 * lane, color=p.dry_spell, lw=0, zorder=2))
         _lane_label(ax, f"dry spell, {spells[0][2]} days", bars, bottom + 0.75 * lane, days_per_inch, n, ink, only=0, avoid=avoid)

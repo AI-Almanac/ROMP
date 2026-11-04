@@ -299,7 +299,7 @@ def regex_to_glob(pattern: str) -> str | None:
             out.append("[0-9][0-9][0-9][0-9]")
         elif match := _DIGITS.match(rest):
             out.append("[0-9]" * int(match.group(1)))
-        elif rest.startswith(".*") and not rest[2:3] in ("?", "*", "+"):
+        elif rest.startswith(".*") and rest[2:3] not in ("?", "*", "+"):
             out.append("*")
             i += 2
             continue
@@ -307,7 +307,7 @@ def regex_to_glob(pattern: str) -> str | None:
             out.append(rest[1])
             i += 2
             continue
-        elif rest[0] == "." and not rest[1:2] in ("*", "+", "?", "{"):
+        elif rest[0] == "." and rest[1:2] not in ("*", "+", "?", "{"):
             out.append("?")
             i += 1
             continue

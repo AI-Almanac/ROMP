@@ -46,7 +46,7 @@ def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
     spatial = axes.spatial_dims(onset_da_dict[first_year].dims)
     coords = axes.coords_of(onset_da_dict[first_year], spatial)
 
-    log.debug(f"Creating spatial FAR, Miss Rate, yearly MAE, and mean MAE maps...")
+    log.debug("Creating spatial FAR, Miss Rate, yearly MAE, and mean MAE maps...")
     log.debug(f"Grid dimensions: {' x '.join(f'{len(coords[d])} {d}' for d in spatial)}")
     log.debug(f"Years: {list(metrics_df_dict.keys())}")
 

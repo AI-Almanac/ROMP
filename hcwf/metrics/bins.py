@@ -363,7 +363,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     log.debug(f"Processing {len(init_dates)} initialization dates")
     log.debug(f"Day bins: {day_bins}")
     log.debug(f"Extended bins include: 'Before day {min_forecast_day}' and 'After day {max_forecast_day}' ")
-    log.debug(f"Using day-of-year method for onset comparison")
+    log.debug("Using day-of-year method for onset comparison")
 
     # Get the actual coordinates (lat and lon, or unit ids) from the data
     spatial = axes.spatial_dims(obs_onset_da.dims)

@@ -700,12 +700,12 @@ def _stitched_run(plan: P.Plan, amounts: dict, start: int, end: int, data_end: i
 
 def _span_text(a: Anatomy, first: int, last: int, with_year: bool = False) -> str:
     """Day indices first..last as "2-22 Jul", "24 May - 13 Jun" or "5 Jul"."""
-    f, l = date_ymd(a.date_of(first)), date_ymd(a.date_of(last))
+    start, end = date_ymd(a.date_of(first)), date_ymd(a.date_of(last))
     if first == last:
         return format_date(a.date_of(first), with_year)
-    if f[:2] == l[:2]:
-        return f"{f[2]}-{l[2]} {_MONTHS[f[1] - 1]}" + (f" {f[0]}" if with_year else "")
-    return f"{format_date(a.date_of(first), with_year and f[0] != l[0])} - {format_date(a.date_of(last), with_year)}"
+    if start[:2] == end[:2]:
+        return f"{start[2]}-{end[2]} {_MONTHS[start[1] - 1]}" + (f" {start[0]}" if with_year else "")
+    return f"{format_date(a.date_of(first), with_year and start[0] != end[0])} - {format_date(a.date_of(last), with_year)}"
 
 
 def _amount_text(check: Check) -> str:

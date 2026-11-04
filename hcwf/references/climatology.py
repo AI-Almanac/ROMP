@@ -230,7 +230,7 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
     else:
         climatology_forecast_df = pd.DataFrame([])
 
-    log.debug(f"\nClimatology Forecast Summary:")
+    log.debug("\nClimatology Forecast Summary:")
     log.debug(f"Total potential initializations: {total_potential_inits}")
     log.debug(f"Skipped (no observed onset): {skipped_no_obs}")
     log.debug(f"Skipped (initialized after observed onset): {skipped_late_init}")
@@ -326,7 +326,7 @@ def climatological_onset_dataset(rc, case, select=Selection()):
     total_valid = (~pd.isna(climatological_onset_da.values)).sum()
 
     log.debug(f"\n{'='*60}")
-    log.debug(f"CLIMATOLOGICAL ONSET DATASET SUMMARY")
+    log.debug("CLIMATOLOGICAL ONSET DATASET SUMMARY")
     log.debug(f"{'='*60}")
     log.debug(f"Years processed: {len(valid_years)} ({min(valid_years)}-{max(valid_years)})")
     log.debug(f"Spatial domain: {' x '.join(f'{len(v)} {d}' for d, v in zip(spatial, values))}")

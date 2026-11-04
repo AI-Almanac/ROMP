@@ -265,7 +265,9 @@ def fold_coefficients(models: Mapping[int, FittedModel]) -> xr.Dataset:
             raise ValueError(f"fold {year} has another formula, features or classes than the first fold")
         if model.scaler_mean is None:
             raise ValueError(f"fold {year} has no scaler")
-    stack = lambda name: np.stack([getattr(m, name) for m in models.values()])
+    def stack(name):
+        return np.stack([getattr(m, name) for m in models.values()])
+
     return xr.Dataset(
         {
             "coef": (("year", "class", "feature"), stack("coef")),

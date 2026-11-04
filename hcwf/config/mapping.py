@@ -134,7 +134,7 @@ def _finish_observations(res, config, sources):
     if listed:   # listed files: any number per year, the years filter applied
         flat["obs_paths"] = listed
         flat["obs_dir"] = flat["obs_dir"] or ""
-    if values.get("dims") and any(l.key == "dims" and not l.how.startswith("detected") for l in res.lines):
+    if values.get("dims") and any(line.key == "dims" and not line.how.startswith("detected") for line in res.lines):
         flat["obs_dims"] = dict(values["dims"])   # only dims the user (or a dataset file) gave rename anything
     pattern = config.get("obs_file_pattern") or ((values["file_pattern"],) if "file_pattern" in values else None)
     if pattern:
@@ -196,7 +196,7 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
         report.append(f"{written} {entry.get('name', '')}:")
         report.extend("  " + t for t in res.report())
         values = detect.finalize_units(res.values)
-        values["_accumulation_detected"] = any(l.key == "accumulation" and l.how.startswith("detected") for l in res.lines)
+        values["_accumulation_detected"] = any(line.key == "accumulation" and line.how.startswith("detected") for line in res.lines)
         for key in ("name", "path", "variable"):
             if key not in values:
                 values[key] = "" if key == "path" and values.get("paths") else None
@@ -281,7 +281,7 @@ def _resolve_reference_settings(config, sources, given_units, report):
     if not config.get("ref_model_accumulation"):
         config["ref_model_accumulation"] = res.values.get("accumulation") or "auto"
         config["ref_model_accumulation_detected"] = any(
-            l.key == "accumulation" and l.how.startswith("detected") for l in res.lines)
+            line.key == "accumulation" and line.how.startswith("detected") for line in res.lines)
         sources["ref_model_accumulation"] = "detected" if config["ref_model_accumulation_detected"] else "default"
     report.append(f"reference {config['ref_model']}: accumulation {config['ref_model_accumulation']}"
                   + (f", days cut at {config['ref_model_daily_boundary']}" if config.get("ref_model_daily_boundary") else ""))
