@@ -50,7 +50,8 @@ from hcwf.onset.model import Status
 from hcwf.references.climatology import climatological_onset, climatological_onset_dataset
 from hcwf.references.climatology import compute_climatology_as_forecast
 from hcwf.onset.observed_cache import threshold_hash
-from hcwf.references.conditional import (CONDITIONAL_CLIMATOLOGY, cv_mode,
+from hcwf.config.model import CLIMATOLOGY, CONDITIONAL_CLIMATOLOGY
+from hcwf.references.conditional import (cv_mode,
                                                 compute_conditional_climatology_as_forecast,
                                                 conditional_lead_probabilities)
 from hcwf.onset.detect import (_ensemble_status, detect_forecast, detect_observed, detect_observed_dataset,
@@ -61,8 +62,6 @@ log = logging.getLogger(__name__)
 
 OBSERVED = "observed"
 """The name of the observed source."""
-CLIMATOLOGY = "climatology"
-"""The name of the traditional climatology source."""
 _NO_OBS = np.datetime64("2262-01-01", "ns")
 """Stand-in observed onset (after every init) that makes every cell a case for the climatology functions."""
 

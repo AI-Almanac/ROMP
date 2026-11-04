@@ -18,11 +18,8 @@ from hcwf.onset.detect import check_alignment, detect_deterministic, detect_ense
 from hcwf.onset.observed_cache import threshold_hash
 from hcwf.references.climatology import climatological_onset, compute_climatology_as_forecast
 from hcwf.references.climatology import climatological_onset_dataset
-from hcwf.references.conditional import (
-    CLIMATOLOGY_REFERENCES,
-    CONDITIONAL_CLIMATOLOGY,
-    compute_conditional_climatology_as_forecast,
-)
+from hcwf.config.model import CLIMATOLOGY, CLIMATOLOGY_REFERENCES, CONDITIONAL_CLIMATOLOGY
+from hcwf.references.conditional import compute_conditional_climatology_as_forecast
 from hcwf.parallel import map_year_args
 
 import logging
@@ -123,7 +120,7 @@ def _tables_of_years(years, rc, case, select, ens, extra):
         Maps each year to ``(onset_df, onset_da)``: the onset table and the observed onsets.
     """
     model, ev = case.model, rc.evaluation
-    ref_clim = (model.name == "climatology")
+    ref_clim = (model.name == CLIMATOLOGY)
     ref_cond = (model.name == CONDITIONAL_CLIMATOLOGY)
     use_ensemble = (ev.probabilistic and not ref_clim) if ens else ev.probabilistic
     thresh_da = thresholds_io.thresholds_of(rc, model, select)
@@ -238,13 +235,13 @@ def onset_tables(rc, case, select=Selection(), *, ens=False, years=None):
         extra = {}
         tables = _SHARED.pop(key, None)   # the skill pass detected these years already
         if tables is None:
-            if case.model.name == "climatology":
+            if case.model.name == CLIMATOLOGY:
                 log.debug("Generating climatology onset doy for each year as onset_da_dict")
                 extra["climatological_onset_doy"] = climatological_onset(rc, case, select)
             elif case.model.name == CONDITIONAL_CLIMATOLOGY:
                 log.debug("Computing observed onsets of the climatology years for the conditional climatology")
                 extra["clim_onset"] = climatological_onset_dataset(rc, case, select)
-            reads = case.model.name not in (CONDITIONAL_CLIMATOLOGY, "climatology") and len(years) > 1
+            reads = case.model.name not in CLIMATOLOGY_REFERENCES and len(years) > 1
             chunks = map_year_args(_tables_of_years, years, (rc, case, select, ens, extra), rc.parallel, skip=None,
                                    prewarm=lambda: warmup_io.warm_up_of(rc, case.model, select),
                                    item_bytes=forecasts_io.forecast_year_bytes(
@@ -286,7 +283,7 @@ def _metrics_of_tables(tables, extra, rc, case, years=None):
     years = rc.evaluation.years if years is None else years
     metrics_df_dict = {}
     onset_da_dict = {}
-    ref_clim = (case.model.name == "climatology")
+    ref_clim = (case.model.name == CLIMATOLOGY)
     back_dated = reports_back_dated(rc.onset, case.model.name)
     dims = point_dims(rc.observations)
     if ref_clim:

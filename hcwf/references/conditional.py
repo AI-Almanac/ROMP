@@ -19,7 +19,7 @@ onset date per init and cell, in the layout of
 import numpy as np
 import pandas as pd
 
-from hcwf.config.model import Selection
+from hcwf.config.model import CONDITIONAL_CLIMATOLOGY, Selection
 from hcwf.metrics.bins import LeadBins, PairArrays, bin_fields, onset_cases
 from hcwf.references.kde import conditional_probabilities, season_days
 from hcwf.spatial import axes
@@ -27,10 +27,6 @@ import logging
 
 log = logging.getLogger(__name__)
 
-CONDITIONAL_CLIMATOLOGY = "conditional_climatology"
-"""The name of the conditional climatology reference."""
-CLIMATOLOGY_REFERENCES = ("climatology", CONDITIONAL_CLIMATOLOGY)
-"""The names of the climatology references."""
 CV_MODES = ("none", "leave_one_year_out")
 """The values of ``climatology_cv`` (both climatology references: the conditional and the unconditional)."""
 DEFAULT_CV = "leave_one_year_out"

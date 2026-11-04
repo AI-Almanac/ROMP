@@ -20,7 +20,7 @@ import numpy as np
 import xarray as xr
 
 from hcwf.config.schema import has_blend
-from hcwf.config.model import climatology_years, evaluation_years
+from hcwf.config.model import CLIMATOLOGY_REFERENCES, CONDITIONAL_CLIMATOLOGY, climatology_years, evaluation_years
 from hcwf.config.onset import onset_setup
 
 log = logging.getLogger(__name__)
@@ -330,7 +330,7 @@ def _files(dic: dict, report: CheckReport) -> dict:
     report.section("Files")
     years, clim = _years(dic)
     setup = onset_setup(dic)
-    needs_clim = dic.get("ref_model") in ("climatology", "conditional_climatology")
+    needs_clim = dic.get("ref_model") in CLIMATOLOGY_REFERENCES
     obs_years = set(years) | (set(clim) if needs_clim else set())
     if setup.uses_thresholds and setup.threshold_source == "observations" and setup.threshold_years and not any(
             True for _ in (*setup.threshold_files, *setup.threshold_constants)):
@@ -357,7 +357,7 @@ def _files(dic: dict, report: CheckReport) -> dict:
         if gone:
             report.error(f"{model} forecast files missing for {_short(gone)} in {folder} (pattern {pattern})")
     ref = dic.get("ref_model")
-    if ref and ref not in ("climatology", "conditional_climatology") and dic.get("ref_model_dir"):
+    if ref and ref not in CLIMATOLOGY_REFERENCES and dic.get("ref_model_dir"):
         got = {y: _find(dic["ref_model_dir"], (dic.get("ref_model_file_pattern") or "{}.nc",), y) for y in years}
         gone = [y for y, p in got.items() if p is None]
         report.add(f"reference {ref}: {len(got) - len(gone)} of {len(got)} yearly files found")
@@ -802,7 +802,7 @@ def _short_climatology(dic: dict, report: CheckReport) -> None:
         The report to add to.
     """
     n = len(climatology_years(dic))
-    needs = 10 if dic.get("ref_model") == "conditional_climatology" else 15
+    needs = 10 if dic.get("ref_model") == CONDITIONAL_CLIMATOLOGY else 15
     if n < needs:
         report.hint("evaluation.start_year_clim", f"the climatology has only {n} years "
                     f"({dic['start_year_clim']}-{dic['end_year_clim']}); the climatology reference and "

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hcwf.config import schema
+from hcwf.config.model import CLIMATOLOGY, CLIMATOLOGY_REFERENCES
 from hcwf.errors import RunExistsError
 
 MAX_NAME = 40
@@ -50,8 +51,6 @@ _NOT_IN_FINGERPRINT = {
 """The keys of the flat config that do not define the results (folders, switches, plotting, ...)."""
 _BLEND_NOT_IN_FINGERPRINT = {"blend_climatology": ("workers",), "blend_outputs": ("intermediates", "pickles")}
 """Keys inside blend sections that do not define the results."""
-_CLIMATOLOGY_REFERENCES = ("climatology", "conditional_climatology")
-"""The reference models whose onsets come from no forecast."""
 
 
 @dataclass(frozen=True)
@@ -240,7 +239,7 @@ def _count_scores(dic: dict) -> int:
     if dic.get("probabilistic"):
         return models * windows * 2 * bool(dic.get("save_csv_score"))
     count = (models + reference) * windows * bool(dic.get("save_nc_spatial_far_mr_mae"))
-    return count + int(bool(dic.get("save_nc_climatology")) and dic.get("ref_model") == "climatology")
+    return count + int(bool(dic.get("save_nc_climatology")) and dic.get("ref_model") == CLIMATOLOGY)
 
 
 def _count_figures(dic: dict) -> int:
@@ -264,7 +263,7 @@ def _count_figures(dic: dict) -> int:
             + (on("plot_panel_heatmap_skill") + on("plot_bar_bss_rpss_auc")) * windows
     else:
         count = on("plot_spatial_far_mr_mae") * (models + 1) * windows + on("plot_panel_heatmap_error") \
-            + int(bool(dic.get("plot_climatology_onset")) and dic.get("ref_model") == "climatology")
+            + int(bool(dic.get("plot_climatology_onset")) and dic.get("ref_model") == CLIMATOLOGY)
     return count + (1 + models if dic.get("mask") else 0)
 
 
@@ -281,7 +280,7 @@ def count_onsets(dic: dict) -> int:
     int
         The number of files.
     """
-    return 1 + len(dic.get("model_list") or ()) + int(dic.get("ref_model") in _CLIMATOLOGY_REFERENCES)
+    return 1 + len(dic.get("model_list") or ()) + int(dic.get("ref_model") in CLIMATOLOGY_REFERENCES)
 
 
 def plan(dic: dict, config_file=None, write: bool = True) -> RunPaths:

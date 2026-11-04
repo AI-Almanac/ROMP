@@ -4,6 +4,7 @@ The module holds the flow of the spatial scores of a run: for each case it gets 
 `hcwf.scoring.onset_tables`, makes the maps with `hcwf.metrics.error` and writes or plots them. The probabilistic
 counterpart is `hcwf.scoring.probabilistic`.
 """
+from hcwf.config.model import CLIMATOLOGY
 from hcwf.metrics.error import create_spatial_far_mr_mae
 from hcwf.scoring.onset_tables import compute_metrics
 from hcwf.io.output import save_climatology_onset, save_metrics_to_netcdf
@@ -140,7 +141,7 @@ def spatial_far_mr_mae_map(rc):
 
 
     # save climatological onset to netcdf
-    if case.model.name == 'climatology' and output.save_nc_climatology:
+    if case.model.name == CLIMATOLOGY and output.save_nc_climatology:
         save_climatology_onset(onset_da_dict, rc.paths, output, units, ev.climatology_years)
 
     # spatial map of climatology onset day

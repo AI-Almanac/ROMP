@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 
 import pandas as pd
 
-from hcwf.config.model import Case, Selection
+from hcwf.config.model import CLIMATOLOGY_REFERENCES, Case, Selection
 from hcwf.io import forecasts as forecasts_io
 from hcwf.io import observations as observations_io
 from hcwf.io import reference as reference_io
@@ -22,7 +22,7 @@ from hcwf.metrics.bins import PairArrays, create_climatological_forecast_obs_pai
 from hcwf.onset.detect import check_alignment, detect_ensemble, detect_observed
 from hcwf.parallel import NO_DATA, Pending, concat_year_args, spec_workers, start_year_args
 from hcwf.references.climatology import climatological_onset_dataset
-from hcwf.references.conditional import (CLIMATOLOGY_REFERENCES, conditional_pairs, cv_mode, is_conditional_climatology,
+from hcwf.references.conditional import (conditional_pairs, cv_mode, is_conditional_climatology,
                                          observed_of_year)
 from hcwf.scoring.onset_tables import reports_back_dated, share_ensemble_tables
 

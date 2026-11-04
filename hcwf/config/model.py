@@ -38,7 +38,11 @@ if TYPE_CHECKING:  # pragma: no cover
 
 Dims = tuple[tuple[str, str], ...]
 """Canonical dimension name -> name in the files, as sorted-as-given pairs (a dict is not hashable)."""
-CLIMATOLOGY_REFERENCES = ("climatology", "conditional_climatology")
+CLIMATOLOGY = "climatology"
+"""The name of the traditional climatology reference."""
+CONDITIONAL_CLIMATOLOGY = "conditional_climatology"
+"""The name of the conditional climatology reference."""
+CLIMATOLOGY_REFERENCES = (CLIMATOLOGY, CONDITIONAL_CLIMATOLOGY)
 """The names of the reference sources that are climatologies, not a forecast model."""
 
 

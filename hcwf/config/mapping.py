@@ -20,6 +20,7 @@ from pathlib import Path
 
 from hcwf.config import schema
 from hcwf.config import detect
+from hcwf.config.model import CLIMATOLOGY, CLIMATOLOGY_REFERENCES
 from hcwf.config.datasets import Dataset, expand_path, file_year, get_dataset, load_datasets, suggest
 from hcwf.errors import ConfigSchemaError, DatasetError, RegionError
 
@@ -453,7 +454,7 @@ def _resolve_reference_settings(config, sources, given_units, report):
     None
         Nothing; a climatology reference is left alone.
     """
-    if str(config.get("ref_model", "climatology")).endswith("climatology") or not config.get("ref_model_dir"):
+    if config.get("ref_model", CLIMATOLOGY) in CLIMATOLOGY_REFERENCES or not config.get("ref_model_dir"):
         return
     entry = {"name": config["ref_model"], "path": expand_path(config["ref_model_dir"]),
              "variable": config.get("ref_model_var"), "file_pattern": config.get("ref_model_file_pattern")}
@@ -562,7 +563,7 @@ def _derive(config, sources, errors):
     if config.get("date_filter_year") is None and config.get("start_date"):
         config["date_filter_year"] = config["start_date"][0]
         sources["date_filter_year"] = "year of start_date"
-    if str(config.get("ref_model", "climatology")).endswith("climatology"):
+    if config.get("ref_model", CLIMATOLOGY) in CLIMATOLOGY_REFERENCES:
         pairs = (("ref_model_dir", config.get("obs_dir")),
                  ("ref_model_file_pattern", (config.get("obs_file_pattern") or (None,))[0]),
                  ("ref_model_var", config.get("obs_var")), ("ref_model_unit_cvt", config.get("obs_unit_cvt")))
