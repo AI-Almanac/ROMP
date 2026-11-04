@@ -112,3 +112,12 @@ def test_dry_spells():
             units.parse_dry_run(bad)
     with pytest.raises(UnitsError, match="Fix:"):
         units.parse_dry_window("10 days")
+
+
+def test_parse_month_day_is_the_one_month_day_parser():
+    assert units.parse_month_day("06-02") == (6, 2)
+    assert units.parse_month_day("02-29", leap_day=True) == (2, 29)
+    assert units.parse_month_day("6-2", two_digit=False) == (6, 2)
+    for bad in ("02-29", "02-30", "04-31", "13-01", "6-2", "x"):
+        with pytest.raises(UnitsError):
+            units.parse_month_day(bad)
