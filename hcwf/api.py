@@ -120,7 +120,7 @@ def check(cfg, overwrite: bool = False, **overrides):
 
 def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = False, verbose: bool = False,
         **overrides) -> RunResult:
-    """Run HCWF on a config and return a `RunResult` (see the module text).
+    """Run HCWF on a config and return a `hcwf.api.RunResult` (see the module text).
 
     Parameters
     ----------

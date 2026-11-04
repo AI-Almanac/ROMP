@@ -37,7 +37,7 @@ __all__ = ["CLIMATOLOGY_FEATURE", "DEFAULT_FIXED_CUTOFF", "Recipe", "recipe_from
 
 
 CLIMATOLOGY_FEATURE = "prob_clim"
-"""Stem of the climatology's feature columns (blending `config.CLIMATOLOGY_FEATURE`)."""
+"""Stem of the climatology's feature columns (blending ``config.CLIMATOLOGY_FEATURE``)."""
 VARIANTS = ("base", "fixed_cutoff", "ref_onset")
 """The forecast probability variants: the search starts at lead 1, at the fixed cutoff date, at the reference onset."""
 VARIANT_SUFFIX = {"base": "", "fixed_cutoff": "_fixed_cutoff", "ref_onset": "_ref", "no_ref_filter": ""}

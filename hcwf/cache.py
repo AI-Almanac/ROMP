@@ -990,7 +990,7 @@ class Store:
         Parameters
         ----------
         hashes : dict of str to str
-            The hash of each part, from `_hashes`.
+            The hash of each part, from ``_hashes``.
 
         Returns
         -------
@@ -1106,7 +1106,7 @@ class Store:
         Parameters
         ----------
         hashes : dict of str to str
-            The hash of each part, from `_hashes`.
+            The hash of each part, from ``_hashes``.
         fp : str, optional
             The fingerprint of the entry itself, which is left out of the comparison.
 
@@ -1140,7 +1140,7 @@ class Store:
         fp : str
             The fingerprint looked up.
         hashes : dict of str to str
-            The hash of each part, from `_hashes`.
+            The hash of each part, from ``_hashes``.
         value : object or None
             What the lookup found; None is a miss.
         """

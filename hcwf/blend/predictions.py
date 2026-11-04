@@ -1,6 +1,6 @@
 """A model's probabilities of the outcome bins for samples, with the samples' keys.
 
-`Predictions.data` is an `xarray.Dataset` over ``sample`` (and ``bin``): ``probability`` (sample, bin) over the
+``Predictions.data`` is an `xarray.Dataset` over ``sample`` (and ``bin``): ``probability`` (sample, bin) over the
 interval bins (``week1`` .. ``weekN``, ``later``), optionally ``earlier`` (sample: an onset before the issue, which
 the RPS counts) and ``daily`` (sample, lead_day: a model's daily probabilities); the keys are coordinates over
 sample: ``id``, ``year``, ``time``, ``lat``, ``lon`` (the last three when the samples have them), and ``outcome``
