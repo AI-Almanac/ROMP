@@ -374,7 +374,7 @@ def unit_id_column(columns) -> str | None:
     Returns
     -------
     str or None
-        The first of `UNIT_ID_COLUMNS` in `columns`, or None when there is none.
+        The first of `UNIT_ID_COLUMNS` in ``columns``, or None when there is none.
     """
     names = set(columns)
     return next((c for c in UNIT_ID_COLUMNS if c in names), None)

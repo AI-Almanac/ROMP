@@ -311,7 +311,7 @@ def parse_month_day(text: str, *, leap_day: bool = False, two_digit: bool = True
     ------
     UnitsError
         ``text`` is not ``MM-DD``, names a day that no year has (``02-30``, ``04-31``), or is ``02-29`` without
-        `leap_day`.
+        ``leap_day``.
     """
     width = "{2}" if two_digit else "{1,2}"
     match = re.fullmatch(rf"(\d{width})-(\d{width})", text) if isinstance(text, str) else None

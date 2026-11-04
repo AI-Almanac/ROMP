@@ -250,3 +250,56 @@ html_theme_options = {
     "show_toc_level": 2,
     "github_url": "https://github.com/AI-Almanac/HCWF",
 }
+
+# -- Config classes -----------------------------------------------------------------------------------------------------
+# The config classes (`hcwf.config.Config`, its sections) are dataclasses whose every argument defaults to the
+# ``UNSET`` marker (a key that was not set). Their generated signature lists every key "=UNSET", which says nothing
+# the attribute list below it does not; it is shown as ``(**keys)`` instead.
+
+
+def _unset_signature(app, what, name, obj, options, signature, return_annotation):
+    """Show the signature of a class whose every argument defaults to ``UNSET`` as ``(**keys)``.
+
+    Parameters
+    ----------
+    app : sphinx.application.Sphinx
+        The application.
+    what : str
+        The kind of object.
+    name : str
+        Its full name.
+    obj : object
+        The object.
+    options : dict
+        The autodoc options.
+    signature : str or None
+        The signature autodoc made.
+    return_annotation : str or None
+        The return annotation autodoc made.
+
+    Returns
+    -------
+    tuple of (str, str) or None
+        The new signature and return annotation, or None to keep autodoc's.
+    """
+    import dataclasses
+
+    from hcwf.config import UNSET
+
+    if what != "class" or not dataclasses.is_dataclass(obj):
+        return None
+    fields = dataclasses.fields(obj)
+    if fields and all(f.default is UNSET for f in fields if f.init):
+        return "(**keys)", return_annotation
+    return None
+
+
+def setup(app):
+    """Connect the signature hook.
+
+    Parameters
+    ----------
+    app : sphinx.application.Sphinx
+        The application.
+    """
+    app.connect("autodoc-process-signature", _unset_signature)

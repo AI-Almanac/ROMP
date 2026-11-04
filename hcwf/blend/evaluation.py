@@ -74,7 +74,7 @@ class RunSettings:
     year_tag: str
     """The recipe's year tag, a part of every artifact name."""
     output_tag: str
-    """The suffix on every evaluation artifact, e.g. ``"_fixed_cutoff_2023_2025"`` (`Recipe.output_tag`)."""
+    """The suffix on every evaluation artifact, e.g. ``"_fixed_cutoff_2023_2025"`` (`hcwf.blend.recipe.Recipe.output_tag`)."""
 
     @classmethod
     def from_recipe(cls, recipe: Recipe) -> RunSettings:
