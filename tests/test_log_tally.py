@@ -42,6 +42,23 @@ def test_quiet_shows_none_of_the_counted_notes_but_the_log_file_keeps_them(capsy
     assert "AIFS: 4 negative values" in log_file.read_text()
 
 
+def test_a_live_forecast_shows_the_counted_notes_by_its_verbosity(capsys, monkeypatch):
+    from hcwf.api import forecast
+    from hcwf.blend.trained import TrainedBlend
+
+    def fake(self, forecasts, **kwargs):
+        for _ in range(3):
+            _event("AIFS", 2, -0.1)
+        return "forecast"
+
+    monkeypatch.setattr(TrainedBlend, "forecast", fake)
+    blend = object.__new__(TrainedBlend)
+
+    assert forecast(blend, {}, quiet=True) == "forecast" and capsys.readouterr().out == ""
+    forecast(blend, {})
+    assert capsys.readouterr().out.splitlines() == ["AIFS: 6 negative values (lowest -0.10 mm) were set to 0 (3 reads)"]
+
+
 def test_the_ensemble_mean_of_members_without_an_onset_does_not_warn():
     day = np.full((3, 4, 2), np.nan)
     day[0, :2, 0] = [3.0, 4.0]

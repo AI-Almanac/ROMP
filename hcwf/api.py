@@ -371,7 +371,7 @@ def _execute_benchmark(rc: RunConfig, *, write: bool, overwrite: bool, verbosity
 
 
 def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=None, write=False,
-             netcdf=False):
+             netcdf=False, quiet=False, verbose=False):
     """Apply a trained blend to live forecast files and return the `hcwf.blend.forecast.Forecast`.
 
     ::
@@ -389,9 +389,9 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
     blend : str or pathlib.Path or hcwf.blend.trained.TrainedBlend
         A ``trained.blend`` path (hcwf's format, or onset_blending's) or a trained blend.
     forecasts : dict of str to (str or list of str)
-        Maps each trained model to a file, a glob or a list of them.
+        Maps each trained model to a file, a glob, a zarr store or a list of them.
     issue_date : str or datetime.date, optional
-        Picks one issue of files holding several.
+        Picks one issue of files or of a zarr store holding several.
     fewer_members : bool, default False
         Let an ensemble hold only some of the trained members.
     output : str or pathlib.Path, optional
@@ -401,6 +401,10 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
         Save the forecast; the CSVs are the product.
     netcdf : bool, default False
         With ``write``, add a NetCDF twin of the probabilities.
+    quiet : bool, default False
+        Show warnings only (the notes of the reading, such as negative rain set to 0, are left out).
+    verbose : bool, default False
+        Also show debug lines.
 
     Returns
     -------
@@ -415,7 +419,7 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
     from hcwf.blend.trained import TrainedBlend
 
     path = None if isinstance(blend, TrainedBlend) else Path(blend)
-    with run_scope():
+    with run_scope(), logs.session(logs.verbosity_from(quiet, verbose)):
         trained = blend if path is None else TrainedBlend.load(path)
         result = trained.forecast(forecasts, issue_date=issue_date, fewer_members=fewer_members)
         if write:
