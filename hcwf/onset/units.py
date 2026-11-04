@@ -287,6 +287,43 @@ def _make_span(first: int, last: int, text: str) -> Span:
     return Span(first, last)
 
 
+def parse_month_day(text: str, *, leap_day: bool = False, two_digit: bool = True) -> tuple[int, int]:
+    """Parse ``MM-DD`` into a month and day that exists in a year.
+
+    Parameters
+    ----------
+    text : str
+        The text, for example ``"06-02"``; it is not stripped.
+    leap_day : bool, default False
+        Accept ``02-29``. Leave it False where the day is written into every year, because not every year has it.
+    two_digit : bool, default True
+        Require two digits for the month and for the day; False also accepts ``6-2``.
+
+    Returns
+    -------
+    tuple of (int, int)
+        The month and the day.
+
+    Raises
+    ------
+    UnitsError
+        ``text`` is not ``MM-DD``, names a day that no year has (``02-30``, ``04-31``), or is ``02-29`` without
+        `leap_day`.
+    """
+    width = "{2}" if two_digit else "{1,2}"
+    match = re.fullmatch(rf"(\d{width})-(\d{width})", text) if isinstance(text, str) else None
+    if match is None:
+        raise UnitsError(f"'{text}' is not a month-day. Fix: write MM-DD, e.g. '06-02'")
+    month, day = int(match.group(1)), int(match.group(2))
+    if (month, day) == (2, 29):
+        if not leap_day:
+            raise UnitsError("'02-29' is not allowed because not every year has it. Fix: use 02-28 or 03-01")
+        return month, day
+    if not 1 <= month <= 12 or not 1 <= day <= _MONTH_DAYS[month - 1]:
+        raise UnitsError(f"'{text}' is not a valid month-day. Fix: write MM-DD, e.g. '06-02'")
+    return month, day
+
+
 def parse_dayref(text: object) -> DayRef:
     """Parse ``MM-DD`` or ``climatological onset|cessation [+|- N days]`` into a day reference.
 
@@ -306,13 +343,8 @@ def parse_dayref(text: object) -> DayRef:
         ``text`` is ``02-29``, not a valid month-day, or cannot be read.
     """
     text = _normalize(text, "06-02")
-    match = re.fullmatch(r"(\d{2})-(\d{2})", text)
-    if match is not None:
-        month, day = int(match.group(1)), int(match.group(2))
-        if (month, day) == (2, 29):
-            raise UnitsError("'02-29' is not allowed because not every year has it. Fix: use 02-28 or 03-01")
-        if not 1 <= month <= 12 or not 1 <= day <= _MONTH_DAYS[month - 1]:
-            raise UnitsError(f"'{text}' is not a valid month-day. Fix: write MM-DD, e.g. '06-02'")
+    if re.fullmatch(r"\d{2}-\d{2}", text):
+        month, day = parse_month_day(text)
         return DayRef(month=month, day=day)
     match = re.fullmatch(r"climatological (onset|cessation)(?: ([+-]) ?(\d+) days?)?", text.lower())
     if match is not None:

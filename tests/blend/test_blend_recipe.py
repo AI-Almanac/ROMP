@@ -65,3 +65,10 @@ def test_a_climatology_horizon_needs_its_forecast_window():
     problems = []
     spec = R._climatology({"horizons": [{"start": "05-01", "end": "05-31", "forecast_window": 30}]}, problems)
     assert not problems and spec.horizon_dicts()[0]["forecast_window"] == 30
+
+
+@pytest.mark.parametrize("value", ["02-30", "04-31", "02-29", "5-1"])
+def test_recipe_rejects_month_days_that_not_every_year_has(value):
+    from hcwf.blend.recipe import _is_month_day
+    assert not _is_month_day(value)
+    assert _is_month_day("05-01") and _is_month_day("12-31")

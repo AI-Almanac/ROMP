@@ -42,7 +42,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from hcwf.errors import ConfigSchemaError, HCWFConfigError
+from hcwf.errors import ConfigSchemaError, HCWFConfigError, UnitsError
+from hcwf.onset import units
 from hcwf.config.datasets import ALL_DIMS, expand_env, parse_year_list, suggest
 from hcwf.errors import DatasetError
 
@@ -375,16 +376,15 @@ def _month_day(value):
         The value does not have the expected form.
     """
     if isinstance(value, str):
-        match = re.fullmatch(r"\s*(\d{1,2})-(\d{1,2})\s*", value)
-        parts = tuple(int(g) for g in match.groups()) if match else None
+        text = value.strip()
     elif isinstance(value, (list, tuple)) and len(value) == 2 and all(_is_int(v) for v in value):
-        parts = tuple(value)
+        text = f"{value[0]}-{value[1]}"
     else:
-        parts = None
-    if parts is None:
         raise ValueError
-    datetime.date(2001, *parts)
-    return parts
+    try:
+        return units.parse_month_day(text, leap_day=True, two_digit=False)
+    except UnitsError:
+        raise ValueError from None
 
 
 def _years(value):

@@ -22,11 +22,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from hcwf.errors import RecipeError
+from hcwf.errors import RecipeError, UnitsError
 from hcwf.config.datasets import parse_year_list, suggest
 
 from hcwf.blend.design import Formula, WindowVariant, formula_columns
 from hcwf.blend.random_forest import Params as ForestParams
+from hcwf.onset.units import parse_month_day
 from hcwf.onset.model import Curve, Definition, DerivedSeasons, Season, ThresholdSpec
 from hcwf.metrics.bins import LeadBins
 from hcwf.errors import DatasetError
@@ -49,8 +50,6 @@ CV_METHODS = ("global", "local", "clusters")
 """The values of ``evaluation.cv_methods``."""
 WINDOW_TOKENS = ("trigger", "window", "dry_spell", "sum_window", "follow", "min_dry")
 """The names of the onset definition's windows that a rain predictor's ``window`` may use."""
-_MONTH_DAY = re.compile(r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
-"""A month-day such as ``05-01``."""
 _RAIN_TRANSFORMS = ("identity", "none", "", "sqrt", "fourth_root", "log1p")
 """The named rain transforms (a number or ``power:<p>`` is also valid)."""
 _MODEL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)*")
@@ -757,7 +756,7 @@ class Recipe:
 
         for field_name, value in (("onset.fixed_cutoff", self.onset.fixed_cutoff),
                                   ("climatology.issue_end", self.climatology.issue_end)):
-            if not _MONTH_DAY.match(str(value)):
+            if not _is_month_day(value):
                 problems.append(f"{field_name}: expected a month-day like '05-01', got {value!r}")
 
         climatology = self.climatology
@@ -941,6 +940,26 @@ def probability_feature_base(model: str, variant: str) -> str:
         ``"<model>_p_onset<suffix>"``.
     """
     return f"{model}_p_onset{VARIANT_SUFFIX[variant]}"
+
+
+def _is_month_day(value) -> bool:
+    """Tell whether a value is an ``MM-DD`` that every year has.
+
+    Parameters
+    ----------
+    value : object
+        The setting; it is read as text.
+
+    Returns
+    -------
+    bool
+        True for a day such as ``05-01``; False for ``02-29`` and ``02-30``, which would not parse in every year.
+    """
+    try:
+        parse_month_day(str(value))
+    except UnitsError:
+        return False
+    return True
 
 
 def _check_rain_transform(value, path: str, problems: list[str]) -> None:
@@ -1226,7 +1245,7 @@ def _reference(value, problems: list[str]) -> ReferenceSpec | None:
     for key in ("month_day", "base_date"):
         if node.get(key) is not None:
             node[key] = str(node[key]).strip()
-            if not _MONTH_DAY.match(node[key]):
+            if not _is_month_day(node[key]):
                 problems.append(f"{where}.{key}: expected a month-day like '05-01', got {node[key]!r}")
     try:
         return ReferenceSpec(**node)
@@ -1271,7 +1290,7 @@ def _climatology(value, problems: list[str]) -> ClimatologySpec:
             problems.append(f"{at}.forecast_window: required (the lead days of the issue dates in the period)")
             continue
         for key in ("start", "end"):
-            if not _MONTH_DAY.match(str(item[key]).strip()):
+            if not _is_month_day(str(item[key]).strip()):
                 problems.append(f"{at}.{key}: expected a month-day like '05-01', got {item[key]!r}")
         horizons.append((str(item["start"]).strip(), str(item["end"]).strip(), item["forecast_window"]))
     out["horizons"] = tuple(horizons)
