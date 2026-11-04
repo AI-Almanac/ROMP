@@ -7,7 +7,9 @@
 import logging
 import os
 
+import numpy as np
 import pandas as pd
+import xarray as xr
 
 from hcwf.config.model import Selection
 from hcwf.io.observations import observations_of
@@ -15,7 +17,8 @@ from hcwf.io.thresholds import thresholds_of
 from hcwf.onset.detect import detect_observed
 from hcwf.figures.func_map import spatial_metrics_map
 from hcwf.figures.rainfall_time_series import plot_rainfall_timeseries_with_onset_and_wetspell
-from hcwf.references.climatology import climatological_onset
+from hcwf.onset.climatology import _doy_index
+from hcwf.references.climatology import climatological_onset, season_day_dates
 
 log = logging.getLogger(__name__)
 
@@ -136,17 +139,13 @@ def obs_onset_analysis(year, rc, lat_select=11, lon_select=39, incl_clim=True):
         climatological_onset_doy, da_pr_clim = climatological_onset(
             rc, rc.first_case(rc.models[0].name), Selection(grid_point=True, lat=lat_select, lon=lon_select))
 
-        doy = int(climatological_onset_doy.squeeze())
+        climatological_onset_datetime = pd.Timestamp(
+            season_day_dates(year, float(climatological_onset_doy.squeeze())))
 
-        climatological_onset_datetime = (
-            pd.Timestamp(year=year, month=1, day=1)
-            + pd.Timedelta(days=doy - 1)
-        )
-
-        # get day-of-year for each timestamp
-        doy = da_sub['time'].dt.dayofyear
-
-        # select values from rainfall_clim_mean using day-of-year
+        # the climatological rain of each day by its day of the 365-day year (29 February takes 28 February's)
+        index = _doy_index(da_sub['time'].dt.month.values, da_sub['time'].dt.day.values)
+        index = np.where(index < 0, _doy_index(2, 28), index)
+        doy = xr.DataArray(index + 1, dims="time")
         da_pr_clim_sub = da_pr_clim.sel(doy=doy).copy()
 
         # assign the actual time from da_sub

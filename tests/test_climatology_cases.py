@@ -138,3 +138,11 @@ def test_a_mean_beyond_365_is_placed_in_the_year_after_the_init():
     table = compute_climatology_as_forecast(clim, pd.DatetimeIndex(["2020-11-02"]), like, max_forecast_day=70)
     assert len(table) == 1
     assert table["onset_day"].iloc[0] == 69
+
+
+def test_season_day_dates_places_days_of_the_365_day_year():
+    """Day 152 is 1 June in leap and other years, day 365 is 31 December, and a day past 365 is in the next year."""
+    from hcwf.references.climatology import season_day_dates
+
+    got = season_day_dates(np.array([2019, 2020, 2020, 2020]), np.array([152.0, 152.0, 365.0, 375.0]))
+    assert list(got.astype(str)) == ["2019-06-01", "2020-06-01", "2020-12-31", "2021-01-10"]

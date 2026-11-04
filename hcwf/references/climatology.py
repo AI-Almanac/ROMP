@@ -225,6 +225,31 @@ def climatological_onset(rc, case, select=Selection()):
     return climatological_onset_doy
 
 
+def season_day_dates(years, days) -> np.ndarray:
+    """Place days of the season's 365-day year (as `climatological_onset` gives them) in given years.
+
+    Day 1 is 1 January and 1 March is day 60 every year, so in a leap year the dates from day 60 on are one day later
+    than the plain day of year; a day past 365 falls in the next year.
+
+    Parameters
+    ----------
+    years : int or numpy.ndarray of int
+        The season year of each day.
+    days : float or numpy.ndarray of float
+        The days (1-based, whole numbers), broadcast against ``years``.
+
+    Returns
+    -------
+    numpy.ndarray of datetime64[D]
+        The dates.
+    """
+    years = np.asarray(years, dtype=np.int64)
+    day_index = np.asarray(days).astype(np.int64) - 1
+    start = (years - 1970).astype("datetime64[Y]")
+    leap = np.asarray(pd.DatetimeIndex(np.atleast_1d(start).ravel()).is_leap_year).reshape(start.shape) & (day_index >= 59)
+    return start.astype("datetime64[D]") + (day_index + leap).astype("timedelta64[D]")
+
+
 def compute_climatology_as_forecast(climatological_onset_doy, init_dates, observed_onset_da,
                                    *, max_forecast_day):
     """Use climatology as a forecast model for the given initialization dates.
@@ -276,12 +301,7 @@ def compute_climatology_as_forecast(climatological_onset_doy, init_dates, observ
 
     doy = climatological_onset_doy.transpose(*spatial).values.astype(float)[where]
     no_clim = np.isnan(doy)
-    init_year = inits.year.to_numpy()[i] - 1970
-    day_index = np.where(no_clim, 1, doy).astype(np.int64) - 1
-    # the day of a 365-day year counts 1 March as day 60: in a leap year the dates from then on are one day later
-    leap = pd.DatetimeIndex(init_year.astype("datetime64[Y]")).is_leap_year & (day_index >= 59)
-    clim_date = (init_year.astype("datetime64[Y]").astype("datetime64[D]")
-                 + (day_index + leap).astype("timedelta64[D]"))
+    clim_date = season_day_dates(inits.year.to_numpy()[i], np.where(no_clim, 1, doy))
     init_at = init_ns[i]
     clim_at = clim_date.astype("datetime64[ns]")
     in_window = (~no_clim & (init_at + np.timedelta64(1, "D") <= clim_at)
