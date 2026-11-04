@@ -105,8 +105,6 @@ class _Param:
     """Whether the key must be given."""
 
 
-_PARAMETERS: dict[type, list[_Param]] = {}
-"""The documented keyword arguments of each config class, in order."""
 _ITEM = re.compile(r"'([^']+)' \(((?:[^()]|\([^()]*\))*)\)")
 """A choice with its explanation, as the schema help writes it: ``'name' (what it does)``."""
 
@@ -244,7 +242,7 @@ def _document(cls: type, entries: dict[str, _Param | None]) -> None:
         give (it is left out).
     """
     params = [entries[f.name] for f in dataclasses.fields(cls) if entries[f.name] is not None]
-    _PARAMETERS[cls] = params
+    cls._parameters = tuple(params)   # the documented keyword arguments, in order, kept on the class itself
     cls.__doc__ = (cls.__doc__ or "").rstrip() + "\n\n" + _parameters_section(params)
     cls.__signature__ = _signature(cls)
 
@@ -286,7 +284,7 @@ def _signature(cls: type) -> inspect.Signature:
         One keyword-only parameter per documented key, its default shown as source text (``...`` for none).
     """
     return inspect.Signature([inspect.Parameter(p.name, inspect.Parameter.KEYWORD_ONLY, default=_Shown(p.default or "..."))
-                              for p in _PARAMETERS[cls]])
+                              for p in cls._parameters])
 
 
 def keyword_signature(cls: type) -> str:

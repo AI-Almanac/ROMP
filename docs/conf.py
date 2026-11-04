@@ -321,9 +321,9 @@ def _keyword_signature(app, what, name, obj, options, signature, return_annotati
     tuple of (str, str) or None
         The new signature and return annotation, or None to keep autodoc's.
     """
-    from hcwf.config import _PARAMETERS, keyword_signature
+    from hcwf.config import keyword_signature
 
-    if what == "class" and obj in _PARAMETERS:
+    if what == "class" and isinstance(obj, type) and "_parameters" in vars(obj):
         return keyword_signature(obj), return_annotation
     return None
 
