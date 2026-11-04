@@ -176,21 +176,28 @@ def _read_obs_range(first, last, store, read: ObsRead, cells=False):
     return scale_in_place(in_memory(da), obs.unit_cvt)
 
 
-def _long_time_chunks(store, obs_var) -> bool:
+def _long_time_chunks(store, read: ObsRead) -> bool:
     """Tell whether the store's time chunks are longer than a year, so each year read decodes data of other years too.
+
+    Observations on evaluation units (``units:``) are never read in blocks: the block read keeps the grid, and the
+    units are built for one year at a time (`_read_obs_units`).
 
     Parameters
     ----------
     store : str
         The zarr store path.
-    obs_var : str
-        The observation variable.
+    read : ObsRead
+        The typed inputs of the observation reading (its variable and ``units``).
 
     Returns
     -------
     bool
-        True when the time chunk exceeds 366 days; False also when the layout cannot be read.
+        True when the time chunk exceeds 366 days and the observations are on the grid; False also when the layout
+        cannot be read.
     """
+    if read.obs.units is not None:
+        return False
+    obs_var = read.obs.var
     try:
         da = dim_fmt(open_store(store))[obs_var]
         chunks = da.encoding.get("chunks")
@@ -341,7 +348,7 @@ def obs_years_of(read: ObsRead, years, hold=True, cells=False) -> Iterator[tuple
         store = locate(years[0])[1]
     except FileNotFoundError:
         store = None
-    if store is not None and len(years) > 1 and _long_time_chunks(store, obs.var):
+    if store is not None and len(years) > 1 and _long_time_chunks(store, read):
         per_block = max(1, _GROUP_BYTES // _estimated_year_bytes(store, obs.var))
         for start in range(0, len(years), per_block):
             group = years[start:start + per_block]
@@ -667,13 +674,13 @@ def observation_year(year, read: ObsRead):
     xarray.DataArray
         The year's daily rain (see `load_observations`).
     """
-    obs, select = read.obs, read.select
+    select = read.select
     store, path = _locate(year, read)
     key = _obs_key(year, store, path, read)
     with _obs_lock:
         rainfall = _obs_years.get(key)
     if rainfall is None and store is not None and year in years_held(read.run_years) \
-            and _long_time_chunks(store, obs.var):
+            and _long_time_chunks(store, read):
         # an archive chunked over many years: read all the years the run holds in one pass, not one decode per year
         for _ in obs_years_of(read, sorted(years_held(read.run_years))):
             pass
