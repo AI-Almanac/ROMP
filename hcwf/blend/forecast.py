@@ -313,9 +313,11 @@ def _issue_problems(blend, issue_date: dt.date | None, held: dict[str, list[dt.d
             return None, None, [f"the live files are initialised on different dates ({listed}); every model needs "
                                 "the same one"]
     if issue_date is not None:
-        year = issue_date.year
-        start = dt.date.fromisoformat(f"{year}-{blend_season_start(blend.setup)}")
-        end = dt.date.fromisoformat(f"{year}-{blend.recipe.climatology.issue_end}")
+        first, issue_end = blend_season_start(blend.setup), blend.recipe.climatology.issue_end
+        # a season crossing New Year (the end before the start) holds a January issue in the year before
+        year = issue_date.year - int(issue_end < first and f"{issue_date.month:02d}-{issue_date.day:02d}" <= issue_end)
+        start = dt.date.fromisoformat(f"{year}-{first}")
+        end = dt.date.fromisoformat(f"{year + int(issue_end < first)}-{issue_end}")
         if not start <= issue_date <= end:
             problems.append(f"issue date {issue_date} is outside the season ({start} to {end})")
         for name, dates in held.items():

@@ -571,9 +571,9 @@ def season_relative_days(dates, label_years):
     """Count the days of dates from 1 January of their season's year, 29 February sharing the day of 1 March.
 
     The day counter of the conditional climatology (`hcwf.references.kde.season_days` with ``leap_shift``), continued
-    past 31 December: a date in the year after its season's label year counts 365 more, so an onset in January of
-    the next year is placed after the init of a season that crosses the year boundary. Two dates counted against the
-    same labelled year differ by the real number of days, except across 29 February of a leap year.
+    past 31 December: a date is counted from 1 January of its season's label year, so an onset in January of the next
+    year is placed after the init of a season that crosses the year boundary. Two dates counted against the same
+    labelled year differ by the real number of days, except across 29 February of a leap year.
 
     Parameters
     ----------
@@ -589,9 +589,7 @@ def season_relative_days(dates, label_years):
     """
     from hcwf.references.kde import season_days   # the references import this module
     dates = np.asarray(dates, dtype="datetime64[ns]")
-    days = season_days(dates, (1, 1), leap_shift=True).reshape(dates.shape)
-    years = pd.DatetimeIndex(dates.ravel()).year.to_numpy().reshape(dates.shape)
-    return days + 365.0 * (years - label_years)
+    return season_days(dates, (1, 1), leap_shift=True, label_years=label_years).reshape(dates.shape)
 
 
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member

@@ -137,8 +137,8 @@ def _observed_year(year, rc, select, thresholds, season_start):
     onset = detect.detect_observed(lambda: observations_io.observations_of(year, rc, select), thresholds, year, rc, select)
     ids = np.asarray(onset["unit"].values).astype(str)
     dates = onset.values.astype("datetime64[D]")
-    cutoff = np.datetime64(f"{year}-{season_start}", "D")
-    onset_day = np.where(np.isnat(dates), np.nan, (dates - cutoff).astype("timedelta64[D]").astype(float))
+    onset_day = kde.season_days(dates, tuple(int(part) for part in season_start.split("-")),
+                                label_years=year).reshape(dates.shape)   # from the season start of the detection year
     return {"ids": ids, "years": np.array([year]), "onset_day": onset_day[:, None],
             "onset_idx": onset["onset_index"].values[:, None], "present": onset["present"].values[:, None]}
 

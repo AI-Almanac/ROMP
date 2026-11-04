@@ -73,24 +73,28 @@ def cv_mode(climatology_cv) -> str:
     return mode
 
 
-def season_day(dates) -> np.ndarray:
-    """Compute the days since 1 January of each date's year, without leap-day shifts; NaN for NaT.
+def season_day(dates, label_years=None) -> np.ndarray:
+    """Compute the days since 1 January of each date's season year, without leap-day shifts; NaN for NaT.
 
     From 1 March on a leap year's dates count one less, so a calendar date has
     the same number every year and the KDE's day axis is not blurred by 29 February.
-    (`hcwf.references.kde.season_days` with ``leap_shift``: the one day counter, with onset_blending's start.)
+    A date in the year after its season's ``label_years`` counts on past 31 December, so a season crossing New Year
+    keeps its January onsets after its autumn inits.
+    (`hcwf.references.kde.season_days` with ``leap_shift``: the one day counter.)
 
     Parameters
     ----------
     dates : numpy.ndarray of datetime64
         The dates, any shape.
+    label_years : int or numpy.ndarray of int, optional
+        The year of the season each date belongs to, broadcast against ``dates``; each date's own year when None.
 
     Returns
     -------
     numpy.ndarray of float64
         The day counts, in the shape of ``dates``.
     """
-    return season_days(dates, (1, 1), leap_shift=True)
+    return season_days(dates, (1, 1), leap_shift=True, label_years=label_years)
 
 
 def _conditional_by_case(clim_onset, target_year, cells, issue_dates, horizon, cv):
@@ -124,11 +128,12 @@ def _conditional_by_case(clim_onset, target_year, cells, issue_dates, horizon, c
     spatial = axes.spatial_dims(clim_onset.dims)
     years = clim_onset.year.values.astype(int)
     dates = clim_onset.transpose("year", *spatial).values.astype("datetime64[ns]")
-    days = season_day(dates).reshape(dates.shape)
+    label = years.reshape((-1,) + (1,) * (dates.ndim - 1))   # an onset belongs to the season of its detection year
+    days = season_day(dates, label).reshape(dates.shape)
     cell_at = list(zip(*(c.tolist() for c in cells)))
     keys = sorted(set(cell_at))
     onset_by_cell = {key: pd.Series(days[(slice(None), *key)], index=years) for key in keys}
-    issue = season_day(issue_dates)
+    issue = season_day(issue_dates, int(target_year))   # the inits belong to the target year's season
     unique_issue, back = np.unique(issue, return_inverse=True)
     probs = conditional_probabilities(onset_by_cell, unique_issue, horizon,
                                       cv_years=[int(target_year)] if cv else None)

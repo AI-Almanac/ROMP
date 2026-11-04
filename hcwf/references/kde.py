@@ -16,9 +16,14 @@ probability exactly zero. Optionally the KDE is refitted without each test
 year (leave-one-year-out), so a year is never forecast from its own onset.
 
 The numerics are a port of the onset_blending package's climatology, operation
-for operation, so the two give identical probabilities for the same inputs.
+for operation, so the two give identical probabilities for the same inputs
+(for seasons inside one calendar year; see below).
 Days are plain numbers on any common axis: the day of the year for HCWF's reference
-forecast, the days since the season start for onset_blending (`season_days` makes either).
+forecast, the days since the season start for onset_blending (`season_days` makes either). Each date is counted
+from the season start of its season's year (the year the onset was detected for, the target year for an init), so
+a season crossing New Year (Kenya's short rains, October to January) counts a January onset after the autumn
+inits; onset_blending counted from the calendar year of the date, so parity with it holds for seasons inside one
+calendar year.
 
 Around the core sits onset_blending's caller logic. `issue_grid` lists the issue dates of the
 test years with each one's day of the season and its horizon, `climatology_years` picks the
@@ -679,12 +684,38 @@ def unconditional_probabilities(onset_days_by_cell: Mapping, issue_days: Sequenc
 # The issue grid, the training window and the probabilities of a whole season (onset_blending's climatology)
 # ---------------------------------------------------------------------------
 
-def season_days(dates, season_start: tuple[int, int] = (1, 1), leap_shift: bool = False) -> np.ndarray:
-    """Compute the days from the season start (month, day) of each date's own year, as floats; NaN for NaT.
+def _month_day_of(years: np.ndarray, month: int, day: int) -> np.ndarray:
+    """Return the date ``month``-``day`` of each year, as ``datetime64[D]``.
 
-    The default start is 1 January. onset_blending counts from its season start, in real calendar days. With
-    ``leap_shift``, dates from 1 March of a leap year count one less (when the start is before March), so a calendar
-    date has the same number every year and the KDE's day axis is not blurred by 29 February (HCWF's reference forecast).
+    Parameters
+    ----------
+    years : numpy.ndarray of int
+        The years.
+    month : int
+        The month, 1 to 12.
+    day : int
+        The day of the month.
+
+    Returns
+    -------
+    numpy.ndarray of datetime64[D]
+        The dates, one per year.
+    """
+    first = (years - 1970).astype("datetime64[Y]").astype("datetime64[M]") + np.timedelta64(month - 1, "M")
+    return first.astype("datetime64[D]") + np.timedelta64(day - 1, "D")
+
+
+def season_days(dates, season_start: tuple[int, int] = (1, 1), leap_shift: bool = False,
+                label_years=None) -> np.ndarray:
+    """Compute the days from the season start (month, day) of each date's season year, as floats; NaN for NaT.
+
+    The default start is 1 January. onset_blending counts from its season start, in real calendar days. A date is
+    counted from the season start of its season's year, ``label_years`` (default: the year of the date itself), so a
+    season that crosses New Year counts a January date after the December ones: with a 1 October start and label year
+    2020, 10 January 2021 is day 101, not -264. With ``leap_shift``, 29 February shares the day of 1 March: dates from
+    1 March on count one less for each leap year's 29 February passed since the start (when the start is before
+    March), so a calendar date has the same number every year and the KDE's day axis is not blurred by 29 February
+    (HCWF's reference forecast).
 
     Parameters
     ----------
@@ -693,22 +724,28 @@ def season_days(dates, season_start: tuple[int, int] = (1, 1), leap_shift: bool 
     season_start : tuple of (int, int), default (1, 1)
         The month and day the count starts from.
     leap_shift : bool, default False
-        Count dates from 1 March of a leap year one less.
+        Count 29 February with 1 March (a start before March).
+    label_years : int or array_like of int, optional
+        The year of the season each date belongs to, broadcast against ``dates``; each date's own year when None.
 
     Returns
     -------
     numpy.ndarray of float64, shape (date,)
         The day counts, NaN for ``NaT``.
     """
-    index = pd.DatetimeIndex(np.asarray(dates).ravel())
+    dates = np.asarray(dates)
+    index = pd.DatetimeIndex(dates.ravel())
     valid = ~index.isna()
-    year = np.where(valid, index.year, 1970).astype(np.int64)
+    own = np.where(valid, index.year, 1970).astype(np.int64)
+    label = own if label_years is None else np.broadcast_to(np.asarray(label_years, dtype=np.int64),
+                                                            dates.shape).ravel()
     month, day = season_start
-    start = ((year - 1970).astype("datetime64[Y]").astype("datetime64[M]") + np.timedelta64(month - 1, "M")
-             ).astype("datetime64[D]") + np.timedelta64(day - 1, "D")
-    days = (index.values.astype("datetime64[D]") - start).astype(np.int64).astype(float)
+    date = index.values.astype("datetime64[D]")
+    days = (date - _month_day_of(label, month, day)).astype(np.int64).astype(float)
     if leap_shift and month < 3:
-        days = days - (index.is_leap_year & (index.month >= 3))
+        for year in (label, label + 1):
+            leap = (year % 4 == 0) & ((year % 100 != 0) | (year % 400 == 0))
+            days = days - (leap & valid & (date >= _month_day_of(year, 3, 1)))
     return np.where(valid, days, np.nan)
 
 
@@ -794,11 +831,33 @@ def eligible_onsets(onsets: pd.DataFrame, window: tuple[int, int], min_onset_yea
     return onsets, len(eligible)
 
 
+def _season_date(year: int, month_day: str, season_start: str) -> pd.Timestamp:
+    """Return the date of a month-day in the season of ``year``: the next calendar year when it is before the start.
+
+    Parameters
+    ----------
+    year : int
+        The season's year (that of its start).
+    month_day : str
+        The month-day, ``"MM-DD"``.
+    season_start : str
+        The season start, ``"MM-DD"``.
+
+    Returns
+    -------
+    pandas.Timestamp
+        The date, ``NaT`` when it is not a month-day.
+    """
+    after = isinstance(month_day, str) and isinstance(season_start, str) and month_day < season_start
+    return pd.Timestamp(f"{year + int(after)}-{month_day}")
+
+
 def issue_grid(test: tuple[int, int], season_start: str, issue_end: str, forecast_window, horizons) -> pd.DataFrame:
     """List every issue date of the test years, with its day of the season (``d0``) and horizon (``window``).
 
-    The issue dates run from ``season_start`` to ``issue_end`` (``"MM-DD"``) in each test year; ``d0`` counts days since the
-    season start. ``horizons`` is None (every date has ``forecast_window``) or a list of dicts with the keys ``start_md``,
+    The issue dates run from ``season_start`` to ``issue_end`` (``"MM-DD"``) of each test year's season; ``d0`` counts days
+    since the season start. A month-day before ``season_start`` falls in the next calendar year, so a season may cross
+    New Year (start ``"10-01"``, end ``"01-31"``); ``year`` is the season's year. ``horizons`` is None (every date has ``forecast_window``) or a list of dicts with the keys ``start_md``,
     ``end_md`` and ``forecast_window`` (a date has the first horizon that contains it; -1 outside every one).
 
     Parameters
@@ -822,15 +881,13 @@ def issue_grid(test: tuple[int, int], season_start: str, issue_end: str, forecas
     Raises
     ------
     ValueError
-        The season dates are not ``"MM-DD"``, or ``issue_end`` is before ``season_start`` in a year.
+        The season dates are not ``"MM-DD"``.
     """
     times, years, d0, windows = [], [], [], []
     for year in range(int(test[0]), int(test[1]) + 1):
-        first, last = pd.Timestamp(f"{year}-{season_start}"), pd.Timestamp(f"{year}-{issue_end}")
+        first, last = pd.Timestamp(f"{year}-{season_start}"), _season_date(year, issue_end, season_start)
         if pd.isna(first) or pd.isna(last):
             raise ValueError(f"Bad season dates; expected 'MM-DD'. Got: {season_start} / {issue_end}")
-        if last < first:
-            raise ValueError(f"issue_end_md is before season_start_md for year {year}")
         days = pd.date_range(first, last, freq="D")
         times.append(days.date)
         years.append(np.full(len(days), year))
@@ -841,7 +898,8 @@ def issue_grid(test: tuple[int, int], season_start: str, issue_end: str, forecas
         window = np.full(len(days), -1)
         unset = np.ones(len(days), dtype=bool)
         for h in horizons:
-            inside = unset & (days >= pd.Timestamp(f"{year}-{h['start_md']}")) & (days <= pd.Timestamp(f"{year}-{h['end_md']}"))
+            inside = unset & (days >= _season_date(year, h["start_md"], season_start)) & (
+                days <= _season_date(year, h["end_md"], season_start))
             window[inside] = int(h["forecast_window"])
             unset &= ~inside
         windows.append(window)
