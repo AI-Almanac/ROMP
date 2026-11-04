@@ -77,7 +77,10 @@ testpaths = ["tests"]
 # loadgroup only matters with -n: it keeps tests marked xdist_group (the GPU ones) together on one worker.
 # -n is not forced here so that a single test or --testmon (which cannot combine with xdist) still works.
 addopts = "--dist loadgroup"
-markers = ["slow: long-running tests (full differential runs, benchmarks, full grids); run with --run-slow"]
+markers = [
+  "slow: long-running tests (full differential runs against onset_blending, full grids); run with --run-slow",
+  "bench: timing benchmarks (speed, not results); run with --run-bench on an idle machine",
+]
 
 [tool.ruff.lint]
 # The existing rule set (ruff defaults: E4, E7, E9, F) plus the pydocstyle D rules in numpy convention.

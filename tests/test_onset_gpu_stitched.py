@@ -100,7 +100,7 @@ def test_gpu_stitched_trace_is_not_supported():
         gpu.detect_stitched(*case, trace=True)
 
 
-@pytest.mark.slow
+@pytest.mark.bench
 def test_gpu_stitched_timing_india_ensemble(capsys):
     """Time GPU stitched detection on the India-ensemble-shaped case; no speed assertion."""
     plan, hist, hist_missing, fc, fc_missing, amounts, jobs = india_ensemble_case()

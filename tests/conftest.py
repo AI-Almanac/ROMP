@@ -9,7 +9,9 @@
   fixture is built once, on one worker, instead of once per worker that happens to get one of the module's tests.
 * Natural Earth shapefiles that the code reads are fetched once, by the session controller under a file lock, before
   any worker starts (cartopy downloads on first use, and parallel workers raced on a half-written file).
-* Tests marked ``slow`` run only with ``--run-slow`` (the full run is ``pytest -n 10 --run-slow``).
+* Tests marked ``slow`` run only with ``--run-slow`` (the full run is ``pytest -n 10 --run-slow``). Tests marked
+  ``bench`` (timing benchmarks: they check speed, not results, and fail under load) run only with ``--run-bench``,
+  best alone on an idle machine.
 """
 import os
 
@@ -56,7 +58,9 @@ NATURAL_EARTH_FILES = [
 
 def pytest_addoption(parser):
     parser.addoption("--run-slow", action="store_true", default=False,
-                     help="also run the tests marked slow (full differential runs, timing benchmarks, full grids)")
+                     help="also run the tests marked slow (full differential runs against onset_blending, full grids)")
+    parser.addoption("--run-bench", action="store_true", default=False,
+                     help="also run the timing benchmarks (marked bench); run them on an idle machine")
 
 
 def _ensure_natural_earth():
@@ -92,6 +96,7 @@ def pytest_configure(config):
 @pytest.hookimpl(tryfirst=True)  # before xdist reads the xdist_group marks into the node ids
 def pytest_collection_modifyitems(config, items):
     skip_slow = None if config.getoption("--run-slow") else pytest.mark.skip(reason="slow: run with --run-slow")
+    skip_bench = None if config.getoption("--run-bench") else pytest.mark.skip(reason="bench: run with --run-bench")
     for item in items:
         if "gpu" in item.nodeid.lower():
             item.add_marker(pytest.mark.xdist_group("gpu"))
@@ -101,3 +106,5 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(pytest.mark.xdist_group(module))
         if skip_slow is not None and "slow" in item.keywords:
             item.add_marker(skip_slow)
+        if skip_bench is not None and "bench" in item.keywords:
+            item.add_marker(skip_bench)

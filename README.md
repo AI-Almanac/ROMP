@@ -234,7 +234,8 @@ tests/
 ```bash
 pip install -e ".[dev]"
 pytest -n 10          # everyday run in parallel: skips the tests marked slow (GPU tests and modules with expensive fixtures are grouped on one worker: --dist loadgroup is set in pyproject.toml)
-pytest -n 10 --run-slow   # full run: also the slow tests (full differential runs against onset_blending, timing benchmarks, full option grid)
+pytest -n 10 --run-slow   # full run: also the slow tests (full differential runs against onset_blending, full option grid)
+pytest --run-bench -m bench   # timing benchmarks only (speed, not results); run them alone on an idle machine
 pytest --testmon      # iterate: re-run only tests affected by your edits (cannot be combined with -n)
 pytest --lf           # re-run the last failures
 pytest tests/test_cache.py   # a single file needs no extra options

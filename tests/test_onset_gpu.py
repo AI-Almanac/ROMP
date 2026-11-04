@@ -80,7 +80,7 @@ def test_trace_not_supported():
         gpu.detect(plan, tenths, missing, amounts, random_jobs(rng, 3, 50, 5), trace=True)
 
 
-@pytest.mark.slow
+@pytest.mark.bench
 def test_timing_forecast_shaped(capsys):
     """Report reference and GPU wall times on a forecast-shaped case (no speed assertion)."""
     rng = np.random.default_rng(42)
