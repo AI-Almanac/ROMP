@@ -1,7 +1,7 @@
-"""Logging for HCWF: one logger per module under ``hcwf``, a console handler, an optional run.log and progress.
+"""Configure logging for HCWF: one logger per module under ``hcwf``, a console handler, an optional run.log and progress.
 
 Modules log with ``log = logging.getLogger(__name__)``; nothing is configured on import. A run calls
-``session(verbosity, logfile)`` (a context manager) which
+`session` (a context manager) which
 
 * shows INFO (default), only warnings (``verbosity=-1``, ``--quiet``) or DEBUG (``verbosity=1``, ``--verbose``)
   on the console, without time stamps, writing to whatever ``sys.stdout`` is at that moment;
@@ -10,10 +10,10 @@ Modules log with ``log = logging.getLogger(__name__)``; nothing is configured on
 * restores the previous logging setup on exit.
 
 Worker processes (see ``hcwf.parallel``) forward their log records and warnings to the process that owns the
-session through a queue (``forwarding`` / ``worker_logging``), so they reach run.log and the console like any other
+session through a queue (`forwarding` / `worker_logging`), so they reach run.log and the console like any other
 record, with the worker's year in the message.
 
-``progress(iterable, desc)`` shows a tqdm bar when tqdm is installed and stderr is a terminal, and otherwise logs
+`progress` shows a tqdm bar when tqdm is installed and stderr is a terminal, and otherwise logs
 ``desc: i/n`` lines (nothing at all when quiet).
 """
 from __future__ import annotations
@@ -25,6 +25,7 @@ import multiprocessing
 import sys
 import time
 import warnings
+from collections.abc import Iterator
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 
@@ -35,10 +36,16 @@ _state = {"console_level": logging.INFO}
 
 
 class _Console(logging.Handler):
-    """Writes plain messages to the current sys.stdout; warnings and errors are prefixed with their level."""
+    """A handler that writes plain messages to the current ``sys.stdout``; warnings and errors get their level as prefix."""
 
     def emit(self, record):
-        """Write one record to stdout."""
+        """Write one record to stdout.
+
+        Parameters
+        ----------
+        record : logging.LogRecord
+            The record to show; the prefix ``error:`` or ``warning:`` is put in front of ERROR and WARNING records.
+        """
         try:
             text = record.getMessage()
             if record.levelno >= logging.ERROR:
@@ -52,7 +59,25 @@ class _Console(logging.Handler):
 
 
 def log_warning(message, category, filename=None, lineno=None, file=None, line=None):
-    """Log a Python warning as a ``hcwf.warnings`` record (ingest notes as INFO, the rest as warnings)."""
+    """Log a Python warning as a ``hcwf.warnings`` record (ingest notes as INFO, the rest as warnings).
+
+    It has the signature of ``warnings.showwarning`` and replaces it while a session or a worker is active.
+
+    Parameters
+    ----------
+    message : Warning or str
+        The warning; its text becomes the log message.
+    category : type
+        The warning class; subclasses of ``hcwf.onset.ingest.IngestInfo`` are logged at INFO, others at WARNING.
+    filename : str, optional
+        Unused; present for the ``warnings.showwarning`` signature.
+    lineno : int, optional
+        Unused; present for the ``warnings.showwarning`` signature.
+    file : file object, optional
+        Unused; present for the ``warnings.showwarning`` signature.
+    line : str, optional
+        Unused; present for the ``warnings.showwarning`` signature.
+    """
     from hcwf.onset.ingest import IngestInfo
 
     logging.getLogger(f"{ROOT}.warnings").log(
@@ -63,10 +88,21 @@ _worker = {"year": None}
 
 
 class _YearFilter(logging.Filter):
-    """Puts the year the worker is processing in front of each record's message (and in ``record.year``)."""
+    """A filter that puts the year the worker is processing in front of each record's message (and in ``record.year``)."""
 
     def filter(self, record):
-        """Prefix the message with the worker's year, if it has one."""
+        """Prefix the message with the worker's year, if it has one.
+
+        Parameters
+        ----------
+        record : logging.LogRecord
+            The record to change in place.
+
+        Returns
+        -------
+        bool
+            Always True: no record is dropped.
+        """
         year = _worker["year"]
         if year is not None:
             record.year = year
@@ -76,7 +112,13 @@ class _YearFilter(logging.Filter):
 
 
 def worker_logging(queue) -> None:
-    """Worker-process initializer: send every ``hcwf`` record and Python warning to the parent through `queue`."""
+    """Initialize a worker process: send every ``hcwf`` record and Python warning to the parent through `queue`.
+
+    Parameters
+    ----------
+    queue : multiprocessing.Queue
+        The queue made by `forwarding` in the parent process.
+    """
     root = logging.getLogger(ROOT)
     handler = logging.handlers.QueueHandler(queue)
     handler.addFilter(_YearFilter())
@@ -87,16 +129,27 @@ def worker_logging(queue) -> None:
 
 
 def set_worker_year(year) -> None:
-    """Name the year this worker is processing, for the messages it forwards (None clears it)."""
+    """Name the year this worker is processing, for the messages it forwards.
+
+    Parameters
+    ----------
+    year : int or None
+        The year; None clears it.
+    """
     _worker["year"] = year
 
 
 @contextlib.contextmanager
-def forwarding():
-    """Yield a queue whose records go to the handlers of the current session (None if there are none to feed).
+def forwarding() -> Iterator:
+    """Yield a queue whose records go to the handlers of the current session.
 
     A listener thread passes what workers put on the queue to the ``hcwf`` logger's handlers (run.log and console,
     each at its own level). It is stopped on exit, error or not; leave the block after the workers have finished.
+
+    Yields
+    ------
+    multiprocessing.Queue or None
+        The queue for `worker_logging`, or None when there are no handlers to feed.
     """
     handlers = list(logging.getLogger(ROOT).handlers)
     if not handlers:
@@ -114,8 +167,23 @@ def forwarding():
 
 
 @contextlib.contextmanager
-def session(verbosity: int = NORMAL, logfile=None):
-    """Configure HCWF's logging for the duration of a run (see the module text); yields the ``hcwf`` logger."""
+def session(verbosity: int = NORMAL, logfile=None) -> Iterator[logging.Logger]:
+    """Configure HCWF's logging for the duration of a run (see the module text).
+
+    The previous logging setup (handlers, level, ``warnings.showwarning``) is restored on exit.
+
+    Parameters
+    ----------
+    verbosity : int, default NORMAL
+        `QUIET` (warnings only), `NORMAL` (INFO) or `VERBOSE` (DEBUG) on the console.
+    logfile : str or pathlib.Path, optional
+        A file that receives everything (DEBUG up, with time stamps); its folder is created. None writes no file.
+
+    Yields
+    ------
+    logging.Logger
+        The ``hcwf`` logger.
+    """
     root = logging.getLogger(ROOT)
     previous = (root.level, list(root.handlers), root.propagate, warnings.showwarning, _state["console_level"])
     level = _LEVELS.get(verbosity, logging.INFO)
@@ -148,14 +216,41 @@ def session(verbosity: int = NORMAL, logfile=None):
 
 
 def verbosity_from(quiet: bool = False, verbose: bool = False) -> int:
-    """The verbosity number for the --quiet / --verbose flags (quiet wins)."""
+    """Return the verbosity number for the ``--quiet`` / ``--verbose`` flags (quiet wins).
+
+    Parameters
+    ----------
+    quiet : bool, default False
+        The ``--quiet`` flag.
+    verbose : bool, default False
+        The ``--verbose`` flag.
+
+    Returns
+    -------
+    int
+        `QUIET`, `VERBOSE` or `NORMAL`.
+    """
     return QUIET if quiet else (VERBOSE if verbose else NORMAL)
 
 
-def progress(iterable, desc: str = "", total: int | None = None):
-    """Iterate over iterable, showing progress: a tqdm bar, else ``desc: i/n`` log lines (none when quiet).
+def progress(iterable, desc: str = "", total: int | None = None) -> Iterator:
+    """Iterate over `iterable`, showing progress: a tqdm bar, else ``desc: i/n`` log lines (none when quiet).
 
     tqdm is used only when it is installed, stderr is a terminal and the console shows INFO; it is never required.
+
+    Parameters
+    ----------
+    iterable : iterable
+        The items to pass through.
+    desc : str, default ""
+        The label of the bar or of each log line.
+    total : int, optional
+        The number of items; taken from ``len(iterable)`` when None and it has one.
+
+    Yields
+    ------
+    object
+        The items of `iterable`, one at a time.
     """
     items = iterable
     if total is None and hasattr(iterable, "__len__"):
@@ -176,7 +271,13 @@ def progress(iterable, desc: str = "", total: int | None = None):
 
 
 def print_hcwf_banner(project_name):
-    """Print the HCWF start-up banner with package version, project name and start time."""
+    """Log the HCWF start-up banner with package version, project name and start time.
+
+    Parameters
+    ----------
+    project_name : str
+        The project name of the run config.
+    """
     version = pkg_version("hcwf")
 
     banner = fr"""

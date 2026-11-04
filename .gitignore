@@ -235,3 +235,5 @@ __marimo__/
 
 # pytest-testmon
 .testmondata*
+docs/_build/
+docs/_api/

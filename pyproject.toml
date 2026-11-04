@@ -56,8 +56,14 @@ dev = [
   "jupyterlab",
   "black",
   "ruff",
+  "pydoclint>=0.6",
   "ipython",
   "gcsfs",
+]
+docs = [
+  "sphinx>=7.2",
+  "pydata-sphinx-theme",
+  "myst-nb",
 ]
 gpu = [
     "cupy-cuda13x>=14.2.0",
@@ -71,3 +77,43 @@ testpaths = ["tests"]
 # loadgroup only matters with -n: it keeps tests marked xdist_group (the GPU ones) together on one worker.
 # -n is not forced here so that a single test or --testmon (which cannot combine with xdist) still works.
 addopts = "--dist loadgroup"
+
+[tool.ruff.lint]
+# The existing rule set (ruff defaults: E4, E7, E9, F) plus the pydocstyle D rules in numpy convention.
+select = ["E4", "E7", "E9", "F", "D"]
+# D401 (imperative summary) and D417 (every argument documented) are not in the numpy convention; re-enabled here.
+extend-select = ["D401", "D417"]
+
+[tool.ruff.lint.per-file-ignores]
+# Packages whose docstrings are not converted yet; keep equal to PENDING in tests/test_docstrings.py (one line each).
+"hcwf/blend/**" = ["D"]
+"hcwf/cli/**" = ["D"]
+"hcwf/config/**" = ["D"]
+"hcwf/figures/**" = ["D"]
+"hcwf/io/**" = ["D"]
+"hcwf/metrics/**" = ["D"]
+"hcwf/onset/**" = ["D"]
+"hcwf/references/**" = ["D"]
+"hcwf/runs/**" = ["D"]
+"hcwf/scoring/**" = ["D"]
+"hcwf/spatial/**" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.pydoclint]
+style = "numpy"
+# Docstring types are the single source of rendered types (they carry shape, dtype and meaning, which annotations cannot),
+# so signature annotations are optional and are not compared with the docstring.
+arg-type-hints-in-docstring = true
+arg-type-hints-in-signature = false
+check-return-types = false
+check-yield-types = false
+check-arg-order = true
+skip-checking-short-docstrings = false
+skip-checking-raises = false
+allow-init-docstring = false
+check-class-attributes = false
+check-style-mismatch = true
+show-filenames-in-every-violation-message = true
+quiet = true

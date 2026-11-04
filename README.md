@@ -21,6 +21,7 @@ Optional extras:
 
 * `pip install ".[gpu]"` adds CuPy for `onset.backend: gpu` (CUDA 13 build).
 * `.[dev]` adds pytest (with xdist and testmon), jupyterlab, black, ruff and others.
+* `.[docs]` adds Sphinx for the documentation: `uv run --extra docs sphinx-build -W --keep-going -b html docs docs/_build/html`. Docstring conventions: [docs/contributing_docstrings.md](docs/contributing_docstrings.md).
 
 Check it: `python -c "import hcwf; print(hcwf.__file__)"` should print a path in your checkout, and `hcwf-run -h` should list the commands.
 

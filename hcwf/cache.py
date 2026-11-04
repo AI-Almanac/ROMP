@@ -1,4 +1,4 @@
-"""The one cache of hcwf: results kept under a fingerprint of everything they depend on.
+"""Keep results under a fingerprint of everything they depend on: the one cache of hcwf.
 
 A `Store` is a folder of entries for one *kind* of result (observed onsets, thresholds, harmonic seasons, dataset
 detection, ...). An entry is addressed by its *parts*: a dict of named inputs (``{"files": ..., "definition": ...}``).
@@ -11,7 +11,7 @@ On disk: ``<root>/<kind>/<fingerprint>/`` holding ``parts.json`` and the payload
 are atomic (a temporary file in the same folder, then ``os.replace``), so worker processes and concurrent runs can
 share a folder: a reader sees a whole file or none, and two writers of one fingerprint write the same content.
 Without a root the store is in memory only. A failure of the disk (read-only folder, damaged entry) is a miss and
-never stops a run. `Store.entries` lists a kind's entries (size, age) and `Store.prune` deletes them (`hcwf-run cache`).
+never stops a run. `Store.entries` lists a kind's entries (size, age) and `Store.prune` deletes them (``hcwf-run cache``).
 
 The other half of this module is the in-memory side, the state of one run: every table a module keeps for the life of a
 run is a `Memo` made by `memo(name, ...)` and registered here, so that `reset_run_state` clears them all (`run_scope`
@@ -51,6 +51,19 @@ class Memo:
     the open zarr stores), keyed by what the value depends on. Every operation takes a lock, so the reader threads of a run
     can share one. `share` marks a table whose items the workers need (it is part of `shared_state`); `persistent` one that
     holds only values fixed by the files of the installation (Natural Earth shapes), which a run reset keeps.
+
+    Parameters
+    ----------
+    name : str
+        The module path under hcwf and what the table holds, e.g. ``"io.thresholds.loaded"``.
+    maxsize : int or None
+        The most items kept (least recently used out); None for no bound.
+    share : bool
+        Whether the workers get the items (see `shared_state`).
+    persistent : bool
+        Whether a run reset keeps the items.
+    on_clear : callable or None
+        ``on_clear(item)`` is called for each item when the table is cleared.
     """
 
     def __init__(self, name: str, maxsize: int | None, share: bool, persistent: bool, on_clear):
@@ -59,20 +72,66 @@ class Memo:
         self._lock = threading.RLock()
 
     def __repr__(self) -> str:
+        """Return the name and the number of items.
+
+        Returns
+        -------
+        str
+            For example ``Memo('io.thresholds.loaded', 3 items)``.
+        """
         return f"Memo({self.name!r}, {len(self._items)} items)"
 
     def __len__(self) -> int:
+        """Return the number of items.
+
+        Returns
+        -------
+        int
+            The count.
+        """
         return len(self._items)
 
     def __contains__(self, key) -> bool:
+        """Tell whether there is an item for `key` (it does not become the most recently used).
+
+        Parameters
+        ----------
+        key : hashable
+            The key to look for.
+
+        Returns
+        -------
+        bool
+            True when the key is present.
+        """
         return key in self._items
 
     def __iter__(self) -> Iterator:
+        """Iterate over a snapshot of the keys.
+
+        Returns
+        -------
+        collections.abc.Iterator
+            The keys, least recently used first.
+        """
         with self._lock:
             return iter(list(self._items))
 
     def get(self, key, default=None):
-        """The item of `key` (it becomes the most recently used), else `default`."""
+        """Return the item of `key` (it becomes the most recently used), else `default`.
+
+        Parameters
+        ----------
+        key : hashable
+            The key to look up.
+        default : object, optional
+            Returned when there is no item for `key`.
+
+        Returns
+        -------
+        object
+            The item, or `default`.
+        """
         with self._lock:
             if key not in self._items:
                 return default
@@ -80,12 +139,38 @@ class Memo:
             return self._items[key]
 
     def __getitem__(self, key):
+        """Return the item of `key` (it becomes the most recently used).
+
+        Parameters
+        ----------
+        key : hashable
+            The key to look up.
+
+        Returns
+        -------
+        object
+            The item.
+
+        Raises
+        ------
+        KeyError
+            There is no item for `key`.
+        """
         with self._lock:
             if key not in self._items:
                 raise KeyError(key)
             return self.get(key)
 
     def __setitem__(self, key, value) -> None:
+        """Keep `value` under `key` as the most recently used item, dropping the oldest ones beyond `maxsize`.
+
+        Parameters
+        ----------
+        key : hashable
+            The key.
+        value : object
+            The item to keep.
+        """
         with self._lock:
             self._items[key] = value
             self._items.move_to_end(key)
@@ -93,14 +178,40 @@ class Memo:
                 self._items.popitem(last=False)
 
     def setdefault(self, key, value):
-        """The item of `key`, set to `value` first when there is none."""
+        """Return the item of `key`, set to `value` first when there is none.
+
+        Parameters
+        ----------
+        key : hashable
+            The key.
+        value : object
+            The item to keep when there is none.
+
+        Returns
+        -------
+        object
+            The item now held under `key`.
+        """
         with self._lock:
             if key not in self._items:
                 self[key] = value
             return self.get(key)
 
     def get_or_make(self, key, make: Callable[[], Any]):
-        """The item of `key`; else make() it, keep it and return it (one maker at a time, so a value is built once)."""
+        """Return the item of `key`; else make it, keep it and return it (one maker at a time, so a value is built once).
+
+        Parameters
+        ----------
+        key : hashable
+            The key.
+        make : callable
+            Called with no arguments to build the item when there is none.
+
+        Returns
+        -------
+        object
+            The item.
+        """
         with self._lock:
             if key in self._items:
                 return self.get(key)
@@ -109,24 +220,59 @@ class Memo:
             return value
 
     def pop(self, key, *default):
+        """Remove and return the item of `key`, like ``dict.pop``.
+
+        Parameters
+        ----------
+        key : hashable
+            The key.
+        *default : object
+            Returned when there is no item for `key`; without it a missing key raises.
+
+        Returns
+        -------
+        object
+            The removed item, or the default.
+        """
         with self._lock:
             return self._items.pop(key, *default)
 
     def items(self) -> list:
+        """Return the ``(key, item)`` pairs, least recently used first.
+
+        Returns
+        -------
+        list of tuple
+            A snapshot of the pairs.
+        """
         with self._lock:
             return list(self._items.items())
 
     def values(self) -> list:
+        """Return the items, least recently used first.
+
+        Returns
+        -------
+        list
+            A snapshot of the items.
+        """
         with self._lock:
             return list(self._items.values())
 
     def update(self, items: Mapping) -> None:
+        """Keep every item of a mapping (as `__setitem__` does).
+
+        Parameters
+        ----------
+        items : collections.abc.Mapping
+            The keys and items to add.
+        """
         with self._lock:
             for key, value in dict(items).items():
                 self[key] = value
 
     def clear(self) -> None:
-        """Drop every item (calling `on_clear` with them first, e.g. to close what they hold)."""
+        """Drop every item, calling `on_clear` with each (e.g. to close what it holds); a failure there is only logged."""
         with self._lock:
             held = list(self._items.values())
             self._items.clear()
@@ -148,12 +294,29 @@ _SCOPE_LOCK = threading.Lock()
 
 def memo(name: str, maxsize: int | None = None, *, share: bool = False, persistent: bool = False,
          on_clear: Callable[[Any], None] | None = None) -> Memo:
-    """Register and return the in-memory table `name`: the module path under hcwf and what it holds, e.g.
-    "io.thresholds.loaded" in hcwf/io/thresholds.py (a shared table's module is imported by name in the workers).
+    """Register and return the in-memory table `name`.
 
-    maxsize bounds the number of items (None: unbounded, for tables that are the size of one run); share sends the table to
-    the workers (see shared_state); persistent keeps it across runs (only for values fixed by files of the installation);
-    on_clear(item) runs for each item when the table is cleared. Making a name again replaces the earlier table.
+    The name is the module path under hcwf and what the table holds, e.g. ``"io.thresholds.loaded"`` in
+    hcwf/io/thresholds.py (a shared table's module is imported by name in the workers). Making a name again replaces
+    the earlier table.
+
+    Parameters
+    ----------
+    name : str
+        The module path under hcwf and what the table holds.
+    maxsize : int, optional
+        The most items kept; None for unbounded, for tables that are the size of one run.
+    share : bool, default False
+        Send the table to the workers (see `shared_state`).
+    persistent : bool, default False
+        Keep the table across runs (only for values fixed by files of the installation).
+    on_clear : callable, optional
+        ``on_clear(item)`` runs for each item when the table is cleared.
+
+    Returns
+    -------
+    Memo
+        The registered table.
     """
     table = Memo(name, maxsize, share, persistent, on_clear)
     _MEMOS[name] = table
@@ -161,30 +324,58 @@ def memo(name: str, maxsize: int | None = None, *, share: bool = False, persiste
 
 
 def memos() -> dict[str, Memo]:
-    """The registered memos, by name."""
+    """Return the registered memos.
+
+    Returns
+    -------
+    dict of str to Memo
+        A copy of the registry, by name.
+    """
     return dict(_MEMOS)
 
 
 def reset_run_state(*, everything: bool = False) -> None:
-    """Clear every registered memo of the run (all of them with everything=True, persistent ones included)."""
+    """Clear every registered memo of the run.
+
+    Parameters
+    ----------
+    everything : bool, default False
+        Also clear the persistent memos.
+    """
     for table in list(_MEMOS.values()):
         if everything or not table.persistent:
             table.clear()
 
 
 def on_run_end(hook: Callable[[], None]) -> Callable[[], None]:
-    """Register `hook()` to run when a run ends, before its memos are cleared (a decorator, or a call)."""
+    """Register a hook to run when a run ends, before its memos are cleared (use it as a decorator, or call it).
+
+    Parameters
+    ----------
+    hook : callable
+        Called with no arguments at the end of the outermost `run_scope`.
+
+    Returns
+    -------
+    callable
+        The hook, unchanged.
+    """
     if hook not in _END_HOOKS:
         _END_HOOKS.append(hook)
     return hook
 
 
 @contextlib.contextmanager
-def run_scope():
-    """One run's state: cleared on entering, the end hooks run and everything cleared again on leaving.
+def run_scope() -> Iterator[None]:
+    """Scope one run's state: cleared on entering, the end hooks run and everything cleared again on leaving.
 
-    Every run entry (hcwf.run, the command line, export, blend training and forecasting) is made of one. Scopes nest: only
-    the outermost resets, so a step called inside a run (the onset export of a benchmark) keeps the run's state.
+    Every run entry (`hcwf.run`, the command line, export, blend training and forecasting) is made of one. Scopes nest:
+    only the outermost resets, so a step called inside a run (the onset export of a benchmark) keeps the run's state.
+
+    Yields
+    ------
+    None
+        Nothing; the block runs inside the scope.
     """
     with _SCOPE_LOCK:
         outermost = _SCOPE["depth"] == 0
@@ -208,7 +399,13 @@ def run_scope():
 
 
 def shared_state() -> dict:
-    """The items of every shared memo, {name: {key: item}}: what the workers start from (see hcwf.parallel.snapshot)."""
+    """Return the items of every shared memo: what the workers start from (see `hcwf.parallel.snapshot`).
+
+    Returns
+    -------
+    dict of str to dict
+        ``{name: {key: item}}`` for each shared memo that holds items.
+    """
     return {name: dict(table.items()) for name, table in _MEMOS.items() if table.share and len(table)}
 
 
@@ -216,7 +413,12 @@ def install_shared_state(state: Mapping) -> None:
     """Put a `shared_state` into this (worker) process's memos.
 
     A worker may not have imported the module that makes a memo yet, so a name is a module path under hcwf and the table
-    ("io.thresholds.loaded" is made by hcwf.io.thresholds): the module is imported first.
+    (``"io.thresholds.loaded"`` is made by `hcwf.io.thresholds`): the module is imported first.
+
+    Parameters
+    ----------
+    state : collections.abc.Mapping
+        A `shared_state` made in the run's process.
     """
     import importlib
 
@@ -231,10 +433,20 @@ def install_shared_state(state: Mapping) -> None:
 
 
 def file_identity(path) -> list:
-    """What identifies a file or directory (zarr stores included): [path, size, mtime_ns], [path, None, None] if missing.
+    """Return what identifies a file or directory (zarr stores included).
 
     For a directory the size is the number of its entries and the mtime the newest of the directory, its entries
     and the metadata files one level down, so a rewritten zarr array or added file changes it without walking every chunk.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The file or directory.
+
+    Returns
+    -------
+    list
+        ``[path, size, mtime_ns]``, or ``[path, None, None]`` when it is missing.
     """
     path = Path(path)
     try:
@@ -255,7 +467,15 @@ def file_identity(path) -> list:
 
 
 def _feed(h, value) -> None:
-    """Add a value to a hash, type-tagged, by value (see part_hash)."""
+    """Add a value to a hash, type-tagged, by value (see `part_hash`).
+
+    Parameters
+    ----------
+    h : hashlib._Hash
+        The hash to update.
+    value : object
+        The value; arrays by contents, containers recursively, anything else by ``repr``.
+    """
     if value is None:
         h.update(b"N")
     elif isinstance(value, (bool, np.bool_)):
@@ -300,7 +520,18 @@ def _feed(h, value) -> None:
 
 
 def part_hash(*values) -> str:
-    """A 12-hex-character hash of the values: arrays by contents (strings by value), containers recursively."""
+    """Return a 12-hex-character hash of the values: arrays by contents (strings by value), containers recursively.
+
+    Parameters
+    ----------
+    *values : object
+        The values to hash together, in order.
+
+    Returns
+    -------
+    str
+        The first 12 hex characters of the SHA-256.
+    """
     h = hashlib.sha256()
     for value in values:
         _feed(h, value)
@@ -308,8 +539,22 @@ def part_hash(*values) -> str:
 
 
 def atomic_write(path, write: Callable[[Path], None]) -> None:
-    """Make `path` (a file, or a folder `write` creates) by calling write(temporary path) and renaming it over `path`;
-    nothing is left behind on failure."""
+    """Make `path` (a file, or a folder `write` creates) by writing a temporary path and renaming it over `path`.
+
+    Nothing is left behind on failure.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The file or folder to make; its parent folder is created.
+    write : callable
+        ``write(temporary_path)`` creates the file or folder at the temporary path it is given.
+
+    Raises
+    ------
+    BaseException
+        Whatever `write` or the rename raised (including ``KeyboardInterrupt``), after the temporary path is removed.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f"{path.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp{path.suffix}")
@@ -329,21 +574,57 @@ class Codec:
     """How a store keeps a payload: its file name in the entry folder and the functions that read and write it."""
 
     filename: str
+    """The payload's file name in the entry folder."""
     read: Callable[[Path], Any]
+    """``read(path)`` returns the payload."""
     write: Callable[[Path, Any], None]
+    """``write(path, value)`` stores the payload."""
 
 
 def _read_pickle(path):
+    """Read a pickled value.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The pickle file.
+
+    Returns
+    -------
+    object
+        The unpickled value.
+    """
     with open(path, "rb") as fh:
         return pickle.load(fh)
 
 
 def _write_pickle(path, value):
+    """Write a value as a pickle.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The file to write.
+    value : object
+        Any picklable value.
+    """
     with open(path, "wb") as fh:
         pickle.dump(value, fh)
 
 
 def _read_netcdf(path):
+    """Read a NetCDF payload written by `_write_netcdf`, loaded into memory.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The NetCDF file.
+
+    Returns
+    -------
+    xarray.Dataset or xarray.DataArray
+        The stored object; a DataArray when it was stored as one (name and attrs restored).
+    """
     with xr.open_dataset(path) as ds:
         loaded = ds.load()
     if "__value__" not in loaded:
@@ -354,6 +635,15 @@ def _read_netcdf(path):
 
 
 def _write_netcdf(path, value):
+    """Write a DataArray (its name and attrs kept) or a Dataset as NetCDF.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The file to write.
+    value : xarray.Dataset or xarray.DataArray
+        The object to store.
+    """
     if isinstance(value, xr.DataArray):
         ds = value.to_dataset(name="__value__")
         ds["__value__"].attrs["__name__"] = "" if value.name is None else str(value.name)
@@ -362,6 +652,18 @@ def _write_netcdf(path, value):
 
 
 def _read_groups(path):
+    """Read a dict of named DataArrays written by `_write_groups`.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The NetCDF file.
+
+    Returns
+    -------
+    dict of str to xarray.DataArray
+        The arrays, loaded into memory, in their stored order.
+    """
     with xr.open_dataset(path) as root:
         names = json.loads(root.attrs["names"])
     out = {}
@@ -372,6 +674,15 @@ def _read_groups(path):
 
 
 def _write_groups(path, value):
+    """Write a dict of named DataArrays as one NetCDF group each.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The file to write.
+    value : dict of str to xarray.DataArray
+        The arrays to store.
+    """
     xr.Dataset(attrs={"names": json.dumps(list(value))}).to_netcdf(path, mode="w")
     for name, array in value.items():
         array.to_netcdf(path, mode="a", group=name)
@@ -387,17 +698,33 @@ NETCDF_GROUPS = Codec("value.nc", _read_groups, _write_groups)
 
 @dataclass(frozen=True)
 class Entry:
-    """One cache entry on disk: its kind, fingerprint, folder, size in bytes and the time (epoch seconds) it was last written."""
+    """One cache entry on disk: its kind, fingerprint, folder, size in bytes and the time it was last written."""
 
     kind: str
+    """The kind of result (the folder under the cache root)."""
     name: str
+    """The fingerprint, which is also the entry folder's name."""
     path: Path
+    """The entry folder."""
     size: int
+    """The bytes in all its files."""
     mtime: float
+    """When it was last written, in epoch seconds."""
 
 
 def _tree_size(path: Path) -> tuple[int, float]:
-    """(bytes in all the files under a folder, newest modification time of the folder and its files)."""
+    """Measure a folder.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The folder.
+
+    Returns
+    -------
+    tuple of (int, float)
+        The bytes in all the files under it, and the newest modification time of it and its files.
+    """
     size, newest = 0, path.stat().st_mtime
     for item in path.rglob("*"):
         try:
@@ -411,7 +738,13 @@ def _tree_size(path: Path) -> tuple[int, float]:
 
 
 def global_root() -> Path:
-    """The folder of the cache shared by every run: $HCWF_CACHE_DIR, else ~/.cache/hcwf."""
+    """Return the folder of the cache shared by every run: ``$HCWF_CACHE_DIR``, else ``~/.cache/hcwf``.
+
+    Returns
+    -------
+    pathlib.Path
+        The shared cache root.
+    """
     return Path(os.environ.get("HCWF_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "hcwf"))
 
 
@@ -419,7 +752,23 @@ _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 7 * 86400}
 
 
 def parse_duration(text: str) -> float:
-    """Seconds in a duration written as a number and a unit: 90m, 12h, 30d, 2w (a bare number is days)."""
+    """Convert a duration written as a number and a unit, such as ``90m``, ``12h``, ``30d`` or ``2w``, into seconds.
+
+    Parameters
+    ----------
+    text : str
+        A number and a unit (``s``, ``m``, ``h``, ``d``, ``w``); a bare number is days.
+
+    Returns
+    -------
+    float
+        The duration in seconds.
+
+    Raises
+    ------
+    ValueError
+        The text is not a duration, or is negative.
+    """
     text = str(text).strip().lower()
     unit = text[-1:] if text[-1:] in _UNITS else "d"
     number = text[:-1] if text[-1:] in _UNITS else text
@@ -433,7 +782,20 @@ def parse_duration(text: str) -> float:
 
 
 def store_kinds(root, kinds=None) -> list[Store]:
-    """A Store for each kind folder of a cache root (only the named `kinds` when given), to list or prune its entries."""
+    """Return a Store for each kind folder of a cache root, to list or prune its entries.
+
+    Parameters
+    ----------
+    root : str or pathlib.Path
+        The cache root.
+    kinds : iterable of str, optional
+        Only these kinds; None or empty means every kind there is.
+
+    Returns
+    -------
+    list of Store
+        One store per kind folder.
+    """
     return [Store(kind, root) for kind in Store.kinds(root) if not kinds or kind in kinds]
 
 
@@ -446,15 +808,30 @@ every entry of the kind, so older entries, in any shared cache folder, simply mi
 class Store:
     """The entries of one kind of result under ``<root>/<kind>/``; see the module text.
 
-    `codec` says how a payload is kept; `prefix` starts the fingerprint (``obs-1a2b...``); `label` names the store in
-    the log lines (hit, miss, and on a miss the parts that differ from the nearest entry); `describe(value)`, if given,
-    adds to a hit line; `miss_note` ends the line of a miss with nothing cached. With `memory=False` a root's entries are
-    read from disk each time (a fresh copy per get) instead of being kept in this process.
+    Parameters
+    ----------
+    kind : str
+        The kind of result; the folder name under `root`.
+    root : str or pathlib.Path, optional
+        The cache root; None keeps the store in memory for this process.
+    codec : Codec, default `PICKLE`
+        How a payload is kept.
+    prefix : str, default ""
+        Starts the fingerprint (``obs-1a2b...``).
+    label : str, optional
+        Names the store in the log lines (hit, miss, and on a miss the parts that differ from the nearest entry); default
+        `kind`.
+    describe : callable, optional
+        ``describe(value)`` returns text that is added to the line of a hit.
+    miss_note : str, default ""
+        Ends the line of a miss that has no earlier entry to compare with.
+    memory : bool, default True
+        With False a root's entries are read from disk each time (a fresh copy per get) instead of being kept in this
+        process.
     """
 
     def __init__(self, kind: str, root=None, *, codec: Codec = PICKLE, prefix: str = "", label: str | None = None,
                  describe: Callable[[Any], str] | None = None, miss_note: str = "", memory: bool = True):
-        """A store of `kind` in `root` (None keeps it in memory for this process)."""
         self.kind, self.codec, self.prefix, self.describe, self.miss_note = kind, codec, prefix, describe, miss_note
         self.memory = memory or root is None
         self.label = label or kind
@@ -469,28 +846,84 @@ class Store:
 
     @staticmethod
     def hash_parts(parts: Mapping) -> dict:
-        """The hash of each part."""
+        """Return the hash of each part.
+
+        Parameters
+        ----------
+        parts : collections.abc.Mapping
+            The named inputs of an entry.
+
+        Returns
+        -------
+        dict of str to str
+            `part_hash` of each value, by part name.
+        """
         return {name: part_hash(value) for name, value in parts.items()}
 
     def _hashes(self, parts: Mapping) -> dict:
-        """The hash of each part, and of the code version of this store's kind (see SCHEMA) when it has one."""
+        """Return the hash of each part, and of the code version of this store's kind (see `SCHEMA`) when it has one.
+
+        Parameters
+        ----------
+        parts : collections.abc.Mapping
+            The named inputs of an entry.
+
+        Returns
+        -------
+        dict of str to str
+            The hashes by part name, plus ``code_version`` for a versioned kind.
+        """
         hashes = self.hash_parts(parts)
         if self.kind in SCHEMA:
             hashes["code_version"] = part_hash(SCHEMA[self.kind])
         return hashes
 
     def fingerprint(self, parts: Mapping) -> str:
-        """The fingerprint of a dict of parts: the prefix and 12 hex characters of the hash of their hashes."""
+        """Return the fingerprint of a dict of parts: the prefix and 12 hex characters of the hash of their hashes.
+
+        Parameters
+        ----------
+        parts : collections.abc.Mapping
+            The named inputs of an entry.
+
+        Returns
+        -------
+        str
+            The fingerprint.
+        """
         return self._fingerprint(self._hashes(parts))
 
     def entry(self, parts: Mapping) -> Path | None:
-        """The entry folder of these parts (it may not exist), or None for an in-memory store."""
+        """Return the entry folder of these parts (it may not exist).
+
+        Parameters
+        ----------
+        parts : collections.abc.Mapping
+            The named inputs of an entry.
+
+        Returns
+        -------
+        pathlib.Path or None
+            The folder, or None for an in-memory store.
+        """
         return None if self.folder is None else self.folder / self.fingerprint(parts)
 
     def get(self, parts: Mapping, *, quiet: bool = False) -> Any | None:
-        """The cached value of these parts, or None. The first lookup of a fingerprint logs a hit or a miss.
+        """Return the cached value of these parts, or None. The first lookup of a fingerprint logs a hit or a miss.
 
-        A miss names the parts that differ from the nearest cached entry. quiet=True logs nothing.
+        A miss names the parts that differ from the nearest cached entry.
+
+        Parameters
+        ----------
+        parts : collections.abc.Mapping
+            The named inputs of an entry.
+        quiet : bool, default False
+            Log nothing.
+
+        Returns
+        -------
+        object or None
+            The cached value, or None on a miss.
         """
         hashes = self._hashes(parts)
         fp = self._fingerprint(hashes)
@@ -501,7 +934,15 @@ class Store:
         return value
 
     def put(self, parts: Mapping, value: Any) -> None:
-        """Keep `value` under these parts (memory, and disk when there is a root); a disk failure is only logged."""
+        """Keep `value` under these parts (memory, and disk when there is a root); a disk failure is only logged.
+
+        Parameters
+        ----------
+        parts : collections.abc.Mapping
+            The named inputs of an entry.
+        value : object
+            The payload to keep.
+        """
         hashes = self._hashes(parts)
         fp = self._fingerprint(hashes)
         if self.memory:
@@ -517,7 +958,20 @@ class Store:
             log.debug("%s cache write failed (%s)", self.label, exc)
 
     def get_or_compute(self, parts: Mapping, compute: Callable[[], Any]) -> Any:
-        """The cached value of these parts; else compute() it, keep it and return it."""
+        """Return the cached value of these parts; else compute it, keep it and return it.
+
+        Parameters
+        ----------
+        parts : collections.abc.Mapping
+            The named inputs of an entry.
+        compute : callable
+            Called with no arguments on a miss.
+
+        Returns
+        -------
+        object
+            The cached or computed value.
+        """
         value = self.get(parts)
         if value is None:
             value = compute()
@@ -525,11 +979,34 @@ class Store:
         return value
 
     def _fingerprint(self, hashes: dict) -> str:
+        """Return the fingerprint of the part hashes, with the store's prefix.
+
+        Parameters
+        ----------
+        hashes : dict of str to str
+            The hash of each part, from `_hashes`.
+
+        Returns
+        -------
+        str
+            The fingerprint.
+        """
         digest = part_hash(hashes)
         return f"{self.prefix}-{digest}" if self.prefix else digest
 
     def _read(self, fp: str) -> Any | None:
-        """The value of a fingerprint from memory or disk (a damaged entry is a miss), or None."""
+        """Return the value of a fingerprint from memory or disk (a damaged entry is a miss).
+
+        Parameters
+        ----------
+        fp : str
+            The fingerprint.
+
+        Returns
+        -------
+        object or None
+            The value, or None when there is none or it cannot be read.
+        """
         if fp in self._memory:
             return self._memory[fp][1]
         if self.folder is None or not (self.folder / fp / self.codec.filename).exists():
@@ -549,12 +1026,29 @@ class Store:
 
     @staticmethod
     def kinds(root) -> list[str]:
-        """The kinds with a folder in a cache root (sorted); [] when the root is not there."""
+        """Return the kinds with a folder in a cache root.
+
+        Parameters
+        ----------
+        root : str or pathlib.Path
+            The cache root.
+
+        Returns
+        -------
+        list of str
+            The kind names, sorted; empty when the root is not there.
+        """
         root = Path(root)
         return sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
 
     def entries(self) -> list[Entry]:
-        """The entries of this kind on disk, oldest first (an in-memory store has none)."""
+        """Return the entries of this kind on disk, oldest first (an in-memory store has none).
+
+        Returns
+        -------
+        list of Entry
+            The entries, by last write time then name.
+        """
         folder = self.folder
         if folder is None or not folder.is_dir():
             return []
@@ -566,10 +1060,23 @@ class Store:
         return sorted(found, key=lambda e: (e.mtime, e.name))
 
     def prune(self, *, older_than: float | None = None, dry_run: bool = False, now: float | None = None) -> list[Entry]:
-        """Delete this kind's entries last written more than `older_than` seconds ago (None: every entry).
+        """Delete this kind's entries last written more than `older_than` seconds ago.
 
-        Returns the entries deleted (with dry_run, the ones that would be, nothing is touched). An entry that cannot be
-        deleted is left and not returned.
+        An entry that cannot be deleted is left and not returned.
+
+        Parameters
+        ----------
+        older_than : float, optional
+            The age in seconds; None deletes every entry.
+        dry_run : bool, default False
+            Touch nothing and return the entries that would be deleted.
+        now : float, optional
+            The current time in epoch seconds; default ``time.time()``.
+
+        Returns
+        -------
+        list of Entry
+            The entries deleted (or, with `dry_run`, the ones that would be).
         """
         now = time.time() if now is None else now
         chosen = [e for e in self.entries() if older_than is None or now - e.mtime > older_than]
@@ -588,7 +1095,20 @@ class Store:
         return gone
 
     def nearest(self, hashes: dict, fp: str | None = None) -> tuple[str, list[str]] | None:
-        """The other entry sharing most parts with these hashes and the names of the parts that differ, or None."""
+        """Return the other entry sharing most parts with these hashes and the names of the parts that differ.
+
+        Parameters
+        ----------
+        hashes : dict of str to str
+            The hash of each part, from `_hashes`.
+        fp : str, optional
+            The fingerprint of the entry itself, which is left out of the comparison.
+
+        Returns
+        -------
+        tuple of (str, list of str) or None
+            The nearest entry's fingerprint and the differing part names; None when there is no other entry.
+        """
         others = {name: stored for name, (stored, _) in self._memory.items()}
         if self.folder is not None and self.folder.is_dir():
             for folder in self.folder.iterdir():
@@ -607,7 +1127,17 @@ class Store:
         return best
 
     def _announce(self, fp: str, hashes: dict, value) -> None:
-        """Log a hit, or a miss with the parts that differ from the nearest entry."""
+        """Log a hit, or a miss with the parts that differ from the nearest entry.
+
+        Parameters
+        ----------
+        fp : str
+            The fingerprint looked up.
+        hashes : dict of str to str
+            The hash of each part, from `_hashes`.
+        value : object or None
+            What the lookup found; None is a miss.
+        """
         where = "in memory" if self.folder is None else str(self.folder)
         if value is not None:
             detail = f"{self.describe(value)}, " if self.describe else ""

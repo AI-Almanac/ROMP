@@ -1,4 +1,7 @@
-"""Run HCWF from Python: ``hcwf.run(cfg)`` returns the results as xarray and pandas objects.
+"""Run HCWF from Python: `run` returns the results as xarray and pandas objects.
+
+This module implements the functions that `hcwf` re-exports (`run`, `check`) and the application of a trained blend
+(`forecast`)::
 
     import hcwf
     result = hcwf.run("run.yaml", max_forecast_day=15)       # a YAML path, a hcwf.config.Config or a mapping
@@ -14,14 +17,14 @@
     fc = forecast("run/blend/trained.blend", {"aifs": "live/aifs.nc"})   # a trained blend on live forecasts
 
 A config with a ``blend:`` section trains the blend instead of benchmarking: ``result.blend`` is the
-``hcwf.blend.training.TrainingResult`` (evaluation tables and the trained blend; ``write=True`` saves its artifacts under
+`hcwf.blend.training.TrainingResult` (evaluation tables and the trained blend; ``write=True`` saves its artifacts under
 their own names into ``<run folder>/blend/``), and ``observed`` and ``scores`` are empty.
 
 ``write`` chooses whether files are written. The default is ``write=False``: scores, figures and onset files are
 not written and nothing is created on disk (temporary folders hold what the pipeline needs and are deleted;
 the observed-onset cache lives in memory), which suits notebooks. ``write=True`` writes the run exactly as
-``hcwf-run`` does (run folder, or the config's data_dir); ``overwrite=True`` re-runs a run folder that exists.
-Further keyword arguments override config values by their flat names (the names of hcwf.config.schema,
+``hcwf-run`` does (run folder, or the config's ``output.data_dir``); ``overwrite=True`` re-runs a run folder that exists.
+Further keyword arguments override config values by their flat names (the names of `hcwf.config.schema`,
 for example ``verification_window_list``, ``max_forecast_day``, ``start_date``, ``probabilistic``).
 """
 from __future__ import annotations
@@ -47,26 +50,28 @@ log = logging.getLogger(__name__)
 class RunResult:
     """What a run returns: observed onsets, scores, the run folder, and the onset forecasts on request.
 
-    observed is an xarray.Dataset (variable onset_date over year, lat, lon; attribute fingerprint) or None.
-    scores holds pandas / xarray objects (see the module text). folder is the run folder, or None when
-    write=False. config is the resolved flat config dict and run_config the RunConfig it belongs to. forecasts is
-    computed the first time it is read.
-    blend is the TrainingResult of a run with a `blend:` section (None otherwise).
+    The `forecasts` property is computed the first time it is read.
     """
 
     observed: xr.Dataset | None
+    """Observed onsets: variable ``onset_date`` over ``year, lat, lon`` (attribute ``fingerprint``), or None."""
     scores: dict
+    """The scores as pandas and xarray objects (see the module text)."""
     folder: Path | None
+    """The run folder, or None when ``write=False``."""
     config: dict = field(repr=False, default_factory=dict)
+    """The resolved flat config dict."""
     _forecasts: dict | None = field(default=None, repr=False)
     blend: object | None = None
+    """The `hcwf.blend.training.TrainingResult` of a run with a ``blend:`` section, else None."""
     run_config: RunConfig | None = field(repr=False, default=None)
+    """The `hcwf.config.model.RunConfig` the run was made from."""
 
     @property
     def forecasts(self) -> dict:
-        """{source: xarray.Dataset} of the gridded onset dates of every model and climatology reference.
+        """The gridded onset dates of every model and climatology reference, as ``{source: xarray.Dataset}``.
 
-        Computed on first use with hcwf.runs.export (the scoring's own detection, repeated) and kept.
+        Computed on first use with `hcwf.runs.export` (the scoring's own detection, repeated) and kept.
         """
         if self._forecasts is None:
             from hcwf.runs import export
@@ -78,7 +83,27 @@ class RunResult:
 
 
 def check(cfg, overwrite: bool = False, **overrides):
-    """The plan of a run as a hcwf.runs.check.CheckReport (``.text()``, ``.errors``, ``.warnings``, ``.ok``); runs nothing."""
+    """Return the plan of a run as a `hcwf.runs.check.CheckReport` (``.text()``, ``.errors``, ``.warnings``, ``.ok``); run nothing.
+
+    Parameters
+    ----------
+    cfg : str or pathlib.Path or hcwf.config.Config or dict
+        A run YAML path, a `hcwf.config.Config`, a nested mapping (as the YAML) or a flat config dict.
+    overwrite : bool, default False
+        Plan as if ``--overwrite`` were given (an existing run folder is then not an error).
+    **overrides : dict
+        Flat config keys that override values of `cfg`.
+
+    Returns
+    -------
+    hcwf.runs.check.CheckReport
+        The settings, datasets, hints, errors and warnings of the run.
+
+    Raises
+    ------
+    HCWFConfigError
+        The config cannot be resolved; the message lists every problem.
+    """
     from hcwf.config.build import resolve
     from hcwf.errors import HCWFConfigError
     from hcwf.runs.check import build_report
@@ -92,12 +117,28 @@ def check(cfg, overwrite: bool = False, **overrides):
 
 def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = False, verbose: bool = False,
         **overrides) -> RunResult:
-    """Run HCWF on a config and return a RunResult (see the module text).
+    """Run HCWF on a config and return a `RunResult` (see the module text).
 
-    cfg is the path of a run YAML, a hcwf.config.Config, a nested mapping (as the YAML) or a flat config dict.
-    write=False (default) writes no files; write=True writes the run as the command line does and refuses a run
-    folder that already holds a run unless overwrite=True. quiet and verbose set how much is printed.
-    Other keyword arguments override flat config keys.
+    Parameters
+    ----------
+    cfg : str or pathlib.Path or hcwf.config.Config or dict
+        A run YAML path, a `hcwf.config.Config`, a nested mapping (as the YAML) or a flat config dict.
+    write : bool, default False
+        False writes no files; True writes the run as the command line does and refuses a run folder that already holds
+        a run unless `overwrite` is True.
+    overwrite : bool, default False
+        Re-run a run folder that exists, clearing it first (with ``write=True``).
+    quiet : bool, default False
+        Print only warnings.
+    verbose : bool, default False
+        Also print debug lines.
+    **overrides : dict
+        Flat config keys that override values of `cfg`.
+
+    Returns
+    -------
+    RunResult
+        The observed onsets, scores and run folder (or the blend, for a config with a ``blend:`` section).
     """
     from hcwf.config.build import resolve
 
@@ -112,7 +153,18 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
 
 
 def _observed_dataset(rc: RunConfig) -> xr.Dataset | None:
-    """The observed onsets of this run (from the observed-onset cache) as one Dataset, or None."""
+    """Return the observed onsets of this run (from the observed-onset cache) as one Dataset.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    xarray.Dataset or None
+        Variable ``onset_date`` over ``year`` and the cache's dims; None when nothing was cached.
+    """
     from hcwf.io.output import with_unit_labels
     from hcwf.onset import observed_cache
 
@@ -132,7 +184,20 @@ def _observed_dataset(rc: RunConfig) -> xr.Dataset | None:
 
 
 def _scores(results, probabilistic_tables) -> dict:
-    """The scores of a run as xarray / pandas objects."""
+    """Collect the scores of a run as xarray and pandas objects.
+
+    Parameters
+    ----------
+    results : dict or None
+        The deterministic metrics by model and window, from `hcwf.scoring.deterministic.spatial_far_mr_mae_map`.
+    probabilistic_tables : dict or None
+        The ensemble tables (``overall`` and ``binned``), when the run is probabilistic.
+
+    Returns
+    -------
+    dict
+        The ensemble tables as given, else ``{"spatial": {(model, window): Dataset}, "summary": DataFrame}``.
+    """
     if probabilistic_tables is not None:
         return dict(probabilistic_tables)
     out: dict = {"spatial": {}, "summary": None}
@@ -149,10 +214,27 @@ def _scores(results, probabilistic_tables) -> dict:
 
 
 def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
-    """Train the blend a config's `blend:` section describes (`hcwf.blend.training.train(cfg, recipe, setup)`).
+    """Train the blend a config's ``blend:`` section describes (`hcwf.blend.training.train`).
 
-    The run folder is prepared as for a benchmark (refused when it exists unless overwrite), run.log and the resolved config
-    are written, and the TrainingResult is saved into the run folder's blend/ subfolder (artifact names are kept).
+    The run folder is prepared as for a benchmark (refused when it exists unless `overwrite`), run.log and the resolved
+    config are written, and the TrainingResult is saved into the run folder's ``blend/`` subfolder (artifact names are
+    kept).
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config, with ``blend`` set.
+    write : bool
+        Write the run folder, run.log and the artifacts.
+    overwrite : bool
+        Clear an existing run folder first.
+    verbosity : int
+        The console verbosity (see `hcwf.log.session`).
+
+    Returns
+    -------
+    RunResult
+        With ``blend`` set to the training result and empty ``scores``.
     """
     from hcwf.runs import folder as run_folder
     from hcwf.runs.resolved import definition_lines, write_resolved
@@ -187,11 +269,27 @@ def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: in
 
 
 def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = logs.NORMAL) -> RunResult:
-    """Run the benchmark for a resolved RunConfig (see hcwf.config.build.resolve) and return the RunResult.
+    """Run the benchmark (or train the blend) for a resolved RunConfig and return the `RunResult`.
 
-    This is what ``hcwf-run`` and ``hcwf.run`` share: prepare the run folder (refusing or clearing an existing
+    This is what ``hcwf-run`` and `hcwf.run` share: prepare the run folder (refusing or clearing an existing
     one), attach run.log, print the settings, write the resolved config, optionally explain cells and export the
     onsets, activate the observed-onset cache, then score.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config, from `hcwf.config.build.resolve`.
+    write : bool
+        Write the run folder and its files.
+    overwrite : bool
+        Clear an existing run folder first.
+    verbosity : int, default `hcwf.log.NORMAL`
+        The console verbosity (see `hcwf.log.session`).
+
+    Returns
+    -------
+    RunResult
+        The result of the benchmark or blend training.
     """
     with run_scope():   # the run's state starts empty and is cleared at the end, whichever flow runs
         if rc.blend is not None:
@@ -200,7 +298,24 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
 
 
 def _execute_benchmark(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
-    """The benchmark flow of `execute`."""
+    """Run the benchmark flow of `execute`.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    write : bool
+        Write the run folder and its files.
+    overwrite : bool
+        Clear an existing run folder first.
+    verbosity : int
+        The console verbosity (see `hcwf.log.session`).
+
+    Returns
+    -------
+    RunResult
+        The observed onsets and scores.
+    """
     from hcwf.scoring.probabilistic import skill_score_in_bins
     from hcwf.scoring.deterministic import spatial_far_mr_mae_map
     from hcwf.runs import folder as run_folder
@@ -259,17 +374,43 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
              netcdf=False):
     """Apply a trained blend to live forecast files and return the `hcwf.blend.forecast.Forecast`.
 
+    ::
+
         fc = forecast("run/blend/trained.blend", {"aifs": "live/aifs_2026-06-09.nc"})
         fc.weekly           # xarray.Dataset of blended week probabilities over (time, id)
         fc.weekly_table     # the same as blending's contract table (id, time, onset_threshold, lat, lon, cv_*, clim_*)
 
-    `blend` is a trained.blend path (hcwf's format, or onset_blending's) or a `hcwf.blend.TrainedBlend`; `forecasts`
-    maps each trained model to a file, a glob or a list of them. The live files may hold more than the blend was
-    trained on (lead days, members, a larger domain), never less, and must have its units, accumulation, grid spacing and
-    issue hour (`hcwf.blend.forecast.IncompatibleForecast` lists every difference); `issue_date` picks one issue of files
-    holding several, `fewer_members` lets an ensemble hold only some of the trained members. With `write` the forecast
-    is saved into `output`, default `forecasts/<issue date>/` beside the blend file (`Forecast.folder`); the CSVs
-    are the product, `netcdf` adds a NetCDF twin of the probabilities.
+    The live files may hold more than the blend was trained on (lead days, members, a larger domain), never less, and
+    must have its units, accumulation, grid spacing and issue hour (`hcwf.errors.IncompatibleForecast` lists every
+    difference).
+
+    Parameters
+    ----------
+    blend : str or pathlib.Path or hcwf.blend.trained.TrainedBlend
+        A ``trained.blend`` path (hcwf's format, or onset_blending's) or a trained blend.
+    forecasts : dict of str to (str or list of str)
+        Maps each trained model to a file, a glob or a list of them.
+    issue_date : str or datetime.date, optional
+        Picks one issue of files holding several.
+    fewer_members : bool, default False
+        Let an ensemble hold only some of the trained members.
+    output : str or pathlib.Path, optional
+        The folder the forecast is saved into with `write`; default ``forecasts/<issue date>/`` beside the blend file
+        (``Forecast.folder``).
+    write : bool, default False
+        Save the forecast; the CSVs are the product.
+    netcdf : bool, default False
+        With `write`, add a NetCDF twin of the probabilities.
+
+    Returns
+    -------
+    hcwf.blend.forecast.Forecast
+        The blended week probabilities for the issue date.
+
+    Raises
+    ------
+    ValueError
+        `write` is True without `output` for a blend that was not read from a file.
     """
     from hcwf.blend.trained import TrainedBlend
 
