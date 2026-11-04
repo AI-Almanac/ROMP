@@ -251,6 +251,15 @@ and the path, size and mtime of the input data files; any change recomputes. The
 comparison is as strict as before. Force a recompute with `HCWF_ORACLE_REFRESH=1`, or delete the entries with
 `hcwf-run cache clean --kind oracle`. Details: `tests/blend/_oracle_cache.py`.
 
+`scripts/regress/` is the real-data regression harness: four slices (`configs/slice_*.yaml`; three read zarr stores,
+`slice_d_eth_aifs` reads NetCDF) run through `hcwf-run`, and their outputs are compared between two code versions. Run
+`scripts/regress/run.sh <out_root> [repo_dir]` once per version (e.g. on a git worktree of the base commit), then
+`scripts/regress/cmp.sh <base_out> <new_out>`; `warm.sh <out_root>` re-runs on the warm cache. `compare_tol.py` checks
+floats to a relative 1e-9 (`RTOL`) and everything else exactly. `ALL SAME` (exit 0) means every `.nc` and `.csv` file
+matched; `DIFFERENCES FOUND` (exit 1) also covers a missing file or no file compared. Environment: `PY` (interpreter,
+default `.venv/bin/python`), `HCWF_REGRESS_DATA` (zarr root with `india/` and `ethiopia/`, default `<repo>/data`),
+`ALMANAC_DATASETS` (NetCDF root, default `/home/hcwf/code/ai-almanac/datasets`).
+
 The pytest cache (`.pytest_cache/`) and testmon data (`.testmondata*`) are ignored by Git.
 
 Current version 0.0.1; APIs may change. MIT License.

@@ -1,0 +1,39 @@
+# Regression slice slice_d_eth_aifs (NetCDF read path). run.sh fills @ALMANAC_DATASETS@ and @OUT@.
+project_name: regress slice_d_eth_aifs
+region: Ethiopia
+observations:
+  path: @ALMANAC_DATASETS@/ethiopia/obs
+  file_pattern: "{}.nc"
+  variable: total_precipitation_24hr
+  units: mm
+  dims: {time: time, lat: latitude, lon: longitude}
+models:
+  - name: AIFS
+    path: @ALMANAC_DATASETS@/ethiopia/models/AIFS_v2
+    variable: tp
+    units: m
+    lead_label: start
+    accumulation: daily
+    members: 1
+    dims: {init_time: time, step: prediction_timedelta_daily}
+evaluation:
+  start_date: [2018, 5, 1]
+  end_date: [2018, 8, 31]
+  init_days: [0, 3]
+  verification_windows: [[1, 15], [16, 30]]
+  tolerances: [3, 5]
+  max_forecast_day: 30
+  day_bins: [[1, 5], [6, 10], [11, 15], [16, 20], [21, 25], [26, 30]]
+  probabilistic: false
+output:
+  data_dir: @OUT@/slice_d_eth_aifs
+  figure_dir: @OUT@/slice_d_eth_aifs/fig
+  save_fig: false
+  plot_spatial_far_mr_mae: false
+  plot_heatmap_bss_auc: false
+  plot_reliability: false
+  plot_climatology_onset: false
+  plot_panel_heatmap_error: false
+  plot_panel_heatmap_skill: false
+  plot_bar_bss_rpss_auc: false
+  show_panel: false

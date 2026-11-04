@@ -1,0 +1,33 @@
+# Regression slice slice_b_india_graphcast (zarr read path). run.sh fills @ZARR_ROOT@ and @OUT@.
+project_name: regress slice_b_india_graphcast
+region: India
+observations:
+  path: @ZARR_ROOT@/india/obs.zarr
+  day_boundary: "03 UTC, labelled by end"
+models:
+  - name: GRAPHCAST
+    path: @ZARR_ROOT@/india/models/graphcast.zarr
+    lead_label: end
+    accumulation: daily
+    members: 1
+evaluation:
+  start_date: [2018, 5, 1]
+  end_date: [2018, 8, 31]
+  init_days: [0, 3]
+  verification_windows: [[1, 15], [16, 30]]
+  tolerances: [3, 5]
+  max_forecast_day: 30
+  day_bins: [[1, 5], [6, 10], [11, 15], [16, 20], [21, 25], [26, 30]]
+  probabilistic: false
+output:
+  data_dir: @OUT@/slice_b_india_graphcast
+  figure_dir: @OUT@/slice_b_india_graphcast/fig
+  save_fig: false
+  plot_spatial_far_mr_mae: false
+  plot_heatmap_bss_auc: false
+  plot_reliability: false
+  plot_climatology_onset: false
+  plot_panel_heatmap_error: false
+  plot_panel_heatmap_skill: false
+  plot_bar_bss_rpss_auc: false
+  show_panel: false

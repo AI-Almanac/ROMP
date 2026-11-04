@@ -40,7 +40,7 @@ compare with this tolerance. This supersedes "byte-identical" and "bit-identical
   copies), collapse them as part of the same change.
 - **Parity options are options of the one implementation**, e.g. `rain_resolution: exact`,
   `missing: keep`, `horizon: truncate`; defaults are ROMP's current behaviour.
-- **ROMP outputs byte-identical** under default settings (existing tests, `data/phase7/baseline`).
+- **ROMP outputs byte-identical** under default settings (existing tests, `scripts/regress`).
 - **Blending numbers identical** under the parity options: blending's oracles (`tests/_legacy`,
   its 191 tests) move to `tests/blend/` and run against momp; end-to-end, momp's results are
   compared artifact by artifact with onset_blending@1e6d696 on the same config and data.
@@ -119,7 +119,7 @@ and pandas groupby/apply on hot paths, in-place ops and views, memory layout for
 overhead in inner loops, chunk-aligned reads, sparse unit weights, no frame-to-array round trips;
 changes that would alter numbers are flagged as trade-offs for the user, not applied), and caching (size limits and eviction for the disk caches, e.g. via diskcache; zarr for large
 cached arrays; faster hashing (xxhash/blake3) only if profiles show hashing cost; one bounded mechanism
-for the scattered in-memory memo tables; keep momp.cache's fingerprints and miss diagnostics), backed by targeted profiles of the real-data workloads (phase7 slices on NetCDF and zarr,
+for the scattered in-memory memo tables; keep momp.cache's fingerprints and miss diagnostics), backed by targeted profiles of the real-data workloads (the `scripts/regress` slices on NetCDF and zarr,
 Ethiopia and India training and forecasts, an admin-unit benchmark). One combined proposal
 (restructuring + measured hot spots with expected gains) goes to the user for approval.
 

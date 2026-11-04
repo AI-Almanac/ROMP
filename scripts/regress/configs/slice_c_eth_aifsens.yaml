@@ -1,0 +1,33 @@
+# Regression slice slice_c_eth_aifsens (zarr read path). run.sh fills @ZARR_ROOT@ and @OUT@.
+project_name: regress slice_c_eth_aifsens
+region: Ethiopia
+observations:
+  path: @ZARR_ROOT@/ethiopia/obs.zarr
+  day_boundary: "00 UTC, labelled by start"
+models:
+  - name: AIFS_ENS
+    path: @ZARR_ROOT@/ethiopia/models/AIFS_ENS_v2.zarr
+    lead_label: start
+    accumulation: daily
+    members: 26
+evaluation:
+  start_date: [2018, 5, 1]
+  end_date: [2018, 8, 31]
+  init_days: [0, 3]
+  verification_windows: [[1, 15], [16, 30]]
+  tolerances: [3, 5]
+  max_forecast_day: 30
+  day_bins: [[1, 5], [6, 10], [11, 15], [16, 20], [21, 25], [26, 30]]
+  probabilistic: true
+output:
+  data_dir: @OUT@/slice_c_eth_aifsens
+  figure_dir: @OUT@/slice_c_eth_aifsens/fig
+  save_fig: false
+  plot_spatial_far_mr_mae: false
+  plot_heatmap_bss_auc: false
+  plot_reliability: false
+  plot_climatology_onset: false
+  plot_panel_heatmap_error: false
+  plot_panel_heatmap_skill: false
+  plot_bar_bss_rpss_auc: false
+  show_panel: false

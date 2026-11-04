@@ -1,5 +1,7 @@
 """Parallel years give the serial answer; the parallel.workers config key; threaded reads of NetCDF stay safe."""
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +20,6 @@ from tests.config_world import configs, world  # noqa: F401 - the fixture world 
 from hcwf.errors import ConfigSchemaError
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = ROOT / "data" / "phase7" / "baseline"
 
 
 def squares_of(years, offset=0):
@@ -88,27 +89,18 @@ def test_threaded_obs_reads_of_netcdf_are_serialised(tmp_path):
     assert missing[0][1] is None and isinstance(missing[1][1], FileNotFoundError)
 
 
-def _baseline_runs():
-    """Whether the untracked baseline config exists and is written for this version (no removed flat onset keys)."""
-    config = BASELINE / "demo_mwset_new.yaml"
-    return config.exists() and "\nwet_init:" not in config.read_text()
-
-
-@pytest.mark.skipif(not _baseline_runs(), reason="baseline demo data not present or still has the removed flat onset keys")
 def test_run_parallel_equals_serial(tmp_path):
-    """A whole run gives byte-identical files with parallel on and off."""
+    """A whole run on the demo data gives byte-identical files with parallel on and off."""
+    template = (ROOT / "tests" / "data" / "parallel_run.yaml").read_text()
     outs = {}
     for flag in ("false", "true"):
-        text = (BASELINE / "demo_mwset_new.yaml").read_text()
         out = tmp_path / flag
-        text = text.replace("parallel: false", f"parallel: {flag}")
-        text = "\n".join(f"  data_dir: {out}" if l.startswith("  data_dir:") else
-                         f"  figure_dir: {out}/fig" if l.startswith("  figure_dir:") else l
-                         for l in text.splitlines())
         cfg = tmp_path / f"{flag}.yaml"
-        cfg.write_text(text)
-        subprocess.run([str(ROOT / ".venv/bin/hcwf-run"), "-p", str(cfg), "--quiet", "--overwrite"], check=True,
-                       cwd=BASELINE / "cwd", env={"MPLBACKEND": "Agg", "PATH": "/usr/bin:/bin"})
+        cfg.write_text(template.replace("@DEMO@", str(ROOT / "demo" / "data")).replace("@OUT@", str(out))
+                       .replace("@PARALLEL@", flag))
+        subprocess.run([sys.executable, "-c", "from hcwf.cli import main; main()", "-p", str(cfg), "--quiet",
+                        "--overwrite"], check=True, cwd=tmp_path,
+                       env={**os.environ, "MPLBACKEND": "Agg", "PYTHONPATH": str(ROOT)})
         outs[flag] = out
     files = sorted(p.name for p in outs["false"].glob("*.nc")) + sorted(p.name for p in outs["false"].glob("*.csv"))
     assert files
