@@ -2,11 +2,9 @@
 
 The shared building blocks of the figure modules of `hcwf.figures`: the season colormap (`cbar_season`), the region
 basemap and outlines (`set_basemap`, `shp_outline`, `get_india_outline`, `polygon_outline`, `add_polygon`,
-`box_boundary`) and the portrait plot (`portrait_plot` with `prepare_data`, `heatmap`, `annotate_heatmap` and
-`add_legend`), a simplified version of the PCMDI Metrics Package (PMP) portrait plot.
+`box_boundary`) and the portrait plot (`portrait_plot` with `prepare_data`, `heatmap`, `annotate_heatmap`),
+a simplified version of the PCMDI Metrics Package (PMP) portrait plot.
 """
-import sys
-
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
@@ -228,24 +226,17 @@ def portrait_plot(
     missing_color="grey",
     invert_yaxis=True,
     box_as_square=False,
-    legend_on=False,
-    legend_labels=None,
-    legend_box_xy=None,
-    legend_box_size=None,
-    legend_lw=1,
-    legend_fontsize=14,
     debug=False,
 ):
     """Draw a portrait plot: a heatmap of a 2D array with labelled rows and columns.
 
-    Only the heatmap style (a single 2D array) is drawn; stacked arrays (2 or 4, meant as triangles) pass the
-    checks but draw nothing and fail at the return. The function exits the program with a message (`sys.exit`)
-    when the inputs are inconsistent. This is a simplified version of the PMP ``portrait_plot()``.
+    Only the heatmap style (a single 2D array) is drawn; stacked arrays (the triangle styles of the PMP
+    ``portrait_plot()``, which this simplifies) are not supported. Raises ValueError when the inputs are inconsistent.
 
     Parameters
     ----------
     data : numpy.ndarray or list of numpy.ndarray
-        A 2D array, a list of 2D arrays, or a 3D array (stacked 2D arrays), with shape (row, column).
+        A 2D array, or a list holding one 2D array, with shape (row, column).
     xaxis_labels : list of str
         The column labels; the length equals the number of columns, or is 0 to turn off the labels.
     yaxis_labels : list of str
@@ -255,13 +246,13 @@ def portrait_plot(
     ax : matplotlib.axes.Axes, optional
         The axes to plot on. When None a new subplot of `fig` is created.
     annotate : bool, default False
-        Add the value as text in each cell (heatmap style only).
+        Add the value as text in each cell.
     annotate_data : numpy.ndarray, optional
         The values written in the cells. None uses `data`.
     annotate_textcolors : tuple of (str, str), default ("black", "white")
         The text colours below and above `annotate_textcolors_threshold`.
-    annotate_textcolors_threshold : tuple or float, optional
-        The value in data units where the text colour switches. Currently not passed on (see `annotate_heatmap`).
+    annotate_textcolors_threshold : tuple of (float, float), optional
+        Passed to `annotate_heatmap` as its ``threshold``: the text colour switches outside it.
     annotate_fontsize : float, default 15
         The font size of the annotations (divided by half the number of columns).
     annotate_format : str, default "{x:.2f}"
@@ -300,18 +291,6 @@ def portrait_plot(
         Put the first row at the top.
     box_as_square : bool, default False
         Make each cell square.
-    legend_on : bool, default False
-        Show a legend (for 2 or 4 triangles only).
-    legend_labels : list of str, optional
-        The legend labels; required when `legend_on` is true.
-    legend_box_xy : tuple of (float, float), optional
-        The upper-left corner of the legend box in axes coordinates (lower-left if `invert_yaxis` is false).
-    legend_box_size : float, optional
-        The size of the legend box.
-    legend_lw : float, default 1
-        The line width of the legend.
-    legend_fontsize : float, default 14
-        The font size of the legend.
     debug : bool, default False
         Log more messages.
 
@@ -325,25 +304,27 @@ def portrait_plot(
         The drawn mesh, for a common colorbar.
     cbar : matplotlib.colorbar.Colorbar
         The colorbar; returned (as a fourth value) only when `colorbar_off` is false.
+
+    Raises
+    ------
+    ValueError
+        When `data` is stacked, or the labels or `annotate_data` do not match its shape.
     """
     # ----------------
     # Prepare plotting
     # ----------------
     data, num_divide = prepare_data(data, xaxis_labels, yaxis_labels, debug=debug)
 
-    if num_divide not in [1, 2, 4]:
-        sys.exit("Error: Number of (stacked) array is not 1, 2, or 4.")
+    if num_divide != 1:
+        raise ValueError("portrait_plot draws a single 2D array; stacked arrays are not supported")
 
     if annotate:
         if annotate_data is None:
             annotate_data = data
-            num_divide_annotate = num_divide
         else:
-            annotate_data, num_divide_annotate = prepare_data(
-                annotate_data, xaxis_labels, yaxis_labels, debug=debug
-            )
-            if num_divide_annotate != num_divide:
-                sys.exit("Error: annotate_data does not have same size as data")
+            annotate_data, _ = prepare_data(annotate_data, xaxis_labels, yaxis_labels, debug=debug)
+            if annotate_data.shape != data.shape:
+                raise ValueError("annotate_data does not have the same shape as data")
 
     # ----------------
     # Ready to plot!!
@@ -373,36 +354,30 @@ def portrait_plot(
             extend = "neither"
         norm = matplotlib.colors.BoundaryNorm(cmap_bounds, cmap.N, extend=extend)
 
-    # [1] Heatmap-style portrait plot (no triangles)
-    if num_divide == 1:
-        ax, im = heatmap(
-            data,
-            xaxis_labels,
-            yaxis_labels,
+    # Heatmap-style portrait plot
+    ax, im = heatmap(
+        data,
+        xaxis_labels,
+        yaxis_labels,
+        ax=ax,
+        invert_yaxis=invert_yaxis,
+        cmap=cmap,
+        edgecolors="k",
+        linewidth=0.5,
+        norm=norm,
+    )
+    if annotate:
+        ax = annotate_heatmap(
+            im,
             ax=ax,
-            invert_yaxis=invert_yaxis,
+            data=data,
             cmap=cmap,
-            edgecolors="k",
-            linewidth=0.5,
-            norm=norm,
+            annotate_data=annotate_data,
+            valfmt=annotate_format,
+            textcolors=annotate_textcolors,
+            threshold=annotate_textcolors_threshold,
+            fontsize=annotate_fontsize,
         )
-        if annotate:
-            if annotate_data is not None:
-                if annotate_data.shape != data.shape:
-                    sys.exit("Error: annotate_data has different size than data")
-            else:
-                annotate_data = data
-            ax = annotate_heatmap(
-                im,
-                ax=ax,
-                data=data,
-                cmap=cmap,
-                annotate_data=annotate_data,
-                valfmt=annotate_format,
-                textcolors=annotate_textcolors,
-                threshold=annotate_textcolors_threshold,
-                fontsize=annotate_fontsize,
-            )
 
     # X-axis tick labels
     if xaxis_tick_labels_top_and_bottom:
@@ -435,21 +410,6 @@ def portrait_plot(
 
     # Set font size for yaxis tick labels
     plt.setp(ax.get_yticklabels(), fontsize=yaxis_fontsize)
-
-    # Legend
-    if legend_on:
-        if legend_labels is None:
-            sys.exit("Error: legend_labels was not provided.")
-        else:
-            add_legend(
-                num_divide,
-                ax,
-                legend_box_xy,
-                legend_box_size,
-                labels=legend_labels,
-                lw=legend_lw,
-                fontsize=legend_fontsize,
-            )
 
     if title:
         ax.set_title(title, fontsize=xaxis_fontsize, fontweight='normal')
@@ -514,8 +474,8 @@ def portrait_plot(
 def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
     """Convert `data` to a numpy array and check its shape against the labels.
 
-    The program exits (`sys.exit`) with a message when the data are not a 2D or 3D array, a list that is not made
-    of 2D arrays, or when the labels do not match the shape (an empty label list matches anything).
+    Raises ValueError when the data are not a 2D or 3D array, a list that is not made of 2D arrays, or when the
+    labels do not match the shape (an empty label list matches anything).
 
     Parameters
     ----------
@@ -534,6 +494,11 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
         The data as an array, shape (row, column) or (stack, row, column).
     num_divide : int
         The number of stacked 2D arrays (1 for a single 2D array).
+
+    Raises
+    ------
+    ValueError
+        When the data or the labels are not as described above.
     """
     # In case data was given as list of arrays, convert it to numpy (stacked) array
     if isinstance(data, list):
@@ -545,7 +510,7 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
                 data = data[0]
                 num_divide = 1
             else:
-                sys.exit("Error: Element of given list is not in np.ndarray type")
+                raise ValueError("Element of given list is not in np.ndarray type")
         else:  # list has more than 1 arrays as elements
             data = np.stack(data)
             num_divide = len(data)
@@ -555,10 +520,10 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
         log.debug("%s %s", "data.shape:", data.shape)
 
     if data.shape[-1] != len(xaxis_labels) and len(xaxis_labels) > 0:
-        sys.exit("Error: Number of elements in xaxis_label mismatchs to the data")
+        raise ValueError("Number of elements in xaxis_label mismatchs to the data")
 
     if data.shape[-2] != len(yaxis_labels) and len(yaxis_labels) > 0:
-        sys.exit("Error: Number of elements in yaxis_label mismatchs to the data")
+        raise ValueError("Number of elements in yaxis_label mismatchs to the data")
 
     if isinstance(data, np.ndarray):
         if len(data.shape) == 2:
@@ -567,9 +532,9 @@ def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
             num_divide = data.shape[0]
         else:
             log.debug("%s %s", "data.shape:", data.shape)
-            sys.exit("Error: data.shape is not right")
+            raise ValueError("data.shape is not right")
     else:
-        sys.exit("Error: Converted or given data is not in np.ndarray type")
+        raise ValueError("Converted or given data is not in np.ndarray type")
 
     if debug:
         log.debug("%s %s", "num_divide:", num_divide)
@@ -640,7 +605,8 @@ def annotate_heatmap(
 
     The text colour is black or white, whichever contrasts with the cell colour (`contrast_text_color`, against a
     norm from the 10 % and 90 % quantiles of `data`); with a tuple `threshold` it is picked from `textcolors`
-    instead. The font size is ``fontsize * 2 / number of columns``, so `fontsize` must be given in `textkw`.
+    instead. The font size is ``fontsize * 2 / number of columns`` (``fontsize`` from `textkw`, default the
+    matplotlib ``font.size``).
 
     Parameters
     ----------
@@ -658,11 +624,10 @@ def annotate_heatmap(
         The format of the annotations: a `str.format` string with ``x``, or a formatter.
     textcolors : tuple of (str, str), default ("black", "white")
         The colours of values inside and outside a tuple `threshold` (``(low, high)``).
-    threshold : tuple of (float, float) or float, optional
-        With a tuple, the cells outside ``[min, max]`` get the second colour. Otherwise unused for the colour (the
-        contrast rule applies).
+    threshold : tuple of (float, float), optional
+        The cells outside ``[min, max]`` get the second colour. None applies the contrast rule.
     **textkw : dict
-        Passed on to `matplotlib.axes.Axes.text` for every cell; must contain ``fontsize``.
+        Passed on to `matplotlib.axes.Axes.text` for every cell; ``fontsize`` is scaled as above.
 
     Returns
     -------
@@ -675,9 +640,6 @@ def annotate_heatmap(
     if annotate_data is None:
         annotate_data = data
 
-    if threshold is None:
-        threshold = (data.max()) / 2.0
-
     # Set default alignment to center, but allow it to be
     # overwritten by textkw.
     kw = dict(horizontalalignment="center", verticalalignment="center")
@@ -685,9 +647,7 @@ def annotate_heatmap(
 
     # adjust annote fontsize according to # of heat blocks
     x_num = data.shape[1]
-    fontsize = kw.get('fontsize')
-    fontsize *= 2/x_num
-    kw.update({'fontsize': fontsize})
+    kw['fontsize'] = kw.get('fontsize', plt.rcParams['font.size']) * 2 / x_num
 
     # Get the formatter in case a string is supplied
     if isinstance(valfmt, str):
@@ -704,7 +664,7 @@ def annotate_heatmap(
     texts = []
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
-            if type(threshold) is tuple:
+            if threshold is not None:
                 kw.update(
                     color=textcolors[
                         int(
@@ -750,169 +710,6 @@ def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
 # ======================================================================
 # Portrait plot legend (four/two triangles)
 # ======================================================================
-def add_legend(
-    num_divide, ax, box_xy=None, box_size=None, labels=None, lw=1, fontsize=14
-):
-    """Draw a legend box divided into 2 or 4 labelled triangles next to the portrait plot.
-
-    Parameters
-    ----------
-    num_divide : int
-        The number of triangles: 2 or 4 (anything else draws nothing).
-    ax : matplotlib.axes.Axes
-        The axes of the portrait plot.
-    box_xy : tuple of (float, float), optional
-        The upper-left corner of the box in axes coordinates. None puts it right of the axes.
-    box_size : float, optional
-        The size of the box in data units; default 1.5.
-    labels : list of str, optional
-        The triangle labels; defaults ``["TOP", "RIGHT", "BOTTOM", "LEFT"]`` (4) or ``["UPPER", "LOWER"]`` (2).
-    lw : float, default 1
-        The line width of the box.
-    fontsize : float, default 14
-        The font size of the labels.
-    """
-    if box_xy is None:
-        box_x = ax.get_xlim()[1] * 1.25
-        box_y = ax.get_ylim()[1]
-    else:
-        # Convert axes coordinate to data coordinate
-        # Ref: https://matplotlib.org/stable/tutorials/advanced/transforms_tutorial.html
-        box_x, box_y = ax.transLimits.inverted().transform(box_xy)
-
-    if box_size is None:
-        box_size = 1.5
-
-    if num_divide == 4:
-        if labels is None:
-            labels = ["TOP", "RIGHT", "BOTTOM", "LEFT"]
-        ax.add_patch(
-            plt.Polygon(
-                [
-                    [box_x, box_y],
-                    [box_x + box_size / 2.0, box_y + box_size / 2],
-                    [box_x + box_size, box_y],
-                ],
-                color="k",
-                fill=False,
-                clip_on=False,
-                lw=lw,
-            )
-        )
-        ax.add_patch(
-            plt.Polygon(
-                [
-                    [box_x + box_size, box_y],
-                    [box_x + box_size / 2.0, box_y + box_size / 2],
-                    [box_x + box_size, box_y + box_size],
-                ],
-                color="k",
-                fill=False,
-                clip_on=False,
-                lw=lw,
-            )
-        )
-        ax.add_patch(
-            plt.Polygon(
-                [
-                    [box_x + box_size, box_y + box_size],
-                    [box_x + box_size / 2.0, box_y + box_size / 2],
-                    [box_x, box_y + box_size],
-                ],
-                color="k",
-                fill=False,
-                clip_on=False,
-                lw=lw,
-            )
-        )
-        ax.add_patch(
-            plt.Polygon(
-                [
-                    [box_x, box_y],
-                    [box_x + box_size / 2.0, box_y + box_size / 2],
-                    [box_x, box_y + box_size],
-                ],
-                color="k",
-                fill=False,
-                clip_on=False,
-                lw=lw,
-            )
-        )
-        ax.text(
-            box_x + box_size * 0.5,
-            box_y + box_size * 0.2,
-            labels[0],
-            ha="center",
-            va="center",
-            fontsize=fontsize,
-        )
-        ax.text(
-            box_x + box_size * 0.8,
-            box_y + box_size * 0.5,
-            labels[1],
-            ha="center",
-            va="center",
-            fontsize=fontsize,
-        )
-        ax.text(
-            box_x + box_size * 0.5,
-            box_y + box_size * 0.8,
-            labels[2],
-            ha="center",
-            va="center",
-            fontsize=fontsize,
-        )
-        ax.text(
-            box_x + box_size * 0.2,
-            box_y + box_size * 0.5,
-            labels[3],
-            ha="center",
-            va="center",
-            fontsize=fontsize,
-        )
-    elif num_divide == 2:
-        if labels is None:
-            labels = ["UPPER", "LOWER"]
-        ax.add_patch(
-            plt.Polygon(
-                [[box_x, box_y], [box_x, box_y + box_size], [box_x + box_size, box_y]],
-                color="k",
-                fill=False,
-                clip_on=False,
-                lw=lw,
-            )
-        )
-        ax.add_patch(
-            plt.Polygon(
-                [
-                    [box_x + box_size, box_y + box_size],
-                    [box_x, box_y + box_size],
-                    [box_x + box_size, box_y],
-                ],
-                color="k",
-                fill=False,
-                clip_on=False,
-                lw=lw,
-            )
-        )
-        ax.text(
-            box_x + box_size * 0.05,
-            box_y + box_size * 0.2,
-            labels[0],
-            ha="left",
-            va="center",
-            fontsize=fontsize,
-        )
-        ax.text(
-            box_x + box_size * 0.95,
-            box_y + box_size * 0.8,
-            labels[1],
-            ha="right",
-            va="center",
-            fontsize=fontsize,
-        )
-
-
 # ----------------------------------------------------------------------------------------------------------
 # region outlines on maps
 # ----------------------------------------------------------------------------------------------------------
@@ -993,6 +790,7 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
     from hcwf.onset.regions import polygon_boundary
 
     polygon_defined = False
+    polygon1_lat = polygon1_lon = np.array([])
 
     if polygon:
         polygon1_lat, polygon1_lon = polygon_boundary(da)

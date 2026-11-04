@@ -49,8 +49,8 @@ def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=
         The figure.
     ax : matplotlib.axes.Axes
         The axes.
-    plot_path : str
-        The output file path in ``spec.dir_fig`` (raises ``UnboundLocalError`` here when ``spec.dir_fig`` is empty).
+    plot_path : str or None
+        The output file path in ``spec.dir_fig``; None when ``spec.dir_fig`` is empty (nothing is saved).
     """
     polygon, dir_fig, region = spec.polygon, spec.dir_fig, spec.region
 
@@ -111,8 +111,6 @@ def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=
     if domain_mask and units is None:
         climatological_onset_doy = shp_mask(climatological_onset_doy, region=region)
 
-    vmin, vmax = climatological_onset_doy.quantile([0.05, 0.95], dim=None, skipna=True).values
-
     # Plot discrete values at each grid point using pcolormesh with custom colormap
     im = draw_field(ax, climatological_onset_doy, units, cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree())
 
@@ -170,6 +168,7 @@ def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=
     plt.tight_layout()
 
     # Save if path provided
+    plot_path = None
     if dir_fig:
         plot_filename = file_name(None, "climatology_map", tuple_to_str_range(years_clim))
         plot_path = os.path.join(dir_fig, plot_filename)

@@ -16,9 +16,8 @@ log = logging.getLogger(__name__)
 def nested_dict_to_array(nested_dict, metric_key):
     """Convert a 3-level nested dict to a 2D array over its first two levels.
 
-    Every cell is the mean of the value at `metric_key` (an array-like with a ``mean`` method). A cell whose model or
-    window is absent from `nested_dict` falls back to ``NaN``, but a leaf without `metric_key` makes the fallback
-    fail: a plain float has no ``mean``.
+    Every cell is the mean of the value at `metric_key` (an array-like with a ``mean`` method). A cell whose model,
+    window or `metric_key` is absent from `nested_dict` is ``NaN``.
 
     Parameters
     ----------
@@ -50,9 +49,10 @@ def nested_dict_to_array(nested_dict, metric_key):
     # Fill array with metric values
     for i, rkey in enumerate(row_labels):
         for j, ckey in enumerate(col_labels):
-            # Safely get the value (default to np.nan if missing)
-            da = nested_dict.get(rkey, {}).get(ckey, {}).get(metric_key, np.nan)
-            arr[i,j] = da.mean()
+            # A missing model, window or metric leaves the cell NaN
+            da = nested_dict.get(rkey, {}).get(ckey, {}).get(metric_key)
+            if da is not None:
+                arr[i, j] = da.mean()
 
     return arr, row_labels, col_labels
 

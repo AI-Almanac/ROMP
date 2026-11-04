@@ -119,6 +119,28 @@ def _mae_stats_across_years(spatial_metrics, polygon_lon, polygon_lat, polygon_d
     return cmz_mean, cmz_se, overall_mean, overall_se
 
 
+def _draw_outline(ax, india_boundaries, region, linewidth):
+    """Draw the region outline on `ax`: the given boundary lines, or else the region's shapefile outline.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    india_boundaries : list of tuple or None
+        The ``(lon, lat)`` boundary lines from `hcwf.figures.visual.get_india_outline`; None draws the outline of
+        `region` with `hcwf.figures.visual.shp_outline` instead.
+    region : str
+        The region name, for `shp_outline`.
+    linewidth : float
+        The width of the boundary lines.
+    """
+    if india_boundaries is None:
+        shp_outline(ax, region=region)
+    else:
+        for india_lon, india_lat in india_boundaries:
+            ax.plot(india_lon, india_lat, color='black', linewidth=linewidth)
+
+
 def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_box=True):
     """Plot maps of mean MAE, false alarm rate and miss rate for one case in a 1x3 subplot.
 
@@ -209,13 +231,8 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
     im1 = draw_field(axes[0], mean_mae, units, shading='flat', cmap='OrRd', vmin=0, vmax=15)
 
     # Add India outline
-    if shpfile_dir:
-        india_boundaries = get_india_outline(shpfile_dir)
-        for boundary in india_boundaries:
-            india_lon, india_lat = boundary
-            axes[0].plot(india_lon, india_lat, color='black', linewidth=map_lw)
-    else:
-        shp_outline(axes[0], region=region)
+    india_boundaries = get_india_outline(shpfile_dir) if shpfile_dir else None
+    _draw_outline(axes[0], india_boundaries, region, map_lw)
 
     # Add CMZ polygon only if defined
     if polygon_defined:
@@ -255,12 +272,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
     im2 = draw_field(axes[1], far, units, shading='flat', cmap='Reds', vmin=0, vmax=100)
 
     # Add India outline
-    if "india_boundaries" in locals():
-        for boundary in india_boundaries:
-            india_lon, india_lat = boundary
-            axes[1].plot(india_lon, india_lat, color='black', linewidth=map_lw)
-    else:
-        shp_outline(axes[1], region=region)
+    _draw_outline(axes[1], india_boundaries, region, map_lw)
 
     # Add CMZ polygon only if defined
     if polygon_defined:
@@ -295,12 +307,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
     im3 = draw_field(axes[2], miss_rate, units, shading='flat', cmap='Blues', vmin=0, vmax=100)
 
     # Add India outline
-    if "india_boundaries" in locals():
-        for boundary in india_boundaries:
-            india_lon, india_lat = boundary
-            axes[2].plot(india_lon, india_lat, color='black', linewidth=map_lw)
-    else:
-        shp_outline(axes[2], region=region)
+    _draw_outline(axes[2], india_boundaries, region, map_lw)
 
     # Add CMZ polygon only if defined
     if polygon_defined:
@@ -343,7 +350,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
         cax = divider.append_axes("bottom", size="5%", pad=0.3)
 
         # 3. Create the colorbar in that specific cax
-        cbar = fig.colorbar(im, cax=cax, orientation='horizontal', extend=colorbar_extend(im))
+        fig.colorbar(im, cax=cax, orientation='horizontal', extend=colorbar_extend(im))
         # 4. To make it SHORTER (e.g., 60% of the plot width):
         pos = cax.get_position()
         new_width = pos.width * 0.6

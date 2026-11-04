@@ -73,7 +73,7 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, spec, *, legend=
     bss, model_list  = extract_overall_dict(result_overall, 'Fair_Brier_Skill_Score')
     rps, _  = extract_overall_dict(result_overall, 'Fair_RPS_Skill_Score')
     auc, _  = extract_overall_dict(result_overall, 'AUC')
-    log.debug("%s %s", "/n/n result_overall = ", result_overall)
+    log.debug("result_overall = %s", result_overall)
     auc_ref, _  = extract_overall_dict(result_overall, 'AUC_ref')
     auc_ref = auc_ref[0]
 
@@ -140,9 +140,8 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, spec, *, legend=
     if legend:
         lines1, labels1 = ax.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        legend = ax.legend(lines1 + lines2 + [clim_line],
-                          labels1 + labels2 + ['climatology'],
-                          loc='lower right', frameon=False)
+        ax.legend(lines1 + lines2 + [clim_line], labels1 + labels2 + ['climatology'],
+                  loc='lower right', frameon=False)
 
     fig.tight_layout()
     if spec.show_panel:

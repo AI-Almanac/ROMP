@@ -407,8 +407,6 @@ class _Row:
     """The veto, for a ``"veto"`` row."""
     lines: list[str] | None = None
     """The wrapped label, set by `_prepare_rows`."""
-    label_x: float = 0.0
-    """Unused: the x position of the label."""
     height: float = 0.0
     """The vertical space of the row in inches, set by `_prepare_rows`."""
 
