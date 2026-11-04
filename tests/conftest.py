@@ -89,6 +89,7 @@ def pytest_configure(config):
         _ensure_natural_earth()
 
 
+@pytest.hookimpl(tryfirst=True)  # before xdist reads the xdist_group marks into the node ids
 def pytest_collection_modifyitems(config, items):
     skip_slow = None if config.getoption("--run-slow") else pytest.mark.skip(reason="slow: run with --run-slow")
     for item in items:
