@@ -28,38 +28,39 @@ result = hcwf.run("run.yaml", max_forecast_day=15)
 plan = hcwf.check("run.yaml")
 ```
 
-See {py:obj}`hcwf.run`, {py:obj}`hcwf.check` and the {doc}`api` for the Python interface, and the repository README for the command
-reference, the run file sections, run folders and caches.
+See {doc}`howto/run_benchmark` for a first run, {py:obj}`hcwf.run` and {py:obj}`hcwf.check` for the Python interface and the
+repository README for run folders and caches.
+
+The documentation is organised by purpose:
+
+* **Tutorials**: worked notebooks that run HCWF end to end on sample data.
+* **How-to guides**: one task each: configure a run, add a dataset, run a benchmark, train and apply a blend, choose or override an onset definition.
+* **Explanation**: what the onset definitions, the scores, the reference forecasts and the blending method mean.
+* **Reference**: the Python interface, the `hcwf-run` command line, every run-file key, and the public names of every module.
+* **Project notes**: migration notes, contributing conventions and the records of the merge.
 
 ```{toctree}
 :maxdepth: 2
-:caption: Guides
+:hidden:
+:caption: Learn
 
-blending
-onset_in_hcwf
-onset_spec
-reading_data
-migrating_from_onset_blending
-```
-
-```{toctree}
-:maxdepth: 1
-:caption: Notebooks
-
-package_configuration
-package_run_guidance_et
+tutorials/index
+howto/index
+explanation/index
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: Reference
+:hidden:
+:caption: Look up
 
-api
+reference/index
 ```
 
 ```{toctree}
-:maxdepth: 1
-:caption: Contributing
+:maxdepth: 2
+:hidden:
+:caption: Project
 
-contributing_docstrings
+project/index
 ```
