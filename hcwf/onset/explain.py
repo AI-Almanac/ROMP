@@ -22,8 +22,8 @@ from hcwf.onset.describe import describe
 from hcwf.onset.model import (
     Curve, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, resolution_of,
 )
+from hcwf.onset.units import MONTH_NAMES as _MONTHS
 
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 _OP_WORDS = {"ge": "at least", "gt": "more than", "le": "at most", "lt": "less than"}
 _OP_NAMES = {code: name for name, code in P.OP_CODES.items()}
 _PLACEMENTS = {P.INSIDE: "inside", P.STARTS_INSIDE: "starts_inside", P.BEGINS: "begins"}

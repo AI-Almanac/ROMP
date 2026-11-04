@@ -20,13 +20,14 @@ import xarray as xr
 from hcwf.cache import NETCDF, Store
 from hcwf.onset.calendar import fixed_bounds, label_keys
 from hcwf.onset.model import Definition, ThresholdSpec, resolution_of
+from hcwf.onset.units import DAYS_IN_MONTH
 from hcwf.spatial import ids
 
 MAX_MISSING_FRACTION = 0.10
 """The largest fraction of reference days that may be missing before a threshold is NaN."""
 _CHUNK_VALUES = 1 << 24
 """The most values of rain held as float64 at once when thresholds are computed in chunks of series."""
-_DAYS_IN_MONTH = np.array([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31])
+_DAYS_IN_MONTH = np.array(DAYS_IN_MONTH)
 """The days of each month of a 365-day year."""
 _CUMULATIVE_DAYS = np.concatenate([[0], np.cumsum(_DAYS_IN_MONTH)])
 """The days of the year before each month (13 entries, the last is 365)."""

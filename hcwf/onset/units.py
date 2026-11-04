@@ -30,7 +30,10 @@ _COMPARATORS: dict[str, Op] = {
 _COMPARATOR_RE = re.compile(r"^(at least|more than|less than|at most|>=|<=|>|<)\s*(.*)$", re.IGNORECASE)
 _COMPARATOR_HINT = "at least, more than, less than, at most (or >=, >, <, <=)"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_MONTH_DAYS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+DAYS_IN_MONTH = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+"""The days of each month of a 365-day year."""
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+"""The three-letter English names of the months."""
 _FINE_AMOUNTS: ContextVar[bool] = ContextVar("fine_amounts", default=False)
 
 
@@ -319,7 +322,7 @@ def parse_month_day(text: str, *, leap_day: bool = False, two_digit: bool = True
         if not leap_day:
             raise UnitsError("'02-29' is not allowed because not every year has it. Fix: use 02-28 or 03-01")
         return month, day
-    if not 1 <= month <= 12 or not 1 <= day <= _MONTH_DAYS[month - 1]:
+    if not 1 <= month <= 12 or not 1 <= day <= DAYS_IN_MONTH[month - 1]:
         raise UnitsError(f"'{text}' is not a valid month-day. Fix: write MM-DD, e.g. '06-02'")
     return month, day
 

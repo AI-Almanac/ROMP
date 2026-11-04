@@ -18,12 +18,12 @@ from hcwf.onset.explain import Anatomy
 from hcwf.onset.model import Status
 from hcwf.onset.viz import style
 from hcwf.onset.viz.anatomy import PANEL_RATIOS, _subtitle, _title, anatomy_panels, draw_anatomy
+from hcwf.onset.units import MONTH_NAMES as _MONTH_NAMES
 
 _MAP_IN = 4.4
 _LEFT_IN = 0.8
 _GAP_IN = 2.0
 _RIGHT_IN = 1.0
-_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 def _ramp(pal: style.Palette) -> LinearSegmentedColormap:

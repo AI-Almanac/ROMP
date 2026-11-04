@@ -22,6 +22,7 @@ from hcwf.onset.model import (
     ThresholdSpec, Total, Veto, WetDays,
 )
 from hcwf.onset.viz import style
+from hcwf.onset.units import MONTH_NAMES as _MONTHS
 
 WIDTH_IN = 9.0
 """Default figure width in inches."""
@@ -44,7 +45,6 @@ SEARCH_START_DAYS = 5
 MEASURE_SLACK = 1.04
 """Factor applied to measured text widths, for font differences between renderers."""
 
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 _OP_WORDS = {"ge": "at least", "gt": "more than", "le": "at most", "lt": "less than"}
 
 
