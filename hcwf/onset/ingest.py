@@ -30,6 +30,9 @@ MM_PER_UNIT = {
 }
 """Millimetres per unit of a rainfall total's declared units, by lower-case name with single spaces (the one table;
 the CF spellings of onset_blending included)."""
+_HELP_UNITS = ("mm", "mm/day", "m")
+UNITS_HELP = f"{', '.join(_HELP_UNITS[:-1])} or {_HELP_UNITS[-1]}"
+"""The units a user is told to write, as help text; each is a name in `MM_PER_UNIT`."""
 
 # Offsets from UTC in hours for the zone names day boundaries may use.
 _ZONES = {"UTC": 0.0, "GMT": 0.0, "Z": 0.0, "IST": 5.5, "EAT": 3.0, "CAT": 2.0, "WAT": 1.0,
@@ -99,6 +102,22 @@ def observation_shift_days(obs_boundary: str, lead_label: str) -> int:
     return 1 if parse_day_boundary(obs_boundary)[1] == "start" and lead_label == "end" else 0
 
 
+def mm_per_unit(units: object) -> float | None:
+    """Look up the factor taking a rainfall units name to mm.
+
+    Parameters
+    ----------
+    units : object
+        The declared units; the name is compared in lower case with single spaces.
+
+    Returns
+    -------
+    float or None
+        Millimetres per unit from `MM_PER_UNIT`, or None when the name is not in the table.
+    """
+    return MM_PER_UNIT.get(" ".join(str(units).lower().split()))
+
+
 def unit_scale(units: str | None) -> float:
     """Return the factor taking the given rainfall units to mm.
 
@@ -121,10 +140,10 @@ def unit_scale(units: str | None) -> float:
     """
     if units is None:
         raise ValueError("No rainfall units: pass units=... or set the 'units' attribute on the data")
-    key = " ".join(str(units).lower().split())
-    if key in MM_PER_UNIT:
-        return MM_PER_UNIT[key]
-    raise ValueError(f"Unsupported rainfall units {units!r}; supported: mm, mm/day, kg m-2, m, m/day")
+    factor = mm_per_unit(units)
+    if factor is None:
+        raise ValueError(f"Unsupported rainfall units {units!r}; supported: mm, mm/day, kg m-2, m, m/day")
+    return factor
 
 
 def _find_dim(da: xr.DataArray, role: str, override: str | None, label: str | None = None,

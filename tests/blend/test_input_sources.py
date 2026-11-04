@@ -212,3 +212,10 @@ def test_a_forecast_without_declared_units_scales_like_onset_blending(tmp_path):
     assert scaled.dtype == np.float32
     np.testing.assert_array_equal(scaled.values, plain.values * np.float32(0.1))
     assert path.exists()
+
+
+def test_the_units_help_names_only_units_the_table_knows():
+    from hcwf.onset import ingest
+    assert ingest.UNITS_HELP == "mm, mm/day or m"
+    assert all(ingest.mm_per_unit(name) is not None for name in ("mm", "mm/day", "m"))
+    assert ingest.mm_per_unit("cm") is None and ingest.mm_per_unit("  MM   Day-1") == 1.0

@@ -17,17 +17,18 @@ from hcwf.config import detect
 from hcwf.config.convert import _flow
 from hcwf.config.datasets import expand_path
 from hcwf.onset import regions
+from hcwf.onset.ingest import UNITS_HELP
 from hcwf.errors import RegionError
 
 _OBS_PLACEHOLDERS = (("file_pattern", '"{}.nc"', "the year placeholder; detected from the files if left out"),
                      ("variable", "rainfall", "rainfall variable; detected if it is the only one"),
-                     ("units", "mm", "mm, mm/day, m or cm; read from the file's attribute if left out"),
+                     ("units", "mm", f"{UNITS_HELP}; read from the file's attribute if left out"),
                      ("day_boundary", '"00 UTC, labelled by start"',
                       "when the day starts and which date labels it; the region's if left out"))
 """The ``(key, example value, comment)`` lines of an observations entry that detection could not fill."""
 _MODEL_PLACEHOLDERS = (("file_pattern", '"{}.nc"', "the year placeholder; detected from the files if left out"),
                        ("variable", "tp", "rainfall variable; detected if it is the only one"),
-                       ("units", "m", "mm, mm/day, m or cm; read from the file's attribute if left out"),
+                       ("units", "m", f"{UNITS_HELP}; read from the file's attribute if left out"),
                        ("lead_label", "start", "start: lead k is dated init + k - 1; end: init + k. "
                                                "Detected against the observations if left out"))
 """The ``(key, example value, comment)`` lines of a model entry that detection could not fill."""

@@ -472,9 +472,9 @@ def unit_factor(units: str, origin: str) -> float | None:
     DatasetError
         The units name is not in the table.
     """
-    from hcwf.onset.ingest import MM_PER_UNIT
+    from hcwf.onset.ingest import MM_PER_UNIT, mm_per_unit
 
-    factor = MM_PER_UNIT.get(" ".join(str(units).lower().split()))
+    factor = mm_per_unit(units)
     if factor is None:
         raise DatasetError(f"{origin}: units {units!r} is not known (known: {', '.join(MM_PER_UNIT)}). "
                            "Fix: convert the data to mm or m first and set units accordingly")
