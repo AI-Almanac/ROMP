@@ -28,7 +28,7 @@ def get_target_bins(brier_forecast, brier_climatology):
     Returns
     -------
     list of str
-        The labels in both, starting with ``Days ``, in day order.
+        The labels in both, starting with ``Days``, in day order.
     """
     all_forecast_bins = set(brier_forecast['bin_fair_brier_scores'].keys())
     all_clim_bins = set(brier_climatology['bin_fair_brier_scores'].keys())

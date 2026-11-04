@@ -78,6 +78,27 @@ napoleon_include_init_with_doc = False
 napoleon_include_private_with_doc = False
 napoleon_attr_annotations = True
 
+
+def _attribute_docstring_without_inline_type(self):
+    """Return an attribute docstring's lines whole, never splitting a ``type: description`` first line.
+
+    napoleon reads ``text: more`` on the first line of an attribute docstring as a type and a description, so a
+    sentence such as "The yes/no keys: ..." rendered as "Type: The yes/no keys". HCWF never writes types in
+    attribute docstrings (the annotation is the type), so the whole docstring is the description.
+
+    Returns
+    -------
+    list of str
+        The docstring's lines, formatted as a field description.
+    """
+    lines = [*self._dedent(self._consume_to_end())]
+    return self._format_field("", "", self.__class__(lines, self._config).lines())
+
+
+from sphinx.ext.napoleon.docstring import GoogleDocstring  # noqa: E402
+
+GoogleDocstring._parse_attribute_docstring = _attribute_docstring_without_inline_type
+
 # -- Intersphinx --------------------------------------------------------------------------------------------------------
 
 intersphinx_mapping = {
