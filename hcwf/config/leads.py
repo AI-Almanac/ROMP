@@ -11,8 +11,6 @@ from __future__ import annotations
 import os
 import re
 
-import xarray as xr
-
 from hcwf.config.model import evaluation_years
 from hcwf.config.onset import forecast_reach, onset_setup
 from hcwf.io.paths import set_dir
@@ -99,8 +97,8 @@ def count_leads(dic: dict, index: int) -> int:
     OnsetConfigError
         No year is evaluated, or the first year's file does not exist.
     """
-    from hcwf.config.datasets import is_zarr
-    from hcwf.io.stores import open_store
+    from hcwf.config.detect import open_data
+    from hcwf.io.stores import forecast_sources
 
     folder = set_dir(str(dic["model_dir_list"][index]))
     years = evaluation_years(dic)
@@ -113,16 +111,15 @@ def count_leads(dic: dict, index: int) -> int:
     year = years[0]
     dims_list = dic.get("model_dims_list")
     dims = dims_list[index] if dims_list else None
-    if is_zarr(folder):
-        return int((dim_fmt_model(open_store(folder), dims)["step"].values >= 1).sum())
-    path = os.path.join(folder, dic["file_pattern_list"][index].format(year))
-    if not os.path.exists(path):
+    listed = (dic.get("model_paths_list") or [None] * (index + 1))[index]
+    try:
+        path = forecast_sources(year, folder, str(dic["file_pattern_list"][index]), listed or None)[0]
+    except FileNotFoundError as exc:
         have = available_years(folder, str(dic["file_pattern_list"][index]))
-        raise OnsetConfigError(f"cannot count the forecast leads of {dic['model_list'][index]}: {path} not found "
-                               f"(its files cover the years {_years_text(have)}; start_date starts at {year})")
-    with xr.open_dataset(path) as ds:
-        ds = dim_fmt_model(ds, dims)
-        return int((ds["step"].values >= 1).sum())
+        raise OnsetConfigError(f"cannot count the forecast leads of {dic['model_list'][index]}: {exc} "
+                               f"(its files cover the years {_years_text(have)}; start_date starts at {year})") from None
+    with open_data(folder if path is None else path) as ds:
+        return int((dim_fmt_model(ds, dims)["step"].values >= 1).sum())
 
 
 def _clip(pairs, last: int):

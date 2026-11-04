@@ -198,7 +198,7 @@ _SAMPLES = memo("config.detect.samples", maxsize=32)
 
 
 def open_data(path: str) -> xr.Dataset:
-    """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) with `xarray.open_zarr`.
+    """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) through `hcwf.io.stores.open_store`.
 
     Parameters
     ----------
@@ -208,10 +208,13 @@ def open_data(path: str) -> xr.Dataset:
     Returns
     -------
     xarray.Dataset
-        The lazily opened dataset (a zarr store is opened unchunked). The caller closes it.
+        The lazily opened dataset. The caller closes it; a zarr store is the run's shared handle (opened unchunked), so
+        this returns a view of it whose ``close`` does nothing and the run's state reset closes the store.
     """
     if is_zarr(path):
-        return xr.open_zarr(path, chunks=None)
+        from hcwf.io.stores import open_store
+
+        return open_store(path).copy()
     return xr.open_dataset(path)
 
 
