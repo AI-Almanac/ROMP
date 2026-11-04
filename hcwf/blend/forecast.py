@@ -29,15 +29,34 @@ from hcwf.config import detect as dataset_detect
 from hcwf.errors import IncompatibleForecast
 
 WEEKLY_FILENAME = "blended_forecast_probabilities.csv"
+"""The name of the weekly probabilities CSV that `Forecast.save` writes."""
 DAILY_FILENAME = "daily_onset_probabilities.csv"
+"""The name of the daily probabilities CSV (random forest blends only)."""
 WEEKLY_NETCDF = "blended_forecast_probabilities.nc"
+"""The name of the weekly probabilities NetCDF file (written only on request)."""
 DAILY_NETCDF = "daily_onset_probabilities.nc"
+"""The name of the daily probabilities NetCDF file (written only on request)."""
 
 __all__ = ["DAILY_FILENAME", "Forecast", "IncompatibleForecast", "WEEKLY_FILENAME", "check_files", "run"]
 
 
 def _dataset(table: pd.DataFrame, columns: list[str]) -> xr.Dataset:
-    """A forecast table (rows of id and issue date) as arrays over (time, id), NaN where a unit has no row."""
+    """Return a forecast table (rows of id and issue date) as arrays over (time, id).
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        One row per unit and issue date, with ``id``, ``time``, the `columns`, and optionally ``lat``, ``lon`` and
+        ``onset_threshold`` (taken from the first row of each unit).
+    columns : list of str
+        The columns to turn into ``float64`` variables over ``(time, id)``.
+
+    Returns
+    -------
+    xarray.Dataset
+        The `columns` over ``(time, id)``, ``NaN`` where a unit has no row for a time, and the per-unit
+        ``lat``, ``lon`` and ``onset_threshold`` over ``(id,)`` where the table has them. Times and ids are sorted.
+    """
     time = pd.to_datetime(table["time"])
     times = np.sort(time.unique())
     ids = np.sort(table["id"].unique().astype(str))
@@ -58,15 +77,22 @@ def _dataset(table: pd.DataFrame, columns: list[str]) -> xr.Dataset:
 class Forecast:
     """Blended onset probabilities for the live issue dates.
 
-    `weekly_table` holds one row per unit and issue date as blending's contract has it (id, time, onset_threshold, lat,
-    lon, cv_week1..N, cv_later, then the climatology's clim_*); `daily_table` (the random forest blend's) id, time, lat,
-    lon, p_day_1..D, p_later and the week bins cv_*. `weekly` and `daily` are the same probabilities as xarray
-    Datasets over (time, id); `features` holds the weekly feature rows the probabilities come from."""
+    `weekly_table` holds one row per unit and issue date as blending's contract has it (``id``, ``time``,
+    ``onset_threshold``, ``lat``, ``lon``, ``cv_week1`` .. ``cv_weekN``, ``cv_later``, then the climatology's
+    ``clim_*``); `daily_table` (the random forest blend's) ``id``, ``time``, ``lat``, ``lon``, ``p_day_1`` ..
+    ``p_day_D``, ``p_later`` and the week bins ``cv_*``. `Forecast.weekly` and `Forecast.daily` are the same
+    probabilities as `xarray.Dataset` objects over ``(time, id)``; `features` holds the weekly feature rows the
+    probabilities come from.
+    """
 
     weekly_table: pd.DataFrame
+    """The weekly probabilities, one row per unit and issue date."""
     features: pd.DataFrame
+    """The weekly feature rows the probabilities were computed from."""
     daily_table: pd.DataFrame | None = None
-    folder: Path | None = None          # where `save` wrote it
+    """The daily onset probabilities; ``None`` unless the blend is a random forest."""
+    folder: Path | None = None
+    """Where `Forecast.save` wrote the forecast; ``None`` before."""
 
     @property
     def issue_dates(self) -> list[dt.date]:
@@ -81,11 +107,13 @@ class Forecast:
 
     @property
     def weekly(self) -> xr.Dataset:
+        """The weekly probabilities (the ``cv_*`` and ``clim_*`` columns) as arrays over ``(time, id)``."""
         columns = [c for c in self.weekly_table.columns if c.startswith(("cv_", "clim_"))]
         return _dataset(self.weekly_table, columns)
 
     @property
     def daily(self) -> xr.Dataset | None:
+        """The daily probabilities as arrays over ``(time, id)`` (``p_day`` over ``(time, id, day)``), ``None`` if none."""
         if self.daily_table is None:
             return None
         table = self.daily_table
@@ -97,8 +125,31 @@ class Forecast:
         return data
 
     def save(self, directory, *, netcdf: bool = False) -> Path:
-        """Write the forecast's files into a new directory, all or nothing: blending's contract CSVs (weekly, and daily
-        for a random forest blend). `netcdf` also writes the probabilities as NetCDF (off by default: nothing reads it)."""
+        """Write the forecast's files into a new directory, all or nothing.
+
+        The files are blending's contract CSVs (weekly, and daily for a random forest blend). They are written to a
+        staging directory next to `directory` and moved into place at the end, so a failure leaves nothing behind.
+        `Forecast.folder` is set to `directory`.
+
+        Parameters
+        ----------
+        directory : str or pathlib.Path
+            The directory to create; it may exist if it is empty.
+        netcdf : bool, default False
+            Also write the probabilities as NetCDF (off by default: nothing reads it).
+
+        Returns
+        -------
+        pathlib.Path
+            The directory written.
+
+        Raises
+        ------
+        FileExistsError
+            `directory` exists and is not empty.
+        BaseException
+            Whatever the writing raised; the staging directory is removed first.
+        """
         directory = Path(directory)
         if directory.exists() and any(directory.iterdir()):
             raise FileExistsError(f"{directory} exists and is not empty")
@@ -123,16 +174,60 @@ class Forecast:
 
 
 def _files(forecasts: dict) -> dict[str, list[Path]]:
+    """Expand each model's live files (a file, a glob or a list) to paths.
+
+    Parameters
+    ----------
+    forecasts : dict
+        The model name and its file, glob or list of them.
+
+    Returns
+    -------
+    dict of str to list of pathlib.Path
+        The paths of each model.
+    """
     from hcwf.blend.trained import expand_files
 
     return {name: expand_files(value) for name, value in forecasts.items()}
 
 
 def _model_spec(blend, name: str):
+    """Return a model's recipe entry.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend.
+    name : str
+        The model name.
+
+    Returns
+    -------
+    object
+        ``blend.recipe.model(name)``.
+    """
     return blend.recipe.model(name)
 
 
 def _read(blend, name: str, path, *, selected: bool) -> tuple[dict, list]:
+    """Read one live forecast file as the blend's detection does.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend (its entries and recipe give how to read the file).
+    name : str
+        The model the file belongs to.
+    path : str or pathlib.Path
+        The forecast file.
+    selected : bool
+        Whether to keep only the selected members and units, see `hcwf.config.detect.read_forecast_file`.
+
+    Returns
+    -------
+    tuple of (dict, list)
+        What `hcwf.config.detect.read_forecast_file` returns: the file's signature and its issue dates.
+    """
     model = _model_spec(blend, name)
     return dataset_detect.read_forecast_file(
         path, blend.entries[name], lead_days=model.lead_days, max_member=model.max_member, selected=selected)
@@ -140,8 +235,24 @@ def _read(blend, name: str, path, *, selected: bool) -> tuple[dict, list]:
 
 def check_files(blend, forecasts: dict[str, list[Path]], *, fewer_members: bool = False,
                 held: dict | None = None) -> list[str]:
-    """Every way the live files differ from what the blend was trained on. With a `held` dict, the issue dates each
-    model's files hold are collected into it."""
+    """Find every way the live files differ from what the blend was trained on.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend.
+    forecasts : dict of str to list of pathlib.Path
+        The live files of each model; they must be given for exactly the trained models.
+    fewer_members : bool, default False
+        Accept live files that hold only some of the members the blend was trained on.
+    held : dict, optional
+        If given, filled with the sorted issue dates that each model's files hold.
+
+    Returns
+    -------
+    list of str
+        The problems found; empty when the files are compatible.
+    """
     problems = []
     trained, given = set(blend.recipe.model_names), set(forecasts)
     if given != trained:
@@ -170,8 +281,26 @@ def check_files(blend, forecasts: dict[str, list[Path]], *, fewer_members: bool 
 
 
 def _issue_problems(blend, issue_date: dt.date | None, held: dict[str, list[dt.date]]):
-    """(issue date, season year, problems). With no issue date given, files holding one initialisation each forecast
-    it; files holding more forecast every issue of their one season."""
+    """Settle the issue date and the season year of a forecast and check them against the live files.
+
+    With no issue date given, files holding one initialisation each forecast it (the models must agree); files
+    holding more forecast every issue of their one season.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend (its season and the end of the climatology's issue window).
+    issue_date : datetime.date or None
+        The issue date asked for, or ``None``.
+    held : dict of str to list of datetime.date
+        The issue dates each model's files hold.
+
+    Returns
+    -------
+    tuple of (datetime.date or None, int or None, list of str)
+        The issue date (``None`` for a whole season), the season year (``None`` if it is ambiguous) and the
+        problems found.
+    """
     problems = []
     if issue_date is None and held and all(len(dates) == 1 for dates in held.values()):
         inits = {name: dates[0] for name, dates in held.items()}
@@ -202,10 +331,38 @@ def _issue_problems(blend, issue_date: dt.date | None, held: dict[str, list[dt.d
 
 
 def run(blend, forecasts: dict, *, issue_date=None, fewer_members: bool = False, workers: int | None = None):
-    """Blended probabilities for the live forecasts (model name -> file, glob or list).
+    """Compute blended probabilities for the live forecasts.
 
-    fewer_members lets an ensemble's live files hold only some of the members the blend was trained on: its onset
-    probabilities are shares of fewer members, so coarser and noisier than the blend's training saw."""
+    The files are checked first (`check_files`); then onsets are detected, the features built without trimming (a
+    forecast must not know when the onset came), and the fitted blend (and the random forest, if the blend has one)
+    applied.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend.
+    forecasts : dict
+        The live files: model name to a file, a glob or a list of them.
+    issue_date : datetime.date or str, optional
+        The issue to forecast (an ISO date string is parsed); ``None`` forecasts the one initialisation of the files,
+        or every issue of their season.
+    fewer_members : bool, default False
+        Let an ensemble's live files hold only some of the members the blend was trained on: its onset
+        probabilities are shares of fewer members, so coarser and noisier than the blend's training saw.
+    workers : int, optional
+        The worker processes; ``None`` takes the number the run's resources allow.
+
+    Returns
+    -------
+    Forecast
+        The probabilities for the units and issue dates that have every feature the blend needs.
+
+    Raises
+    ------
+    IncompatibleForecast
+        The live files differ from the training structure, the issue date does not fit them or the season, the
+        random forest's inputs do not match, or no unit and issue date has every feature.
+    """
     from hcwf.blend.random_forest import feature_names, feature_matrix, predict, weekly_from_daily
 
     if isinstance(issue_date, str):
@@ -266,19 +423,59 @@ def run(blend, forecasts: dict, *, issue_date=None, fewer_members: bool = False,
 
 
 def _thresholds(blend):
-    """The frozen thresholds as the detection reads them."""
+    """Return the frozen thresholds as the detection reads them.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend, whose ``thresholds`` are frozen.
+
+    Returns
+    -------
+    hcwf.config.onset.Thresholds
+        The thresholds wrapped for detection.
+    """
     from hcwf.config.onset import Thresholds
 
     return Thresholds(blend.thresholds)
 
 
 def _input_columns(model, weekly) -> list[str]:
-    """The weekly columns the fitted model's terms are made of."""
+    """Return the weekly columns the fitted model's terms are made of.
+
+    Parameters
+    ----------
+    model : object
+        The fitted logistic blend; its ``features`` are the terms (``a:b`` is made of ``a`` and ``b``).
+    weekly : hcwf.blend.samples.Weekly
+        The weekly samples, whose ``columns`` are searched.
+
+    Returns
+    -------
+    list of str
+        The columns of `weekly` that appear in a term, in the order of its columns.
+    """
     names = {part for feature in model.features for part in str(feature).split(":")}
     return [c for c in weekly.columns if c in names]
 
 
 def _probabilities(blend, rows: pd.DataFrame) -> pd.DataFrame:
+    """Predict the week-bin probabilities of the weekly feature rows, with the climatology they start from.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend.
+    rows : pandas.DataFrame
+        The weekly feature rows, with ``id``, ``time``, ``onset_threshold``, ``lat``, ``lon`` and the climatology
+        feature of each week.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``id``, ``time``, ``onset_threshold``, ``lat``, ``lon``, ``cv_<label>`` for every outcome label and
+        ``clim_<week>`` (the inverse logit of the climatology feature) with ``clim_later``, the rest to 1 (at least 0).
+    """
     labels = blend.recipe.outcome_labels()
     predicted = dict(zip(blend.model.classes, blend.model.predict(rows).T))
     out = rows[["id", "time", "onset_threshold", "lat", "lon"]].copy()
@@ -294,7 +491,23 @@ def _probabilities(blend, rows: pd.DataFrame) -> pd.DataFrame:
 
 
 def parse_forecast_arguments(items) -> dict[str, list[str]]:
-    """`MODEL=PATH` items (as the command line gives them) as a mapping of model to its paths."""
+    """Turn ``MODEL=PATH`` items (as the command line gives them) into a mapping of model to its paths.
+
+    Parameters
+    ----------
+    items : iterable of str
+        The ``MODEL=PATH`` items; a model may repeat.
+
+    Returns
+    -------
+    dict of str to list of str
+        The paths given for each model, in order.
+
+    Raises
+    ------
+    ValueError
+        An item has no ``=``, or an empty model or path.
+    """
     out: dict[str, list[str]] = {}
     for item in items:
         model, sep, path = str(item).partition("=")

@@ -1,16 +1,13 @@
 """Platt calibration of week-bin probabilities, on arrays.
 
-`cross_validated` is the legacy platt_cv_multibin: for each holdout year,
-each bin's probability is recalibrated by a logistic regression on the raw
-probability (as R's glm(y ~ p) does, not on its logit), fitted on the other
-years' samples outside the true holdouts and in the dissemination units; a
-bin with too few such samples keeps its raw probability; rows are then
-normalised. `export_weights` is fit_platt_weights_export: per-bin weights on
-the logit, fitted on the training years, applied as expit(a + b logit(p)).
+`cross_validated` is the legacy ``platt_cv_multibin``: for each holdout year, each bin's probability is
+recalibrated by a logistic regression on the raw probability (as R's ``glm(y ~ p)`` does, not on its logit), fitted
+on the other years' samples outside the true holdouts and in the dissemination units; a bin with too few such
+samples keeps its raw probability; rows are then normalised. `export_weights` is ``fit_platt_weights_export``:
+per-bin weights on the logit, fitted on the training years, applied as ``expit(a + b * logit(p))``.
 
-Fits run on one BLAS thread, so results do not depend on the machine's core
-count; with `workers` the holdout years are fitted in parallel on the run's worker pool (inputs in shared
-memory), with the same results.
+Fits run on one BLAS thread, so results do not depend on the machine's core count; with ``workers`` the holdout
+years are fitted in parallel on the run's worker pool (inputs in shared memory), with the same results.
 """
 
 from __future__ import annotations
@@ -28,11 +25,34 @@ _EPS = 1e-6
 
 def cross_validated(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, trainable: np.ndarray,
                     holdout_years, *, workers: int = 1) -> list[tuple[int, np.ndarray, np.ndarray]]:
-    """Calibrated probabilities per holdout year: [(year, sample positions, (n, bins))].
+    """Return the calibrated probabilities of each holdout year.
 
-    P: (samples, bins) raw probabilities; outcome: codes (-1 without one);
-    trainable: samples a fit may train on (outside the true holdouts, in the
-    dissemination units)."""
+    For each year of `holdout_years`, every bin's probability is recalibrated by a logistic regression of the
+    outcome on the raw probability, fitted on the trainable samples of the other years; a bin without enough such
+    samples (fewer than 10 usable, or a single outcome class) keeps its raw probability. The rows are then
+    normalised to sum to 1 (a zero sum is left as is). A year without samples is left out of the result.
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (sample, bin)
+        The raw probabilities; clipped to ``[1e-6, 1 - 1e-6]`` for the fit.
+    outcome : numpy.ndarray of int, shape (sample,)
+        The observed bin code of each sample, -1 where there is none.
+    year : numpy.ndarray of int, shape (sample,)
+        The year of each sample.
+    trainable : numpy.ndarray of bool, shape (sample,)
+        The samples a fit may train on (outside the true holdouts, in the dissemination units).
+    holdout_years : sequence of int
+        The years to calibrate, each fitted on the other years.
+    workers : int, default 1
+        The processes to fit the holdout years on; 1, or a single holdout year, fits in this process.
+
+    Returns
+    -------
+    list of tuple of (int, numpy.ndarray, numpy.ndarray)
+        One ``(year, positions, probabilities)`` per holdout year that has samples: the year, the positions of its
+        samples (``int64``, shape ``(n,)``), and their calibrated probabilities (``float64``, shape ``(n, bin)``).
+    """
     P = np.asarray(P, dtype=float)
     n_bins = P.shape[1]
     known = outcome >= 0
@@ -62,13 +82,46 @@ def cross_validated(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, traina
 
 
 def _pooled_fold(test_year, specs):
+    """Fit one holdout year from shared-memory specs; the function the worker pool calls.
+
+    Parameters
+    ----------
+    test_year : int
+        The holdout year.
+    specs : dict
+        The shared-memory specs of the arrays (``p``, ``y``, ``years``, ``trainable``), see `_fold`.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, list of int)
+        The result of `_fold`.
+    """
     return _fold(specs, test_year)
 
 
 def _fold(arrays, test_year):
-    """One holdout year's per-bin fits: (calibrated test probabilities, bins
-    left uncalibrated). arrays holds p, y (bin, sample), years and trainable,
-    or their shared-memory specs."""
+    """Fit the per-bin Platt regressions of one holdout year.
+
+    The fits are limited to one BLAS thread so results do not depend on the core count. Each bin is fitted by an
+    effectively unpenalised ``LogisticRegression`` (``C=1e9``) of the outcome on the raw probability, on the trainable
+    samples of the other years.
+
+    Parameters
+    ----------
+    arrays : dict
+        ``p`` and ``y`` (``float64``, shape ``(bin, sample)``; ``y`` is 1.0 or 0.0, ``NaN`` without an outcome),
+        ``years`` (shape ``(sample,)``) and ``trainable`` (``bool``, shape ``(sample,)``); or the shared-memory
+        specs of these, which are attached and detached here.
+    test_year : int
+        The holdout year.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, list of int)
+        The calibrated probabilities of the holdout samples (``float64``, shape ``(n_test, bin)``, ``NaN`` in the
+        bins listed second) and the bins left uncalibrated (fewer than 10 usable training samples, or a single
+        outcome class).
+    """
     from threadpoolctl import threadpool_limits
 
     if not isinstance(arrays["p"], np.ndarray):
@@ -96,8 +149,26 @@ def _fold(arrays, test_year):
 
 
 def export_weights(P: np.ndarray, outcome: np.ndarray, labels) -> pd.DataFrame:
-    """Per-bin Platt weights on the logit (bin, intercept, slope), fitted on
-    the samples given (the training years); (0, 1) where a bin cannot be."""
+    """Fit per-bin Platt weights on the logit.
+
+    Each bin's weights come from an effectively unpenalised logistic regression (``C=1e9``) of the outcome on
+    ``logit(p)``, applied later as ``expit(intercept + slope * logit(p))``. A bin with fewer than 10 usable samples,
+    or a single outcome class, gets the identity weights (intercept 0, slope 1).
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (sample, bin)
+        The raw probabilities of the training samples; clipped to ``[1e-6, 1 - 1e-6]``.
+    outcome : numpy.ndarray of int, shape (sample,)
+        The observed bin code of each sample, -1 where there is none.
+    labels : sequence
+        The label of each bin, in the column order of `P`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per bin with columns ``bin`` (the label), ``intercept`` and ``slope`` (floats).
+    """
     rows = []
     known = outcome >= 0
     for j, label in enumerate(labels):

@@ -1,24 +1,25 @@
-"""TrainedBlend: everything operations needs from training, in one file.
+"""A trained blend: everything operations needs from training, in one file.
 
-A trained blend holds the run it was trained with (HCWF's resolved run YAML, with the onset definition frozen beside
+`TrainedBlend` holds the run it was trained with (HCWF's resolved run YAML, with the onset definition frozen beside
 it), the fitted model (and random forest), the reference data training resolved (per-unit thresholds, reference onsets,
 the weights that put each model's grid on the units), the observed onsets the climatology is fitted on, and each
-model's forecast signature. `forecast` takes only live forecast files and an issue date; nothing else is read, so
-operations cannot run with other settings than training did (`hcwf.blend.forecast`).
+model's forecast signature. `TrainedBlend.forecast` takes only live forecast files and an issue date; nothing else
+is read, so operations cannot run with other settings than training did (`hcwf.blend.forecast`).
 
 File formats. A trained blend is a zip of JSON, YAML and NumPy arrays: no pickles, so it loads across library versions
 and is safe to read. It is written to a temporary file and renamed into place, and every member is checked against its
 digest on load. Two formats load into this one class:
 
-* "hcwf/trained-blend" (what `TrainingResult.save` writes): manifest.json, run.yaml (the resolved run config, with its
-  sources), definition.yaml (the onset definition as used, with its hash in the manifest), recipe.json (the recipe's
-  digest and the climatology years training resolved), model.json/.npz, forest.json/.npz, units.json, weights.json/.npz,
-  reference.json/.npz, observed.npz and signatures.json. Loading rebuilds the run config, the onset setup and the
-  recipe from run.yaml and definition.yaml and refuses a file whose definition or recipe no longer rebuild to what
-  training used.
-* "onset-blending/trained-blend" (onset_blending, features version 1): its BlendConfig config.yml goes through
-  `hcwf.config.convert_specs` in memory (as `hcwf-run convert` does) to the run config and recipe; the model, forest,
-  reference, units and observed arrays are used as stored.
+* ``"hcwf/trained-blend"`` (what `hcwf.blend.training.TrainingResult.save` writes): ``manifest.json``, ``run.yaml``
+  (the resolved run config, with its sources), ``definition.yaml`` (the onset definition as used, with its hash in
+  the manifest), ``recipe.json`` (the recipe's digest and the climatology years training resolved),
+  ``model.json``/``.npz``, ``forest.json``/``.npz``, ``units.json``, ``weights.json``/``.npz``,
+  ``reference.json``/``.npz``, ``observed.npz`` and ``signatures.json``. Loading rebuilds the run config, the onset
+  setup and the recipe from ``run.yaml`` and ``definition.yaml`` and refuses a file whose definition or recipe no
+  longer rebuild to what training used.
+* ``"onset-blending/trained-blend"`` (onset_blending, features version 1): its BlendConfig ``config.yml`` goes through
+  `hcwf.config.convert_specs` in memory (as ``hcwf-run convert`` does) to the run config and recipe; the model,
+  forest, reference, units and observed arrays are used as stored.
 """
 
 from __future__ import annotations
@@ -50,16 +51,23 @@ log = logging.getLogger(__name__)
 
 __all__ = ["FEATURES_VERSION", "FORMAT", "FORMAT_VERSION", "FrozenUnits", "LEGACY_HCWF_FORMAT", "OLD_FORMAT", "TrainedBlend", "frozen_config"]
 
-# Bump whenever the numbers the features are computed from change: a blend trained under another version is refused
-# rather than fed different features.
 FEATURES_VERSION = 1
+"""The version of the numbers the features are computed from.
+
+Bump whenever they change: a blend trained under another version is refused rather than fed different features.
+"""
 FORMAT = "hcwf/trained-blend"
+"""The format id of the files `TrainedBlend.save` writes."""
 FORMAT_VERSION = 1
+"""The version of the `FORMAT` layout."""
 OLD_FORMAT = "onset-blending/trained-blend"
-# The id this format had before the package was renamed from momp to hcwf: files saved then still load (same layout).
+"""The format id of onset_blending's trained blends, which still load."""
 LEGACY_HCWF_FORMAT = "momp/trained-blend"
+"""The id this format had before the package was renamed from momp to hcwf: files saved then still load (same layout)."""
 _MANIFEST = "manifest.json"
+"""The name of the manifest member of the zip."""
 TRAINED_FILENAME = "trained.blend"
+"""The file name a trained blend is saved under by default."""
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -68,17 +76,59 @@ TRAINED_FILENAME = "trained.blend"
 
 
 def _npz_bytes(arrays: dict[str, np.ndarray]) -> bytes:
+    """Serialise arrays as the bytes of an ``.npz`` file.
+
+    Parameters
+    ----------
+    arrays : dict of str to numpy.ndarray
+        The arrays by name.
+
+    Returns
+    -------
+    bytes
+        The uncompressed ``.npz`` content.
+    """
     buffer = io.BytesIO()
     np.savez(buffer, **arrays)
     return buffer.getvalue()
 
 
 def _npz_load(data: bytes):
+    """Read the arrays of ``.npz`` bytes without allowing pickles.
+
+    Parameters
+    ----------
+    data : bytes
+        The content written by `_npz_bytes`.
+
+    Returns
+    -------
+    numpy.lib.npyio.NpzFile
+        The lazily loaded arrays by name.
+    """
     return np.load(io.BytesIO(data), allow_pickle=False)
 
 
 def _put(arrays: dict, prefix: str, table: pd.DataFrame) -> dict:
-    """A table's columns into arrays (strings as unicode, dates as ISO text); returns its schema."""
+    """Put a table's columns into arrays (strings as unicode, dates as ISO text) and return its schema.
+
+    A number or bool column is stored as it is under ``<prefix>.<index>``; any other column is stored as text under
+    that key with a ``<prefix>.<index>.missing`` mask (``datetime.date`` values as ISO strings).
+
+    Parameters
+    ----------
+    arrays : dict
+        The arrays to add to, by name.
+    prefix : str
+        The prefix of the array names.
+    table : pandas.DataFrame
+        The table to store.
+
+    Returns
+    -------
+    dict
+        The schema `_get` needs: ``prefix``, ``rows`` and ``columns`` (a list of ``name``, ``kind`` and ``dtype``).
+    """
     columns = []
     for index, name in enumerate(table.columns):
         series, key = table[name], f"{prefix}.{index}"
@@ -97,7 +147,20 @@ def _put(arrays: dict, prefix: str, table: pd.DataFrame) -> dict:
 
 
 def _get(arrays, schema: dict) -> pd.DataFrame:
-    """The table `_put` described."""
+    """Rebuild the table that `_put` stored.
+
+    Parameters
+    ----------
+    arrays : mapping of str to numpy.ndarray
+        The arrays, as `_npz_load` returns them.
+    schema : dict
+        The schema `_put` returned.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The table, on a ``0..rows-1`` index; missing text and dates are None.
+    """
     data = {}
     for index, column in enumerate(schema["columns"]):
         key = f"{schema['prefix']}.{index}"
@@ -121,16 +184,48 @@ def _get(arrays, schema: dict) -> pd.DataFrame:
 
 
 def model_entries(mapping: dict) -> dict[str, dict]:
-    """The dataset entries of the run's models by name (their keys as the run YAML gives them), without their files."""
+    """Return the dataset entries of the run's models by name, without their files.
+
+    Parameters
+    ----------
+    mapping : dict
+        The run config as a mapping, with a ``models`` list.
+
+    Returns
+    -------
+    dict of str to dict
+        For each model name its entry with the keys as the run YAML gives them, minus ``paths``, ``path`` and
+        ``years``.
+    """
     return {m["name"]: {k: v for k, v in m.items() if k not in ("paths", "path", "years")}
             for m in mapping.get("models") or ()}
 
 
 def frozen_config(mapping: dict, definition_text: str | None = None):
-    """The RunConfig of a run mapping, without reading any data: the config's sections are flattened and typed as a run
-    config's are, the model lists are made from the model entries (no files: a forecast names its own), and the onset
-    definition is the frozen one (`definition_text`) when given, else the run's own inline rule. Its `onset` is the
-    OnsetSetup and its `blend` the recipe (the invariants of a run that read data are not checked)."""
+    """Return the run config of a run mapping, without reading any data.
+
+    The config's sections are flattened and typed as a run config's are, the model lists are made from the model
+    entries (no files: a forecast names its own), and the onset definition is the frozen one (`definition_text`) when
+    given, else the run's own inline rule. Its ``onset`` is the OnsetSetup and its ``blend`` the recipe (the
+    invariants of a run that read data are not checked).
+
+    Parameters
+    ----------
+    mapping : dict
+        The run config as a mapping (the content of ``run.yaml``).
+    definition_text : str, optional
+        The text of the frozen onset definition; None keeps the run's own inline rule.
+
+    Returns
+    -------
+    hcwf.config.model.RunConfig
+        The config, without observation or model files.
+
+    Raises
+    ------
+    BlendFileError
+        The mapping does not load as a run config.
+    """
     from hcwf.config.model import RunConfig, complete_flat
     from hcwf.config import schema
 
@@ -158,11 +253,38 @@ def frozen_config(mapping: dict, definition_text: str | None = None):
 
 
 def _recipe_digest(recipe) -> str:
+    """Return a digest of a recipe.
+
+    Parameters
+    ----------
+    recipe : hcwf.blend.recipe.Recipe
+        The recipe.
+
+    Returns
+    -------
+    str
+        The SHA-256 hex digest of its ``repr``.
+    """
     return hashlib.sha256(repr(recipe).encode()).hexdigest()
 
 
 def _with_years(recipe, train_years, test_years):
-    """The recipe with the climatology years training resolved (a forecast must fit the same training window)."""
+    """Return the recipe with the climatology years training resolved (a forecast must fit the same training window).
+
+    Parameters
+    ----------
+    recipe : hcwf.blend.recipe.Recipe
+        The recipe.
+    train_years : iterable of int
+        The climatology training years.
+    test_years : iterable of int
+        The climatology test years.
+
+    Returns
+    -------
+    hcwf.blend.recipe.Recipe
+        A copy with those years in its climatology section.
+    """
     return dataclasses.replace(recipe, climatology=dataclasses.replace(
         recipe.climatology, train_years=tuple(train_years), test_years=tuple(test_years)))
 
@@ -174,24 +296,56 @@ def _with_years(recipe, train_years, test_years):
 
 @dataclass(frozen=True)
 class FrozenUnits:
-    """One model's units as training resolved them: how its rain reaches them (`how`, as `UnitsSpec.how`) and, for
-    units made from a shapefile or weights, the weights table that put the training grid on them (target_id with
-    lat/lon or source_id, and weight). It stands in for a `UnitsSpec` when a live file is read (`select`): the weights
-    are matched to the live grid's cells by coordinates, so a live file holding more cells than training did is read
-    for the trained ones only. Units that are the file's own cells (or its own units) need no weights."""
+    """One model's units as training resolved them.
+
+    It records how the model's rain reaches the units (`how`, as ``UnitsSpec.how``) and, for units made from a
+    shapefile or weights, the weights table that put the training grid on them. It stands in for a ``UnitsSpec`` when
+    a live file is read (`FrozenUnits.select`): the weights are matched to the live grid's cells by coordinates, so a
+    live file holding more cells than training did is read for the trained ones only. Units that are the file's own
+    cells (or its own units) need no weights.
+    """
 
     how: str
+    """How the rain reaches the units, as ``UnitsSpec.how`` (for example ``"cells"``)."""
     weights: pd.DataFrame | None = field(default=None, compare=False)
+    """The weights table that put the training grid on the units: ``target_id`` with ``lat`` and ``lon`` or
+    ``source_id``, and ``weight``; None when the units need no weights. Excluded from comparison."""
     convention: object = None
+    """The unit convention (the ``units.convention`` of the run), passed on to the unit builders."""
 
     def __post_init__(self):
+        """Put a given weights table in its one canonical form (legacy column names renamed)."""
         if self.weights is not None:     # the one canonical form of a weights table (legacy column names renamed)
             from hcwf.spatial.regrid import read_weights
 
             object.__setattr__(self, "weights", read_weights(self.weights, "the trained blend's weights"))
 
     def select(self, lat=None, lon=None, ids=None, keep_ids=None):
-        """(units, positions of those used, ordered by id), as `UnitsSpec.select`."""
+        """Return the units of a live file and the positions of those used, as ``UnitsSpec.select``.
+
+        Parameters
+        ----------
+        lat : numpy.ndarray of float64, shape (lat,), optional
+            The live file's latitudes, for units that are its own cells.
+        lon : numpy.ndarray of float64, shape (lon,), optional
+            The live file's longitudes, for units that are its own cells.
+        ids : array_like of str, optional
+            The unit ids of a file with its own units; these are the units when given.
+        keep_ids : iterable of str, optional
+            The unit ids to keep; all when None.
+
+        Returns
+        -------
+        units : hcwf.spatial.units.EvaluationUnits
+            The units: the given `ids`, the targets of the weights, or the grid cells.
+        positions : numpy.ndarray of int, shape (kept,)
+            The positions in `units` of the kept units, ordered by id.
+
+        Raises
+        ------
+        ValueError
+            No unit of the file is kept.
+        """
         from hcwf.spatial.units import EvaluationUnits
 
         if ids is not None:
@@ -210,7 +364,19 @@ class FrozenUnits:
 
 
 def _weights_frame(transform) -> pd.DataFrame:
-    """A SparseTransform as the long weights table it was made from (target_id, source cell or id, weight)."""
+    """Return a sparse transform as the long weights table it was made from.
+
+    Parameters
+    ----------
+    transform : hcwf.spatial.onto_units.SparseTransform
+        The transform from a source grid (``keys == "coordinate"``) or source ids to the target units.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per weight: ``target_id``, ``lat`` and ``lon`` of the source cell (coordinate keys) or
+        ``source_id``, and ``weight``.
+    """
     matrix = transform.weighted_matrix.tocoo()
     target = np.asarray(transform.target_ids).astype(str)[matrix.row]
     if transform.keys == "coordinate":
@@ -222,7 +388,29 @@ def _weights_frame(transform) -> pd.DataFrame:
 
 
 def _freeze_units(rc, recipe, name: str, ids) -> FrozenUnits:
-    """The units of model `name` on its (first) training file's grid, restricted to the trained `ids`."""
+    """Return the units of model `name` on its (first) training file's grid, restricted to the trained `ids`.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run config of training, with the model's files.
+    recipe : hcwf.blend.recipe.Recipe
+        The recipe, for the model's lead days.
+    name : str
+        The model's name.
+    ids : iterable of str
+        The unit ids the blend was trained on.
+
+    Returns
+    -------
+    FrozenUnits
+        Without weights for the file's own cells or units, with the weights table otherwise.
+
+    Raises
+    ------
+    BlendFileError
+        The model has no ``units`` section.
+    """
     from hcwf.config.model import Selection
     from hcwf.io import forecasts as forecasts_io
     from hcwf.spatial import onto_units
@@ -246,7 +434,27 @@ def _freeze_units(rc, recipe, name: str, ids) -> FrozenUnits:
 
 
 def _freeze_thresholds(thresholds, ids, convention) -> dict:
-    """The run's named thresholds as a constant, or a table of the trained units' values."""
+    """Return the run's named thresholds as a constant, or a table of the trained units' values.
+
+    Parameters
+    ----------
+    thresholds : mapping of str to object
+        The thresholds by name: a number (mm) or anything `hcwf.onset.thresholds.unit_thresholds` resolves.
+    ids : array_like of str
+        The trained unit ids.
+    convention : object
+        The unit convention, passed on to ``unit_thresholds``.
+
+    Returns
+    -------
+    dict
+        For each name a float (mm), or a `pandas.DataFrame` with ``id`` and ``onset_thresh``.
+
+    Raises
+    ------
+    BlendFileError
+        A threshold cannot be resolved for the trained units.
+    """
     from hcwf.onset.thresholds import unit_thresholds
 
     out = {}
@@ -263,6 +471,23 @@ def _freeze_thresholds(thresholds, ids, convention) -> dict:
 
 
 def _freeze_reference(reference) -> dict | pd.DataFrame | None:
+    """Return the reference onset in a form that can be stored.
+
+    Parameters
+    ----------
+    reference : hcwf.onset.climatology.ReferenceOnset or None
+        The reference onset of training.
+
+    Returns
+    -------
+    dict or pandas.DataFrame or None
+        None for no reference, ``{"month_day": ...}`` for a fixed day, the table for a table.
+
+    Raises
+    ------
+    BlendFileError
+        The reference is a computed field of days of year.
+    """
     if reference is None:
         return None
     if reference.month_day is not None:
@@ -273,6 +498,18 @@ def _freeze_reference(reference) -> dict | pd.DataFrame | None:
 
 
 def _thaw_reference(stored):
+    """Return the reference onset from its stored form.
+
+    Parameters
+    ----------
+    stored : dict or pandas.DataFrame or None
+        What `_freeze_reference` returned.
+
+    Returns
+    -------
+    hcwf.onset.climatology.ReferenceOnset or None
+        The reference onset; None when nothing is stored.
+    """
     from hcwf.onset.climatology import ReferenceOnset
 
     if stored is None:
@@ -283,7 +520,13 @@ def _thaw_reference(stored):
 
 
 def _git_commit() -> str | None:
-    """The commit of the hcwf checkout in use, when it is one."""
+    """Return the commit of the hcwf checkout in use, when it is one.
+
+    Returns
+    -------
+    str or None
+        The ``git rev-parse HEAD`` of the folder of this module; None when it is not a git checkout or git fails.
+    """
     try:
         here = Path(__file__).resolve().parent
         out = subprocess.run(["git", "-C", str(here), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10)
@@ -293,6 +536,13 @@ def _git_commit() -> str | None:
 
 
 def _hcwf_version() -> str | None:
+    """Return the installed version of hcwf.
+
+    Returns
+    -------
+    str or None
+        The version of the installed distribution; None when it is not installed.
+    """
     from importlib.metadata import PackageNotFoundError, version
 
     try:
@@ -308,27 +558,51 @@ def _hcwf_version() -> str | None:
 
 @dataclass
 class TrainedBlend:
-    mapping: dict                       # the run config (run.yaml) as a mapping
-    run_yaml: str                       # its text: the resolved config with its sources, or the converted one
-    definition_text: str | None         # the onset definition as used (None: inline in the run config)
+    """Everything operations needs from training, in one object that saves to and loads from one file.
+
+    See the module docstring for what the file holds and its two formats. Build one with
+    `TrainedBlend.from_training`, write it with `TrainedBlend.save`, read it with `TrainedBlend.load` and forecast
+    with `TrainedBlend.forecast`.
+    """
+
+    mapping: dict
+    """The run config (``run.yaml``) as a mapping."""
+    run_yaml: str
+    """The text of the run config: the resolved config with its sources, or the converted one."""
+    definition_text: str | None
+    """The onset definition as used; None when it is inline in the run config."""
     definition_hash: str
-    recipe: object                      # hcwf.blend.recipe.Recipe, climatology years frozen
-    rc: object                          # hcwf.config.model.RunConfig the mapping makes (no live files)
-    model: object                       # hcwf.blend.logit.FittedModel
-    observed: ObservedOnsets            # what the climatology is fitted on
-    units: tuple[str, ...]              # the units the blend was trained and scores on
-    thresholds: dict                    # name -> mm, or a table (id, onset_thresh)
-    reference: object                   # hcwf.onset.climatology.ReferenceOnset | None
+    """The hash of the onset definition, checked on load."""
+    recipe: object
+    """The `hcwf.blend.recipe.Recipe`, with the climatology years frozen."""
+    rc: object
+    """The `hcwf.config.model.RunConfig` the mapping makes (no live files)."""
+    model: object
+    """The fitted `hcwf.blend.logit.FittedModel`."""
+    observed: ObservedOnsets
+    """The observed onsets the climatology is fitted on."""
+    units: tuple[str, ...]
+    """The unit ids the blend was trained and scores on."""
+    thresholds: dict
+    """The named onset thresholds: each is mm (float), or a table with ``id`` and ``onset_thresh``."""
+    reference: object
+    """The `hcwf.onset.climatology.ReferenceOnset` of training, or None."""
     frozen_units: dict[str, FrozenUnits]
-    signatures: dict[str, dict]         # model name -> forecast signature (hcwf.config.detect)
+    """Each model's units as training resolved them, by model name."""
+    signatures: dict[str, dict]
+    """Each model's forecast signature (`hcwf.config.detect`), by model name."""
     unit_table: pd.DataFrame | None = None
+    """The table of the trained units (ids with their attributes), or None when the file has none."""
     provenance: dict = field(default_factory=dict)
-    forest: object = None               # hcwf.blend.random_forest.FittedForest, when configured
+    """When and from which files the blend was trained."""
+    forest: object = None
+    """The fitted `hcwf.blend.random_forest.FittedForest`, when one is configured."""
     format: str = FORMAT
+    """The format the blend was loaded from (`FORMAT`, or `OLD_FORMAT`, which is not written again)."""
 
     @property
     def setup(self):
-        """The resolved onset setup (hcwf.config.onset.OnsetSetup)."""
+        """The resolved onset setup (`hcwf.config.onset.OnsetSetup`)."""
         return self.rc.onset
 
     @property
@@ -340,7 +614,27 @@ class TrainedBlend:
 
     @classmethod
     def from_training(cls, result) -> "TrainedBlend":
-        """The blend a training run produced (`hcwf.blend.training.TrainingResult`)."""
+        """Make the blend that a training run produced.
+
+        Freezes the run config (checking that it rebuilds to the same onset definition and recipe), the forecast
+        signature and the units of each model, the thresholds and the reference onset.
+
+        Parameters
+        ----------
+        result : hcwf.blend.training.TrainingResult
+            The training result.
+
+        Returns
+        -------
+        TrainedBlend
+            The blend, in the `FORMAT` format.
+
+        Raises
+        ------
+        BlendFileError
+            The run cannot be frozen: the onset definition or recipe does not rebuild from the stored config, or a
+            model's training files differ in structure.
+        """
         from hcwf.spatial import onto_units
         from hcwf.runs.resolved import resolved_config_text_of
         from hcwf.onset import definition as definition_mod
@@ -395,7 +689,23 @@ class TrainedBlend:
     # -- files --------------------------------------------------------------------------------------------------
 
     def save(self, path) -> Path:
-        """Write the blend to `path` (hcwf's format), atomically."""
+        """Write the blend to `path` (hcwf's format), atomically.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The file to write.
+
+        Returns
+        -------
+        pathlib.Path
+            `path`.
+
+        Raises
+        ------
+        BlendFileError
+            The blend was loaded from another format.
+        """
         if self.format != FORMAT:
             raise BlendFileError(f"a blend loaded from the {self.format} format is not written again; retrain it")
         members: dict[str, bytes] = {"run.yaml": self.run_yaml.encode(),
@@ -443,6 +753,7 @@ class TrainedBlend:
             "members": {name: hashlib.sha256(data).hexdigest() for name, data in members.items()}}
 
         def write(temp: Path) -> None:
+            """Write the zip (manifest first, then the members) to the temporary file."""
             with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr(_MANIFEST, json.dumps(manifest, indent=1))
                 for name, data in members.items():
@@ -453,8 +764,27 @@ class TrainedBlend:
 
     @classmethod
     def load(cls, path) -> "TrainedBlend":
-        """Read a saved blend (either format); refuses a damaged file, another feature version, or a run config,
-        definition or recipe that no longer rebuild to what training used."""
+        """Read a saved blend (either format).
+
+        Refuses a damaged file, another feature version, or a run config, definition or recipe that no longer rebuild
+        to what training used.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The file to read.
+
+        Returns
+        -------
+        TrainedBlend
+            The blend.
+
+        Raises
+        ------
+        BlendFileError
+            The file is unreadable, of an unknown format or version, damaged, or trained with another feature
+            version.
+        """
         path = Path(path)
         try:
             with zipfile.ZipFile(path) as archive:
@@ -479,7 +809,20 @@ class TrainedBlend:
 
     @classmethod
     def _common(cls, members: dict, *, observed_season: str) -> dict:
-        """What both formats store alike: the fitted model and forest, the observed onsets, the units."""
+        """Read what both formats store alike: the fitted model and forest and the observed onsets.
+
+        Parameters
+        ----------
+        members : dict of str to bytes
+            The members of the file.
+        observed_season : str
+            The season start of the observed onsets, ``"MM-DD"``.
+
+        Returns
+        -------
+        dict
+            The ``model``, ``observed`` and ``forest`` (None when the file has none) fields of the blend.
+        """
         from hcwf.blend.logit import FittedModel
 
         arrays = _npz_load(members["observed.npz"])
@@ -499,6 +842,25 @@ class TrainedBlend:
 
     @classmethod
     def _load_hcwf(cls, manifest: dict, members: dict) -> "TrainedBlend":
+        """Read a blend of hcwf's format (also the legacy ``momp`` id).
+
+        Parameters
+        ----------
+        manifest : dict
+            The manifest of the file.
+        members : dict of str to bytes
+            The members of the file, already checked against their digests.
+
+        Returns
+        -------
+        TrainedBlend
+            The blend.
+
+        Raises
+        ------
+        BlendFileError
+            The onset definition or the recipe no longer rebuilds to what training used.
+        """
         from hcwf.onset import definition as definition_mod
 
         mapping = yaml.safe_load(members["run.yaml"])
@@ -540,8 +902,27 @@ class TrainedBlend:
 
     @classmethod
     def _load_old(cls, manifest: dict, members: dict) -> "TrainedBlend":
-        """An onset_blending trained blend: its config.yml converted in memory (as `hcwf-run convert` does), its
-        arrays as stored."""
+        """Read an onset_blending trained blend: its ``config.yml`` converted in memory, its arrays as stored.
+
+        The conversion is the one ``hcwf-run convert`` does.
+
+        Parameters
+        ----------
+        manifest : dict
+            The manifest of the file.
+        members : dict of str to bytes
+            The members of the file, already checked against their digests.
+
+        Returns
+        -------
+        TrainedBlend
+            The blend, in the `OLD_FORMAT` format.
+
+        Raises
+        ------
+        BlendFileError
+            The stored config cannot be converted.
+        """
         from hcwf.config.convert_specs import convert_blend
         from hcwf.errors import ConvertError
         from hcwf.onset import definition as definition_mod
@@ -586,8 +967,24 @@ class TrainedBlend:
     # -- operations ---------------------------------------------------------------------------------------------
 
     def forecast(self, forecasts: dict, *, issue_date=None, fewer_members: bool = False, workers: int | None = None):
-        """Blended onset probabilities from live forecast files (see `hcwf.blend.forecast.run`): `forecasts` maps each
-        trained model to a file, a glob or a list of them."""
+        """Return blended onset probabilities from live forecast files (see `hcwf.blend.forecast.run`).
+
+        Parameters
+        ----------
+        forecasts : dict
+            Maps each trained model to a file, a glob or a list of them.
+        issue_date : object, optional
+            The issue date to forecast; passed on to `hcwf.blend.forecast.run`.
+        fewer_members : bool, default False
+            Passed on to `hcwf.blend.forecast.run`.
+        workers : int, optional
+            The number of worker processes, passed on to `hcwf.blend.forecast.run`.
+
+        Returns
+        -------
+        object
+            What `hcwf.blend.forecast.run` returns.
+        """
         from hcwf.blend import forecast as forecast_module
 
         return forecast_module.run(self, forecasts, issue_date=issue_date, fewer_members=fewer_members,
@@ -595,5 +992,16 @@ class TrainedBlend:
 
 
 def expand_files(value) -> list[Path]:
-    """The files a forecast names: a path, a glob, or a list of them (sorted by year in the name, then path)."""
+    """Return the files a forecast names.
+
+    Parameters
+    ----------
+    value : str or pathlib.Path or list
+        A path, a glob, or a list of them.
+
+    Returns
+    -------
+    list of pathlib.Path
+        The files, sorted by year in the name, then path.
+    """
     return resolve_paths(value, origin="forecast files")

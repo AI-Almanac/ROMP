@@ -31,7 +31,6 @@ PACKAGE = ROOT / "hcwf"
 
 # Packages not converted to the docstring conventions yet, one per line, alphabetic. Remove a line when its package passes.
 PENDING = {
-    "hcwf/blend",
     "hcwf/cli",
     "hcwf/figures",
     "hcwf/io",

@@ -1,15 +1,17 @@
-"""The blend-specific settings of a run: what the `blend:` section of the run YAML holds, and nothing HCWF's config has.
+"""The blend-specific settings of a run: what the ``blend:`` section of the run YAML holds, and nothing HCWF's config has.
 
-HCWF's resolved run config (`hcwf.config`, `hcwf.config.schema`, `hcwf.config.onset.OnsetSetup`) already says
-where the observations and forecasts are (obs_*, model_* keys, `dataset_schema` entries), the onset definition and its
-run options (onset_definition / onset_rule, rain_resolution, missing, negatives, gaps, onset_horizon), the backend,
-years and workers. A `Recipe` is used *together with* that config: it holds only what blending adds, each field naming
-its BlendConfig origin. `recipe_from_config(flat)` builds it from the flat config's `blend_*` keys (the `blend:` section
-of the YAML; `hcwf-run convert` writes that section from a BlendConfig or a legacy spec set).
+HCWF's resolved run config (`hcwf.config`, `hcwf.config.schema`, `hcwf.config.onset.OnsetSetup`) already says where the
+observations and forecasts are (``obs_*``, ``model_*`` keys, ``dataset_schema`` entries), the onset definition and its
+run options (``onset_definition`` / ``onset_rule``, ``rain_resolution``, ``missing``, ``negatives``, ``gaps``,
+``onset_horizon``), the backend, years and workers. A `Recipe` is used *together with* that config: it holds only what
+blending adds, each field naming its ``BlendConfig`` origin. `recipe_from_config` builds it from the flat config's
+``blend_*`` keys (the ``blend:`` section of the YAML; ``hcwf-run convert`` writes that section from a ``BlendConfig``
+or a legacy spec set).
 
 Pure data with validation: no file is read, no YAML parsed. Rules that need the onset definition (rain-window tokens,
-the formulas' feature names) are checked by `Recipe.check(definition)`. The derived names (feature columns,
-probability variants, labels, artifact tags) are computed here once.
+the formulas' feature names) are checked by `Recipe.check`. The derived names (feature columns, probability variants,
+labels, artifact tags) are computed here once. The other blend modules take a `Recipe` (or its parts, such as
+`ForecastScoring` and `Years`) to know what to build and score.
 """
 
 from __future__ import annotations
@@ -39,12 +41,19 @@ CLIMATOLOGY_FEATURE = "prob_clim"
 VARIANTS = ("base", "fixed_cutoff", "ref_onset")
 """The forecast probability variants: the search starts at lead 1, at the fixed cutoff date, at the reference onset."""
 VARIANT_SUFFIX = {"base": "", "fixed_cutoff": "_fixed_cutoff", "ref_onset": "_ref", "no_ref_filter": ""}
+"""The suffix of a probability variant's feature columns."""
 CUTOFF_MODES = ("fixed_cutoff", "ref_onset", "no_ref_filter")
+"""The values of ``evaluation.cutoff_mode``."""
 CV_METHODS = ("global", "local", "clusters")
+"""The values of ``evaluation.cv_methods``."""
 WINDOW_TOKENS = ("trigger", "window", "dry_spell", "sum_window", "follow", "min_dry")
+"""The names of the onset definition's windows that a rain predictor's ``window`` may use."""
 _MONTH_DAY = re.compile(r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
+"""A month-day such as ``05-01``."""
 _RAIN_TRANSFORMS = ("identity", "none", "", "sqrt", "fourth_root", "log1p")
+"""The named rain transforms (a number or ``power:<p>`` is also valid)."""
 _MODEL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)*")
+"""A valid model name: letters, digits and single underscores."""
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -54,15 +63,16 @@ _MODEL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)*")
 
 @dataclass(frozen=True)
 class RainHorizon:
-    """How far forecast rainfall is trusted for rain predictors (models[].rain_horizon)."""
+    """How far forecast rainfall is trusted for rain predictors (``models[].rain_horizon``)."""
 
     max_day: int | None = None
-    """rain_horizon.max_day: the last rainfall lead day; None is the legacy probability_days + 10."""
+    """``rain_horizon.max_day``: the last rainfall lead day; None is the legacy ``probability_days + 10``."""
     policy: Literal["legacy", "exact", "truncate"] | None = None
-    """rain_horizon.policy: "exact" rejects later days, "truncate" ignores them."""
+    """``rain_horizon.policy``: ``"exact"`` rejects later days, ``"truncate"`` ignores them."""
 
     @property
     def resolved_policy(self) -> str:
+        """The policy in force: `policy`, else ``"legacy"`` without a `max_day` and ``"exact"`` with one."""
         if self.policy is not None:
             return self.policy
         return "legacy" if self.max_day is None else "exact"
@@ -70,29 +80,34 @@ class RainHorizon:
 
 @dataclass(frozen=True)
 class RainPredictor:
-    """A weekly rain feature: the max, min or (diff) excess over the threshold of rolling sums (models[].rain_predictors)."""
+    """A weekly rain feature: the max, min or (diff) excess over the threshold of rolling sums (``models[].rain_predictors``)."""
 
     agg: Literal["diff", "max", "min"]
+    """How the rolling sums are aggregated."""
     window: int | str = "trigger"
-    """The window in days, or a token of the onset definition (`Definition.windows()`): trigger, dry_spell
-    (the dry window), follow, min_dry (the dry run's length)."""
+    """The window in days, or a token of the onset definition (`Definition.windows`): ``trigger``, ``dry_spell``
+    (the dry window), ``follow``, ``min_dry`` (the dry run's length)."""
 
 
 @dataclass(frozen=True)
 class Model:
-    """What blending adds to one forecast model of HCWF's model_list (BlendConfig.models[]): its files, variable, dims and
-    unit_cvt are HCWF's model_* keys."""
+    """What blending adds to one forecast model of HCWF's ``model_list`` (``BlendConfig.models[]``).
+
+    Its files, variable, dims and ``unit_cvt`` are HCWF's ``model_*`` keys.
+    """
 
     name: str
-    """models[].name; prefixes every column derived from it."""
+    """``models[].name``; prefixes every column derived from it."""
     lead_days: tuple[int, int] = (1, 45)
-    """models[].lead_days min and max."""
+    """``models[].lead_days`` min and max."""
     max_member: int | None = None
-    """models[].max_member: members whose index is at most this are read."""
+    """``models[].max_member``: members whose index is at most this are read."""
     rain_horizon: RainHorizon = field(default_factory=RainHorizon)
+    """How far the rain predictors read forecast rainfall."""
     rain_predictors: tuple[RainPredictor, ...] = ()
+    """The weekly rain features of this model."""
     rain_transform: str | float | None = None
-    """models[].rain_transform; None uses features.rain_transform."""
+    """``models[].rain_transform``; None uses ``features.rain_transform``."""
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -102,18 +117,35 @@ class Model:
 
 @dataclass(frozen=True)
 class ReferenceSpec:
-    """The reference (climatological) onset (onset.reference_onset): a month-day every year, or a table of dates
-    per year and/or unit (`hcwf.onset.climatology.ReferenceOnset.read`)."""
+    """The reference (climatological) onset (``onset.reference_onset``).
+
+    A month-day every year, or a table of dates per year and/or unit (`hcwf.onset.climatology.ReferenceOnset.read`).
+    """
 
     month_day: str | None = None
+    """The month-day of every year's reference onset, like ``"06-01"``; exclusive with `file`."""
     file: str | None = None
+    """The table of reference onsets; exclusive with `month_day`."""
     date_col: str | None = None
+    """The table's column of dates."""
     year_col: str | None = None
+    """The table's column of years (with `day_col` and `base_date`, instead of `date_col`)."""
     day_col: str | None = None
+    """The table's column of day counts from `base_date`."""
     base_date: str | None = None
+    """The month-day the day counts start from."""
     unit_col: str | None = None
+    """The table's column of unit ids, when the reference differs by unit."""
 
     def __post_init__(self):
+        """Validate the combination of fields.
+
+        Raises
+        ------
+        RecipeError
+            Not exactly one of `month_day` and `file` is given, or a table lacks a date column (or year, day and
+            base date).
+        """
         if (self.month_day is None) == (self.file is None):
             raise RecipeError(["reference onset: give exactly one of a month-day or a file"])
         if self.file is not None and self.date_col is None and not (self.year_col and self.day_col and self.base_date):
@@ -122,18 +154,20 @@ class ReferenceSpec:
 
 @dataclass(frozen=True)
 class OnsetExtras:
-    """What the onset search needs besides HCWF's onset keys (BlendConfig.onset, observations). The onset rule, its
-    thresholds (`thresholds`, `threshold_scale`, `threshold_table`, `threshold_years`), the units (`units_*`) and the
-    reading options are HCWF config keys."""
+    """What the onset search needs besides HCWF's onset keys (``BlendConfig.onset``, observations).
+
+    The onset rule, its thresholds (``thresholds``, ``threshold_scale``, ``threshold_table``, ``threshold_years``), the
+    units (``units_*``) and the reading options are HCWF config keys.
+    """
 
     fixed_cutoff: str = "06-02"
-    """onset.fixed_cutoff: the start of the fixed_cutoff forecast probabilities."""
+    """``onset.fixed_cutoff``: the start of the ``fixed_cutoff`` forecast probabilities, as a month-day."""
     reference: ReferenceSpec | None = None
-    """onset.reference_onset."""
+    """``onset.reference_onset``."""
     forecast_missing: Literal["keep", "flag", "zero"] = "keep"
-    """The missing-rain policy of forecasts; observations take HCWF's `missing` (observations.missing_rain)."""
+    """The missing-rain policy of forecasts; observations take HCWF's ``missing`` (``observations.missing_rain``)."""
     observed_horizon: Literal["reject", "truncate", "censor"] = "reject"
-    """A follow-up past the end of a season's observations (HCWF's onset_horizon is the forecasts')."""
+    """A follow-up past the end of a season's observations (HCWF's ``onset_horizon`` is the forecasts')."""
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -143,37 +177,54 @@ class OnsetExtras:
 
 @dataclass(frozen=True)
 class ClimatologySpec:
-    """The KDE climatology (BlendConfig.climatology), the arguments of `hcwf.references.kde`."""
+    """The KDE climatology (``BlendConfig.climatology``), the arguments of `hcwf.references.kde`."""
 
     issue_end: str = "07-31"
+    """The last issue date, as a month-day."""
     forecast_window: int | None = None
-    """None is features.probability_days."""
+    """The climatology's forecast window in days; None is ``features.probability_days``."""
     horizons: tuple[tuple[str, str, int], ...] = ()
-    """climatology.horizons as (start, end, forecast_window) month-days; exclusive with forecast_window."""
+    """``climatology.horizons`` as (start, end, forecast_window) month-days; exclusive with `forecast_window`."""
     cv_by_year: bool = True
+    """Whether the climatology is fitted leaving each year out."""
     min_onset_years: int = 10
+    """The fewest years with an onset a cell needs for a climatology."""
     train_years: tuple[int, int] | None = None
+    """The first and last year of the training span; None for the default."""
     test_years: tuple[int, int] | None = None
+    """The first and last year of the test span; None for the default."""
     windows: tuple[tuple[int, int], ...] = ()
+    """The (first year, last year) windows of the extra windowed climatologies."""
     workers: int | None = None
+    """The workers of the climatology fit; None for the run's default."""
 
     def horizon_dicts(self) -> list[dict] | None:
-        """The horizons as `issue_grid` takes them (None without)."""
+        """Return the horizons as `issue_grid` takes them.
+
+        Returns
+        -------
+        list of dict or None
+            One ``{"start_md", "end_md", "forecast_window"}`` dict per horizon; None without horizons.
+        """
         return [{"start_md": a, "end_md": b, "forecast_window": w} for a, b, w in self.horizons] or None
 
 
 @dataclass(frozen=True)
 class Features:
-    """The weekly features (BlendConfig.features)."""
+    """The weekly features (``BlendConfig.features``)."""
 
     bins: LeadBins = field(default_factory=lambda: LeadBins.uniform(4, 7))
-    """features.bins.count and days: `LeadBins.uniform(count, days)` (outcomes week1..weekN, later)."""
+    """``features.bins.count`` and ``days``: ``LeadBins.uniform(count, days)`` (outcomes ``week1`` to ``weekN``, later)."""
     probability_days: int = 28
+    """The lead days the onset probabilities cover."""
     trim_after_true_onset: bool = True
+    """Whether samples after the true onset are dropped."""
     rain_transform: str | float = "identity"
+    """The transform of rain features: a name of ``_RAIN_TRANSFORMS``, ``power:<p>`` or a power."""
 
     @property
     def count(self) -> int:
+        """The number of inner week bins."""
         return self.bins.n_inner
 
     @property
@@ -188,18 +239,34 @@ class Features:
 
 
 def _years(values) -> tuple[int, ...]:
+    """Convert the values to a tuple of ints.
+
+    Parameters
+    ----------
+    values : iterable
+        The years.
+
+    Returns
+    -------
+    tuple of int
+        The years as ints.
+    """
     return tuple(int(y) for y in values)
 
 
 @dataclass(frozen=True)
 class Years:
-    """evaluation.years."""
+    """The years of the evaluation (``evaluation.years``)."""
 
     training: tuple[int, ...]
+    """The years models train on."""
     cv_holdout: tuple[int, ...]
+    """The years held out in cross-validation."""
     true_holdout: tuple[int, ...] = ()
+    """The years no model trains on."""
 
     def __post_init__(self):
+        """Convert the three year lists to tuples of ints."""
         for name in ("training", "cv_holdout", "true_holdout"):
             object.__setattr__(self, name, _years(getattr(self, name)))
 
@@ -211,53 +278,72 @@ class Years:
 
 @dataclass(frozen=True)
 class Baselines:
-    """evaluation.climatology_baselines."""
+    """The climatology baselines that are scored (``evaluation.climatology_baselines``)."""
 
     unconditional: bool = True
+    """Score the unconditional climatology (``unc_clim_raw``); it is the baseline of every skill score."""
     conditional: bool = True
+    """Score the conditional climatology (``clim_raw``)."""
     windows: tuple[tuple[int, int], ...] = ()
+    """The (first year, last year) windows of the extra windowed climatologies to score."""
 
 
 @dataclass(frozen=True)
 class ForecastScoring:
-    """evaluation.forecasts[]: raw and calibrated scoring of a model's own probabilities."""
+    """Raw and calibrated scoring of a model's own probabilities (``evaluation.forecasts[]``)."""
 
     model: str
+    """The name of the model scored."""
     variant: Literal["base", "fixed_cutoff", "ref_onset"] | None = None
+    """The probability variant; None is the one of the cutoff mode."""
     raw: bool = True
+    """Score the raw probabilities."""
     calibrated: bool = True
+    """Score the Platt-calibrated probabilities."""
     platt_weights: bool = False
+    """Export the per-bin Platt weights."""
 
 
 @dataclass(frozen=True)
 class MmeSource:
-    """evaluation.mme.sources[]."""
+    """A source of the multi-model ensemble (``evaluation.mme.sources[]``)."""
 
     name: str
+    """A climatology baseline name, or a model name."""
     source: Literal["clim", "forecast"] = "clim"
+    """Whether `name` is a climatology baseline or a calibrated forecast model."""
     cal_variant: Literal["base", "fixed_cutoff", "ref_onset"] = "base"
+    """The probability variant of a calibrated forecast source."""
 
 
 @dataclass(frozen=True)
 class Mme:
-    """evaluation.mme: a multi-model ensemble with RPS-optimised weights."""
+    """A multi-model ensemble with RPS-optimised weights (``evaluation.mme``)."""
 
     enabled: bool = False
+    """Whether the ensemble is built."""
     variants: tuple[str, ...] = ("fixed_cutoff",)
+    """The probability variants the ensemble is built for."""
     sources: tuple[MmeSource, ...] = ()
+    """The sources that are mixed (at least two when enabled)."""
     optimize: Literal["auto", "always", "never"] = "auto"
+    """Whether the weights are optimised."""
     weights: dict[str, float] | str | None = None
     """Fixed weights instead of optimised ones: a mapping of source name to weight (non-negative, summing to 1), or
-    the path of a weights CSV an earlier run wrote (columns objective, w_<source>..., rps; the "rps" row is used)."""
+    the path of a weights CSV an earlier run wrote (columns ``objective``, ``w_<source>``..., ``rps``; the ``"rps"``
+    row is used)."""
 
 
 @dataclass(frozen=True)
 class ExternalPrediction:
-    """evaluation.external_predictions[]: CV predictions made elsewhere, scored with the rest."""
+    """CV predictions made elsewhere, scored with the rest (``evaluation.external_predictions[]``)."""
 
     name: str
+    """The name the predictions are scored under."""
     file: str
+    """The file of the predictions."""
     method: str = "global"
+    """The CV method the predictions came from."""
 
 
 @dataclass(frozen=True)
@@ -265,32 +351,51 @@ class Evaluation:
     """How the blend is cross-validated and scored (BlendConfig.evaluation)."""
 
     years: Years
+    """The training and holdout years."""
     cutoff_mode: Literal["fixed_cutoff", "ref_onset", "no_ref_filter"] = "fixed_cutoff"
+    """Which forecast probability variant and onset filter the scoring uses."""
     cv_methods: tuple[Literal["global", "local", "clusters"], ...] = ("global",)
+    """The cross-validation methods that are run."""
     cluster_var: str = "cluster"
+    """The weekly column that gives a unit's cluster (for the ``clusters`` method)."""
     formulas: tuple[tuple[str, Formula], ...] = ()
-    """evaluation.formulas in order (name, Formula)."""
+    """``evaluation.formulas`` in order (name, Formula)."""
     final_formula: str | None = None
+    """The name of the formula the operational model is fitted with; None when one formula is enabled."""
     window_variants: tuple[WindowVariant, ...] = ()
+    """The formula variants that swap the climatology for a windowed one."""
     baselines: Baselines = field(default_factory=Baselines)
+    """The climatology baselines to score."""
     forecasts: tuple[ForecastScoring, ...] | None = None
     """None scores every model, raw and calibrated."""
     mme: Mme = field(default_factory=Mme)
+    """The multi-model ensemble."""
     external_predictions: tuple[ExternalPrediction, ...] = ()
+    """The predictions made elsewhere."""
     random_forest: ForestParams | None = None
-    """evaluation.random_forest as the forest's Params (days_per_week is the bins' days)."""
+    """``evaluation.random_forest`` as the forest's Params (``days_per_week`` is the bins' days); None for no forest."""
 
     def formula_map(self) -> dict[str, Formula]:
+        """Return the formulas by name.
+
+        Returns
+        -------
+        dict of str to hcwf.blend.design.Formula
+            `formulas` as a dict, in order.
+        """
         return dict(self.formulas)
 
 
 @dataclass(frozen=True)
 class Outputs:
-    """outputs."""
+    """Where and what the run writes (``outputs``)."""
 
     dir: str | None = None
+    """The output folder; None for the default."""
     intermediates: tuple[Literal["observations", "features"], ...] = ()
+    """The intermediate tables to write besides the results."""
     pickles: bool = False
+    """Whether the legacy pickles are written."""
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -300,22 +405,47 @@ class Outputs:
 
 @dataclass(frozen=True)
 class Recipe:
-    """The blend settings of a run (BlendConfig, minus what HCWF's config holds)."""
+    """The blend settings of a run (``BlendConfig``, minus what HCWF's config holds)."""
 
     name: str
+    """The run's name (``project_name``)."""
     models: tuple[Model, ...]
+    """What blending adds to each forecast model."""
     onset: OnsetExtras
+    """What the onset search needs besides HCWF's onset keys."""
     evaluation: Evaluation
+    """How the blend is cross-validated and scored."""
     climatology: ClimatologySpec = field(default_factory=ClimatologySpec)
+    """The KDE climatology."""
     features: Features = field(default_factory=Features)
+    """The weekly features."""
     outputs: Outputs = field(default_factory=Outputs)
+    """Where and what the run writes."""
 
     def __post_init__(self):
+        """Validate the recipe (see `validate`)."""
         self.validate()
 
     # -- lookups ---------------------------------------------------------------------------------------------
 
     def model(self, name: str) -> Model:
+        """Return the model with the given name.
+
+        Parameters
+        ----------
+        name : str
+            The model's name.
+
+        Returns
+        -------
+        Model
+            The model.
+
+        Raises
+        ------
+        KeyError
+            No model has that name.
+        """
         for model in self.models:
             if model.name == name:
                 return model
@@ -323,27 +453,67 @@ class Recipe:
 
     @property
     def model_names(self) -> tuple[str, ...]:
+        """The names of the models, in order."""
         return tuple(model.name for model in self.models)
 
     def forecast_scoring(self) -> tuple[ForecastScoring, ...]:
-        """The configured raw/calibrated scoring, or every model's by default."""
+        """Return the configured raw/calibrated scoring, or every model's by default.
+
+        Returns
+        -------
+        tuple of ForecastScoring
+            `Evaluation.forecasts` if set, else one default scoring per model.
+        """
         if self.evaluation.forecasts is not None:
             return self.evaluation.forecasts
         return tuple(ForecastScoring(model=name) for name in self.model_names)
 
     def final_formula(self) -> str:
-        """The formula the operational model is fitted with."""
+        """Return the name of the formula the operational model is fitted with.
+
+        Returns
+        -------
+        str
+            `Evaluation.final_formula` if set, else the first enabled formula.
+        """
         if self.evaluation.final_formula is not None:
             return self.evaluation.final_formula
         return next(name for name, f in self.evaluation.formulas if f.enabled)
 
     def climatology_forecast_window(self) -> int:
+        """Return the climatology's forecast window in days.
+
+        Returns
+        -------
+        int
+            `ClimatologySpec.forecast_window` if set, else ``features.probability_days``.
+        """
         if self.climatology.forecast_window is not None:
             return self.climatology.forecast_window
         return self.features.probability_days
 
     def window_days(self, predictor: RainPredictor, definition: Definition) -> int:
-        """A rain predictor's window in days; a token is read from the onset definition (`Definition.windows()`)."""
+        """Return a rain predictor's window in days.
+
+        A token is read from the onset definition (`Definition.windows`).
+
+        Parameters
+        ----------
+        predictor : RainPredictor
+            The predictor.
+        definition : hcwf.onset.model.Definition
+            The onset definition that resolves a token.
+
+        Returns
+        -------
+        int
+            The window in days.
+
+        Raises
+        ------
+        RecipeError
+            The token names a window the onset definition does not have.
+        """
         window = predictor.window
         if isinstance(window, int):
             return window
@@ -355,23 +525,64 @@ class Recipe:
         return int(days)
 
     def rain_horizon_days(self, model: Model) -> int:
-        """The last rainfall lead day a model's rain predictors read."""
+        """Return the last rainfall lead day a model's rain predictors read.
+
+        Parameters
+        ----------
+        model : Model
+            The model.
+
+        Returns
+        -------
+        int
+            ``rain_horizon.max_day``, or ``features.probability_days + 10`` without one.
+        """
         horizon = model.rain_horizon
         return horizon.max_day if horizon.max_day is not None else self.features.probability_days + 10
 
     # -- derived names -----------------------------------------------------------------------------------------
 
     def rain_feature_base(self, model: str, predictor: RainPredictor, definition: Definition) -> str:
+        """Return the name stem of a rain predictor's feature columns.
+
+        Parameters
+        ----------
+        model : str
+            The model's name.
+        predictor : RainPredictor
+            The predictor.
+        definition : hcwf.onset.model.Definition
+            The onset definition that resolves a window token.
+
+        Returns
+        -------
+        str
+            ``diff_<model>`` for a ``diff`` predictor, else ``<agg>_<model>_<days>day``.
+        """
         if predictor.agg == "diff":
             return f"diff_{model}"
         return f"{predictor.agg}_{model}_{self.window_days(predictor, definition)}day"
 
     def cutoff_variant(self) -> str:
-        """The forecast probability variant the cutoff mode scores by default."""
+        """Return the forecast probability variant the cutoff mode scores by default.
+
+        Returns
+        -------
+        str
+            ``"fixed_cutoff"`` or ``"ref_onset"`` for that cutoff mode, else ``"base"``.
+        """
         return {"fixed_cutoff": "fixed_cutoff", "ref_onset": "ref_onset"}.get(self.evaluation.cutoff_mode, "base")
 
     def probability_variants(self) -> list[str]:
-        """The variants anything reads (scoring, MME sources, formulas), besides the base series the features always bin."""
+        """Return the variants anything reads, besides the base series the features always bin.
+
+        The scoring, the MME sources and the formulas are looked at.
+
+        Returns
+        -------
+        list of str
+            The variants among ``"fixed_cutoff"`` and ``"ref_onset"`` that are needed, in that order.
+        """
         evaluation = self.evaluation
         variants = {scoring.variant or self.cutoff_variant() for scoring in self.forecast_scoring()}
         variants |= {s.cal_variant for s in evaluation.mme.sources if s.source == "forecast"}
@@ -382,7 +593,18 @@ class Recipe:
         return [v for v in ("fixed_cutoff", "ref_onset") if v in variants]
 
     def feature_bases(self, definition: Definition) -> set[str]:
-        """Every feature a formula may use: `<base>_qx` (one per week) or `<base>_week<n>`."""
+        """Return every feature a formula may use: ``<base>_qx`` (one per week) or ``<base>_week<n>``.
+
+        Parameters
+        ----------
+        definition : hcwf.onset.model.Definition
+            The onset definition that resolves the rain predictors' window tokens.
+
+        Returns
+        -------
+        set of str
+            The feature names.
+        """
         bases = {CLIMATOLOGY_FEATURE, f"{CLIMATOLOGY_FEATURE}_unc"}
         bases |= {f"{CLIMATOLOGY_FEATURE}_{window_tag(w)}" for w in self.climatology.windows}
         for model in self.models:
@@ -394,6 +616,13 @@ class Recipe:
         return expanded
 
     def climatology_baseline_names(self) -> list[str]:
+        """Return the names of the scored climatology baselines.
+
+        Returns
+        -------
+        list of str
+            ``unc_clim_raw``, ``clim_raw`` (each if scored) and ``clim_raw_<first>_<last>`` per window.
+        """
         baselines = self.evaluation.baselines
         names = ["unc_clim_raw"] if baselines.unconditional else []
         if baselines.conditional:
@@ -401,26 +630,65 @@ class Recipe:
         return names + [f"clim_raw_{window_tag(w)}" for w in baselines.windows]
 
     def outcome_labels(self) -> list[str]:
+        """Return the outcome labels of the week bins.
+
+        Returns
+        -------
+        list of str
+            ``week1`` to ``weekN``, without the ``earlier`` label.
+        """
         return self.features.bins.labels("week", earlier=False)
 
     def cutoff_tag(self) -> str:
+        """Return the cutoff mode's artifact tag.
+
+        Returns
+        -------
+        str
+            ``"_fixed_cutoff"``, ``"_no_ref_filter"`` or ``""`` (for ``ref_onset``).
+        """
         return {"fixed_cutoff": "_fixed_cutoff", "no_ref_filter": "_no_ref_filter"}.get(self.evaluation.cutoff_mode, "")
 
     def year_tag(self) -> str:
+        """Return the holdout years' artifact tag.
+
+        Returns
+        -------
+        str
+            ``""`` without holdout years, ``_<year>`` for one, else ``_<first>_<last>`` (the min and max).
+        """
         years = self.evaluation.years.holdout
         if not years:
             return ""
         return f"_{years[0]}" if len(years) == 1 else f"_{min(years)}_{max(years)}"
 
     def output_tag(self) -> str:
-        """The `{cutoff}{years}` suffix every evaluation artifact carries."""
+        """Return the ``{cutoff}{years}`` suffix every evaluation artifact carries.
+
+        Returns
+        -------
+        str
+            `cutoff_tag` followed by `year_tag`.
+        """
         return f"{self.cutoff_tag()}{self.year_tag()}"
 
     # -- validation --------------------------------------------------------------------------------------------
 
     def check(self, definition: Definition) -> None:
-        """The rules that need the onset definition: rain-window tokens it can resolve, formulas that name only
-        features this recipe builds; raises RecipeError."""
+        """Check the rules that need the onset definition.
+
+        The rain-window tokens must resolve, and the formulas may name only features this recipe builds.
+
+        Parameters
+        ----------
+        definition : hcwf.onset.model.Definition
+            The onset definition of the run.
+
+        Raises
+        ------
+        RecipeError
+            One or more rules fail (all problems are reported together).
+        """
         problems: list[str] = []
         for model in self.models:
             for index, predictor in enumerate(model.rain_predictors):
@@ -445,7 +713,13 @@ class Recipe:
             raise RecipeError(problems)
 
     def validate(self) -> None:
-        """Every rule that ties sections together (blending's `BlendConfig.validate`); raises RecipeError."""
+        """Check every rule that ties sections together (blending's ``BlendConfig.validate``).
+
+        Raises
+        ------
+        RecipeError
+            One or more rules fail (all problems are reported together).
+        """
         problems: list[str] = []
         names = self.model_names
         if not names:
@@ -493,6 +767,17 @@ class Recipe:
             raise RecipeError(problems)
 
     def _check_model(self, model: Model, where: str, problems: list[str]) -> None:
+        """Check one model's lead days, rain horizon, rain predictors and rain transform.
+
+        Parameters
+        ----------
+        model : Model
+            The model.
+        where : str
+            The config path used in the problem messages.
+        problems : list of str
+            The list the problems are appended to.
+        """
         features = self.features
         low, high = model.lead_days
         if low < 0 or high < low:
@@ -530,6 +815,13 @@ class Recipe:
             _check_rain_transform(model.rain_transform, f"{where}.rain_transform", problems)
 
     def _check_evaluation(self, problems: list[str]) -> None:
+        """Check the evaluation section against the rest of the recipe.
+
+        Parameters
+        ----------
+        problems : list of str
+            The list the problems are appended to.
+        """
         evaluation, features = self.evaluation, self.features
         years = evaluation.years
         if not years.training:
@@ -610,24 +902,73 @@ class Recipe:
 
 
 def window_tag(window: tuple[int, int]) -> str:
+    """Return the name tag of a year window.
+
+    Parameters
+    ----------
+    window : tuple of (int, int)
+        The first and last year.
+
+    Returns
+    -------
+    str
+        ``"<first>_<last>"``.
+    """
     return f"{window[0]}_{window[1]}"
 
 
 def probability_feature_base(model: str, variant: str) -> str:
+    """Return the name stem of a model's onset-probability feature columns.
+
+    Parameters
+    ----------
+    model : str
+        The model's name.
+    variant : str
+        A key of `VARIANT_SUFFIX`.
+
+    Returns
+    -------
+    str
+        ``"<model>_p_onset<suffix>"``.
+    """
     return f"{model}_p_onset{VARIANT_SUFFIX[variant]}"
 
 
 _FORMULA_FUNCTIONS = re.compile(r"^(?:I|C|Q|center|standardize|scale|np|numpy)(?:\..+)?$")
+"""A Patsy or numpy function name that is not a feature."""
 
 
 def formula_terms(text: str) -> list[str]:
-    """The feature names a formula's right-hand side refers to."""
+    """Return the feature names a formula's right-hand side refers to.
+
+    Parameters
+    ----------
+    text : str
+        The formula, with or without ``~``.
+
+    Returns
+    -------
+    list of str
+        The tokens of the right-hand side that are not numbers or function names.
+    """
     rhs = text.split("~", 1)[1] if "~" in text else text
     tokens = [t.strip() for t in re.split(r"[+\-*:(),]", rhs)]
     return [t for t in tokens if t and not re.fullmatch(r"\d+(\.\d+)?", t) and not _FORMULA_FUNCTIONS.match(t)]
 
 
 def _check_rain_transform(value, path: str, problems: list[str]) -> None:
+    """Check a rain transform setting.
+
+    Parameters
+    ----------
+    value : object
+        The setting: a number, one of ``_RAIN_TRANSFORMS`` or ``power:<p>``.
+    path : str
+        The config path used in the problem message.
+    problems : list of str
+        The list a problem is appended to.
+    """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return
     text = str(value).strip().lower()
@@ -642,7 +983,24 @@ def _check_rain_transform(value, path: str, problems: list[str]) -> None:
 
 
 def _strict(value, allowed, where: str, problems: list[str]) -> dict:
-    """A mapping with only the keys allowed; others are problems with a 'did you mean'."""
+    """Return a mapping with only the keys allowed; others are problems with a 'did you mean'.
+
+    Parameters
+    ----------
+    value : object
+        The config node: a dict, or None for none.
+    allowed : sequence of str
+        The allowed keys.
+    where : str
+        The config path used in the problem messages.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    dict
+        The allowed items of `value` (empty when it is None or not a mapping).
+    """
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -655,6 +1013,22 @@ def _strict(value, allowed, where: str, problems: list[str]) -> dict:
 
 
 def _list(value, where: str, problems: list[str]) -> list:
+    """Return a config node as a list, or a problem if it is not one.
+
+    Parameters
+    ----------
+    value : object
+        The config node: a list or tuple, or None for none.
+    where : str
+        The config path used in the problem message.
+    problems : list of str
+        The list a problem is appended to.
+
+    Returns
+    -------
+    list
+        The items (empty when `value` is None or not a list).
+    """
     if value is None:
         return []
     if not isinstance(value, (list, tuple)):
@@ -664,7 +1038,24 @@ def _list(value, where: str, problems: list[str]) -> list:
 
 
 def _check_type(value, kind: str, where: str, problems: list[str]):
-    """value if it is of the kind ('int', 'number', 'bool', 'str'), else a problem and None."""
+    """Return the value if it is of the kind, else record a problem.
+
+    Parameters
+    ----------
+    value : object
+        The config value.
+    kind : {"int", "number", "bool", "str"}
+        The kind wanted; a ``number`` is an int or a float and is returned as a float.
+    where : str
+        The config path used in the problem message.
+    problems : list of str
+        The list a problem is appended to.
+
+    Returns
+    -------
+    object or None
+        The value (a float for ``"number"``), or None when it is of another kind.
+    """
     ok = {"int": isinstance(value, int) and not isinstance(value, bool),
           "number": isinstance(value, (int, float)) and not isinstance(value, bool),
           "bool": isinstance(value, bool), "str": isinstance(value, str)}[kind]
@@ -676,6 +1067,24 @@ def _check_type(value, kind: str, where: str, problems: list[str]):
 
 
 def _choice(value, choices, where: str, problems: list[str]):
+    """Return the value if it is one of the choices, else record a problem.
+
+    Parameters
+    ----------
+    value : object
+        The config value.
+    choices : sequence
+        The allowed values.
+    where : str
+        The config path used in the problem message.
+    problems : list of str
+        The list a problem is appended to.
+
+    Returns
+    -------
+    object or None
+        The value, or None when it is not allowed.
+    """
     if value not in choices:
         problems.append(f"{where}: {value!r} is not one of {', '.join(map(repr, choices))}.{suggest(value, choices)}")
         return None
@@ -683,7 +1092,22 @@ def _choice(value, choices, where: str, problems: list[str]):
 
 
 def years_of(value, where: str, problems: list[str]) -> tuple[int, ...]:
-    """Years from a list, a year or text like '2000:2024,2026' (sorted, each once)."""
+    """Parse years from a list, a year or text like ``'2000:2024,2026'`` (sorted, each once).
+
+    Parameters
+    ----------
+    value : object
+        The years, or None for none.
+    where : str
+        The config path used in the problem message.
+    problems : list of str
+        The list a problem is appended to.
+
+    Returns
+    -------
+    tuple of int
+        The years; empty for None or on a problem.
+    """
     if value is None:
         return ()
     try:
@@ -694,6 +1118,22 @@ def years_of(value, where: str, problems: list[str]) -> tuple[int, ...]:
 
 
 def year_window(value, where: str, problems: list[str]) -> tuple[int, int] | None:
+    """Parse a first and last year from a years setting.
+
+    Parameters
+    ----------
+    value : object
+        The years (see `years_of`); the first and last are the window.
+    where : str
+        The config path used in the problem messages.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    tuple of (int, int) or None
+        The first and last year, or None when there are no years.
+    """
     years = years_of(value, where, problems)
     if not years:
         problems.append(f"{where}: expected a first and last year")
@@ -702,11 +1142,43 @@ def year_window(value, where: str, problems: list[str]) -> tuple[int, int] | Non
 
 
 def year_windows(value, where: str, problems: list[str]) -> tuple[tuple[int, int], ...]:
+    """Parse a list of year windows.
+
+    Parameters
+    ----------
+    value : object
+        A list whose items `year_window` reads; None for none.
+    where : str
+        The config path used in the problem messages.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    tuple of tuple of (int, int)
+        The valid windows.
+    """
     windows = [year_window(item, f"{where}[{i}]", problems) for i, item in enumerate(_list(value, where, problems))]
     return tuple(w for w in windows if w is not None)
 
 
 def _rain_model(name: str, value, problems: list[str]) -> Model:
+    """Build a `Model` from its ``blend.models.<name>`` node.
+
+    Parameters
+    ----------
+    name : str
+        The model's name.
+    value : object
+        The node, or None for the defaults.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    Model
+        The model (defaults replace the invalid parts, which are in `problems`).
+    """
     where = f"blend.models.{name}"
     node = _strict(value, ("lead_days", "max_member", "rain_horizon", "rain_predictors", "rain_transform"), where,
                    problems)
@@ -746,6 +1218,20 @@ def _rain_model(name: str, value, problems: list[str]) -> Model:
 
 
 def _reference(value, problems: list[str]) -> ReferenceSpec | None:
+    """Build the `ReferenceSpec` from the ``blend.reference_onset`` node.
+
+    Parameters
+    ----------
+    value : object
+        The node, or None for no reference onset.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    ReferenceSpec or None
+        The spec; None without a node or when it is invalid.
+    """
     if value is None:
         return None
     where = "blend.reference_onset"
@@ -764,6 +1250,20 @@ def _reference(value, problems: list[str]) -> ReferenceSpec | None:
 
 
 def _climatology(value, problems: list[str]) -> ClimatologySpec:
+    """Build the `ClimatologySpec` from the ``blend.climatology`` node.
+
+    Parameters
+    ----------
+    value : object
+        The node, or None for the defaults.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    ClimatologySpec
+        The spec.
+    """
     where = "blend.climatology"
     node = _strict(value, ("issue_end", "forecast_window", "horizons", "cv_by_year", "min_onset_years", "train_years",
                            "test_years", "windows", "workers"), where, problems)
@@ -794,6 +1294,20 @@ def _climatology(value, problems: list[str]) -> ClimatologySpec:
 
 
 def _features(cfg: dict, problems: list[str]) -> Features:
+    """Build the `Features` from the flat config's ``blend_bins`` and ``blend_*`` feature keys.
+
+    Parameters
+    ----------
+    cfg : dict
+        The flat run config.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    Features
+        The features.
+    """
     bins = _strict(cfg.get("blend_bins"), ("count", "days"), "blend.bins", problems)
     count, days = bins.get("count", 4), bins.get("days", 7)
     out: dict = {}
@@ -808,6 +1322,22 @@ def _features(cfg: dict, problems: list[str]) -> Features:
 
 
 def _forest(value, days: int, problems: list[str]) -> ForestParams | None:
+    """Build the random forest's parameters from the ``blend.random_forest`` node.
+
+    Parameters
+    ----------
+    value : object
+        The node, or None for no forest.
+    days : int
+        The days per week bin, set as the forest's ``days_per_week``.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    hcwf.blend.random_forest.Params or None
+        The parameters; None without a node or when it is invalid.
+    """
     if value is None:
         return None
     where = "blend.random_forest"
@@ -832,6 +1362,22 @@ def _forest(value, days: int, problems: list[str]) -> ForestParams | None:
 
 
 def _evaluation(cfg: dict, bins_days: int, problems: list[str]) -> Evaluation:
+    """Build the `Evaluation` from the flat config's ``blend_*`` evaluation keys.
+
+    Parameters
+    ----------
+    cfg : dict
+        The flat run config.
+    bins_days : int
+        The days per week bin, passed to the random forest.
+    problems : list of str
+        The list the problems are appended to.
+
+    Returns
+    -------
+    Evaluation
+        The evaluation settings.
+    """
     years = _strict(cfg.get("blend_years"), ("training", "cv_holdout", "true_holdout"), "blend.years", problems)
     if cfg.get("blend_years") is None:
         problems.append("blend.years: required (training and cv_holdout and/or true_holdout years)")
@@ -929,11 +1475,28 @@ def _evaluation(cfg: dict, bins_days: int, problems: list[str]) -> Evaluation:
 
 
 def recipe_from_config(cfg: dict, setup=None) -> Recipe:
-    """The Recipe a resolved run config asks for: its `blend:` section (the flat `blend_*` keys), with the model names of
-    `model_list` and the run's `project_name`. Every problem found is reported together as one RecipeError, nested keys
-    with a 'did you mean'; unset keys take the defaults of the dataclasses above (blending's own).
+    """Build the `Recipe` a resolved run config asks for.
 
-    With `setup` (the run's OnsetSetup) the rules that need the onset definition are checked too (`Recipe.check`).
+    It reads the ``blend:`` section (the flat ``blend_*`` keys), with the model names of ``model_list`` and the run's
+    ``project_name``. Every problem found is reported together as one `RecipeError`, nested keys with a 'did you
+    mean'; unset keys take the defaults of the dataclasses above (blending's own).
+
+    Parameters
+    ----------
+    cfg : dict
+        The flat resolved run config.
+    setup : hcwf.config.onset.OnsetSetup, optional
+        The run's onset setup; with it the rules that need the onset definition are checked too (`Recipe.check`).
+
+    Returns
+    -------
+    Recipe
+        The recipe.
+
+    Raises
+    ------
+    RecipeError
+        The ``blend:`` section has problems, or `setup`'s definition fails `Recipe.check`.
     """
     problems: list[str] = []
     names = tuple(cfg.get("model_list") or ())

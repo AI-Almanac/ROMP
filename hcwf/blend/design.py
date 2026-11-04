@@ -1,19 +1,15 @@
 """Design matrices from formulas, with array math instead of tables.
 
-A formula whose terms are numeric columns and products of them (`a:b`, or
-`a*b` expanded) makes every design column a product of feature columns.
-`plan` takes the formula's columns, in Patsy's order, from Patsy itself;
-`Plan.build` then fills the matrix a column at a time straight from the
-feature arrays, multiplying the factors in Patsy's order, so the values
-are Patsy's to the bit without a table or Patsy's intermediate copies.
-Other formulas (functions, categorical or stateful terms) have no plan
-and go through Patsy.
+A formula whose terms are numeric columns and products of them (``a:b``, or ``a*b`` expanded) makes every design
+column a product of feature columns. `plan` takes the formula's columns, in Patsy's order, from Patsy itself;
+`Plan.build` then fills the matrix a column at a time straight from the feature arrays, multiplying the factors in
+Patsy's order, so the values are Patsy's to the bit without a table or Patsy's intermediate copies. Other formulas
+(functions, categorical or stateful terms) have no plan and go through Patsy.
 
-The formulas themselves come from their texts here too: `formulas` expands
-each enabled text (`_qx` to one term per week bin, `a*b` to every
-interaction), drops the `_qx` terms the rain horizon cannot build, and adds
-the window variants; `sample_support` gives the samples every formula's
-predictors are finite for.
+The formulas themselves come from their texts here too: `formulas` expands each enabled text (``_qx`` to one term
+per week bin, ``a*b`` to every interaction), drops the ``_qx`` terms the rain horizon cannot build, and adds the
+window variants; `sample_support` gives the samples every formula's predictors are finite for. The logistic blend
+(`hcwf.blend.logit`) and the random forest read their predictors through these.
 """
 
 from __future__ import annotations
@@ -33,7 +29,9 @@ class Formula:
     """A named formula's text, and whether the evaluation uses it."""
 
     text: str
+    """The formula text, ``lhs ~ term + term ...``; ``_qx`` and ``*`` are expanded by `expand`."""
     enabled: bool = True
+    """Whether the evaluation uses the formula."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -41,12 +39,28 @@ class WindowVariant:
     """Formula variants that swap a feature for its windowed-climatology version."""
 
     base: str
+    """The name of the formula (in the formulas' mapping) to derive the variants from."""
     windows: tuple[tuple[int, int], ...] = ()
+    """The ``(start, end)`` windows; one variant, named ``<base>_<start>_<end>``, for each."""
     replace: str = "prob_clim"
+    """The feature whose ``<replace>_qx`` term is swapped for ``<replace>_<start>_<end>_qx``."""
     only_if_cutoff_mode: str | None = None
+    """Make the variants only when the cutoff mode equals this; ``None`` makes them always."""
 
 
 def right_hand_side(formula: str) -> str:
+    """Return the right-hand side of a formula.
+
+    Parameters
+    ----------
+    formula : str
+        A formula text, with or without ``lhs ~``.
+
+    Returns
+    -------
+    str
+        The text after the first ``~`` (the whole text without one), stripped.
+    """
     return formula.split("~", 1)[1].strip() if "~" in formula else formula.strip()
 
 
@@ -55,8 +69,11 @@ class Plan:
     """A formula's design columns, each the product of named feature columns."""
 
     formula: str
+    """The formula text the plan was made from."""
     columns: tuple[str, ...]
+    """The design column names, in Patsy's order, without the intercept."""
     factors: tuple[tuple[str, ...], ...]
+    """For each design column, the feature columns it multiplies, in Patsy's order."""
 
     @property
     def features(self) -> list[str]:
@@ -64,8 +81,22 @@ class Plan:
         return list(dict.fromkeys(name for names in self.factors for name in names))
 
     def column(self, j: int, values: Callable[[str], np.ndarray], rows: np.ndarray | None = None) -> np.ndarray:
-        """Design column j, for `rows` (positions) or every row: its factors'
-        product, multiplied in Patsy's order."""
+        """Return one design column: the product of its factors, multiplied in Patsy's order.
+
+        Parameters
+        ----------
+        j : int
+            The position of the design column in `columns`.
+        values : callable
+            ``values(name)`` returns the values of the feature `name`, one per row of the source.
+        rows : numpy.ndarray of int, shape (row,), optional
+            The positions of the rows to take; ``None`` takes every row.
+
+        Returns
+        -------
+        numpy.ndarray of float64, shape (row,)
+            The column; a new array that does not share memory with what `values` returned.
+        """
         out = None
         for name in self.factors[j]:
             factor = np.asarray(values(name), dtype=float)
@@ -79,9 +110,24 @@ class Plan:
 
     def build(self, values: Callable[[str], np.ndarray], rows: np.ndarray | None = None, *,
               out: np.ndarray | None = None, order: str = "F") -> np.ndarray:
-        """The design matrix (rows, columns), into `out` when given.
+        """Return the design matrix, filled a column at a time.
 
-        values(name) gives a feature's values per row of the source."""
+        Parameters
+        ----------
+        values : callable
+            ``values(name)`` returns the values of the feature `name`, one per row of the source.
+        rows : numpy.ndarray of int, shape (row,), optional
+            The positions of the rows to take; ``None`` takes every row.
+        out : numpy.ndarray of float64, shape (row, column), optional
+            Where to write the matrix; a new array when ``None``.
+        order : {"F", "C"}, default "F"
+            The memory order of a new array (ignored when `out` is given).
+
+        Returns
+        -------
+        numpy.ndarray of float64, shape (row, column)
+            The design matrix, `out` itself when it was given.
+        """
         if out is None:
             n = len(rows) if rows is not None else len(np.asarray(values(self.factors[0][0])))
             out = np.empty((n, len(self.columns)), order=order)
@@ -91,8 +137,24 @@ class Plan:
 
 
 def plan(formula: str, dtypes: Mapping[str, object]) -> Plan | None:
-    """The design of a formula whose every term is a product of numeric
-    columns of `dtypes` (column name -> dtype); None for any other formula."""
+    """Return the design plan of a formula, or ``None`` if it needs Patsy.
+
+    A formula has a plan when every term is a product of numeric columns of `dtypes` and Patsy's column names
+    (asked of Patsy on one row) are exactly the terms'.
+
+    Parameters
+    ----------
+    formula : str
+        The formula text, with or without ``lhs ~``.
+    dtypes : mapping of str to object
+        The dtype of each available feature column.
+
+    Returns
+    -------
+    Plan or None
+        The plan, or ``None`` for any other formula (functions, categorical or non-numeric terms, an unparsable
+        text, a term with no factors only).
+    """
     rhs = right_hand_side(formula)
     try:
         terms = patsy.ModelDesc.from_formula(rhs).rhs_termlist
@@ -120,7 +182,18 @@ def plan(formula: str, dtypes: Mapping[str, object]) -> Plan | None:
 
 
 def _numeric(dtype) -> bool:
-    """Patsy treats these as numeric (not bool, object or extension types)."""
+    """Return whether Patsy treats a dtype as numeric (float, signed or unsigned integer; not bool, object or extension).
+
+    Parameters
+    ----------
+    dtype : object
+        A dtype.
+
+    Returns
+    -------
+    bool
+        True for a NumPy dtype of kind ``f``, ``i`` or ``u``.
+    """
     return isinstance(dtype, np.dtype) and dtype.kind in "fiu"
 
 
@@ -130,15 +203,43 @@ def _numeric(dtype) -> bool:
 
 
 def formula_columns(formula: str) -> list[str]:
-    """The right-hand side's feature names (operators and constants stripped)."""
+    """Return the feature names of a formula's right-hand side.
+
+    Parameters
+    ----------
+    formula : str
+        The formula text, with or without ``lhs ~``.
+
+    Returns
+    -------
+    list of str
+        The names between the operators ``+ - * : ( )``, without empty ones, digits and ``1``; repeats are kept.
+    """
     rhs = formula.split("~", 1)[1] if "~" in formula else formula
     names = [t.strip() for t in re.split(r"[+\-\*:\(\)]", rhs)]
     return [n for n in names if n and not n.isdigit() and n != "1"]
 
 
 def _expanded_terms(formula: str, n_bins: int) -> tuple[str, list[tuple[str, set[str]]]]:
-    """(lhs, [(term, the _qx-generated columns it uses)]): `_qx` terms expand
-    to one per week bin, `a*b` to every Wilkinson interaction."""
+    """Expand the ``_qx`` and ``*`` of a formula into its terms.
+
+    A term with ``_qx`` columns becomes one term per week bin (``_week1`` ... ``_weekN``), and ``a*b`` becomes every
+    Wilkinson term (``a``, ``b``, ``a:b``).
+
+    Parameters
+    ----------
+    formula : str
+        The formula text, with or without ``lhs ~``.
+    n_bins : int
+        The number of week bins.
+
+    Returns
+    -------
+    lhs : str
+        The left-hand side, empty without ``~``.
+    terms : list of tuple of (str, set of str)
+        Each term and the columns it uses that were generated from a ``_qx`` column.
+    """
     if "~" in formula:
         lhs, rhs = (part.strip() for part in formula.split("~", 1))
     else:
@@ -164,20 +265,69 @@ def _expanded_terms(formula: str, n_bins: int) -> tuple[str, list[tuple[str, set
 
 
 def _joined(lhs: str, terms: list[str]) -> str:
+    """Join terms into a formula text.
+
+    Parameters
+    ----------
+    lhs : str
+        The left-hand side; empty for none.
+    terms : list of str
+        The terms of the right-hand side.
+
+    Returns
+    -------
+    str
+        ``lhs ~ term + term ...``, or only the right-hand side when `lhs` is empty.
+    """
     rhs = " + ".join(terms)
     return f"{lhs} ~ {rhs}" if lhs else rhs
 
 
 def expand(formula: str, n_bins: int) -> str:
-    """The formula with `_qx` and `*` expanded."""
+    """Return the formula with ``_qx`` and ``*`` expanded.
+
+    Parameters
+    ----------
+    formula : str
+        The formula text, with or without ``lhs ~``.
+    n_bins : int
+        The number of week bins.
+
+    Returns
+    -------
+    str
+        The expanded formula text.
+    """
     lhs, terms = _expanded_terms(formula, n_bins)
     return _joined(lhs, [term for term, _ in terms])
 
 
 def resolve(formula: str, unavailable, n_bins: int) -> tuple[str, list[str]]:
-    """(the expanded formula without the `_qx` terms whose columns cannot be
-    built under the rain horizon, the dropped terms). Explicit `_weekN` terms
-    are never dropped."""
+    """Expand a formula and drop the terms whose columns cannot be built under the rain horizon.
+
+    Explicit ``_weekN`` terms are never dropped, only those generated from ``_qx``.
+
+    Parameters
+    ----------
+    formula : str
+        The formula text, with or without ``lhs ~``.
+    unavailable : iterable of str
+        The columns that cannot be built.
+    n_bins : int
+        The number of week bins.
+
+    Returns
+    -------
+    formula : str
+        The expanded formula without the dropped terms.
+    dropped : list of str
+        The dropped terms.
+
+    Raises
+    ------
+    ValueError
+        No kept term has a feature column.
+    """
     lhs, terms = _expanded_terms(formula, n_bins)
     unavailable = set(unavailable)
     kept, dropped = [], []
@@ -190,19 +340,44 @@ def resolve(formula: str, unavailable, n_bins: int) -> tuple[str, list[str]]:
 
 def formulas(entries: Mapping[str, Formula], window_variants: Sequence[WindowVariant], unavailable, n_bins: int,
              cutoff_mode: str) -> tuple[dict[str, str], dict[str, dict]]:
-    """The enabled formulas (name -> Formula), resolved, with their window
-    variants, and how each was resolved.
+    """Return the enabled formulas, resolved, with their window variants, and how each was resolved.
 
-    A window variant is its base formula with the `<replace>_qx` feature
-    swapped for its windowed version `<replace>_<start>_<end>_qx`, resolved
-    as a formula of its own. (The legacy evaluation swapped it in the
-    expanded text, where `_qx` no longer occurs, so every variant repeated
-    its base formula.)"""
+    A window variant is its base formula with the ``<replace>_qx`` feature swapped for its windowed version
+    ``<replace>_<start>_<end>_qx``, resolved as a formula of its own. (The legacy evaluation swapped it in the
+    expanded text, where ``_qx`` no longer occurs, so every variant repeated its base formula.)
+
+    Parameters
+    ----------
+    entries : mapping of str to Formula
+        The named formulas; those not enabled are skipped.
+    window_variants : sequence of WindowVariant
+        The variants to add; one whose `WindowVariant.only_if_cutoff_mode` differs from `cutoff_mode` is skipped.
+    unavailable : iterable of str
+        The columns that cannot be built (see `resolve`).
+    n_bins : int
+        The number of week bins.
+    cutoff_mode : str
+        The cutoff mode of the run.
+
+    Returns
+    -------
+    formulas : dict of str to str
+        The resolved formula text of each enabled formula and variant (named ``<base>_<start>_<end>``).
+    resolution : dict of str to dict
+        For each, ``original_formula``, ``expanded_formula``, ``resolved_formula`` and ``dropped_terms``.
+
+    Raises
+    ------
+    ValueError
+        `entries` is empty, an enabled formula has no text, a variant's base is not an enabled formula, or a
+        formula has no constructible term.
+    """
     if not entries:
         raise ValueError("Spec must define models.formulas with named entries containing 'text'.")
     out, resolution = {}, {}
 
     def add(name, text):
+        """Resolve one formula and record it and how it was resolved."""
         resolved, dropped = resolve(text, unavailable, n_bins)
         out[name] = resolved
         resolution[name] = {
@@ -232,13 +407,48 @@ def formulas(entries: Mapping[str, Formula], window_variants: Sequence[WindowVar
 
 
 def _as_float(values) -> np.ndarray:
+    """Return values as floats, with ``NaN`` for what is not numeric.
+
+    Parameters
+    ----------
+    values : array-like
+        The values, e.g. a ``pandas.Series``.
+
+    Returns
+    -------
+    numpy.ndarray of float64
+        The values converted by ``pandas.to_numeric(errors="coerce")``.
+    """
     return np.asarray(pd.to_numeric(values, errors="coerce"), dtype=float)
 
 
 def sample_support(weekly, formulas: dict[str, str]) -> tuple[np.ndarray, dict]:
-    """The samples every enabled formula's predictors are finite for
-    (positions), and diagnostics; refuses a predictor that is missing or
-    never finite (naming a rain-horizon cause when the features recorded one)."""
+    """Find the samples for which every formula's predictors are finite.
+
+    A predictor that is missing, or never finite, is refused; the message names a rain-horizon cause when the
+    features recorded one (``weekly.attrs["unavailable_rain_predictors"]``).
+
+    Parameters
+    ----------
+    weekly : pandas.DataFrame
+        The weekly features, one row per sample, with the predictor columns (and the rain-horizon record in
+        ``attrs``).
+    formulas : dict of str to str
+        The resolved formula text of each enabled formula.
+
+    Returns
+    -------
+    positions : numpy.ndarray of int64, shape (n,)
+        The positions of the samples that are finite in every required column.
+    diagnostics : dict
+        ``policy`` (``"common_complete"``), ``required_columns``, ``rows_before``, ``rows_after``,
+        ``rows_excluded`` and ``nonfinite_by_column`` (the columns with non-finite rows and their counts).
+
+    Raises
+    ------
+    ValueError
+        A predictor column is missing or has no finite value.
+    """
     feature_map = {name: list(dict.fromkeys(formula_columns(text))) for name, text in formulas.items()}
     unavailable = weekly.attrs.get("unavailable_rain_predictors", {})
     problems = []
