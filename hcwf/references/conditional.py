@@ -3,16 +3,17 @@
 HCWF scores only inits before the observed onset, so the fair climatological
 reference is P(onset on lead k | no onset by the issue date), not the
 unconditional distribution of onset dates. The probabilities come from a KDE of
-the cell's observed onsets over the climatology years (hcwf.references.kde),
-optionally refitted without the evaluated year (climatology_cv).
+the cell's observed onsets over the climatology years (`hcwf.references.kde`),
+optionally refitted without the evaluated year (``climatology_cv``).
 
-Probabilistic use gives pairs (PairArrays) of the shape the climatology scoring
+Probabilistic use gives pairs (`hcwf.metrics.bins.PairArrays`) of the shape the climatology scoring
 consumes (per init, cell and day bin, with Before and After bins); the
 probabilities are exact, so the pairs carry infinite member counts and the
 fair-score corrections vanish. Deterministic use gives the conditional median
-onset date per init and cell, in the layout of compute_climatology_as_forecast.
+onset date per init and cell, in the layout of
+`hcwf.references.climatology.compute_climatology_as_forecast`.
 
-`conditional_pairs` takes the typed inputs of hcwf.config.model (run, case, selection).
+`conditional_pairs` takes the typed inputs of `hcwf.config.model` (run, case, selection).
 """
 
 import numpy as np
@@ -27,19 +28,51 @@ import logging
 log = logging.getLogger(__name__)
 
 CONDITIONAL_CLIMATOLOGY = "conditional_climatology"
+"""The name of the conditional climatology reference."""
 CLIMATOLOGY_REFERENCES = ("climatology", CONDITIONAL_CLIMATOLOGY)
+"""The names of the climatology references."""
 CV_MODES = ("none", "leave_one_year_out")
+"""The values of ``climatology_cv``."""
 DEFAULT_CV = "leave_one_year_out"
+"""The ``climatology_cv`` used when none is given."""
 _GRID_TOLERANCE = 1e-3
+"""How far (in degrees) a climatology cell may be from a target cell and still be matched to it."""
 
 
 def is_conditional_climatology(name) -> bool:
-    """Whether name is the conditional climatology reference."""
+    """Tell whether `name` is the conditional climatology reference.
+
+    Parameters
+    ----------
+    name : str
+        A reference name.
+
+    Returns
+    -------
+    bool
+        True when it equals ``CONDITIONAL_CLIMATOLOGY``.
+    """
     return name == CONDITIONAL_CLIMATOLOGY
 
 
 def cv_mode(climatology_cv) -> str:
-    """The climatology_cv setting (default leave_one_year_out), checked against CV_MODES."""
+    """Return the ``climatology_cv`` setting (default ``"leave_one_year_out"``), checked against `CV_MODES`.
+
+    Parameters
+    ----------
+    climatology_cv : str or None
+        The setting; None or empty means the default.
+
+    Returns
+    -------
+    str
+        The mode, one of `CV_MODES`.
+
+    Raises
+    ------
+    ValueError
+        The mode is not one of `CV_MODES`.
+    """
     mode = climatology_cv or DEFAULT_CV
     if mode not in CV_MODES:
         raise ValueError(f"climatology_cv must be one of {CV_MODES}, got {mode!r}")
@@ -47,20 +80,52 @@ def cv_mode(climatology_cv) -> str:
 
 
 def season_day(dates) -> np.ndarray:
-    """Days since 1 January of each date's year, without leap-day shifts; NaN for NaT.
+    """Compute the days since 1 January of each date's year, without leap-day shifts; NaN for NaT.
 
     From 1 March on a leap year's dates count one less, so a calendar date has
     the same number every year and the KDE's day axis is not blurred by 29 February.
-    (hcwf.references.kde.season_days with leap_shift: the one day counter, with onset_blending's start.)
+    (`hcwf.references.kde.season_days` with ``leap_shift``: the one day counter, with onset_blending's start.)
+
+    Parameters
+    ----------
+    dates : numpy.ndarray of datetime64
+        The dates, any shape.
+
+    Returns
+    -------
+    numpy.ndarray of float64
+        The day counts, in the shape of `dates`.
     """
     return season_days(dates, (1, 1), leap_shift=True)
 
 
 def _conditional_by_case(clim_onset, target_year, cells, issue_dates, horizon, cv):
-    """Conditional lead probabilities (case, issue, lead) of cells given by grid indices, NaN where no KDE fits.
+    """Compute the conditional lead probabilities of cells given by grid indices, NaN where no KDE fits.
 
-    clim_onset is the observed onset dates (year, lat, lon) of the climatology years (or (year, unit)); `cells` is
-    a tuple of index arrays into its spatial axes (lat and lon, or unit), once per requested cell.
+    Parameters
+    ----------
+    clim_onset : xarray.DataArray of datetime64
+        The observed onset dates ``(year, lat, lon)`` of the climatology years (or ``(year, unit)``).
+    target_year : int
+        The evaluated year; left out of the KDE fit when `cv` is true.
+    cells : tuple of numpy.ndarray of int
+        One index array per spatial axis of `clim_onset` (``lat`` and ``lon``, or ``unit``), one entry per requested
+        cell.
+    issue_dates : pandas.DatetimeIndex
+        The issue dates.
+    horizon : int
+        The last lead, in days; leads 1 to `horizon` are returned.
+    cv : bool
+        Refit each KDE without `target_year`.
+
+    Returns
+    -------
+    values : numpy.ndarray of float64, shape (key, unique_issue, lead)
+        The probabilities of each distinct requested cell (``key``) and each distinct issue day; NaN where no KDE fits.
+    position : numpy.ndarray of int64, shape (cell,)
+        For each requested cell, its row in `values`.
+    back : numpy.ndarray of int64, shape (issue,)
+        For each issue date, its column in `values`.
     """
     spatial = axes.spatial_dims(clim_onset.dims)
     years = clim_onset.year.values.astype(int)
@@ -80,7 +145,20 @@ def _conditional_by_case(clim_onset, target_year, cells, issue_dates, horizon, c
 
 
 def _align(clim_onset, like):
-    """The climatology onsets on the spatial axes of `like` (nearest cells within tolerance, or units by id; others NaT)."""
+    """Reindex the climatology onsets onto the spatial axes of `like` (nearest cells within tolerance, or units by id).
+
+    Parameters
+    ----------
+    clim_onset : xarray.DataArray of datetime64
+        The climatology onsets, over ``(year, lat, lon)`` or ``(year, unit)``.
+    like : xarray.DataArray
+        An array whose ``lat`` and ``lon`` (or ``unit``) coordinates give the target axes.
+
+    Returns
+    -------
+    xarray.DataArray of datetime64
+        `clim_onset` on the axes of `like`; ``NaT`` where there is no cell within `_GRID_TOLERANCE` (or no such unit).
+    """
     if "unit" in like.dims:
         return clim_onset.reindex(unit=like["unit"].values)
     return clim_onset.reindex(lat=like["lat"].values, lon=like["lon"].values, method="nearest",
@@ -88,19 +166,52 @@ def _align(clim_onset, like):
 
 
 def _cases(inits, obs):
-    """Index arrays (init, *spatial) of the cells with an observed onset and the inits before it, init-major."""
+    """Find the cases: the cells with an observed onset and the inits before it, init-major.
+
+    Parameters
+    ----------
+    inits : pandas.DatetimeIndex
+        The initialization dates.
+    obs : numpy.ndarray of datetime64[ns], shape spatial
+        The observed onset dates over the spatial axes, ``NaT`` where there is none.
+
+    Returns
+    -------
+    tuple of numpy.ndarray of int64
+        The index arrays ``(init, *spatial)``, one entry per case.
+    """
     has_obs = ~np.isnat(obs)
     return np.nonzero(has_obs[None] & (axes.broadcast_rows(inits.values.astype("datetime64[ns]"), obs.ndim + 1) < obs[None]))
 
 
 def conditional_lead_probabilities(clim_onset, year, init_dates, like, horizon, climatology_cv=None):
-    """Conditional onset probabilities of every init and cell, shaped (init, lat, lon, lead) (or (init, unit, lead))
-    for leads 1..horizon.
+    """Compute the conditional onset probabilities of every init and cell for leads 1 to `horizon`.
 
-    The same probabilities the scoring functions of this module use (the KDE of clim_onset refitted without
-    `year` when climatology_cv is leave_one_year_out); NaN for cells without a KDE. `like` is a DataArray over the
-    spatial axes of the observed onsets (clim_onset is aligned to them as the scoring does) and init_dates the issue
-    dates.
+    The same probabilities the scoring functions of this module use (the KDE of `clim_onset` refitted without
+    `year` when `climatology_cv` is ``"leave_one_year_out"``); NaN for cells without a KDE. `like` is a DataArray over
+    the spatial axes of the observed onsets (`clim_onset` is aligned to them as the scoring does).
+
+    ``ValueError`` is raised by a called function when `climatology_cv` is not a valid mode.
+
+    Parameters
+    ----------
+    clim_onset : xarray.DataArray of datetime64
+        The observed onset dates of the climatology years, ``(year, lat, lon)`` or ``(year, unit)``.
+    year : int
+        The evaluated year (left out of the fit with leave-one-year-out).
+    init_dates : iterable of datetime-like
+        The issue dates.
+    like : xarray.DataArray
+        An array over the spatial axes of the observed onsets.
+    horizon : int
+        The last lead, in days.
+    climatology_cv : str, optional
+        The cross-validation mode (see `cv_mode`); None means the default.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (init, lat, lon, lead) or (init, unit, lead)
+        The probability of the onset on each lead 1 to `horizon`, NaN where the cell has no KDE.
     """
     cv = cv_mode(climatology_cv) == "leave_one_year_out"
     clim = _align(clim_onset, like)
@@ -115,17 +226,36 @@ def conditional_lead_probabilities(clim_onset, year, init_dates, like, horizon, 
 
 def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, observed_onset_da=None, *,
                                                          day_bins, climatology_cv=None):
-    """Forecast-observation pairs (PairArrays) of the conditional climatology for one year, per init, cell and day bin.
+    """Make the forecast-observation pairs of the conditional climatology for one year, per init, cell and day bin.
 
-    clim_onset is the (year, lat, lon) observed onset dates of the climatology
-    years. observed_onset_da is the target year's observed onsets (lat, lon);
-    by default the target year's slice of clim_onset. A case is a cell with an
-    observed onset and an init before it, as for the other forecasts. Its
+    A case is a cell with an observed onset and an init before it, as for the other forecasts. Its
     probabilities are the conditional KDE probabilities of the leads in each
     bin; the Before bin holds the leads before the first bin (0 when the bins
     start at lead 1) and the After bin the rest of the mass. Cases whose cell
     has no KDE (too few onset years) are left out. Cases are ordered by init,
     lat and lon; their member counts are infinite.
+
+    ``ValueError`` is raised by a called function when `climatology_cv` is not a valid mode.
+
+    Parameters
+    ----------
+    clim_onset : xarray.DataArray of datetime64
+        The ``(year, lat, lon)`` observed onset dates of the climatology years.
+    target_year : int
+        The year to evaluate.
+    init_dates : iterable of datetime-like
+        The initialization dates.
+    observed_onset_da : xarray.DataArray of datetime64, optional
+        The target year's observed onsets ``(lat, lon)``; by default the target year's slice of `clim_onset`.
+    day_bins : sequence
+        The day bins, as `hcwf.metrics.bins.LeadBins.from_day_bins` takes them.
+    climatology_cv : str, optional
+        The cross-validation mode (see `cv_mode`); None means the default.
+
+    Returns
+    -------
+    hcwf.metrics.bins.PairArrays
+        The pairs, empty when there is no case.
     """
     cv = cv_mode(climatology_cv) == "leave_one_year_out"
     bins = LeadBins.from_day_bins(day_bins)
@@ -171,11 +301,36 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
 
 
 def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bins):
-    """Conditional climatology pairs (PairArrays) of all years in years, concatenated.
+    """Make the conditional climatology pairs of all `years`, concatenated.
 
-    A year's observed onsets come from clim_onset when it holds that year,
+    A year's observed onsets come from `clim_onset` when it holds that year,
     otherwise they are detected from the year's rainfall as for the forecasts.
-    The run `rc` carries the init dates, the onset definition and climatology_cv.
+    The run `rc` carries the init dates, the onset definition and ``climatology_cv``.
+
+    Parameters
+    ----------
+    clim_onset : xarray.DataArray of datetime64
+        The observed onset dates of the climatology years.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    case : hcwf.config.model.Case
+        The case whose model the thresholds are loaded for.
+    select : hcwf.config.model.Selection, default Selection()
+        The call's choices.
+    years : iterable of int
+        The target years.
+    day_bins : sequence
+        The day bins.
+
+    Returns
+    -------
+    hcwf.metrics.bins.PairArrays
+        The pairs of all years, in the order of `years`.
+
+    Raises
+    ------
+    ValueError
+        No year gave a case, or the ``climatology_cv`` setting is not a valid mode.
     """
     from hcwf.io.forecasts import initialization_dates
     from hcwf.io.thresholds import thresholds_of
@@ -197,7 +352,24 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
 
 
 def _detect_observed(year, rc, select, thresholds):
-    """The observed onsets (lat, lon) of a year outside the climatology years."""
+    """Detect the observed onsets of a year outside the climatology years.
+
+    Parameters
+    ----------
+    year : int
+        The year.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    select : hcwf.config.model.Selection
+        The call's choices.
+    thresholds : xarray.DataArray
+        The onset thresholds.
+
+    Returns
+    -------
+    xarray.DataArray of datetime64
+        The observed onset dates over ``(lat, lon)`` (or ``unit``).
+    """
     from hcwf.io.observations import observations_of
     from hcwf.onset.detect import detect_observed
 
@@ -206,13 +378,37 @@ def _detect_observed(year, rc, select, thresholds):
 
 def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, observed_onset_da, *,
                                                 max_forecast_day, climatology_cv=None):
-    """The conditional median onset as a deterministic forecast, one row per (init, lat, lon), as compute_climatology_as_forecast.
+    """Compute the conditional median onset as a deterministic forecast, one row per (init, lat, lon).
 
+    The layout is that of `hcwf.references.climatology.compute_climatology_as_forecast`.
     For each init before a cell's observed onset, the forecast onset is the
-    first lead (1..max_forecast_day) where the conditional CDF, the running
+    first lead (1 to `max_forecast_day`) where the conditional CDF, the running
     sum of the conditional probabilities, reaches 0.5. There is no forecast
-    onset (NaN day, no date) when it does not within max_forecast_day, when the
+    onset (NaN day, no date) when it does not within `max_forecast_day`, or when the
     cell has no KDE.
+
+    ``ValueError`` is raised by a called function when `climatology_cv` is not a valid mode.
+
+    Parameters
+    ----------
+    clim_onset : xarray.DataArray of datetime64
+        The observed onset dates of the climatology years.
+    year : int
+        The evaluated year.
+    init_dates : iterable of datetime-like
+        The initialization dates.
+    observed_onset_da : xarray.DataArray of datetime64
+        The observed onsets of the year; they select the cases and give the grid.
+    max_forecast_day : int
+        The last lead, in days.
+    climatology_cv : str, optional
+        The cross-validation mode (see `cv_mode`); None means the default.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per case (init, lat, lon) or (init, unit) with ``init_time``, the spatial columns, ``onset_day``,
+        ``onset_date`` and ``obs_onset_date``. Empty when there is no case.
     """
     cv = cv_mode(climatology_cv) == "leave_one_year_out"
     spatial = axes.spatial_dims(observed_onset_da.dims)

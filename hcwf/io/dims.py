@@ -2,7 +2,8 @@
 
 Canonical names: lat, lon, time (observations), init_time, step, member (forecasts) and unit (a string dimension of
 pre-aggregated units such as admin units). `ROLE_ALIASES` is the only place the names a file may use for each role are
-listed; hcwf.onset.ingest, hcwf.config.detect and the dim_fmt functions below all read it.
+listed; `hcwf.onset.ingest`, `hcwf.config.detect` and the ``dim_fmt`` functions below all read it. The readers in
+`hcwf.io.observations` and `hcwf.io.forecasts` apply the ``dim_fmt`` functions to every dataset they open.
 """
 import pandas as pd
 
@@ -28,11 +29,30 @@ _DAY_UNITS = ("day", "days")
 
 
 def matches(names, role, *, exclude=(), fuzzy=False, coords=None):
-    """The names (in the order given) that can play `role`: an alias, else (fuzzy) one holding a keyword of the role.
+    """Return the names that can play `role`: an alias, else (if `fuzzy`) one holding a keyword of the role.
 
     Exact aliases are compared in lower case and returned in the table's order of preference. `exclude` lists names
     taken by other roles. For the step role a coordinate whose units attribute is days also counts, when no name
-    does (`coords` maps a name to its attributes, e.g. ds.coords).
+    does.
+
+    Parameters
+    ----------
+    names : iterable of str
+        The candidate names, e.g. the coordinates of a dataset.
+    role : {"time", "init_time", "step", "member", "lat", "lon", "unit"}
+        The role to find a name for (a key of `ROLE_ALIASES`).
+    exclude : iterable of str, default ()
+        Names taken by other roles, left out.
+    fuzzy : bool, default False
+        Also accept a name holding a keyword of the role (`ROLE_KEYWORDS`) when no alias is present.
+    coords : mapping, optional
+        Maps a name to an object with an ``attrs`` dict, e.g. ``ds.coords``; used for the step role to accept a
+        coordinate whose ``units`` attribute is days.
+
+    Returns
+    -------
+    list of str
+        The matching names, best first; empty if none.
     """
     names = [n for n in names if n not in exclude]
     lowered = {str(n).lower(): n for n in reversed(names)}
@@ -46,13 +66,44 @@ def matches(names, role, *, exclude=(), fuzzy=False, coords=None):
 
 
 def find_dim(names, role, *, exclude=(), fuzzy=False, coords=None):
-    """The first name that can play `role` (see `matches`), or None."""
+    """Return the first name that can play `role`, or None.
+
+    Parameters
+    ----------
+    names : iterable of str
+        The candidate names.
+    role : str
+        The role to find (see `matches`).
+    exclude : iterable of str, default ()
+        Names taken by other roles.
+    fuzzy : bool, default False
+        Also accept keyword matches (see `matches`).
+    coords : mapping, optional
+        Coordinate attributes for the step role (see `matches`).
+
+    Returns
+    -------
+    str or None
+        The best match, or None when no name fits.
+    """
     hits = matches(names, role, exclude=exclude, fuzzy=fuzzy, coords=coords)
     return hits[0] if hits else None
 
 
 def _rename_unit(ds):
-    """Rename a string unit dimension (adm3_name, adm3) to "unit" and give it its labels as a clean string coordinate."""
+    """Rename a string unit dimension (``adm3_name``, ``adm3``) to ``unit`` and give it clean string labels.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The dataset; returned unchanged when it has no unit dimension.
+
+    Returns
+    -------
+    xarray.Dataset
+        The dataset with a ``unit`` dimension whose coordinate holds the stripped, decoded labels (taken from an
+        ``adm3_name`` or ``adm3`` variable if the dimension had no coordinate).
+    """
     name = find_dim(list(ds.dims), "unit")
     if name is None:
         return ds
@@ -71,7 +122,23 @@ def _rename_unit(ds):
 
 
 def _rename_spatial(ds):
-    """Rename the latitude and longitude coordinates to lat and lon (not needed for a unit dimension)."""
+    """Rename the latitude and longitude coordinates to ``lat`` and ``lon`` (not needed for a unit dimension).
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The dataset.
+
+    Returns
+    -------
+    xarray.Dataset
+        The dataset with ``lat`` and ``lon`` coordinates; unchanged if it has ``lon`` or a ``unit`` dimension.
+
+    Raises
+    ------
+    IndexError
+        No latitude or no longitude coordinate is found.
+    """
     coord_list = list(ds.coords.keys())
     if "lon" not in coord_list and "unit" not in ds.dims:
         lat = find_dim(coord_list, "lat", fuzzy=True)
@@ -83,7 +150,20 @@ def _rename_spatial(ds):
 
 
 def dim_fmt(ds):
-    """Standardize dimension names"""
+    """Standardise the dimension names of an observation dataset.
+
+    Units and spatial names are renamed; a dataset that is not a plain lat/lon grid also gets a ``time`` coordinate.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The dataset as read from a file.
+
+    Returns
+    -------
+    xarray.Dataset
+        The dataset with ``lat``, ``lon`` and ``time`` (or ``unit``) names.
+    """
     ds = _rename_spatial(_rename_unit(ds))
     coord_list = list(ds.coords.keys())
 
@@ -99,8 +179,23 @@ def dim_fmt(ds):
 def rename_model_dims(ds, model_dims=None):
     """Rename coordinates the caller named explicitly to HCWF's canonical names.
 
-    `model_dims` maps canonical names ("init_time", "step", "member", "lat",
-    "lon") to the names used in the file, e.g. {"init_time": "time"}.
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The dataset.
+    model_dims : dict of str to str, optional
+        Maps canonical names (``"init_time"``, ``"step"``, ``"member"``, ``"lat"``, ``"lon"``) to the names used in
+        the file, e.g. ``{"init_time": "time"}``; None or empty renames nothing.
+
+    Returns
+    -------
+    xarray.Dataset
+        The renamed dataset.
+
+    Raises
+    ------
+    ValueError
+        A name in `model_dims` is not a variable of the dataset.
     """
     if not model_dims:
         return ds
@@ -115,7 +210,23 @@ def rename_model_dims(ds, model_dims=None):
 
 
 def _init_time_coord(ds, coord_list):
-    """Prefer a datetime coordinate: lead-time names like "prediction_timedelta" also contain "time"."""
+    """Pick the coordinate to call ``init_time``, preferring a datetime one.
+
+    Lead-time names like ``prediction_timedelta`` also contain ``time``, so datetime coordinates come first.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The dataset.
+    coord_list : list of str
+        The coordinate names of `ds`.
+
+    Returns
+    -------
+    str
+        The first datetime coordinate whose name contains ``time``, else the first name containing it (an
+        ``IndexError`` follows if no name contains ``time``).
+    """
     time_coords = [variable for variable in coord_list if "time" in variable.lower()]
     datetime_coords = [
         variable for variable in time_coords if pd.api.types.is_datetime64_any_dtype(ds[variable])
@@ -124,7 +235,22 @@ def _init_time_coord(ds, coord_list):
 
 
 def dim_fmt_model(ds, model_dims=None):
-    """Standardize dimension names for deterministic reforecast model data"""
+    """Standardise the dimension names of deterministic reforecast model data.
+
+    Renames to ``lat``, ``lon``, ``init_time`` and ``step``; a timedelta step is converted to integer days.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The dataset as read from a file.
+    model_dims : dict of str to str, optional
+        Explicit names used in the file (see `rename_model_dims`).
+
+    Returns
+    -------
+    xarray.Dataset
+        The dataset with canonical dimension names; ``step`` holds integer days.
+    """
     ds = _rename_spatial(_rename_unit(rename_model_dims(ds, model_dims)))
     coord_list = list(ds.coords.keys())
 
@@ -144,8 +270,22 @@ def dim_fmt_model(ds, model_dims=None):
 
 
 def dim_fmt_model_ensemble(ds, model_dims=None):
-    """Standardize dimension names for probabilistic reforecast model data"""
+    """Standardise the dimension names of probabilistic reforecast model data.
 
+    As `dim_fmt_model`, and a ``member`` dimension is required.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The dataset as read from a file.
+    model_dims : dict of str to str, optional
+        Explicit names used in the file (see `rename_model_dims`).
+
+    Returns
+    -------
+    xarray.Dataset
+        The dataset with canonical dimension names including ``member``.
+    """
     ds = dim_fmt_model(ds, model_dims)
 
     coord_list = list(ds.coords.keys())

@@ -33,13 +33,10 @@ PACKAGE = ROOT / "hcwf"
 PENDING = {
     "hcwf/cli",
     "hcwf/figures",
-    "hcwf/io",
     "hcwf/metrics",
     "hcwf/onset",
-    "hcwf/references",
     "hcwf/runs",
     "hcwf/scoring",
-    "hcwf/spatial",
 }
 
 # pydoclint cannot allow optional signature annotations: with ``arg-type-hints-in-signature = false`` it reports DOC108 for

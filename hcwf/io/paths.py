@@ -3,9 +3,22 @@ from pathlib import Path
 
 
 def set_dir(path_str, work_dir=None):
-    """
-    Resolve a path string into an absolute, OS-agnostic Path.
-    Relative paths are resolved against `work_dir` if given, otherwise the current directory.
+    """Resolve a path string into an absolute, OS-agnostic path.
+
+    ``~`` is expanded. A relative path is resolved against `work_dir` if given, otherwise against the current
+    directory.
+
+    Parameters
+    ----------
+    path_str : str or pathlib.Path
+        The path to resolve; backslash and slash separators are both understood.
+    work_dir : str or pathlib.Path, optional
+        The folder a relative path is taken from; None (or an empty value) means the current directory.
+
+    Returns
+    -------
+    pathlib.Path
+        The absolute, resolved path.
     """
     # 1. Convert to an OS-agnostic Path object (handles \ and / automatically)
     p = Path(path_str).expanduser()

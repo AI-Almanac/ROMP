@@ -1,13 +1,16 @@
-"""Evaluation units: the places onsets are computed, scored and blended for.
+"""Define the evaluation units, the places onsets are computed, scored and blended for.
 
 A unit is a grid cell, a polygon (an admin unit) or a region (a set of cells averaged into one series). One
-table describes them, whatever the kind: an ordered, unique string `id`, a centroid `lat` / `lon`, and optionally
-`name`, `parent`, the polygon `geometry` and named boolean subsets (for instance `dissemination`, `training`).
+table describes them, whatever the kind: an ordered, unique string ``id``, a centroid ``lat`` / ``lon``, and
+optionally ``name``, ``parent``, the polygon ``geometry`` and named boolean subsets (for instance ``dissemination``,
+``training``). `EvaluationUnits` is that table, `UnitsSpec` the configuration that says where it comes from, and
+`read_centroids`, `read_id_list` and `read_shapes` read the tables and shapes it is built from. The weights
+themselves are built in `hcwf.spatial.regrid`, the grid-id conventions live in `hcwf.spatial.ids`.
 
-`EvaluationUnits.transform(source_lat, source_lon)` gives the `SparseTransform` from the cells of a source grid
-(observations or a model) to the units, compiled once per grid. Rain is read on the source grid, averaged with
-`observed_mean` onto the units in float mm and only then rounded to tenths (`EvaluationUnits.from_region` is the
-one-unit case), so the engine runs on a ("unit",) spatial axis unchanged.
+`EvaluationUnits.transform(source_lat, source_lon)` gives the `~hcwf.spatial.regrid.SparseTransform` from the cells
+of a source grid (observations or a model) to the units, compiled once per grid. Rain is read on the source grid,
+averaged with ``observed_mean`` onto the units in float mm and only then rounded to tenths
+(`EvaluationUnits.from_region` is the one-unit case), so the engine runs on a ``("unit",)`` spatial axis unchanged.
 
 How the transform comes about:
 
@@ -40,16 +43,40 @@ from hcwf.errors import RegionError
 log = logging.getLogger(__name__)
 
 KINDS = ("grid", "polygon", "region")
+"""The kinds of unit: a grid cell, a polygon and a region (a set of cells averaged into one series)."""
 _GRID_ID = re.compile(r"^(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)$")
+"""The pattern of a ``<lat>_<lon>`` grid id, with the latitude and the longitude as groups."""
 _LAT_NAMES = ("lat", "center_lat", "latitude")
+"""The accepted names of a latitude column, in order of preference."""
 _LON_NAMES = ("lon", "center_lon", "longitude")
+"""The accepted names of a longitude column, in order of preference."""
 
 
 def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
-    """Unit centroids as a table of (id, lat, lon), from a CSV path or a DataFrame.
+    """Read the unit centroids as a table of (id, lat, lon), from a CSV path or a table.
 
-    The id column is `id_col`, else the first of target_id, id, adm3_name, else the first column; latitude and
-    longitude are lat / center_lat / latitude and lon / center_lon / longitude. One row per id.
+    The id column is `id_col`, else the first of ``target_id``, ``id``, ``adm3_name``, else the first column;
+    latitude and longitude are ``lat`` / ``center_lat`` / ``latitude`` and ``lon`` / ``center_lon`` / ``longitude``.
+    There is one row per id.
+
+    Parameters
+    ----------
+    source : str or os.PathLike or pandas.DataFrame
+        The path of a CSV file, or a table with the same columns (it is copied).
+    id_col : str, optional
+        The name of the id column; None picks it as described above.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The columns ``id`` (normalised strings, unique), ``lat`` and ``lon`` (``float64``, degrees).
+
+    Raises
+    ------
+    FileNotFoundError
+        `source` is a path that does not exist.
+    ValueError
+        `id_col` is not a column of the table, or the table has no latitude or longitude column.
     """
     if isinstance(source, (str, os.PathLike)):
         if not os.path.exists(source):
@@ -72,10 +99,34 @@ def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
 
 
 def read_id_list(path, id_col: str | None = None, *, explicit=None, authoritative_ids=None) -> pd.Series:
-    """The ids of a CSV list of units (for instance the dissemination units), as normalised strings.
+    """Read the ids of a CSV list of units (for instance the dissemination units) as normalised strings.
 
-    The id column is `id_col`, else id / adm3_name, else grid ids made from lat and lon, else (with a warning) the
-    first column. Grid ids are written under the convention the `authoritative_ids` (the units') establish.
+    The id column is `id_col`, else ``id`` / ``adm3_name``, else grid ids made from ``lat`` and ``lon``, else (with a
+    warning) the first column. Grid ids are written under the convention the `authoritative_ids` (the units')
+    establish.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The CSV file to read.
+    id_col : str, optional
+        The name of the id column; None picks it as described above.
+    explicit : hcwf.spatial.ids.GridIdConvention, optional
+        A grid-id convention set by the configuration; None lets the units' ids decide.
+    authoritative_ids : pandas.Series of str, optional
+        The ids of the units, whose convention the listed grid ids follow.
+
+    Returns
+    -------
+    pandas.Series of str
+        The distinct ids, in file order, with a fresh index.
+
+    Raises
+    ------
+    FileNotFoundError
+        `path` does not exist.
+    ValueError
+        `id_col` is not a column of the file.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"unit list not found: {path}")
@@ -94,9 +145,34 @@ def read_id_list(path, id_col: str | None = None, *, explicit=None, authoritativ
 
 
 def read_shapes(path, unit_id_col: str, unit_name_col: str | None = None, parent_col: str | None = None):
-    """The features of a shapefile or GeoJSON as (table of id [, name, parent], geometries) in EPSG:4326.
+    """Read the features of a shapefile or GeoJSON as (table of id [, name, parent], geometries) in EPSG:4326.
 
     Ids are normalised strings and must be unique. A file without a coordinate system is taken to be EPSG:4326.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The shapefile or GeoJSON to read.
+    unit_id_col : str
+        The attribute that holds the unit id.
+    unit_name_col : str, optional
+        The attribute that holds the unit name; None leaves the ``name`` column out.
+    parent_col : str, optional
+        The attribute that holds the parent unit; None leaves the ``parent`` column out.
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        One row per feature, with ``id`` and, when asked for, ``name`` and ``parent``.
+    geometries : list of shapely.Geometry
+        The geometry of each feature, in the order of the rows, in EPSG:4326.
+
+    Raises
+    ------
+    FileNotFoundError
+        `path` does not exist.
+    ValueError
+        A requested attribute is not in the file, or the ids are not unique.
     """
     import geopandas as gpd
 
@@ -118,8 +194,33 @@ def read_shapes(path, unit_id_col: str, unit_name_col: str | None = None, parent
 
 
 class _Cells:
-    """The grid a grid or region unit lives on: axes, the flat (latitude-major) index of each unit's cell and, for a
-    region, the weight of each of its cells."""
+    """The grid a grid or region unit lives on.
+
+    It holds the axes, the flat (latitude-major) index of each unit's cell and, for a region, the weight of each of
+    its cells.
+
+    Parameters
+    ----------
+    lat : array_like of float, shape (lat,)
+        The latitudes of the grid, in degrees.
+    lon : array_like of float, shape (lon,)
+        The longitudes of the grid, in degrees.
+    flat : array_like of int, shape (cell,)
+        The flat latitude-major index (``i_lat * len(lon) + i_lon``) of each cell.
+    weights : array_like of float, shape (cell,), optional
+        The weight of each cell in a region; None for grid units.
+
+    Attributes
+    ----------
+    lat : numpy.ndarray of float64, shape (lat,)
+        The latitudes of the grid.
+    lon : numpy.ndarray of float64, shape (lon,)
+        The longitudes of the grid.
+    flat : numpy.ndarray of int64, shape (cell,)
+        The flat index of each cell.
+    weights : numpy.ndarray of float64, shape (cell,) or None
+        The weight of each cell, or None.
+    """
 
     def __init__(self, lat, lon, flat, weights=None):
         self.lat, self.lon = np.asarray(lat, dtype=float), np.asarray(lon, dtype=float)
@@ -127,6 +228,18 @@ class _Cells:
         self.weights = None if weights is None else np.asarray(weights, dtype=float)
 
     def take(self, index) -> "_Cells":
+        """Return the cells at the given positions, on the same grid.
+
+        Parameters
+        ----------
+        index : array_like of int or array_like of bool
+            The positions (or a boolean selection) among the cells.
+
+        Returns
+        -------
+        _Cells
+            The selected cells, with their weights.
+        """
         return _Cells(self.lat, self.lon, self.flat[index], None if self.weights is None else self.weights[index])
 
 
@@ -134,9 +247,45 @@ class EvaluationUnits:
     """An ordered table of units and what is needed to aggregate source grids onto them.
 
     Build one with `from_grid`, `from_mask`, `from_shapefile`, `from_weights` or `from_region`. The columns are
-    `id` (unique strings), `lat`, `lon` (centroid, NaN when unknown), `name` and `parent` when known; `kind` is
-    "grid", "polygon" or "region"; `geometry` holds the polygons of a shapefile; `subsets` maps a name to a boolean
-    array over the units.
+    ``id`` (unique strings), ``lat``, ``lon`` (centroid, NaN when unknown), ``name`` and ``parent`` when known.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        One row per unit with an ``id`` column and, optionally, ``lat``, ``lon``, ``name`` and ``parent``. The ids
+        are normalised to strings and must be unique; a missing ``lat`` or ``lon`` becomes NaN.
+    kind : {"grid", "polygon", "region"}
+        What a unit is.
+    geometry : sequence of shapely.Geometry, optional
+        The polygon of each unit, for a shapefile.
+    subsets : dict of str to array_like of bool, optional
+        Named boolean subsets, each with one entry per unit.
+    weights : pandas.DataFrame, optional
+        A source-to-unit weights table, from which `transform` is built.
+    cells : _Cells, optional
+        The grid and cells of grid and region units.
+    weight_options : dict, optional
+        The options of `hcwf.spatial.regrid.polygon_weights` for polygon units.
+    mask_record : object, optional
+        The record of the mask the units were selected with, kept for the run record.
+
+    Attributes
+    ----------
+    table : pandas.DataFrame
+        The units, one row each.
+    kind : str
+        ``"grid"``, ``"polygon"`` or ``"region"``.
+    geometry : list of shapely.Geometry or None
+        The polygons of a shapefile.
+    subsets : dict of str to numpy.ndarray of bool, shape (unit,)
+        Maps a subset name to a boolean array over the units.
+    mask_record : object or None
+        The record of the mask the units were selected with.
+
+    Raises
+    ------
+    ValueError
+        `kind` is not one of `KINDS`, the ids are not unique, or a subset does not have one entry per unit.
     """
 
     def __init__(self, table: pd.DataFrame, kind: str, *, geometry=None, subsets=None, weights=None, cells=None,
@@ -164,22 +313,43 @@ class EvaluationUnits:
     # -- the table -----------------------------------------------------------------------------------------
 
     def __len__(self) -> int:
+        """Return the number of units.
+
+        Returns
+        -------
+        int
+            The number of rows of the table.
+        """
         return len(self.table)
 
     @property
     def ids(self) -> np.ndarray:
+        """The unit ids, as a string array of shape ``(unit,)``."""
         return self.table["id"].to_numpy(dtype=str)
 
     @property
     def lat(self) -> np.ndarray:
+        """The centroid latitudes in degrees, a ``float64`` array of shape ``(unit,)`` (NaN when unknown)."""
         return self.table["lat"].to_numpy(dtype=float)
 
     @property
     def lon(self) -> np.ndarray:
+        """The centroid longitudes in degrees, a ``float64`` array of shape ``(unit,)`` (NaN when unknown)."""
         return self.table["lon"].to_numpy(dtype=float)
 
     def column(self, name: str) -> np.ndarray | None:
-        """An optional column (name, parent), None when the units have none."""
+        """Return an optional column (``name``, ``parent``), None when the units have none.
+
+        Parameters
+        ----------
+        name : str
+            The column to read.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            The values of the column, one per unit, or None when the table has no such column.
+        """
         return self.table[name].to_numpy() if name in self.table.columns else None
 
     # -- constructors --------------------------------------------------------------------------------------
@@ -187,8 +357,36 @@ class EvaluationUnits:
     @classmethod
     def from_grid(cls, lat, lon, keep=None, *, convention: unit_ids.GridIdConvention | None = None,
                   explicit: unit_ids.GridIdConvention | None = None, mask_record=None) -> "EvaluationUnits":
-        """The cells of a (lat, lon) grid where the boolean (nlat, nlon) `keep` is True (all when None), as grid
-        units in latitude-major order. Ids are "<lat>_<lon>" under `convention`, else the explicit or inferred one."""
+        """Build grid units from the cells of a (lat, lon) grid where `keep` is True.
+
+        The units are in latitude-major order. Ids are ``<lat>_<lon>`` under `convention`, else the explicit or
+        inferred one.
+
+        Parameters
+        ----------
+        lat : array_like of float, shape (lat,)
+            The latitudes of the grid, in degrees.
+        lon : array_like of float, shape (lon,)
+            The longitudes of the grid, in degrees.
+        keep : array_like of bool, shape (lat, lon), optional
+            The cells to keep; None keeps all.
+        convention : hcwf.spatial.ids.GridIdConvention, optional
+            The convention to write the ids under; None resolves one from `explicit` or the coordinates.
+        explicit : hcwf.spatial.ids.GridIdConvention, optional
+            A convention set by the configuration, used when `convention` is None.
+        mask_record : object, optional
+            The record of the mask that gave `keep`, stored on the units.
+
+        Returns
+        -------
+        EvaluationUnits
+            The grid units, of kind ``"grid"``.
+
+        Raises
+        ------
+        ValueError
+            `keep` has the wrong shape or keeps no cell.
+        """
         lat, lon = np.asarray(lat, dtype=float).reshape(-1), np.asarray(lon, dtype=float).reshape(-1)
         keep = np.ones((lat.size, lon.size), dtype=bool) if keep is None else np.asarray(keep, dtype=bool)
         if keep.shape != (lat.size, lon.size):
@@ -204,7 +402,26 @@ class EvaluationUnits:
 
     @classmethod
     def from_mask(cls, mask, lat, lon, *, label: str = "data", **kwargs) -> "EvaluationUnits":
-        """Grid units from HCWF's mask (a `MaskSpec` or its mapping; None keeps every cell) on a grid."""
+        """Build grid units from HCWF's mask on a grid.
+
+        Parameters
+        ----------
+        mask : hcwf.spatial.masks.MaskSpec or dict or None
+            The mask, or its mapping; None keeps every cell.
+        lat : array_like of float, shape (lat,)
+            The latitudes of the grid, in degrees.
+        lon : array_like of float, shape (lon,)
+            The longitudes of the grid, in degrees.
+        label : str, default "data"
+            What the grid is, for the messages of the mask.
+        **kwargs : dict
+            Passed on to `from_grid` (``convention``, ``explicit``).
+
+        Returns
+        -------
+        EvaluationUnits
+            The grid units of the cells the mask keeps.
+        """
         if mask is None:
             return cls.from_grid(lat, lon, **kwargs)
         from hcwf.spatial.masks import MaskSpec, build_mask
@@ -216,9 +433,35 @@ class EvaluationUnits:
     def from_shapefile(cls, path, unit_id_col: str, unit_name_col: str | None = None,
                        parent_col: str | None = None, *, cell_area: str = "planar", measure: str = "area",
                        min_share: float = 1e-9, clip_to=None) -> "EvaluationUnits":
-        """Polygon units from the features of a shapefile or GeoJSON. Centroids are the polygons' centroids; the
-        weights onto a grid are built from the overlap areas when `transform` is asked for one (options as in
-        `polygon_weights`)."""
+        """Build polygon units from the features of a shapefile or GeoJSON.
+
+        Centroids are the polygons' centroids; the weights onto a grid are built from the overlap areas when
+        `transform` is asked for one (options as in `hcwf.spatial.regrid.polygon_weights`).
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The shapefile or GeoJSON.
+        unit_id_col : str
+            The attribute that holds the unit id.
+        unit_name_col : str, optional
+            The attribute that holds the unit name.
+        parent_col : str, optional
+            The attribute that holds the parent unit.
+        cell_area : str, default "planar"
+            How the area of a cell is measured (see `hcwf.spatial.regrid.polygon_weights`).
+        measure : str, default "area"
+            What the overlap is measured in (see `hcwf.spatial.regrid.polygon_weights`).
+        min_share : float, default 1e-9
+            The smallest overlap share kept (see `hcwf.spatial.regrid.polygon_weights`).
+        clip_to : object, optional
+            An outline the cells are clipped to (see `hcwf.spatial.regrid.polygon_weights`).
+
+        Returns
+        -------
+        EvaluationUnits
+            The polygon units, in file order.
+        """
         import warnings
 
         import shapely
@@ -233,9 +476,27 @@ class EvaluationUnits:
 
     @classmethod
     def from_weights(cls, weights, centroids=None, *, centroid_id_col: str | None = None) -> "EvaluationUnits":
-        """Units named by the targets of a weights table or CSV (sorted, as `SparseTransform.from_weights` has
-        them), with centroids from a table or CSV, else from "<lat>_<lon>" ids. Kind is grid when every id is a
-        grid id, else polygon. The weights give `transform`."""
+        """Build units named by the targets of a weights table or CSV.
+
+        The units are sorted, as `~hcwf.spatial.regrid.SparseTransform.from_weights` has them, with centroids from a
+        table or CSV, else from ``<lat>_<lon>`` ids. The kind is grid when every id is a grid id, else polygon. The
+        weights give `transform`.
+
+        Parameters
+        ----------
+        weights : str or os.PathLike or pandas.DataFrame
+            The weights table, or the path of its CSV (see `hcwf.spatial.regrid.read_weights`); its ``target_id``
+            column names the units.
+        centroids : str or os.PathLike or pandas.DataFrame, optional
+            The centroids, as for `read_centroids`; None takes them from the ids.
+        centroid_id_col : str, optional
+            The id column of `centroids`.
+
+        Returns
+        -------
+        EvaluationUnits
+            The units, with the weights kept for `transform`.
+        """
         weights = regrid.read_weights(weights)
         ids = sorted(weights["target_id"].unique())
         table = pd.DataFrame({"id": ids})
@@ -250,8 +511,35 @@ class EvaluationUnits:
     @classmethod
     def from_region(cls, keep, lat, lon, *, id: str = "region", name: str | None = None,
                     weights: str = "cos_lat") -> "EvaluationUnits":
-        """One unit averaging the cells of a boolean (nlat, nlon) mask: cos(latitude) weights, or equal ones.
-        The centroid is the cells' mean position."""
+        """Build one unit that averages the cells of a mask.
+
+        The cells are weighted by cos(latitude), or equally. The centroid is the cells' mean position.
+
+        Parameters
+        ----------
+        keep : array_like of bool, shape (lat, lon)
+            The cells of the region.
+        lat : array_like of float, shape (lat,)
+            The latitudes of the grid, in degrees.
+        lon : array_like of float, shape (lon,)
+            The longitudes of the grid, in degrees.
+        id : str, default "region"
+            The id of the unit.
+        name : str, optional
+            The name of the unit; None leaves the ``name`` column out.
+        weights : {"cos_lat", "equal"}, default "cos_lat"
+            How the cells are weighted.
+
+        Returns
+        -------
+        EvaluationUnits
+            One unit of kind ``"region"``.
+
+        Raises
+        ------
+        ValueError
+            `weights` is not one of the choices, `keep` does not match the grid, or it selects no cell.
+        """
         if weights not in ("cos_lat", "equal"):
             raise ValueError(f"weights must be 'cos_lat' or 'equal', got {weights!r}")
         lat, lon = np.asarray(lat, dtype=float).reshape(-1), np.asarray(lon, dtype=float).reshape(-1)
@@ -271,8 +559,26 @@ class EvaluationUnits:
     # -- subsets and area of interest ----------------------------------------------------------------------
 
     def subset_from_csv(self, name: str, path, id_col: str | None = None, *, explicit=None) -> "EvaluationUnits":
-        """A copy with a subset named by a CSV list of unit ids (see `read_id_list`); the listed ids that are
-        not units are ignored, as listing a cell outside the data is harmless."""
+        """Return a copy with a subset named by a CSV list of unit ids (see `read_id_list`).
+
+        The listed ids that are not units are ignored, as listing a cell outside the data is harmless.
+
+        Parameters
+        ----------
+        name : str
+            The name of the subset.
+        path : str or os.PathLike
+            The CSV list of ids.
+        id_col : str, optional
+            The id column of the list.
+        explicit : hcwf.spatial.ids.GridIdConvention, optional
+            A grid-id convention set by the configuration.
+
+        Returns
+        -------
+        EvaluationUnits
+            The same units with the subset added.
+        """
         listed = read_id_list(path, id_col, explicit=explicit, authoritative_ids=pd.Series(self.ids, dtype=str))
         out = self._copy(self.table)
         out.subsets = {**self.subsets, name: np.isin(self.ids, listed.to_numpy())}
@@ -280,7 +586,18 @@ class EvaluationUnits:
         return out
 
     def restrict(self, keep) -> "EvaluationUnits":
-        """The units where `keep` is True or the named subset, in order, with their subsets and weights."""
+        """Return the units where `keep` is True (or in the named subset), in order, with their subsets and weights.
+
+        Parameters
+        ----------
+        keep : str or array_like of bool, shape (unit,)
+            A subset name or a boolean selection.
+
+        Returns
+        -------
+        EvaluationUnits
+            The selected units.
+        """
         keep = self.subsets[keep] if isinstance(keep, str) else np.asarray(keep, dtype=bool)
         index = np.flatnonzero(keep)
         out = self._copy(self.table.iloc[index])
@@ -293,12 +610,27 @@ class EvaluationUnits:
         return out
 
     def in_box(self, box) -> np.ndarray:
-        """Whether each unit's centroid is inside a box.
+        """Tell whether each unit's centroid is inside a box.
 
-        A dict with any of lat_min, lat_max, lon_min, lon_max (inclusive; a missing bound is open) compares
-        the raw longitudes, as onset_blending does. A region name (or alias) takes the region's box as HCWF
+        A dict with any of ``lat_min``, ``lat_max``, ``lon_min``, ``lon_max`` (inclusive; a missing bound is open)
+        compares the raw longitudes, as onset_blending does. A region name (or alias) takes the region's box as HCWF
         does (`hcwf.spatial.select.region_box`: longitude conventions and the seam are handled). Units without a
         centroid are outside; no centroid at all is an error.
+
+        Parameters
+        ----------
+        box : dict or str
+            The bounds in degrees, or a region name.
+
+        Returns
+        -------
+        numpy.ndarray of bool, shape (unit,)
+            True for the units inside the box.
+
+        Raises
+        ------
+        ValueError
+            No unit has a centroid.
         """
         lat, lon = self.lat, self.lon
         if np.isnan(lat).all() or np.isnan(lon).all():
@@ -313,8 +645,21 @@ class EvaluationUnits:
         return keep
 
     def _in_region_box(self, region: str) -> np.ndarray:
-        """HCWF's region box on the units' centroid axes: the box is separable, so cutting the distinct latitudes
-        and longitudes with `region_box` (which also conforms the longitude convention) cuts the units."""
+        """Tell whether each unit's centroid is inside HCWF's box of a region.
+
+        The box is separable, so cutting the distinct latitudes and longitudes with
+        `~hcwf.spatial.select.region_box` (which also conforms the longitude convention) cuts the units.
+
+        Parameters
+        ----------
+        region : str
+            A region name or alias.
+
+        Returns
+        -------
+        numpy.ndarray of bool, shape (unit,)
+            True for the units inside the box.
+        """
         import xarray as xr
 
         from hcwf.spatial.select import region_box
@@ -326,9 +671,29 @@ class EvaluationUnits:
         return np.isin(self.lat, cut["axis_lat"].values) & np.isin(self.lon, cut["axis_lon"].values)
 
     def in_outline(self, outline, boundary: str = "contains") -> np.ndarray:
-        """Whether each unit's centroid is inside an outline: a shapely geometry or a GeoJSON / shapefile path (all
-        its features are unioned). boundary "contains" leaves out a centroid on the edge (onset_blending);
-        "intersects" keeps it (HCWF's centre rule for masks). Centroid longitudes are wrapped to -180..180."""
+        """Tell whether each unit's centroid is inside an outline.
+
+        The outline is a shapely geometry or a GeoJSON / shapefile path (all its features are unioned). Centroid
+        longitudes are wrapped to -180..180.
+
+        Parameters
+        ----------
+        outline : shapely.Geometry or str or os.PathLike
+            The outline, or the file that holds it.
+        boundary : {"contains", "intersects"}, default "contains"
+            ``"contains"`` leaves out a centroid on the edge (onset_blending); ``"intersects"`` keeps it (HCWF's
+            centre rule for masks).
+
+        Returns
+        -------
+        numpy.ndarray of bool, shape (unit,)
+            True for the units inside the outline.
+
+        Raises
+        ------
+        ValueError
+            `boundary` is not one of the choices.
+        """
         import shapely
 
         if boundary not in ("contains", "intersects"):
@@ -342,8 +707,29 @@ class EvaluationUnits:
         return np.asarray(test(outline, lon, lat), dtype=bool)
 
     def in_area(self, *, box=None, outline=None, boundary: str = "contains") -> np.ndarray:
-        """Units inside the area of interest: the box, else the outline (see `in_box`, `in_outline`); all when
-        neither is given. No unit inside is an `AreaError`."""
+        """Tell which units are inside the area of interest: the box, else the outline.
+
+        See `in_box` and `in_outline`. All units are inside when neither is given.
+
+        Parameters
+        ----------
+        box : dict or str, optional
+            The box, as for `in_box`.
+        outline : shapely.Geometry or str or os.PathLike, optional
+            The outline, as for `in_outline`; used when `box` is None.
+        boundary : {"contains", "intersects"}, default "contains"
+            How a centroid on the edge of the outline counts.
+
+        Returns
+        -------
+        numpy.ndarray of bool, shape (unit,)
+            True for the units inside the area.
+
+        Raises
+        ------
+        AreaError
+            No unit is inside.
+        """
         if box is not None:
             keep = self.in_box(box)
         elif outline is not None:
@@ -356,6 +742,18 @@ class EvaluationUnits:
         return keep
 
     def _copy(self, table) -> "EvaluationUnits":
+        """Return units with the given table and the same kind, geometry, weights, cells and subsets.
+
+        Parameters
+        ----------
+        table : pandas.DataFrame
+            The table of the new units (copied).
+
+        Returns
+        -------
+        EvaluationUnits
+            The copy; it shares the geometry, weights and cells with `self` and has its own transform cache.
+        """
         out = EvaluationUnits(table.copy(), self.kind, geometry=self.geometry, weights=self._weights,
                               cells=self._cells, weight_options=self._weight_options, mask_record=self.mask_record)
         out.subsets = dict(self.subsets)
@@ -365,14 +763,31 @@ class EvaluationUnits:
 
     def transform(self, source_lat, source_lon, *, tolerance: float | None = None,
                   convention: unit_ids.GridIdConvention | None = None, wrap_longitude: bool = False) -> SparseTransform:
-        """The transform from the cells of a source grid (axes `source_lat`, `source_lon`) to the units, compiled
-        once per grid (and tolerance).
+        """Return the transform from the cells of a source grid to the units, compiled once per grid and tolerance.
 
         Weights from a table are matched to the grid's cells by exact coordinates, or within `tolerance` (the
         parity path for tables written by onset_blending is the exact one). Grid and region units use a
         selection when the grid holds all their cells within `tolerance` (default: HCWF's coordinate tolerance)
-        and conservative area weights otherwise. `wrap_longitude` puts a weight table's longitudes in the source
-        grid's convention before matching (see `SparseTransform.from_weights`).
+        and conservative area weights otherwise.
+
+        Parameters
+        ----------
+        source_lat : array_like of float, shape (lat,)
+            The latitudes of the source grid, in degrees.
+        source_lon : array_like of float, shape (lon,)
+            The longitudes of the source grid, in degrees.
+        tolerance : float, optional
+            The coordinate tolerance in degrees; None takes HCWF's default.
+        convention : hcwf.spatial.ids.GridIdConvention, optional
+            The grid-id convention used to match a weights table's ids.
+        wrap_longitude : bool, default False
+            Put a weight table's longitudes in the source grid's convention before matching (see
+            `~hcwf.spatial.regrid.SparseTransform.from_weights`).
+
+        Returns
+        -------
+        hcwf.spatial.regrid.SparseTransform
+            The sparse transform from the ``lat * lon`` source cells to the units.
         """
         source_lat, source_lon = np.asarray(source_lat, dtype=float), np.asarray(source_lon, dtype=float)
         key = (source_lat.tobytes(), source_lon.tobytes(), tolerance, convention, wrap_longitude)
@@ -381,6 +796,26 @@ class EvaluationUnits:
         return self._transforms[key]
 
     def _compile(self, lat, lon, tolerance, convention, wrap_longitude=False) -> SparseTransform:
+        """Build the transform of `transform` for one source grid.
+
+        Parameters
+        ----------
+        lat : numpy.ndarray of float64, shape (lat,)
+            The latitudes of the source grid.
+        lon : numpy.ndarray of float64, shape (lon,)
+            The longitudes of the source grid.
+        tolerance : float or None
+            The coordinate tolerance in degrees; None takes HCWF's default.
+        convention : hcwf.spatial.ids.GridIdConvention or None
+            The grid-id convention used to match a weights table's ids.
+        wrap_longitude : bool, default False
+            Whether to wrap a weights table's longitudes to the grid's convention.
+
+        Returns
+        -------
+        hcwf.spatial.regrid.SparseTransform
+            The transform, with one target per unit.
+        """
         targets = tuple(self.ids)
         if self._weights is not None:
             return SparseTransform.from_weights(self._weights, lat, lon, target_ids=targets, convention=convention,
@@ -413,53 +848,82 @@ class EvaluationUnits:
 # ---------------------------------------------------------------------------------------------------------------
 
 UNITS_KEYS = {f.key: f.nested_name for f in schema.FIELDS if f.section == "units"}
-"""The flat config keys of the `units:` section and the UnitsSpec field each sets (declared once, in the schema)."""
+"""The flat config keys of the ``units:`` section and the `UnitsSpec` field each sets (declared once, in the schema)."""
 _PER_SOURCE = ("units_mode", "units_weights")
-"""Keys that may be a mapping from a source ("observations" or a model's name; "*" for the rest) to its own value."""
+"""Keys that may be a mapping from a source (``"observations"`` or a model's name; ``"*"`` for the rest) to a value."""
 MODES = ("cells", "regrid", "cell_transform")
+"""The values of ``units.mode``."""
 BOUNDARIES = ("contains", "intersects")
+"""The values of ``units.boundary``."""
 DISSEMINATION_SCOPES = ("inputs", "training")
+"""The values of ``units.dissemination_scope``."""
 
 
 @dataclass(frozen=True)
 class UnitsSpec:
     """How a source's cells (or pre-aggregated units) become evaluation units, and which of them are used.
 
-    Source of the units: a `shapefile` (polygons, with `unit_id_col`; names and parents optional) or a `weights` table
-    (units named by its targets, with optional `centroids`), else the cells of the source grid. `mode` says how rain
-    reaches them: "cells" (the file's own cells, or its own units when it has a "unit" dimension), "regrid" (weights
-    from the source grid; millimetre factors applied after averaging, missing rain judged on the units) or
-    "cell_transform" (a source-to-unit weights table; factors applied before averaging, missing rain judged on the
-    source cells); None is "cells" without a shapefile or weights, else "regrid".
+    Source of the units: a ``shapefile`` (polygons, with ``unit_id_col``; names and parents optional) or a ``weights``
+    table (units named by its targets, with optional ``centroids``), else the cells of the source grid. ``mode`` says
+    how rain reaches them: ``"cells"`` (the file's own cells, or its own units when it has a ``"unit"`` dimension),
+    ``"regrid"`` (weights from the source grid; millimetre factors applied after averaging, missing rain judged on the
+    units) or ``"cell_transform"`` (a source-to-unit weights table; factors applied before averaging, missing rain
+    judged on the source cells); None is ``"cells"`` without a shapefile or weights, else ``"regrid"``.
 
-    The rest restricts or labels the units: `box` (sorted (key, value) pairs of lat_min / lat_max / lon_min / lon_max)
-    or an `outline` (`boundary` "contains" leaves out a centroid on the edge, "intersects" keeps it), the
-    `dissemination` list (`dissemination_scope` "inputs" restricts the units read to it, "training" only marks it as the
-    subset `dissemination`), and how grid ids are written (`id_digits`, `id_format`).
+    The rest restricts or labels the units: ``box`` (sorted (key, value) pairs of ``lat_min`` / ``lat_max`` /
+    ``lon_min`` / ``lon_max``) or an ``outline`` (``boundary`` ``"contains"`` leaves out a centroid on the edge,
+    ``"intersects"`` keeps it), the ``dissemination`` list (``dissemination_scope`` ``"inputs"`` restricts the units
+    read to it, ``"training"`` only marks it as the subset ``dissemination``), and how grid ids are written
+    (``id_digits``, ``id_format``).
 
-    Paths are as written; `resolve_path` expands ${ENV} and ~ and anchors a relative one at `base` (the folder of
-    the YAML that wrote it).
+    Paths are as written; `resolve_path` expands ``${ENV}`` and ``~`` and anchors a relative one at ``base`` (the
+    folder of the YAML that wrote it).
     """
 
     base: Path = Path(".")
+    """The folder a relative path is anchored at."""
     shapefile: str | None = None
+    """The shapefile or GeoJSON of polygon units."""
     unit_id_col: str | None = None
+    """The attribute of the shapefile that holds the unit id."""
     unit_name_col: str | None = None
+    """The attribute of the shapefile that holds the unit name."""
     parent_col: str | None = None
+    """The attribute of the shapefile that holds the parent unit."""
     weights: str | None = None
+    """A source-to-unit weights table (CSV) that names the units."""
     centroids: str | None = None
+    """A table of unit centroids (CSV)."""
     centroid_id_col: str | None = None
+    """The id column of the centroids table."""
     dissemination: str | None = None
+    """A CSV list of the dissemination units."""
     dissemination_id_col: str | None = None
+    """The id column of the dissemination list."""
     mode: str | None = None
+    """How rain reaches the units, one of `MODES`; None picks it from the other fields (see `how`)."""
     box: tuple | None = None
+    """The area of interest as sorted (key, value) pairs; a mapping given is converted."""
     outline: str | None = None
+    """A GeoJSON or shapefile outline of the area of interest."""
     boundary: str = "contains"
+    """Whether a centroid on the edge of the outline is inside, one of `BOUNDARIES`."""
     dissemination_scope: str = "inputs"
+    """What the dissemination list does, one of `DISSEMINATION_SCOPES`."""
     id_digits: int | None = None
+    """The number of decimals of the coordinates in grid ids."""
     id_format: str = "trimmed"
+    """How grid ids are written (``"trimmed"`` or fixed width)."""
 
     def __post_init__(self):
+        """Check the fields and turn a mapping `box` into sorted pairs.
+
+        Raises
+        ------
+        UnitsSpecError
+            A choice is not one of its values, a shapefile and a weights table are both named, the mode does not
+            match them, or a shapefile comes without ``unit_id_col``.
+        """
         if self.mode is not None and self.mode not in MODES:
             raise UnitsSpecError(f"units mode must be one of {MODES}, got {self.mode!r}")
         if self.boundary not in BOUNDARIES:
@@ -480,14 +944,28 @@ class UnitsSpec:
 
     @classmethod
     def from_flat(cls, values, source: str = "observations") -> "UnitsSpec | None":
-        """The evaluation units of a source from a flat config record, or None when it has no `units:` keys (the grid
-        cells are used). This is the one place the flat `units_*` keys (declared in the schema's `units` section, field
-        = nested_name) become a UnitsSpec; `RunConfig.from_flat` calls it once per source.
+        """Build the evaluation units specification of a source from a flat config record.
 
-        The keys given extend the region's declared units (its shapefile or weights, replaced when the config names the
-        other): a config with only `units_box` still reads the region's polygons. units_mode and units_weights may be
-        mappings by source, as models on different grids have their own weights (the source is "observations" or a
-        model's name).
+        This is the one place the flat ``units_*`` keys (declared in the schema's ``units`` section, field =
+        ``nested_name``) become a `UnitsSpec`; ``RunConfig.from_flat`` calls it once per source.
+
+        The keys given extend the region's declared units (its shapefile or weights, replaced when the config names
+        the other): a config with only ``units_box`` still reads the region's polygons. ``units_mode`` and
+        ``units_weights`` may be mappings by source, as models on different grids have their own weights (the source
+        is ``"observations"`` or a model's name).
+
+        Parameters
+        ----------
+        values : collections.abc.Mapping
+            The flat config record.
+        source : str, default "observations"
+            The source the specification is for: ``"observations"`` or a model's name.
+
+        Returns
+        -------
+        UnitsSpec or None
+            The specification, or None when the record has no ``units_*`` keys for the source (the grid cells are
+            used).
         """
         given = {}
         for key, field in UNITS_KEYS.items():
@@ -519,7 +997,7 @@ class UnitsSpec:
 
     @property
     def how(self) -> str:
-        """The mode in force: "cells", "regrid" or "cell_transform"."""
+        """The mode in force: ``"cells"``, ``"regrid"`` or ``"cell_transform"``."""
         if self.mode is not None:
             return self.mode
         return "regrid" if (self.shapefile or self.weights) else "cells"
@@ -530,7 +1008,23 @@ class UnitsSpec:
         return unit_ids.configured(self.id_digits, self.id_format)
 
     def resolve_path(self, value: str) -> Path:
-        """The path with ${ENV} and ~ expanded, relative to `base`; an unset variable is an error."""
+        """Return the path with ``${ENV}`` and ``~`` expanded, relative to `base`.
+
+        Parameters
+        ----------
+        value : str
+            The path as written.
+
+        Returns
+        -------
+        pathlib.Path
+            An absolute path stays as it is; a relative one is anchored at `base`.
+
+        Raises
+        ------
+        UnitsSpecError
+            The path uses an environment variable that is not set.
+        """
         expanded = os.path.expanduser(os.path.expandvars(str(value)))
         if re.search(r"\$\{?\w+\}?", expanded):
             raise UnitsSpecError(f"units path '{value}' uses an environment variable that is not set. "
@@ -538,15 +1032,38 @@ class UnitsSpec:
         return Path(self.base) / expanded if not os.path.isabs(expanded) else Path(expanded)
 
     def files(self) -> list[Path]:
-        """The files this specification names that exist (what a cache key must follow)."""
+        """Return the files this specification names that exist (what a cache key must follow).
+
+        Returns
+        -------
+        list of pathlib.Path
+            The existing shapefile, weights, centroids, dissemination and outline files, sorted.
+        """
         named = [self.shapefile, self.weights, self.centroids, self.dissemination, self.outline]
         found = [self.resolve_path(n) for n in named if n]
         return sorted(p for p in found if p.is_file())
 
     def build(self, lat=None, lon=None, ids=None) -> EvaluationUnits:
-        """The units of a source: of the file's `ids` when it has a "unit" dimension (centroids from the spec's table),
-        else of the source grid (`lat`, `lon`) in "cells" mode, else the shapefile's or the weights' units. The
-        dissemination list is a boolean subset of that name."""
+        """Build the units of a source.
+
+        They are the units of the file's `ids` when it has a ``"unit"`` dimension (centroids from the spec's table),
+        else of the source grid (`lat`, `lon`) in ``"cells"`` mode, else the shapefile's or the weights' units. The
+        dissemination list is a boolean subset of that name.
+
+        Parameters
+        ----------
+        lat : array_like of float, shape (lat,), optional
+            The latitudes of the source grid, in degrees; needed in ``"cells"`` mode.
+        lon : array_like of float, shape (lon,), optional
+            The longitudes of the source grid, in degrees; needed in ``"cells"`` mode.
+        ids : array_like of str, shape (unit,), optional
+            The unit ids of a file that is already aggregated.
+
+        Returns
+        -------
+        EvaluationUnits
+            The units, with the ``dissemination`` subset when the specification has a list.
+        """
         convention = self.convention
         if ids is not None:
             table = pd.DataFrame({"id": np.asarray(ids).astype(str)})
@@ -569,8 +1086,28 @@ class UnitsSpec:
         return units
 
     def kept(self, units: EvaluationUnits, keep_ids=None) -> np.ndarray:
-        """Positions of the units used, ordered by id: inside the box or outline, in the dissemination list (scope
-        "inputs") and among `keep_ids` (None keeps every id)."""
+        """Return the positions of the units used, ordered by id.
+
+        A unit is used when it is inside the box or outline, in the dissemination list (scope ``"inputs"``) and among
+        `keep_ids`.
+
+        Parameters
+        ----------
+        units : EvaluationUnits
+            The units to choose from.
+        keep_ids : collections.abc.Iterable of str, optional
+            The ids that may be used; None keeps every id.
+
+        Returns
+        -------
+        numpy.ndarray of int64, shape (kept,)
+            The positions in `units`, sorted by id.
+
+        Raises
+        ------
+        ValueError
+            No unit is kept.
+        """
         keep = units.in_area(box=None if self.box is None else dict(self.box),
                              outline=None if self.outline is None else self.resolve_path(self.outline),
                              boundary=self.boundary)
@@ -584,6 +1121,25 @@ class UnitsSpec:
         return positions[np.argsort(units.ids[positions], kind="stable")]
 
     def select(self, lat=None, lon=None, ids=None, keep_ids=None) -> tuple[EvaluationUnits, np.ndarray]:
-        """(units, positions of those used): `build` then `kept`."""
+        """Build the units and choose those used: `build` then `kept`.
+
+        Parameters
+        ----------
+        lat : array_like of float, shape (lat,), optional
+            The latitudes of the source grid, as for `build`.
+        lon : array_like of float, shape (lon,), optional
+            The longitudes of the source grid, as for `build`.
+        ids : array_like of str, shape (unit,), optional
+            The unit ids of an aggregated file, as for `build`.
+        keep_ids : collections.abc.Iterable of str, optional
+            The ids that may be used, as for `kept`.
+
+        Returns
+        -------
+        units : EvaluationUnits
+            All the units of the source.
+        positions : numpy.ndarray of int64, shape (kept,)
+            The positions of those used, sorted by id.
+        """
         units = self.build(lat, lon, ids)
         return units, self.kept(units, keep_ids)

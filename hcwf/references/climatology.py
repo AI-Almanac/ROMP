@@ -1,6 +1,9 @@
 """Climatological onset dates from observed rainfall, and climatology used as a baseline forecast.
 
-The functions take the typed inputs of hcwf.config.model (the run `rc`, the `case` and the per-call `select`).
+The functions take the typed inputs of `hcwf.config.model` (the run `rc`, the `case` and the per-call `select`).
+`climatological_onset` and `climatological_onset_dataset` compute the climatology from the observed onsets of the
+climatology years (`hcwf.onset.detect.detect_observed`), and `compute_climatology_as_forecast` turns it into a baseline
+forecast table.
 """
 
 from types import SimpleNamespace
@@ -22,24 +25,48 @@ import logging
 log = logging.getLogger(__name__)
 
 _MEMO = memo("references.climatology.onsets", maxsize=32)
-"""Climatological onset datasets of this run: {key: ((thresholds, onset setup) held so their ids stay unique, dataset)}."""
+"""Climatological onset datasets of this run: ``{key: ((thresholds, onset setup) held so their ids stay unique, dataset)}``."""
 
 
 class _YearRain:
-    """One climatology year's observations, read when the object is called (detect_observed does so on a cache miss).
+    """One climatology year's observations, read when the object is called (`detect_observed` does so on a cache miss).
 
     `probe` stands in for the rain where only its grid is needed (the observed-onset cache's fingerprint): the cells
     of the year from the file's coordinates, or the held reference rain's own, without reading any rainfall.
+
+    Parameters
+    ----------
+    year : int
+        The climatology year.
+    rc : hcwf.config.model.RunConfig
+        The run (its observations and area locate the year's files).
+    select : hcwf.config.model.Selection
+        The call's choices (cells, units).
+    read : callable
+        ``read(year)`` returns the year's rainfall or raises its read error.
+    held : object or None
+        The already ingested reference rain of the year (with ``on_grid``, ``coords`` and ``cells``), or None to read it.
     """
 
     def __init__(self, year, rc, select, read, held):
         self.year, self._rc, self._select, self._read, self._held = year, rc, select, read, held
 
     def __call__(self):
+        """Return the year's rainfall: the held reference rain on the grid, or what `read` returns.
+
+        A read error of the year propagates from `read`.
+
+        Returns
+        -------
+        object
+            The rainfall of the year (what `detect_observed` takes as its rain).
+
+        """
         return self._held.on_grid() if self._held is not None else self._read(self.year)
 
     @property
     def probe(self):
+        """A stand-in for the rain with only ``coords`` (the year's grid; empty when it cannot be found)."""
         try:
             held = self._held
             coords = (held.coords if held.cells is None else held.cells.coords()) if held is not None \
@@ -50,14 +77,30 @@ class _YearRain:
 
 
 def _year_readers(years, rc, select, shared=True):
-    """A `_YearRain` for each year: its observations are read only when called, on a cache miss of detect_observed.
+    """Make a `_YearRain` for each year: its observations are read only when called, on a cache miss of `detect_observed`.
 
-    Calling it returns the rain (hcwf.io.input.observation_years_of: read in blocks or ahead) or raises the year's
-    read error. A year the thresholds were just computed from comes as the DailyRain of that already read and
-    ingested reference rainfall (hcwf.io.input.reference_rain_year) instead of being read and converted again.
-    shared=False reads every year as rainfall. The years are read through one generator while they are asked for in
+    Calling it returns the rain (`hcwf.io.observations.observation_years_of`: read in blocks or ahead) or raises the
+    year's read error. A year the thresholds were just computed from comes as the ``DailyRain`` of that already read and
+    ingested reference rainfall (`hcwf.io.reference.reference_rain_year`) instead of being read and converted again.
+    ``shared=False`` reads every year as rainfall. The years are read through one generator while they are asked for in
     order (so blocks and read-ahead work as before); a year asked for after skipped ones (cached onsets, never read)
     restarts it there.
+
+    Parameters
+    ----------
+    years : iterable of int
+        The climatology years, in the order they will be asked for.
+    rc : hcwf.config.model.RunConfig
+        The run (observations, area, onset definition).
+    select : hcwf.config.model.Selection
+        The call's choices.
+    shared : bool, default True
+        Use the held reference rain for the years the thresholds were computed from, when there is one.
+
+    Returns
+    -------
+    list of _YearRain
+        One reader per year, in the order of `years`.
     """
     years = list(years)
     held = {year: None for year in years}
@@ -68,6 +111,7 @@ def _year_readers(years, rc, select, shared=True):
     feed = {"years": None, "next": None}   # the generator over `rest` and the position of the year it yields next
 
     def read(year):
+        """Read one year through the shared generator, restarting it when the year is not the next one."""
         position = rest.index(year)
         if feed["next"] != position:
             if feed["years"] is not None:
@@ -83,17 +127,34 @@ def _year_readers(years, rc, select, shared=True):
 
 
 def climatological_onset(rc, case, select=Selection()):
-    """
-    Compute climatological onset dates from all available IMD files.
+    """Compute climatological onset dates from all available IMD files.
 
-    Parameters:
-    rc: the run (its climatology years, observations, onset definition and thresholds)
-    case: the case whose model the thresholds are loaded for
-    select: the call's choices; `select.grid_point` (with `lat` and `lon`) selects one grid point and also returns the
-        climatological rainfall
+    The onset of each climatology year is detected, converted to a day of year and the years are averaged
+    (`hcwf.onset.climatology.reduce_onset_days`, rounded to a whole day). In grid-point mode the mean daily rainfall by
+    day of year (leap day left out) is returned as well.
 
-    Returns:
-    climatological_onset_doy: xarray DataArray with climatological onset day of year
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run (its climatology years, observations, onset definition and thresholds).
+    case : hcwf.config.model.Case
+        The case whose model the thresholds are loaded for.
+    select : hcwf.config.model.Selection, default Selection()
+        The call's choices; ``select.grid_point`` (with ``lat`` and ``lon``) selects one grid point and also returns the
+        climatological rainfall.
+
+    Returns
+    -------
+    xarray.DataArray or tuple of (xarray.DataArray, xarray.DataArray)
+        The climatological onset day of year (``float64``, over ``lat``, ``lon`` or ``unit``). In grid-point mode a
+        tuple of that and the climatological mean rainfall by ``doy`` (1-365).
+
+    Raises
+    ------
+    ValueError
+        The thresholds are not scalar in grid-point mode, or no year gave an onset.
+    Exception
+        Whatever the detection or reading of a year raised, with a note naming the year.
     """
     years_clim = rc.evaluation.climatology_years
     grid_point = bool(select.grid_point)
@@ -164,21 +225,30 @@ def climatological_onset(rc, case, select=Selection()):
 
 def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, observed_onset_da,
                                    *, max_forecast_day):
-    """
-    Use climatology as a forecast model for the given initialization dates.
+    """Use climatology as a forecast model for the given initialization dates.
+
     Only processes forecasts initialized before the observed onset date.
 
-    Parameters:
-    climatological_onset_doy: xarray DataArray with climatological onset day of year, or a
-        hcwf.onset.climatology.ReferenceOnset (its day-of-year field on the grid of observed_onset_da)
-    year: int, year to evaluate
-    init_dates: pandas DatetimeIndex with initialization dates
-    observed_onset_da: xarray DataArray with observed onset dates for filtering
-    max_forecast_day: int, maximum forecast day to consider
+    Parameters
+    ----------
+    climatological_onset_doy : xarray.DataArray or hcwf.onset.climatology.ReferenceOnset
+        The climatological onset day of year, or a ``ReferenceOnset`` (its day-of-year field on the grid of
+        `observed_onset_da`).
+    year : int
+        The year to evaluate (only logged).
+    init_dates : pandas.DatetimeIndex
+        The initialization dates.
+    observed_onset_da : xarray.DataArray of datetime64
+        The observed onset dates, used for filtering and for the grid.
+    max_forecast_day : int
+        The maximum forecast day to consider: the lead window in days after the init.
 
-    Returns:
-    pandas DataFrame with climatology forecast results, one row per (init, lat, lon) (or (init, unit)) in that order for
-    cells with an observed onset and an init before it; the climatological onset falls in the year of its init
+    Returns
+    -------
+    pandas.DataFrame
+        The climatology forecast results, one row per (init, lat, lon) (or (init, unit)) in that order for cells with an
+        observed onset and an init before it; the climatological onset falls in the year of its init. Empty when no
+        cell qualifies.
     """
     if isinstance(climatological_onset_doy, ReferenceOnset):
         climatological_onset_doy = climatological_onset_doy.doy_field(observed_onset_da)
@@ -248,22 +318,30 @@ def compute_climatology_as_forecast(climatological_onset_doy, year, init_dates, 
 
 ## This function computes onset dates for all available years in IMD folder and creates a climatological onset dataset
 def climatological_onset_dataset(rc, case, select=Selection()):
-    """
-    Compute onset dates for all climatology years and create a climatological dataset.
+    """Compute onset dates for all climatology years and create a climatological dataset.
 
-    Parameters:
-    -----------
-    rc : RunConfig
-        The run: its observations, area, onset definition and options, and climatology years
-    case : Case
-        The case whose model the thresholds are loaded for (the dataset does not depend on it)
-    select : Selection
-        The call's choices (cells, units, reference onset)
+    The result is kept for the rest of the run and a copy returned, so a second call with the same inputs reuses it.
 
-    Returns:
-    --------
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run: its observations, area, onset definition and options, and climatology years.
+    case : hcwf.config.model.Case
+        The case whose model the thresholds are loaded for (the dataset does not depend on it).
+    select : hcwf.config.model.Selection, default Selection()
+        The call's choices (cells, units, reference onset).
+
+    Returns
+    -------
     xarray.DataArray
-        3D array with dimensions [year, lat, lon] (or 2D [year, unit] on evaluation units) containing onset dates
+        3D array with dimensions ``(year, lat, lon)`` (or 2D ``(year, unit)`` on evaluation units) containing onset dates.
+
+    Raises
+    ------
+    ValueError
+        No year was processed.
+    Exception
+        Whatever the detection or reading of a year raised, with a note naming the year.
     """
     years_clim = rc.evaluation.climatology_years
     thresh_slice = thresholds_of(rc, case.model, select)

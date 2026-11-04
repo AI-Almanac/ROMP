@@ -88,13 +88,10 @@ extend-select = ["D401", "D417"]
 # Packages whose docstrings are not converted yet; keep equal to PENDING in tests/test_docstrings.py (one line each).
 "hcwf/cli/**" = ["D"]
 "hcwf/figures/**" = ["D"]
-"hcwf/io/**" = ["D"]
 "hcwf/metrics/**" = ["D"]
 "hcwf/onset/**" = ["D"]
-"hcwf/references/**" = ["D"]
 "hcwf/runs/**" = ["D"]
 "hcwf/scoring/**" = ["D"]
-"hcwf/spatial/**" = ["D"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

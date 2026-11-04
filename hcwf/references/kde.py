@@ -10,7 +10,7 @@ outside the grid. From that CDF F, for an issue day d and lead k (1..horizon):
   is P(onset already happened by d) = F(d);
 * conditional: P(onset on day d + k | no onset by d) = (F(d + k) - F(d + k - 1)) / (1 - F(d)).
 
-Every probability is floored at MIN_PROB while each row keeps its sum (the
+Every probability is floored at `MIN_PROB` while each row keeps its sum (the
 excess comes off the entries above the floor in proportion), so no lead has
 probability exactly zero. Optionally the KDE is refitted without each test
 year (leave-one-year-out), so a year is never forecast from its own onset.
@@ -25,7 +25,7 @@ test years with each one's day of the season and its horizon, `climatology_years
 training and test windows, `eligible_onsets` keeps the units with enough onset years, and
 `probabilities_for_issues` computes the probabilities once per distinct (season day, horizon),
 or per (year, season day, horizon) when the KDE is refitted without each test year, in tasks of
-units over the run's pool (hcwf.parallel). `conditional_probabilities` and
+units over the run's pool (`hcwf.parallel`). `conditional_probabilities` and
 `unconditional_probabilities` are the same computation on HCWF's cells and one horizon.
 """
 
@@ -39,15 +39,28 @@ import pandas as pd
 import xarray as xr
 
 MIN_PROB = 5e-7
+"""The floor of every probability."""
 EPS = 1e-12
+"""The tolerance below which a sum or an excess counts as zero."""
 MIN_ONSETS = 10
+"""The fewest onset days a KDE is fitted on."""
 
 
 def fit_kde(onset_days):
-    """A Gaussian KDE (Scott's bandwidth) of the onset days, or None with fewer than MIN_ONSETS of them.
+    """Fit a Gaussian KDE (Scott's bandwidth) of the onset days, or None with fewer than `MIN_ONSETS` of them.
 
     NaN days (years without an onset) are dropped first. A degenerate sample
     that scipy cannot fit (for example all days equal) also gives None.
+
+    Parameters
+    ----------
+    onset_days : array_like of float
+        The onset days of one cell, NaN for a year without onset.
+
+    Returns
+    -------
+    scipy.stats.gaussian_kde or None
+        The fitted estimate, or None when it cannot be fitted.
     """
     x = np.asarray(onset_days, dtype=float)
     x = x[~np.isnan(x)]
@@ -62,11 +75,21 @@ def fit_kde(onset_days):
 
 
 def onset_cdf(kde):
-    """The KDE's CDF as a callable, built like R's density() + approxfun(rule = 2).
+    """Build the KDE's CDF as a callable, like R's ``density()`` + ``approxfun(rule = 2)``.
 
     The density is evaluated on 512 points from the smallest day minus three
     bandwidths to the largest plus three, cumulated and normalised; outside
     that range the CDF holds its first and last value.
+
+    Parameters
+    ----------
+    kde : scipy.stats.gaussian_kde
+        The estimate, as `fit_kde` returns it.
+
+    Returns
+    -------
+    callable
+        ``cdf(days)`` returns the CDF at the given days (a ``scipy.interpolate.interp1d``).
     """
     from scipy.interpolate import interp1d
 
@@ -79,11 +102,27 @@ def onset_cdf(kde):
 
 
 def floor_probabilities(p_raw, target_sum, lb: float = MIN_PROB, eps: float = EPS):
-    """Each row of p_raw at least lb, rescaled to keep its target sum (clipped to [0, 1]).
+    """Floor each row of `p_raw` at `lb`, rescaled to keep its target sum (clipped to [0, 1]).
 
     The excess over the target comes off what lies above the floor, in
     proportion. Rows whose target is zero become zero; rows whose target is
     too small for every entry to reach the floor become uniform.
+
+    Parameters
+    ----------
+    p_raw : array_like of float, shape (row, lead)
+        The raw probabilities; negative and non-finite entries count as 0.
+    target_sum : array_like of float, shape (row,)
+        The sum each row must keep; non-finite or negative counts as 0 and it is capped at 1.
+    lb : float, default MIN_PROB
+        The floor.
+    eps : float, default EPS
+        The tolerance below which a sum or an excess counts as zero.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (row, lead)
+        The floored probabilities.
     """
     p_raw = np.asarray(p_raw, dtype=float)
     target_sum = np.asarray(target_sum, dtype=float).copy()
@@ -123,11 +162,11 @@ def floor_probabilities(p_raw, target_sum, lb: float = MIN_PROB, eps: float = EP
 
 
 def onset_probabilities(kde, issue_days, horizon: int, horizons=None) -> tuple[np.ndarray, np.ndarray]:
-    """Conditional (rows, horizon) and unconditional (rows, horizon + 1) probabilities from one KDE.
+    """Compute the conditional and unconditional onset probabilities from one KDE.
 
     One row per issue day. Conditional column k - 1 is P(onset on issue day +
     k | none by the issue day); unconditional column 0 is P(onset by the issue
-    day) and column k is P(onset on issue day + k). Both are NaN when kde is
+    day) and column k is P(onset on issue day + k). Both are NaN when `kde` is
     None. A conditional row sums to P(onset within the horizon | none yet),
     except when the KDE has put (almost) all mass before the issue day, where
     it falls back to the unconditional shape.
@@ -135,6 +174,29 @@ def onset_probabilities(kde, issue_days, horizon: int, horizons=None) -> tuple[n
     `horizons` gives each row its own horizon (at most `horizon`, which sets the width): a row's leads
     past its horizon stay NaN, and a row whose horizon is not positive is all NaN (an issue date outside
     every configured horizon).
+
+    Parameters
+    ----------
+    kde : scipy.stats.gaussian_kde or None
+        The estimate of the cell's onset days.
+    issue_days : array_like of int, shape (row,)
+        The issue days, on the same day axis as the onsets.
+    horizon : int
+        The number of leads of the result (its width).
+    horizons : array_like of int, shape (row,), optional
+        Each row's own horizon; by default `horizon` for all.
+
+    Returns
+    -------
+    conditional : numpy.ndarray of float64, shape (row, horizon)
+        The conditional probabilities of the leads 1 to `horizon`.
+    unconditional : numpy.ndarray of float64, shape (row, horizon + 1)
+        The unconditional probabilities of the leads 0 to `horizon`.
+
+    Raises
+    ------
+    ValueError
+        `horizon` is less than 1.
     """
     d0 = np.asarray(issue_days, dtype=int)
     horizon = int(horizon)
@@ -184,7 +246,28 @@ UNITS_PER_TASK = 200
 
 
 def _unit_task(task: tuple, keys: pd.DataFrame, max_h: int, cv: bool) -> tuple[np.ndarray, np.ndarray]:
-    """Probabilities for a run of units at each key (year, d0, window): (unit, key, lead) arrays."""
+    """Compute the probabilities of a run of units at each key (year, d0, window).
+
+    Module-level so that the process pool can pickle it.
+
+    Parameters
+    ----------
+    task : tuple of (list, list)
+        The onset years and the onset days of each unit of the run (`unit_probabilities` builds it).
+    keys : pandas.DataFrame
+        The keys, with the integer columns ``year``, ``d0`` (issue day) and ``window`` (horizon).
+    max_h : int
+        The width of the lead axis.
+    cv : bool
+        Fit each key year's KDE without that year's onset.
+
+    Returns
+    -------
+    conditional : numpy.ndarray of float64, shape (unit, key, max_h)
+        The conditional probabilities.
+    unconditional : numpy.ndarray of float64, shape (unit, key, max_h + 1)
+        The unconditional probabilities.
+    """
     years_by_unit, days_by_unit = task
     d0 = keys["d0"].to_numpy(dtype=int)
     windows = keys["window"].to_numpy(dtype=int)
@@ -204,12 +287,36 @@ def _unit_task(task: tuple, keys: pd.DataFrame, max_h: int, cv: bool) -> tuple[n
 
 def unit_probabilities(years_by_unit: Sequence, days_by_unit: Sequence, keys: pd.DataFrame, max_h: int, *,
                        cv: bool = False, workers: int = 1, units_per_task: int = UNITS_PER_TASK):
-    """Conditional (unit, key, max_h) and unconditional (unit, key, max_h + 1) probabilities of every unit at every key.
+    """Compute the conditional and unconditional probabilities of every unit at every key.
 
     Each unit has its onset years and onset days (NaN for none; the years are only read with `cv`); `keys` is a
-    table with year, d0 (issue day on the onsets' axis) and window (the key's horizon, at most max_h; not positive
-    for none). With cv each key year's KDE is fitted without that year's onset. Units go in tasks of `units_per_task`
-    to the run's pool when `workers` > 1 (results are in unit order whatever the workers).
+    table with ``year``, ``d0`` (issue day on the onsets' axis) and ``window`` (the key's horizon, at most `max_h`; not
+    positive for none). With `cv` each key year's KDE is fitted without that year's onset. Units go in tasks of
+    `units_per_task` to the run's pool when `workers` > 1 (results are in unit order whatever the workers).
+
+    Parameters
+    ----------
+    years_by_unit : sequence of numpy.ndarray of int
+        The onset years of each unit.
+    days_by_unit : sequence of numpy.ndarray of float
+        The onset days of each unit, NaN for a year without onset.
+    keys : pandas.DataFrame
+        The keys, with the columns ``year``, ``d0`` and ``window``.
+    max_h : int
+        The width of the lead axis.
+    cv : bool, default False
+        Fit each key year's KDE without that year's onset.
+    workers : int, default 1
+        The number of pool workers.
+    units_per_task : int, default UNITS_PER_TASK
+        The number of units in one task.
+
+    Returns
+    -------
+    conditional : numpy.ndarray of float64, shape (unit, key, max_h)
+        The conditional probabilities of the leads 1 to `max_h`.
+    unconditional : numpy.ndarray of float64, shape (unit, key, max_h + 1)
+        The unconditional probabilities of the leads 0 to `max_h`.
     """
     from hcwf import parallel
 
@@ -223,7 +330,27 @@ def unit_probabilities(years_by_unit: Sequence, days_by_unit: Sequence, keys: pd
 
 
 def _cell_onsets(value, cv: bool):
-    """(years or None, onset days) of one cell, from a Series indexed by year or a plain array of days."""
+    """Split one cell's onsets into years and days.
+
+    Parameters
+    ----------
+    value : pandas.Series or array_like of float
+        A Series of onset days indexed by year, or a plain array of days.
+    cv : bool
+        Whether the years are needed (leave-one-year-out).
+
+    Returns
+    -------
+    years : numpy.ndarray of int64 or None
+        The years, None for a plain array.
+    days : numpy.ndarray of float64
+        The onset days.
+
+    Raises
+    ------
+    ValueError
+        `cv` is true and `value` is not a Series.
+    """
     if isinstance(value, pd.Series):
         return value.index.to_numpy(dtype=int), value.to_numpy(dtype=float)
     if cv:
@@ -232,7 +359,27 @@ def _cell_onsets(value, cv: bool):
 
 
 def _probabilities(onset_days_by_cell, issue_days, horizon, cv_years, which: int) -> xr.DataArray:
-    """The conditional (which = 0) or unconditional (which = 1) array over (cell, [year,] issue, lead)."""
+    """Compute the conditional (``which = 0``) or unconditional (``which = 1``) probabilities per cell.
+
+    Parameters
+    ----------
+    onset_days_by_cell : mapping
+        Each cell's onsets (a Series indexed by year, or an array of days without `cv_years`).
+    issue_days : array_like of int
+        The issue days.
+    horizon : int
+        The last lead.
+    cv_years : iterable of int or None
+        The test years for leave-one-year-out, or None.
+    which : int
+        0 for the conditional, 1 for the unconditional probabilities.
+
+    Returns
+    -------
+    xarray.DataArray
+        The probabilities over ``(cell, [year,] issue, lead)``, with the leads 1 to `horizon` (0 to `horizon` for
+        ``which = 1``).
+    """
     issue = np.asarray(issue_days, dtype=int)
     cells = list(onset_days_by_cell)
     cv = cv_years is not None
@@ -257,24 +404,60 @@ def _probabilities(onset_days_by_cell, issue_days, horizon, cv_years, which: int
 
 def conditional_probabilities(onset_days_by_cell: Mapping, issue_days: Sequence[int], horizon: int, *,
                               cv_years: Sequence[int] | None = None) -> xr.DataArray:
-    """P(onset on lead k | no onset by the issue day) for leads 1..horizon, per cell, issue day and optionally test year.
+    """Compute P(onset on lead k | no onset by the issue day) for leads 1 to `horizon`, per cell and issue day.
 
-    onset_days_by_cell maps each cell to its historical onset days: a pandas
-    Series indexed by year, or, without cv_years, any array of days (NaN for a
-    year without onset is fine). issue_days are the issue days on the same day
-    axis as the onsets. The result has dims (cell, issue, lead), or (cell,
-    year, issue, lead) when cv_years is given, in which case each test year's
+    `onset_days_by_cell` maps each cell to its historical onset days: a pandas
+    Series indexed by year, or, without `cv_years`, any array of days (NaN for a
+    year without onset is fine). `issue_days` are the issue days on the same day
+    axis as the onsets. The result has dims ``(cell, issue, lead)``, or ``(cell,
+    year, issue, lead)`` when `cv_years` is given, in which case each test year's
     KDE is fitted without that year's onset. A cell with fewer than
-    MIN_ONSETS onsets (after any leave-out) is NaN.
+    `MIN_ONSETS` onsets (after any leave-out) is NaN.
+
+    ``ValueError`` is raised by a called function when `horizon` is less than 1, or `cv_years` is given and a cell's onsets are not a Series indexed by year.
+
+    Parameters
+    ----------
+    onset_days_by_cell : mapping
+        Each cell's historical onset days.
+    issue_days : sequence of int
+        The issue days on the same axis as the onsets.
+    horizon : int
+        The last lead.
+    cv_years : sequence of int, optional
+        The test years to leave out one at a time; None for no cross-validation.
+
+    Returns
+    -------
+    xarray.DataArray
+        The probabilities, float64 over ``(cell, [year,] issue, lead)``, ``lead`` running 1 to `horizon`.
     """
     return _probabilities(onset_days_by_cell, issue_days, horizon, cv_years, 0)
 
 
 def unconditional_probabilities(onset_days_by_cell: Mapping, issue_days: Sequence[int], horizon: int, *,
                                 cv_years: Sequence[int] | None = None) -> xr.DataArray:
-    """P(onset already happened by the issue day) at lead 0, then P(onset on lead k) for k = 1..horizon.
+    """Compute P(onset already happened by the issue day) at lead 0, then P(onset on lead k) for k = 1 to `horizon`.
 
-    Arguments and dims as conditional_probabilities, with lead running 0..horizon.
+    Arguments and dims as `conditional_probabilities`, with ``lead`` running 0 to `horizon`.
+
+    ``ValueError`` is raised by a called function when `horizon` is less than 1, or `cv_years` is given and a cell's onsets are not a Series indexed by year.
+
+    Parameters
+    ----------
+    onset_days_by_cell : mapping
+        Each cell's historical onset days.
+    issue_days : sequence of int
+        The issue days on the same axis as the onsets.
+    horizon : int
+        The last lead.
+    cv_years : sequence of int, optional
+        The test years to leave out one at a time; None for no cross-validation.
+
+    Returns
+    -------
+    xarray.DataArray
+        The probabilities, float64 over ``(cell, [year,] issue, lead)``, ``lead`` running 0 to `horizon`.
     """
     return _probabilities(onset_days_by_cell, issue_days, horizon, cv_years, 1)
 
@@ -284,11 +467,25 @@ def unconditional_probabilities(onset_days_by_cell: Mapping, issue_days: Sequenc
 # ---------------------------------------------------------------------------
 
 def season_days(dates, season_start: tuple[int, int] = (1, 1), leap_shift: bool = False) -> np.ndarray:
-    """Days from the season start (month, day) of each date's own year, as floats; NaN for NaT.
+    """Compute the days from the season start (month, day) of each date's own year, as floats; NaN for NaT.
 
     The default start is 1 January. onset_blending counts from its season start, in real calendar days. With
-    leap_shift, dates from 1 March of a leap year count one less (when the start is before March), so a calendar
+    `leap_shift`, dates from 1 March of a leap year count one less (when the start is before March), so a calendar
     date has the same number every year and the KDE's day axis is not blurred by 29 February (HCWF's reference forecast).
+
+    Parameters
+    ----------
+    dates : array_like of datetime64
+        The dates, any shape (the result is flattened).
+    season_start : tuple of (int, int), default (1, 1)
+        The month and day the count starts from.
+    leap_shift : bool, default False
+        Count dates from 1 March of a leap year one less.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (date,)
+        The day counts, NaN for ``NaT``.
     """
     index = pd.DatetimeIndex(np.asarray(dates).ravel())
     valid = ~index.isna()
@@ -305,9 +502,35 @@ def season_days(dates, season_start: tuple[int, int] = (1, 1), leap_shift: bool 
 def climatology_years(observed_years: Sequence[int], forecast_years: Sequence[int], *,
                       train_years: tuple[int, int] | None = None,
                       test_years: tuple[int, int] | None = None) -> tuple[tuple[int, int], tuple[int, int]]:
-    """(train, test) year windows: the given ones, else the test window spans the forecast years and training runs
+    """Choose the (train, test) year windows.
+
+    These are the given ones, else the test window spans the forecast years and training runs
     from the first observed year to the year before the first test year (to the last observed year when that
-    leaves nothing)."""
+    leaves nothing).
+
+    Parameters
+    ----------
+    observed_years : sequence of int
+        The years with observed onsets.
+    forecast_years : sequence of int
+        The forecast years.
+    train_years : tuple of (int, int), optional
+        The first and last training year; chosen when None.
+    test_years : tuple of (int, int), optional
+        The first and last test year; the span of `forecast_years` when None.
+
+    Returns
+    -------
+    train : tuple of (int, int)
+        The first and last training year.
+    test : tuple of (int, int)
+        The first and last test year.
+
+    Raises
+    ------
+    ValueError
+        `observed_years` or `forecast_years` is empty.
+    """
     if not len(observed_years):
         raise ValueError("Cannot build a climatology without observed years")
     if not len(forecast_years):
@@ -323,9 +546,28 @@ def climatology_years(observed_years: Sequence[int], forecast_years: Sequence[in
 
 
 def eligible_onsets(onsets: pd.DataFrame, window: tuple[int, int], min_onset_years: int) -> tuple[pd.DataFrame, int]:
-    """The onsets (id, year, onset_day) found in the window's years, of the units with at least min_onset_years of them.
+    """Select the onsets found in the window's years, of the units with at least `min_onset_years` of them.
 
-    Returns the table and the number of eligible units; it is an error when no unit is eligible.
+    Parameters
+    ----------
+    onsets : pandas.DataFrame
+        The onsets, with the columns ``id``, ``year`` and ``onset_day`` (NaN for none).
+    window : tuple of (int, int)
+        The first and last year to keep.
+    min_onset_years : int
+        The fewest onsets a unit must have in the window.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The onsets of the eligible units in the window.
+    int
+        The number of eligible units.
+
+    Raises
+    ------
+    ValueError
+        No unit is eligible.
     """
     onsets = onsets[onsets["onset_day"].notna() & onsets["year"].between(*window)].copy()
     counts = onsets.groupby("id")["onset_day"].size()
@@ -340,11 +582,34 @@ def eligible_onsets(onsets: pd.DataFrame, window: tuple[int, int], min_onset_yea
 
 
 def issue_grid(test: tuple[int, int], season_start: str, issue_end: str, forecast_window, horizons) -> pd.DataFrame:
-    """Every issue date of the test years (time, year), with its day of the season (d0) and horizon (window).
+    """List every issue date of the test years, with its day of the season (``d0``) and horizon (``window``).
 
-    The issue dates run from season_start to issue_end ("MM-DD") in each test year; d0 counts days since the season
-    start. `horizons` is None (every date has forecast_window) or a list of {"start_md", "end_md", "forecast_window"}
-    (a date has the first horizon that contains it; -1 outside every one).
+    The issue dates run from `season_start` to `issue_end` (``"MM-DD"``) in each test year; ``d0`` counts days since the
+    season start. `horizons` is None (every date has `forecast_window`) or a list of dicts with the keys ``start_md``,
+    ``end_md`` and ``forecast_window`` (a date has the first horizon that contains it; -1 outside every one).
+
+    Parameters
+    ----------
+    test : tuple of (int, int)
+        The first and last test year.
+    season_start : str
+        The first issue date of each year, ``"MM-DD"``.
+    issue_end : str
+        The last issue date of each year, ``"MM-DD"``.
+    forecast_window : int
+        The horizon of every date when `horizons` is None.
+    horizons : list of dict or None
+        The horizons by issue period.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per issue date with the columns ``time`` (date), ``year``, ``d0`` and ``window`` (int).
+
+    Raises
+    ------
+    ValueError
+        The season dates are not ``"MM-DD"``, or `issue_end` is before `season_start` in a year.
     """
     times, years, d0, windows = [], [], [], []
     for year in range(int(test[0]), int(test[1]) + 1):
@@ -377,10 +642,36 @@ def issue_grid(test: tuple[int, int], season_start: str, issue_end: str, forecas
 
 def plan_issues(test: tuple[int, int], season_start: str, issue_end: str, forecast_window, horizons,
                 cv_by_year: bool) -> tuple[pd.DataFrame, bool, int]:
-    """The test years' issue grid, whether the probabilities vary by year, and the longest horizon.
+    """Plan the issues: the test years' issue grid, whether the probabilities vary by year, and the longest horizon.
 
     They vary by year when the KDE is refitted without each test year, or when a season day has different horizons in
-    different years. `horizons` as for issue_grid; without it forecast_window is every date's horizon.
+    different years. `horizons` as for `issue_grid`; without it `forecast_window` is every date's horizon.
+
+    ``ValueError`` is raised by a called function when the season dates are bad (see `issue_grid`).
+
+    Parameters
+    ----------
+    test : tuple of (int, int)
+        The first and last test year.
+    season_start : str
+        The first issue date of each year, ``"MM-DD"``.
+    issue_end : str
+        The last issue date of each year, ``"MM-DD"``.
+    forecast_window : int
+        The horizon of every date when `horizons` is empty.
+    horizons : list of dict or None
+        The horizons by issue period (see `issue_grid`).
+    cv_by_year : bool
+        Whether the KDE is refitted without each test year.
+
+    Returns
+    -------
+    grid : pandas.DataFrame
+        The issue grid, as `issue_grid` returns it.
+    by_year : bool
+        Whether the probabilities vary by year.
+    max_h : int
+        The longest horizon.
     """
     grid = issue_grid(test, season_start, issue_end, None if horizons else forecast_window, horizons or None)
     max_h = max(h["forecast_window"] for h in horizons) if horizons else int(forecast_window)
@@ -390,12 +681,32 @@ def plan_issues(test: tuple[int, int], season_start: str, issue_end: str, foreca
 
 def probabilities_for_issues(onsets: pd.DataFrame, grid: pd.DataFrame, by_year: bool, max_h: int, cv_by_year: bool,
                              workers: int = 1) -> xr.Dataset:
-    """conditional and unconditional over (unit, [year,] season_day, lead) for every unit of the training onsets.
+    """Compute the conditional and unconditional probabilities over (unit, [year,] season_day, lead).
 
-    `onsets` has id, year and onset_day (days on the same axis as the grid's d0, e.g. since the season start); the
-    units keep their order of appearance. Probabilities are computed once per distinct (season day, horizon), or per
-    (year, season day, horizon) with by_year; cv_by_year refits each unit's KDE without the key year. Conditional has
-    leads 1..max_h (NaN at lead 0), unconditional 0..max_h.
+    `onsets` has ``id``, ``year`` and ``onset_day`` (days on the same axis as the grid's ``d0``, e.g. since the season
+    start); the units keep their order of appearance. Probabilities are computed once per distinct (season day,
+    horizon), or per (year, season day, horizon) with `by_year`; `cv_by_year` refits each unit's KDE without the key
+    year. Conditional has leads 1 to `max_h` (NaN at lead 0), unconditional 0 to `max_h`.
+
+    Parameters
+    ----------
+    onsets : pandas.DataFrame
+        The training onsets of every unit.
+    grid : pandas.DataFrame
+        The issue grid (`issue_grid`).
+    by_year : bool
+        Compute per year as well.
+    max_h : int
+        The longest horizon.
+    cv_by_year : bool
+        Refit each unit's KDE without the key year.
+    workers : int, default 1
+        The number of pool workers.
+
+    Returns
+    -------
+    xarray.Dataset
+        The variables ``conditional`` and ``unconditional`` (float64) over ``(unit, [year,] season_day, lead)``.
     """
     columns = ["year", "d0", "window"] if by_year else ["d0", "window"]
     keys = grid[columns].drop_duplicates().reset_index(drop=True)
@@ -433,22 +744,25 @@ def probabilities_for_issues(onsets: pd.DataFrame, grid: pd.DataFrame, by_year: 
 
 @dataclass
 class Climatology:
-    """Onset probabilities by unit, season day and lead day.
-
-    data holds conditional (leads 1..H, NaN at lead 0) and unconditional (leads 0..H) over (unit, season_day, lead),
-    with a year dimension when the KDE is refitted without each test year (or a season day's horizon differs by
-    year); its issue coordinate lists the test years' issue dates with their year and season day. windows holds
-    conditional probabilities trained on other year windows, each over its own units.
-    """
+    """Onset probabilities by unit, season day and lead day."""
 
     data: xr.Dataset | None
+    """``conditional`` (leads 1 to H, NaN at lead 0) and ``unconditional`` (leads 0 to H) over ``(unit, season_day,
+    lead)``, with a ``year`` dimension when the KDE is refitted without each test year (or a season day's horizon
+    differs by year); its ``issue`` coordinate lists the test years' issue dates with their year and season day. None
+    after `release`."""
     train_years: tuple[int, int]
+    """The first and last year of the training window."""
     test_years: tuple[int, int]
+    """The first and last year of the test window."""
     eligible_units: int
+    """The number of units with enough onset years in the training window."""
     windows: dict[tuple[int, int], xr.DataArray] = field(default_factory=dict)
+    """Conditional probabilities trained on other year windows, each over its own units, by window."""
 
     @property
     def by_year(self) -> bool:
+        """Whether the probabilities have a ``year`` dimension."""
         return "year" in self.data["conditional"].dims
 
     def release(self) -> None:
@@ -457,14 +771,49 @@ class Climatology:
         self.windows = {}
 
     def at(self, name: str, unit, year, season_day, leads: slice | None = None) -> np.ndarray:
-        """Probabilities (rows, lead) for rows given as unit positions, years and season days; leads selects lead days
-        (positions) when given."""
+        """Return the probabilities (row, lead) for rows given as unit positions, years and season days.
+
+        Parameters
+        ----------
+        name : {"conditional", "unconditional"}
+            The variable of `data`.
+        unit : array_like of int
+            The position of each row's unit.
+        year : array_like of int
+            Each row's year (ignored when the data has no year dimension).
+        season_day : array_like of int
+            Each row's season day.
+        leads : slice, optional
+            The lead positions to keep; all when None.
+
+        Returns
+        -------
+        numpy.ndarray of float64, shape (row, lead)
+            The probabilities.
+        """
         array = self.data[name] if leads is None else self.data[name].isel(lead=leads)
         return _gather(array, unit, year, season_day)
 
 
 def _gather(array: xr.DataArray, unit, year, season_day) -> np.ndarray:
-    """array's values at rows given as unit positions, years and season days."""
+    """Gather the values of `array` at rows given as unit positions, years and season days.
+
+    Parameters
+    ----------
+    array : xarray.DataArray
+        Probabilities over ``(unit, [year,] season_day, lead)``.
+    unit : array_like of int
+        The position of each row's unit.
+    year : array_like of int
+        Each row's year (ignored without a ``year`` dimension).
+    season_day : array_like of int
+        Each row's season day.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (row, lead)
+        The values.
+    """
     day = np.searchsorted(array["season_day"].values, season_day)
     if "year" in array.dims:
         return array.values[unit, np.searchsorted(array["year"].values, year), day]
@@ -474,10 +823,40 @@ def _gather(array: xr.DataArray, unit, year, season_day) -> np.ndarray:
 def build_climatology(onsets: pd.DataFrame, grid: pd.DataFrame, by_year: bool, max_h: int, *,
                       train: tuple[int, int], test: tuple[int, int], min_onset_years: int, cv_by_year: bool,
                       windows: Sequence[tuple[int, int]] = (), workers: int = 1) -> Climatology:
-    """The climatologies for the issue dates of the grid: the training window's, and one per extra year window.
+    """Build the climatologies for the issue dates of the grid: the training window's, and one per extra year window.
 
-    `onsets` are all the observed onsets (id, year, onset_day); each window keeps the units with at least
-    min_onset_years onsets in its years (eligible_onsets). The grid, by_year and max_h come from plan_issues.
+    `onsets` are all the observed onsets (``id``, ``year``, ``onset_day``); each window keeps the units with at least
+    `min_onset_years` onsets in its years (`eligible_onsets`). The grid, `by_year` and `max_h` come from `plan_issues`.
+
+    ``ValueError`` is raised by a called function when no unit has enough onset years in a window (see `eligible_onsets`).
+
+    Parameters
+    ----------
+    onsets : pandas.DataFrame
+        All the observed onsets.
+    grid : pandas.DataFrame
+        The issue grid.
+    by_year : bool
+        Whether the probabilities vary by year.
+    max_h : int
+        The longest horizon.
+    train : tuple of (int, int)
+        The first and last training year.
+    test : tuple of (int, int)
+        The first and last test year.
+    min_onset_years : int
+        The fewest onsets a unit needs in a window.
+    cv_by_year : bool
+        Refit each unit's KDE without the key year.
+    windows : sequence of tuple of (int, int), default ()
+        Extra year windows to train conditional probabilities on.
+    workers : int, default 1
+        The number of pool workers.
+
+    Returns
+    -------
+    Climatology
+        The probabilities of the training window and of each extra window.
     """
     train_onsets, eligible = eligible_onsets(onsets, train, min_onset_years)
     data = probabilities_for_issues(train_onsets, grid, by_year, max_h, cv_by_year, workers)

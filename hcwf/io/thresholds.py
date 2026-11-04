@@ -1,13 +1,18 @@
-"""The named thresholds of an onset definition: files and constants as given, the rest computed from the observations (or the
-model's own forecasts) of the threshold years and cached.
+"""The named thresholds of an onset definition: files and constants as given, the rest computed and cached.
 
-`load_thresholds(onset, obs, area, options, ev, output, model=...)` keeps the loaded set for the run.
+The computed thresholds come from the observations (or the model's own forecasts) of the threshold years, through
+`hcwf.onset.climatology` and `hcwf.onset.thresholds`, and are cached under a fingerprint of their inputs
+(`hcwf.cache.Store`). The reference rainfall they need is read by `hcwf.io.reference`, the forecasts by
+`hcwf.io.forecasts`. `load_thresholds` keeps the loaded set for the run; `hcwf.io.warmup` calls it before the years
+go to workers.
 """
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hcwf.cache import NETCDF, NETCDF_GROUPS, Store, file_identity, memo
 from hcwf.config.model import NO_SELECTION
@@ -33,18 +38,62 @@ from hcwf.spatial.onto_units import units_files
 from hcwf.spatial.select import region_select
 from hcwf.spatial.units import UNITS_KEYS
 
+if TYPE_CHECKING:  # pragma: no cover
+    from hcwf.onset.model import ForecastRain
+
 log = logging.getLogger(__name__)
 
+
 def _harmonic_cached(cache_dir, rain, years, files=()):
-    """The harmonic season analysis of the reference years, read from or written to the cache directory."""
+    """Return the harmonic season analysis of the reference years, read from or written to the cache directory.
+
+    Parameters
+    ----------
+    cache_dir : str or pathlib.Path
+        The cache folder.
+    rain : hcwf.onset.model.DailyRain or hcwf.io.reference.LazyRain
+        The reference rainfall; only its source and grid are read on a cache hit.
+    years : tuple of (int, int)
+        The first and last reference year.
+    files : sequence of str, default ()
+        The identity of the observation files, part of the cache key.
+
+    Returns
+    -------
+    xarray.Dataset
+        The harmonic seasons (see `hcwf.onset.climatology.harmonic_seasons`).
+    """
     parts = {"source": rain.source, "years": [int(years[0]), int(years[1])], "files": list(files),
              "grid": {dim: rain.coords[dim] for dim in rain.dims[:-1]}}
     return Store("harmonic_seasons", cache_dir, codec=NETCDF, label="Harmonic seasons").get_or_compute(
         parts, lambda: harmonic_seasons(rain, years))
 
 
-def _model_forecasts(onset, years, read: ForecastRead):
-    """Yield the model's forecasts of each reference year as ForecastRain, with HCWF's loader and unit conversion."""
+def _model_forecasts(onset, years, read: ForecastRead) -> Iterator[ForecastRain]:
+    """Yield the model's forecasts of each reference year as `hcwf.onset.model.ForecastRain`.
+
+    Each year is loaded with HCWF's loader and unit conversion, so the thresholds are computed from the same
+    forecasts the run evaluates. A year without a forecast file is skipped with a warning.
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup.
+    years : tuple of (int, int)
+        The first and last reference year.
+    read : ForecastRead
+        The typed inputs of the forecast reading.
+
+    Yields
+    ------
+    hcwf.onset.model.ForecastRain
+        The year's forecasts, dims ``(init_time, [member], lat, lon, step)``.
+
+    Raises
+    ------
+    FileNotFoundError
+        No forecast file exists for any of the years.
+    """
     found = False
     for year in range(years[0], years[1] + 1):
         try:
@@ -62,7 +111,20 @@ def _model_forecasts(onset, years, read: ForecastRead):
 
 
 def _model_files(years, read: ForecastRead) -> list:
-    """The identity of what holds the model's forecasts of each year: its files, or the zarr store, or the missing year."""
+    """Return the identity of what holds the model's forecasts of each year, for the cache key.
+
+    Parameters
+    ----------
+    years : tuple of (int, int)
+        The first and last reference year.
+    read : ForecastRead
+        The typed inputs of the forecast reading.
+
+    Returns
+    -------
+    list of list of str
+        For each year in order, the identities of its files (or of the zarr store), or ``["missing <year>"]``.
+    """
     found = []
     model, select = read.model, read.select
     for year in range(int(years[0]), int(years[1]) + 1):
@@ -77,7 +139,18 @@ def _model_files(years, read: ForecastRead) -> list:
 
 
 def _model_read_key(read: ForecastRead) -> dict:
-    """The settings that change the model's forecasts as read (grid, units, steps, days), beside the files."""
+    """Return the settings that change the model's forecasts as read (grid, units, steps, days), beside the files.
+
+    Parameters
+    ----------
+    read : ForecastRead
+        The typed inputs of the forecast reading.
+
+    Returns
+    -------
+    dict
+        The settings, keyed by name, for the cache fingerprint.
+    """
     model, ev, area, options, select = read.model, read.ev, read.area, read.options, read.select
     return {"region": area.region, "mask": None if not area.mask else area.mask.key(), "land_only": select.land_only,
             "shp_only": select.shp_only, "nc_mask": area.nc_mask, "model_var": model.var,
@@ -91,18 +164,51 @@ def _model_read_key(read: ForecastRead) -> dict:
 
 
 def _units_key_part(obs_units, model_units):
-    """The evaluation units of the observations and the model, as a cache key (the grid cells, none given, as before)."""
+    """Return the evaluation units of the observations and the model as a cache key.
+
+    Parameters
+    ----------
+    obs_units : hcwf.spatial.units.UnitsSpec or None
+        The observation units, None for grid cells.
+    model_units : hcwf.spatial.units.UnitsSpec or None
+        The model units, None for grid cells.
+
+    Returns
+    -------
+    dict
+        ``None`` for each key of `hcwf.spatial.units.UNITS_KEYS` when both are None (grid cells, as before), else
+        the ``repr`` of each.
+    """
     if obs_units is None and model_units is None:
         return {key: None for key in UNITS_KEYS}
     return {"observations": repr(obs_units), "model": repr(model_units)}
 
 
 def _model_thresholds(onset, pending, years, cache_dir, read: ForecastRead, obs_units):
-    """The model's own climatology of the pending thresholds, read from or written to the cache directory.
+    """Return the model's own climatology of the pending thresholds, read from or written to the cache directory.
 
-    Each verification window of the run (the windows of `ev`, already
-    shortened to the usable leads) gets its own threshold, pooled over the leads
-    in that window (spec section 13); without windows one threshold pools every lead.
+    Each verification window of the run (the windows of ``ev``, already shortened to the usable leads) gets its own
+    threshold, pooled over the leads in that window (spec section 13); without windows one threshold pools every lead.
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup.
+    pending : list of tuple
+        The ``(name, spec)`` of the thresholds still to compute.
+    years : tuple of (int, int)
+        The first and last threshold year.
+    cache_dir : pathlib.Path
+        The cache folder.
+    read : ForecastRead
+        The typed inputs of the forecast reading.
+    obs_units : hcwf.spatial.units.UnitsSpec or None
+        The observation units, None for grid cells (part of the cache key).
+
+    Returns
+    -------
+    dict of str to xarray.DataArray
+        The thresholds by name, in mm.
     """
     model, ev = read.model, read.ev
     window = (1, int(ev.max_forecast_day))
@@ -119,6 +225,7 @@ def _model_thresholds(onset, pending, years, cache_dir, read: ForecastRead, obs_
     names = {name for name, _ in pending}
 
     def compute():
+        """Compute the pending thresholds from the model's forecasts."""
         reduced = replace(onset.definition,
                           thresholds=tuple((n, sp) for n, sp in onset.definition.thresholds if n in names))
         return compute_thresholds_from_forecasts(reduced, _model_forecasts(onset, years, read), years, window, windows)
@@ -129,12 +236,40 @@ def _model_thresholds(onset, pending, years, cache_dir, read: ForecastRead, obs_
 
 def load_onset_thresholds(onset, obs, area, options, ev, output, *, model=None, select=NO_SELECTION,
                           parallel=None, cache_dir=None):
-    """The named thresholds of the definition, as {name: DataArray(lat, lon)} in mm.
+    """Load or compute the named thresholds of the definition.
 
-    Files given in `thresholds` are used as they are; the others are computed from
-    the observations of threshold_years and cached under the run's cache_dir (shared by runs), or
-    the output's data folder/.onset_cache when none is set.
-    The returned Thresholds also carries season_climatology for derived seasons.
+    Files given in ``thresholds`` are used as they are; the others are computed from the observations of
+    ``threshold_years`` (or the model's forecasts when ``threshold_source`` is ``"model"``) and cached under the
+    run's `cache_dir` (shared by runs), or the output's ``data_dir/.onset_cache`` when none is set. The returned
+    thresholds also carry ``season_climatology`` for derived seasons.
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup.
+    obs : hcwf.config.model.ObsSpec
+        The observation dataset settings.
+    area : hcwf.config.model.AreaSpec
+        The region and mask settings.
+    options : hcwf.config.model.OnsetOptions
+        The onset options.
+    ev : hcwf.config.model.EvaluationSpec
+        The evaluation settings.
+    output : hcwf.config.model.OutputSpec
+        The output settings (``data_dir``, ``figure_dir``).
+    model : hcwf.config.model.ModelSpec, optional
+        The forecast model, needed when the thresholds come from it.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+    parallel : hcwf.config.model.ParallelSpec, optional
+        The parallel settings for reading the observations.
+    cache_dir : str or pathlib.Path, optional
+        The cache folder; None uses ``<output.data_dir>/.onset_cache``.
+
+    Returns
+    -------
+    hcwf.config.onset.Thresholds
+        The thresholds by name, each a ``(lat, lon)`` array (or a table by unit id) in mm, or a constant.
     """
     thresholds = Thresholds()
     if not onset.uses_thresholds:
@@ -181,14 +316,44 @@ _loaded_thresholds = memo("io.thresholds.loaded", maxsize=32, share=True)
 
 
 def _setup_key(onset) -> str:
-    """Text identifying the onset setup the thresholds are computed with."""
+    """Return text identifying the onset setup the thresholds are computed with.
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup.
+
+    Returns
+    -------
+    str
+        The ``repr`` of the definition hash and of the settings that change the thresholds.
+    """
     return repr((definition_mod.definition_hash(onset.definition), onset.season, onset.threshold_years,
                  onset.threshold_files, onset.threshold_constants, onset.obs_day_boundary, onset.lead_label,
                  onset.threshold_source, onset.forecast_history, onset.dry_check))
 
 
 def _thresholds_key(onset, obs, options, select, model) -> str:
-    """What else the loaded thresholds depend on: how they are computed and which observations on which units."""
+    """Return what else the loaded thresholds depend on: how they are computed and which observations on which units.
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup.
+    obs : hcwf.config.model.ObsSpec
+        The observation dataset settings.
+    options : hcwf.config.model.OnsetOptions
+        The onset options.
+    select : hcwf.config.model.Selection
+        The run's selection settings.
+    model : hcwf.config.model.ModelSpec or None
+        The forecast model, None when there is none.
+
+    Returns
+    -------
+    str
+        The ``repr`` of the settings.
+    """
     return repr([("threshold_scale", options.threshold_scale), ("threshold_table", options.threshold_table),
                  ("threshold_max_missing", options.threshold_max_missing),
                  ("threshold_partial_years", options.threshold_partial_years), ("obs_paths", obs.paths),
@@ -200,10 +365,39 @@ def _thresholds_key(onset, obs, options, select, model) -> str:
 
 def load_thresholds(onset=None, obs=None, area=None, options=None, ev=None, output=None, *, model=None,
                     select=NO_SELECTION, parallel=None, cache_dir=None):
-    """The definition's named thresholds (what the onset detection takes as thresh_slice).
+    """Return the definition's named thresholds (what the onset detection takes as ``thresh_slice``).
 
-    `model` is the forecast model the thresholds come from when threshold_source is "model". Computed ones are cached
-    under `cache_dir`, or the output's data folder; the loaded set is kept for the run (see `_loaded_thresholds`).
+    `model` is the forecast model the thresholds come from when ``threshold_source`` is ``"model"``. Computed ones
+    are cached under `cache_dir`, or the output's data folder; the loaded set is kept for the run (see
+    `_loaded_thresholds`) and is the same object on the next call with the same inputs.
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup, optional
+        The onset setup (required in practice).
+    obs : hcwf.config.model.ObsSpec, optional
+        The observation dataset settings (required in practice).
+    area : hcwf.config.model.AreaSpec, optional
+        The region and mask settings (required in practice).
+    options : hcwf.config.model.OnsetOptions, optional
+        The onset options (required in practice).
+    ev : hcwf.config.model.EvaluationSpec, optional
+        The evaluation settings (required in practice).
+    output : hcwf.config.model.OutputSpec, optional
+        The output settings (required in practice).
+    model : hcwf.config.model.ModelSpec, optional
+        The forecast model the thresholds may come from.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+    parallel : hcwf.config.model.ParallelSpec, optional
+        The parallel settings for reading the observations.
+    cache_dir : str or pathlib.Path, optional
+        The cache folder; None uses the output's data folder.
+
+    Returns
+    -------
+    hcwf.config.onset.Thresholds
+        The thresholds (see `load_onset_thresholds`).
     """
     key = (_setup_key(onset), str(None if model is None else model.name), str(ev.max_forecast_day),
            str(None if not ev.windows else [w.span for w in ev.windows]), str(output.data_dir), str(obs.dir),
@@ -213,6 +407,21 @@ def load_thresholds(onset=None, obs=None, area=None, options=None, ev=None, outp
 
 
 def thresholds_of(rc, model, select=NO_SELECTION):
-    """`load_thresholds` of a run (`rc`: RunConfig) for the source `model` (ModelSpec)."""
+    """Call `load_thresholds` with the settings of a run for the source `model`.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run configuration.
+    model : hcwf.config.model.ModelSpec
+        The forecast source.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+
+    Returns
+    -------
+    hcwf.config.onset.Thresholds
+        The thresholds (see `load_onset_thresholds`).
+    """
     return load_thresholds(rc.onset, rc.observations, rc.area, rc.onset_options, rc.evaluation, rc.output, model=model,
                            select=select, parallel=rc.parallel, cache_dir=rc.cache_dir)

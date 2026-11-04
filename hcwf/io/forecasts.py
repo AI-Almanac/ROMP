@@ -1,13 +1,17 @@
-"""Reading a model's forecasts: one year of inits at a time (`load_forecast`), or one file onto evaluation units (`UnitForecast`).
+"""Reading a model's forecasts: one year of inits at a time, or one file onto evaluation units.
 
-The inits, the leads the onset rule reads, the members asked for and the region's box are selected on the lazy array before any
-data is decoded; the cell mask and the unit conversion are then applied in place on the one array that was read. `select_leads`
-and `select_members` are the lead-day and member selections of both readers.
+`load_forecast` reads a year onto grid cells and `UnitForecast` one file onto evaluation units. The inits, the leads the
+onset rule reads, the members asked for and the region's box are selected on the lazy array before any data is
+decoded; the cell mask and the unit conversion are then applied in place on the one array that was read.
+`select_leads` and `select_members` are the lead-day and member selections of both readers. The files are located
+and opened by `hcwf.io.stores`; `hcwf.io.thresholds` uses `load_forecast` and `ingest_forecast` for thresholds
+computed from the model's own forecasts.
 """
 from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,11 +43,24 @@ if TYPE_CHECKING:  # pragma: no cover
 
 log = logging.getLogger(__name__)
 
+
 def steps_needed(max_forecast_day, onset: OnsetSetup | None):
-    """The last lead day onset detection reads, or None if it can't be told.
+    """Return the last lead day onset detection reads, or None if it can't be told.
 
     The largest day any requirement or veto of the compiled plan reads for the last candidate day
-    max_forecast_day, so loading never truncates what the rule reads.
+    `max_forecast_day`, so loading never truncates what the rule reads.
+
+    Parameters
+    ----------
+    max_forecast_day : int or str
+        The last candidate onset day; anything but an ``int`` (for example ``"auto"``) gives None.
+    onset : hcwf.config.onset.OnsetSetup or None
+        The onset setup that says how far the rule reads.
+
+    Returns
+    -------
+    int or None
+        The last lead day to load, or None when `max_forecast_day` is not an integer.
     """
     if not isinstance(max_forecast_day, int):
         return None
@@ -55,30 +72,57 @@ class ForecastRead:
     """What reading a model's forecasts depends on, besides the year: the typed inputs of one call (see `load_forecast`)."""
 
     model: ModelSpec
+    """The forecast source settings."""
     ev: EvaluationSpec
+    """The evaluation settings."""
     area: AreaSpec
+    """The region and mask settings."""
     options: OnsetOptions
+    """The onset options."""
     select: Selection
+    """The run's selection settings."""
     onset: OnsetSetup | None
+    """The onset setup, which says which lead days the rule reads (None: all)."""
     dir_fig: object
+    """The folder for mask figures."""
     ensemble: bool
+    """Whether the forecasts have a member dimension."""
     readers: int = 1
-    """The most processes one file's chunks may be decoded by (hcwf.parallel.reader_count); 1 reads in this process."""
+    """The most processes one file's chunks may be decoded by (`hcwf.parallel.reader_count`); 1 reads in this process."""
     cells: bool = False
     """Read only the cells the run's masks keep, as one "cell" dimension (see `load_forecast`)."""
 
 
 _reported_ingest = memo("io.forecasts.reported")
-"""The forecast ingests already reported in the log this run: {(model, accumulation, resolution, boundary): True}."""
+"""The forecast ingests already reported in the log this run: ``{(model, accumulation, resolution, boundary): True}``."""
 
 
 def ingest_forecast(cube, onset, model, options, select=NO_SELECTION, source=None):
-    """Normalise a model's forecast cube (already in mm, dims init_time, [member], lat, lon, step) to ForecastRain.
+    """Normalise a model's forecast cube (already in mm) to `hcwf.onset.model.ForecastRain`.
 
-    Uses the model's own `accumulation` ("daily", "since_init" or "auto") and `daily_boundary` (the config's per-model
-    values; "daily" when absent), so accumulated fields are differenced and sub-daily steps summed to days
-    exactly as hcwf.onset.ingest.ingest_forecast does. source labels the data (default: the model's name); how the
-    days were made is logged once per model.
+    Uses the model's own ``accumulation`` (``"daily"``, ``"since_init"`` or ``"auto"``) and ``daily_boundary`` (the
+    config's per-model values; ``"daily"`` when absent), so accumulated fields are differenced and sub-daily steps
+    summed to days exactly as `hcwf.onset.ingest.ingest_forecast` does. How the days were made is logged once per model.
+
+    Parameters
+    ----------
+    cube : xarray.DataArray
+        The forecast in mm, dims ``(init_time, [member], lat, lon, step)``.
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup (``forecast_boundary`` and ``lead_label``).
+    model : hcwf.config.model.ModelSpec
+        The forecast source settings.
+    options : hcwf.config.model.OnsetOptions
+        The onset options, whose ingest settings are used.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings (``check_units``).
+    source : str, optional
+        The label of the data; None uses the model's name.
+
+    Returns
+    -------
+    hcwf.onset.model.ForecastRain
+        The normalised forecast, with ``ingest_info`` set.
     """
     source = source or str(model.name or "forecast")
     accumulation = model.accumulation or "daily"
@@ -101,9 +145,28 @@ def ingest_forecast(cube, onset, model, options, select=NO_SELECTION, source=Non
 
 
 def _init_dates(year, date_filter_year, init_days, start_date, end_date):
-    """
-    Get initialization dates for a given year: the days between start_date and end_date
-    (month/day only) whose weekday in date_filter_year is in init_days (0 = Monday).
+    """Return the initialization dates of a year.
+
+    These are the days between `start_date` and `end_date` (month and day only) whose weekday in `date_filter_year`
+    is in `init_days`, moved to `year`.
+
+    Parameters
+    ----------
+    year : int
+        The year of the result.
+    date_filter_year : int
+        The year in which the weekdays are counted.
+    init_days : iterable of int
+        The weekdays of the initializations (0 is Monday).
+    start_date : sequence of int
+        The first date: the elements after the first are the month and day.
+    end_date : sequence of int
+        The last date, in the same form.
+
+    Returns
+    -------
+    pandas.DatetimeIndex
+        The initialization dates in `year`, ascending.
     """
     start_MMDD = start_date[1:]
     end_MMDD = end_date[1:]
@@ -121,16 +184,47 @@ def _init_dates(year, date_filter_year, init_days, start_date, end_date):
 
 
 def initialization_dates(year, ev):
-    """The initialization dates of `year`: the days between ev.start_date and ev.end_date (month/day only) whose weekday
-    in ev.date_filter_year is in ev.init_days (0 = Monday)."""
+    """Return the initialization dates of `year`.
+
+    These are the days between ``ev.start_date`` and ``ev.end_date`` (month and day only) whose weekday in
+    ``ev.date_filter_year`` is in ``ev.init_days`` (0 is Monday).
+
+    Parameters
+    ----------
+    year : int
+        The year of the result.
+    ev : hcwf.config.model.EvaluationSpec
+        The evaluation settings.
+
+    Returns
+    -------
+    pandas.DatetimeIndex
+        The dates (see `_init_dates`).
+    """
     return _init_dates(year, ev.date_filter_year, ev.init_days, ev.start_date, ev.end_date)
 
 
 def _forecast_on_units(da, spec: UnitsSpec, keep_ids, unit_cvt):
-    """The selected issues of a forecast variable on the run's evaluation units, dims (init_time, [member], unit, step).
+    """Return the selected issues of a forecast variable on the run's evaluation units.
 
     The units are those of the observations (their ids, as the same specification builds them for this source), the
-    millimetre factor is the file's declared unit or unit_cvt (as `UnitForecast` reads it).
+    millimetre factor is the file's declared unit or `unit_cvt` (as `UnitForecast` reads it).
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The forecast variable, already restricted to the issues, leads and members wanted.
+    spec : hcwf.spatial.units.UnitsSpec
+        How the cells turn into units.
+    keep_ids : collection of str, optional
+        The unit ids to keep; None keeps all.
+    unit_cvt : float or str, optional
+        The factor to millimetres when the file does not declare its unit.
+
+    Returns
+    -------
+    xarray.DataArray
+        The rain on units, dims ``(init_time, [member], unit, step)``.
     """
     units, positions = select_units(da, spec, keep_ids)
     out = read_units(da, spec, units, positions, block_dim="init_time", scale=declared_scale(da, unit_cvt))
@@ -141,9 +235,29 @@ def _load_forecast(year, read: ForecastRead):
     """Read one year of forecasts as a loaded DataArray in mm, reading only what the run needs.
 
     Inits, leads (up to what the onset rule reads), members and the region's box are selected on the lazy array;
-    the selection is read once, the cell mask and the unit conversion (x * unit_cvt, in float32 as before) are
+    the selection is read once, the cell mask and the unit conversion (``x * unit_cvt``, in float32 as before) are
     applied in place on it. The file's step 0, if present, is dropped. A year listed in several files
-    (select.model_paths) is read file by file and joined along init_time.
+    (``select.model_paths``) is read file by file and joined along ``init_time``.
+
+    Parameters
+    ----------
+    year : int
+        The year to read.
+    read : ForecastRead
+        The typed inputs of the forecast reading.
+
+    Returns
+    -------
+    xarray.DataArray
+        The precipitation in mm, dims ``(init_time, [member], lat, lon, step)`` (or with a ``cell`` dimension, or
+        ``unit`` for evaluation units; see `load_forecast`).
+
+    Raises
+    ------
+    KeyError
+        A file has no ``step`` dimension.
+    ValueError
+        No file has a wanted initialization time.
     """
     model, ev, select = read.model, read.ev, read.select
     sources = forecast_sources(year, model.dir, model.file_pattern, select.model_paths, select.model_files_years)
@@ -179,42 +293,112 @@ def _load_forecast(year, read: ForecastRead):
 
 def load_forecast(year, model, ev, area, options, onset, *, ensemble, select=NO_SELECTION, dir_fig=None, readers=1,
                   cells=False):
-    """Load a model's forecasts of one year: the twice-weekly initializations between ev.start_date and ev.end_date.
+    """Load a model's forecasts of one year: the twice-weekly initializations between the start and end dates.
 
-    Filters for the init days (0 = Monday) of ev.date_filter_year. The forecast file is expected to be named
-    model.file_pattern.format(year) in model.dir (or model.dir is a .zarr store of all years, or select.model_paths
-    lists the files, any number per year) with the variable model.var, daily accumulated rainfall with dimensions
-    (init_time, [member], lat, lon, step). With `ensemble` the members ev.members are selected before the read.
-    `onset` says which lead days the onset rule reads (the rest are not loaded); `options` is the run's reading options
-    (the ingest takes them: see `ingest_forecast`). A big file is decoded by up to `readers` processes at once.
-    With `cells` a gridded read of a region whose masks drop cells keeps only the kept ones: the array then has the dims
-    (init_time, [member], step, cell) with the cells' lat and lon as coordinates over "cell", and `cell` holds their
-    position in the region's box (see hcwf.spatial.select.load_blocks); the onset detection takes either form.
+    Filters for the init days (0 is Monday) of ``ev.date_filter_year``. The forecast file is expected to be named
+    ``model.file_pattern.format(year)`` in ``model.dir`` (or ``model.dir`` is a zarr store of all years, or
+    ``select.model_paths`` lists the files, any number per year) with the variable ``model.var``, daily accumulated
+    rainfall with dimensions ``(init_time, [member], lat, lon, step)``. With `ensemble` the members ``ev.members`` are
+    selected before the read. `onset` says which lead days the onset rule reads (the rest are not loaded); `options` is
+    the run's reading options (the ingest takes them: see `ingest_forecast`). A big file is decoded by up to
+    `readers` processes at once. With `cells` a gridded read of a region whose masks drop cells keeps only the kept
+    ones: the array then has the dims ``(init_time, [member], step, cell)`` with the cells' lat and lon as
+    coordinates over ``cell``, and ``cell`` holds their position in the region's box (see
+    `hcwf.spatial.select.load_blocks`); the onset detection takes either form.
 
-    Returns the DataArray of precipitation in mm, read once with the region, inits and leads selected first.
+    Parameters
+    ----------
+    year : int
+        The year to load.
+    model : hcwf.config.model.ModelSpec
+        The forecast source settings.
+    ev : hcwf.config.model.EvaluationSpec
+        The evaluation settings.
+    area : hcwf.config.model.AreaSpec
+        The region and mask settings.
+    options : hcwf.config.model.OnsetOptions
+        The onset options.
+    onset : hcwf.config.onset.OnsetSetup or None
+        The onset setup, which says which lead days to load; None loads all.
+    ensemble : bool
+        Whether the forecasts have a member dimension.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+    dir_fig : str or pathlib.Path, optional
+        The folder for mask figures.
+    readers : int, default 1
+        The most processes that decode one file's chunks.
+    cells : bool, default False
+        Read only the cells the masks keep.
+
+    Returns
+    -------
+    xarray.DataArray
+        The precipitation in mm, read once with the region, inits and leads selected first.
     """
     return _load_forecast(year, ForecastRead(model, ev, area, options, select, onset, dir_fig, ensemble, readers, cells))
 
 
 def forecast_of(year, rc, model, *, ensemble, select=NO_SELECTION, cells=False):
-    """`load_forecast` of a run for the source `model` (`cells`: only the cells its masks keep)."""
+    """Call `load_forecast` with the settings of a run for the source `model`.
+
+    Parameters
+    ----------
+    year : int
+        The year to load.
+    rc : hcwf.config.model.RunConfig
+        The run configuration.
+    model : hcwf.config.model.ModelSpec
+        The forecast source.
+    ensemble : bool
+        Whether the forecasts have a member dimension.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+    cells : bool, default False
+        Read only the cells the masks keep.
+
+    Returns
+    -------
+    xarray.DataArray
+        The precipitation in mm (see `load_forecast`).
+    """
     steps = rc.onset if isinstance(rc.evaluation.max_forecast_day, int) else None
     return load_forecast(year, model, rc.evaluation, rc.area, rc.onset_options, steps, ensemble=ensemble,
                          select=select, dir_fig=rc.output.figure_dir, readers=reader_count(rc.parallel), cells=cells)
 
 
 _YEAR_FACTOR = 4
-"""Peak memory of detecting a year, as a multiple of its forecast cells' float32 values: the cube, its tenths and flags, the
-engine's tables and the tables of the year (measured on the India and Ethiopia benchmark slices)."""
+"""Peak memory of detecting a year, as a multiple of its forecast cells' float32 values.
+
+It covers the cube, its tenths and flags, the engine's tables and the tables of the year (measured on the India and
+Ethiopia benchmark slices)."""
 _YEAR_BASE = 512 * 2**20
 """What a worker holds beside the forecast: the interpreter and libraries, the year's observations, the thresholds."""
 
 
 def forecast_year_bytes(year, rc, model, *, ensemble, select=NO_SELECTION) -> int | None:
-    """An estimate of the peak memory of one worker reading and detecting `year` of `model`'s forecasts, or None if the file
-    cannot be looked at (the worker count is then the cores').
+    """Estimate the peak memory of one worker reading and detecting `year` of `model`'s forecasts.
 
     Looks at the selection only (inits, leads, members, the region's box and the cells its masks keep), reads no data.
+
+    Parameters
+    ----------
+    year : int
+        The year to size.
+    rc : hcwf.config.model.RunConfig
+        The run configuration.
+    model : hcwf.config.model.ModelSpec
+        The forecast source.
+    ensemble : bool
+        Whether the forecasts have a member dimension.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+
+    Returns
+    -------
+    int or None
+        The estimate in bytes (4 bytes times `_YEAR_FACTOR` per value, plus `_YEAR_BASE`), or None if the file cannot
+        be looked at (the worker count is then the cores').
     """
     try:
         steps = rc.onset if isinstance(rc.evaluation.max_forecast_day, int) else None
@@ -243,13 +427,38 @@ def forecast_year_bytes(year, rc, model, *, ensemble, select=NO_SELECTION) -> in
 
 
 def select_leads(ds, first=None, last=None, *, strict=False, rain_horizon=None, where="forecast"):
-    """The lead days of a dataset or array with a `step` dimension, `first`..`last` (None: from the first positive
-    step, to the last).
+    """Select the lead days `first` to `last` of a dataset or array with a ``step`` dimension.
 
     Without `strict` this is HCWF's reading: a step 0 is dropped and the steps up to `last` kept as they come. With
     `strict` (onset_blending's) the days must be whole, distinct and consecutive; they are put in ascending order and
-    the step labels become 1..n, the days themselves a `lead_day` coordinate. `rain_horizon` (max_day, policy) checks
-    first that the file holds the lead days 1..max_day, exactly ("exact") or with later days permitted ("truncate").
+    the step labels become 1..n, the days themselves a ``lead_day`` coordinate. `rain_horizon` checks first that the
+    file holds the lead days 1..max_day, exactly (``"exact"``) or with later days permitted (``"truncate"``).
+
+    Parameters
+    ----------
+    ds : xarray.Dataset or xarray.DataArray
+        The data, with a ``step`` dimension.
+    first : int, optional
+        The first lead day; None starts at the first positive step.
+    last : int, optional
+        The last lead day; None goes to the last step.
+    strict : bool, default False
+        Require whole, distinct, consecutive days and renumber the steps 1..n.
+    rain_horizon : tuple of (int or None, str), optional
+        ``(max_day, policy)``, the lead days the file must hold; None skips the check.
+    where : str, default "forecast"
+        What the data is, for error messages.
+
+    Returns
+    -------
+    xarray.Dataset or xarray.DataArray
+        The selected data; with `strict` also a ``lead_day`` coordinate over ``step``.
+
+    Raises
+    ------
+    ValueError
+        The filtering removes every day, strict days are not consecutive and distinct, or the rain horizon is not
+        met (see `_check_rain_horizon`).
     """
     if not strict and rain_horizon is None:
         if first is None:
@@ -282,7 +491,18 @@ def select_leads(ds, first=None, last=None, *, strict=False, rain_horizon=None, 
 
 
 def _whole_day(value) -> int | None:
-    """A lead day as a whole number, None for anything else."""
+    """Return a lead day as a whole number, None for anything else.
+
+    Parameters
+    ----------
+    value : object
+        The step label.
+
+    Returns
+    -------
+    int or None
+        The integer value of a finite whole number that is not a boolean, else None.
+    """
     if isinstance(value, (bool, np.bool_)):
         return None
     try:
@@ -293,7 +513,24 @@ def _whole_day(value) -> int | None:
 
 
 def _check_rain_horizon(day_values, rain_day_max: int, where: str, *, allow_extra: bool) -> None:
-    """A strict rain horizon needs the lead days 1..rain_day_max exactly (later days too, with allow_extra)."""
+    """Check that a strict rain horizon holds: the lead days 1 to `rain_day_max` exactly (later days too, with `allow_extra`).
+
+    Parameters
+    ----------
+    day_values : iterable
+        The step labels of the file.
+    rain_day_max : int
+        The last lead day required.
+    where : str
+        What the data is, for the error message.
+    allow_extra : bool
+        Accept days after `rain_day_max`.
+
+    Raises
+    ------
+    ValueError
+        A label is not an integer, a day is duplicated, missing, non-positive or (without `allow_extra`) extra.
+    """
     parsed = [_whole_day(v) for v in day_values]
     invalid = [repr(v) for v, d in zip(day_values, parsed) if d is None]
     valid = [d for d in parsed if d is not None]
@@ -318,10 +555,33 @@ def _check_rain_horizon(day_values, rain_day_max: int, where: str, *, allow_extr
 
 
 def select_members(ds, members=None, *, at_most=None, among=None, where="forecast"):
-    """The members of a dataset or array with a `member` dimension.
+    """Select the members of a dataset or array with a ``member`` dimension.
 
     `members` (HCWF's run setting) names members that must exist. `at_most` and `among` (onset_blending's) keep the
     members present whose number is at most that and among those; none left is an error.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset or xarray.DataArray
+        The data, with a ``member`` dimension.
+    members : sequence, optional
+        Members that must exist; when given, only these are selected and the other arguments are ignored.
+    at_most : int, optional
+        Keep members whose number is at most this.
+    among : collection of int, optional
+        Keep members whose number is in this.
+    where : str, default "forecast"
+        What the data is, for the error message.
+
+    Returns
+    -------
+    xarray.Dataset or xarray.DataArray
+        The selected data; `ds` itself when every member is kept.
+
+    Raises
+    ------
+    ValueError
+        No member is left.
     """
     if members:
         return ds.sel(member=list(members))
@@ -344,18 +604,63 @@ class UnitForecast:
     """One forecast file read onto evaluation units, a run of issues at a time (memory stays one run).
 
     Opens the file lazily as `_load_forecast` does (dimension names, lead days, members), keeps every issue, and puts
-    the units of `spec` (those among `keep_ids`) in id order. `issues`, `ids`, `days` (the lead days kept, their step
-    labels renumbered 1..n) and `members` describe it; `runs()` yields (first, stop, rain) with rain over (init_time,
-    member, unit, step) in the file's dtype for cells and float64 for averaged units.
-    When the first lead day kept is d (steps are renumbered 1..n) init_time is the issue plus d - 1 days, so every step
-    has its true date.
-    `issue_dates` (dates or ISO texts) keeps only the issues on those days, and reads nothing of the others: a file
-    that has none of them has no issues and `runs()` yields nothing.
+    the units of `spec` (those among `keep_ids`) in id order. `runs` yields ``(first, stop, rain)`` with rain over
+    ``(init_time, member, unit, step)`` in the file's dtype for cells and float64 for averaged units.
+    When the first lead day kept is d (steps are renumbered 1..n) ``init_time`` is the issue plus d - 1 days, so every
+    step has its true date. `issue_dates` keeps only the issues on those days, and reads nothing of the others: a file
+    that has none of them has no issues and `runs` yields nothing. Use it as a context manager to close the file.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The NetCDF file.
+    model : hcwf.config.model.ModelSpec
+        The forecast's settings (variable, dimension names, unit factor).
+    spec : hcwf.spatial.units.UnitsSpec
+        How the cells turn into units.
+    keep_ids : collection of str, optional
+        The unit ids to keep; None keeps all.
+    issue_dates : iterable of datetime-like or str, optional
+        Keep only the issues on these days (dates or ISO texts); None keeps all.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        Picks the lead days (``first_lead``, ``last_lead``, ``rain_horizon``) and members (``max_member``,
+        ``member_ids``).
+
+    Attributes
+    ----------
+    path : str or pathlib.Path
+        The file.
+    scale : float
+        The factor to millimetres of the file's variable.
+    days : numpy.ndarray of int64, shape (step,)
+        The lead days kept; their step labels are renumbered 1..n.
+    issues : numpy.ndarray of datetime64[ns], shape (init_time,)
+        The issue dates kept, normalised to midnight.
+    da : xarray.DataArray
+        The lazy variable, transposed to ``(init_time, [member], step, *spatial)``.
+    n_member : int
+        The number of members (1 for a file without a member dimension).
+    members : numpy.ndarray, shape (member,)
+        The member labels (``[0]`` for a single member).
+    spec : hcwf.spatial.units.UnitsSpec
+        How the cells turn into units.
+    units : hcwf.spatial.units.Units
+        The built units.
+    positions : numpy.ndarray of int64
+        The positions of the kept units among `units`.
+    ids : numpy.ndarray of str
+        The ids of the kept units, in id order.
+
+    Raises
+    ------
+    ValueError
+        The file has no such variable, or it is not over issue time and lead day (raised on construction, after
+        which the file is closed).
+    BaseException
+        Whatever else failed while reading the file's layout (the file is closed first).
     """
 
     def __init__(self, path, model, spec: UnitsSpec, *, keep_ids=None, issue_dates=None, select=NO_SELECTION):
-        """`model` is the forecast's ModelSpec (variable, dimension names, unit factor); `select` picks the lead days
-        (first_lead, last_lead, rain_horizon) and members (max_member, member_ids)."""
         self.path, name = path, Path(path).name
         variable = model.var
         ds, self._close = open_forecast(None, None, None, None, model.dims_map(), None, file_path=str(path))
@@ -390,14 +695,35 @@ class UnitForecast:
             raise
 
     def __enter__(self):
+        """Return the reader itself, for use in a ``with`` block.
+
+        Returns
+        -------
+        UnitForecast
+            This reader.
+        """
         return self
 
     def __exit__(self, *exc):
+        """Close the file.
+
+        Parameters
+        ----------
+        *exc : tuple
+            The exception type, value and traceback, if any; ignored.
+        """
         self._close()
 
     def run_bounds(self) -> list[tuple[int, int]]:
-        """The (first, stop) issue positions of each run: whole storage chunks along init_time, as many as `_RUN_VALUES`
-        values allow."""
+        """Return the ``(first, stop)`` issue positions of each run.
+
+        A run is whole storage chunks along ``init_time``, as many as `_RUN_VALUES` values allow.
+
+        Returns
+        -------
+        list of tuple of (int, int)
+            The bounds of the runs, covering every issue in order.
+        """
         da = self.da
         per_issue = max(1, self.n_member * len(self.ids) * len(self.days))
         rows = max(1, _RUN_VALUES // per_issue)
@@ -409,13 +735,31 @@ class UnitForecast:
         return [(start, min(n_issue, start + rows)) for start in range(0, n_issue, max(1, min(rows, n_issue)))]
 
     def run_bytes(self) -> int:
-        """Peak memory to process one run on units: the run and its working copies."""
+        """Estimate the peak memory to process one run on units: the run and its working copies.
+
+        Returns
+        -------
+        int
+            The estimate in bytes.
+        """
         largest = max((stop - start for start, stop in self.run_bounds()), default=0)
         values = largest * self.n_member * len(self.ids) * len(self.days)
         return int(min(values, _RUN_VALUES * 4) * 30) + 512 * 2**20
 
-    def runs(self, bounds=None):
-        """(first, stop, rain) for each run of issues (`run_bounds`, or the (first, stop) pairs given)."""
+    def runs(self, bounds=None) -> Iterator[tuple]:
+        """Yield ``(first, stop, rain)`` for each run of issues.
+
+        Parameters
+        ----------
+        bounds : iterable of tuple of (int, int), optional
+            The ``(first, stop)`` issue positions of the runs; None uses `run_bounds`.
+
+        Yields
+        ------
+        tuple of (int, int, xarray.DataArray)
+            The positions of the run and its rain over ``(init_time, member, unit, step)``, with ``init_time`` the
+            issue plus the first lead day minus one.
+        """
         da = self.da
         for start, stop in self.run_bounds() if bounds is None else bounds:
             rain = read_units(da.isel(init_time=slice(start, stop)), self.spec, self.units, self.positions,

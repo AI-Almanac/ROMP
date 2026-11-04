@@ -1,4 +1,8 @@
-"""What every year of a run shares, built once in the parent process before the years go to workers: the thresholds and the cell masks.
+"""What every year of a run shares, built once in the parent process before the years go to workers.
+
+This is the thresholds (`hcwf.io.thresholds.load_thresholds`) and the cell masks of the observation and model grids
+(`hcwf.spatial.select.mask_region_loaded`). `warm_up` is called by the run entry points before the years are
+scattered; the workers then receive these through the shared state of `hcwf.cache` instead of each building them.
 """
 from __future__ import annotations
 
@@ -16,11 +20,27 @@ from hcwf.io.thresholds import load_thresholds
 
 log = logging.getLogger(__name__)
 
+
 def _warm_masks(lazy, var, dataset_name, area, select, dir_fig):
     """Build the cell masks of a lazily opened dataset's grid (what its first read would build), without reading data.
 
-    `lazy` is the (dim-standardised) Dataset; a zero field on its region box is masked in place with the run's
-    settings, which fills the same mask caches (and logs the same mask text) as the real read.
+    A zero field on the dataset's region box is masked in place with the run's settings, which fills the same mask
+    caches (and logs the same mask text) as the real read.
+
+    Parameters
+    ----------
+    lazy : xarray.Dataset
+        The lazily opened, dim-standardised dataset, with ``lat`` and ``lon`` coordinates.
+    var : str
+        The data variable whose grid is looked at.
+    dataset_name : str
+        The dataset's name, used in the mask log text and cache keys.
+    area : hcwf.config.model.AreaSpec
+        The region and mask settings of the run.
+    select : hcwf.config.model.Selection
+        The run's selection settings (``NO_SELECTION`` when none).
+    dir_fig : str or pathlib.Path
+        The folder where mask figures are written.
     """
     from hcwf.spatial.select import mask_region_loaded, region_box
 
@@ -35,10 +55,38 @@ def warm_up(onset, obs, area, options, ev, output, *, model=None, select=NO_SELE
             cache_dir=None):
     """Read or build in this process what every year of a run shares: the thresholds and the cell masks of both grids.
 
-    Done once before the years go to worker processes, which then get these (see hcwf.parallel.snapshot)
+    Done once before the years go to worker processes, which then get these (see `hcwf.parallel.snapshot`)
     instead of each building them, and whose messages are logged once. The first of the evaluation years picks the
-    NetCDF files whose grids are looked at. Thresholds are loaded as the years would load them; the masks are best effort
-    (a grid that cannot be looked at is left to the workers, which raise the real error if there is one).
+    NetCDF files whose grids are looked at. Thresholds are loaded as the years would load them; the masks are best
+    effort (a grid that cannot be looked at is left to the workers, which raise the real error if there is one).
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset definition.
+    obs : hcwf.config.model.ObsSpec
+        The observation dataset settings; with ``obs.units`` set no mask is built.
+    area : hcwf.config.model.AreaSpec
+        The region and mask settings.
+    options : hcwf.config.model.OnsetOptions
+        The onset options.
+    ev : hcwf.config.model.EvaluationSpec
+        The evaluation settings (years, probabilistic or not).
+    output : hcwf.config.model.OutputSpec
+        The output settings (``figure_dir``).
+    model : hcwf.config.model.Model, optional
+        The forecast source whose grid gets a mask; None leaves the model masks to the workers (that step fails quietly).
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+    parallel : hcwf.config.model.Parallel, optional
+        The parallel settings, passed on to the threshold loading.
+    cache_dir : str or pathlib.Path, optional
+        The cache folder, passed on to the threshold loading.
+
+    Returns
+    -------
+    None
+        Nothing; the thresholds and masks are left in the caches of this process.
     """
     load_thresholds(onset, obs, area, options, ev, output, model=model, select=select, parallel=parallel,
                     cache_dir=cache_dir)
@@ -79,6 +127,21 @@ def warm_up(onset, obs, area, options, ev, output, *, model=None, select=NO_SELE
 
 
 def warm_up_of(rc, model, select=NO_SELECTION):
-    """`warm_up` of a run for the source `model`."""
+    """Call `warm_up` with the settings of a run for the source `model`.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run configuration.
+    model : hcwf.config.model.ModelSpec
+        The forecast source.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+
+    Returns
+    -------
+    None
+        Nothing, as `warm_up`.
+    """
     return warm_up(rc.onset, rc.observations, rc.area, rc.onset_options, rc.evaluation, rc.output, model=model,
                    select=select, parallel=rc.parallel, cache_dir=rc.cache_dir)
