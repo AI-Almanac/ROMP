@@ -21,7 +21,7 @@ from pathlib import Path
 from hcwf.config import schema
 from hcwf.config import detect
 from hcwf.config.model import CLIMATOLOGY, CLIMATOLOGY_REFERENCES
-from hcwf.config.datasets import Dataset, expand_path, file_year, get_dataset, load_datasets, suggest
+from hcwf.config.datasets import Dataset, expand_path, get_dataset, load_datasets, suggest
 from hcwf.errors import ConfigSchemaError, DatasetError, RegionError
 
 YAML_SUFFIXES = (".yaml", ".yml")
@@ -70,10 +70,9 @@ def _listed_files(values: dict, blend: bool) -> tuple[str, ...]:
     if values.get("paths"):
         return tuple(str(f) for f in detect.dataset_files(values))
     if blend and values.get("path") and values.get("file_pattern") and "{}" in values["file_pattern"]:
-        import glob
+        from hcwf.io.stores import pattern_files
 
-        found = glob.glob(str(Path(expand_path(values["path"])) / values["file_pattern"].replace("{}", "[0-9][0-9][0-9][0-9]")))
-        return tuple(sorted(found, key=lambda f: (file_year(f) or 0, f)))
+        return tuple(path for _, path in pattern_files(expand_path(values["path"]), values["file_pattern"]))
     return ()
 
 

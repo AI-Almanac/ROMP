@@ -10,6 +10,8 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import re
+from pathlib import Path
 
 import pandas as pd
 import xarray as xr
@@ -80,6 +82,69 @@ def year_files(paths, base, years_filter, year) -> list[str]:
     return [str(f) for f in files if file_year(f) == year]
 
 
+def is_data_file(name) -> bool:
+    """Tell whether a file name is a NetCDF file or a zarr store (the one test of what counts as a data file).
+
+    Parameters
+    ----------
+    name : str or pathlib.Path
+        The file name; only its text is read.
+
+    Returns
+    -------
+    bool
+        True for a name holding ``.nc`` or ending in ``.zarr``.
+    """
+    name = str(name)
+    return ".nc" in name or name.endswith(".zarr")
+
+
+def data_files(folder) -> list[Path]:
+    """Return the NetCDF files and zarr stores directly in a folder, sorted by name.
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        The folder to list.
+
+    Returns
+    -------
+    list of pathlib.Path
+        The data files (see `is_data_file`); an unreadable folder raises `OSError`.
+    """
+    return sorted(p for p in Path(folder).iterdir() if is_data_file(p.name))
+
+
+def pattern_files(folder, pattern: str) -> list[tuple]:
+    """Return the files of a file pattern with the year each holds: the one listing of a ``{}`` pattern.
+
+    ``{}`` stands for the year, four digits, and the rest of the name is as written, so ``{}.nc`` matches ``2010.nc``
+    and not ``2010_old.nc``. A pattern without ``{}`` matches its own name (or glob) and holds no year.
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        The folder the pattern is relative to.
+    pattern : str
+        The file name with ``{}`` for the year.
+
+    Returns
+    -------
+    list of tuple of (int or None, str)
+        ``(year, path)`` of each file found, by year and then path.
+    """
+    base = glob.escape(str(folder))
+    if "{}" not in pattern:
+        return [(None, f) for f in sorted(glob.glob(os.path.join(base, pattern)))]
+    named = re.compile(re.escape(pattern).replace(re.escape("{}"), r"(\d{4})", 1))
+    found = []
+    for path in glob.glob(os.path.join(base, pattern.replace("{}", "[0-9][0-9][0-9][0-9]"))):
+        match = named.fullmatch(os.path.relpath(path, str(folder)))
+        if match:
+            found.append((int(match.group(1)), path))
+    return sorted(found)
+
+
 def years_in_folder(folder, pattern: str) -> tuple:
     """Return the years of the files in a folder that match a file pattern, sorted.
 
@@ -88,18 +153,14 @@ def years_in_folder(folder, pattern: str) -> tuple:
     folder : str or pathlib.Path
         The folder to look in.
     pattern : str
-        The file pattern, ``{}`` standing for the year.
+        The file pattern, ``{}`` standing for the year (see `pattern_files`).
 
     Returns
     -------
     tuple of int
         The years found, increasing.
     """
-    import glob
-
-    return tuple(sorted({y for y in (file_year(f, whole_number=True)
-                                     for f in glob.glob(os.path.join(str(folder), pattern.replace("{}", "*"))))
-                         if y is not None}))
+    return tuple(sorted({year for year, _ in pattern_files(folder, pattern) if year is not None}))
 
 
 def listed_years(paths, base, years_filter) -> tuple:
@@ -131,13 +192,18 @@ def listed_years(paths, base, years_filter) -> tuple:
     return tuple(sorted({y for y in map(file_year, files) if y is not None}))
 
 
-def store_years(path) -> tuple:
-    """Return the years a zarr store of observations holds, from its time coordinate.
+def store_years(path, forecast: bool = False, dims=None) -> tuple:
+    """Return the years a zarr store holds, from its time coordinate (observations) or its init times (forecasts).
 
     Parameters
     ----------
     path : str or pathlib.Path
         The zarr store.
+    forecast : bool, default False
+        Read the ``init_time`` of a forecast store (named as `hcwf.io.dims.dim_fmt_model` does) instead of the ``time``
+        of an observation store.
+    dims : dict of str to str, optional
+        Names used in the file for canonical dimensions (see `hcwf.io.dims.rename_model_dims`); forecasts only.
 
     Returns
     -------
@@ -147,12 +213,16 @@ def store_years(path) -> tuple:
     Raises
     ------
     ValueError
-        The store has no time coordinate.
+        The store has no time coordinate (no init time for ``forecast``).
     """
-    ds = dim_fmt(open_store(path))
-    if "time" not in ds.coords:
-        raise ValueError(f"{path}: the zarr store has no time coordinate")
-    return tuple(sorted({int(y) for y in pd.DatetimeIndex(ds["time"].values).year.unique()}))
+    coord = "init_time" if forecast else "time"
+    try:
+        ds = dim_fmt_model(open_store(path), dims) if forecast else dim_fmt(open_store(path))
+    except (IndexError, KeyError, ValueError):
+        ds = None
+    if ds is None or coord not in ds.coords:
+        raise ValueError(f"{path}: the zarr store has no {'init time' if forecast else 'time'} coordinate")
+    return tuple(sorted({int(y) for y in pd.DatetimeIndex(ds[coord].values).year.unique()}))
 
 
 def dataset_years(folder, paths=None, years_filter=None, file_pattern=None, *, strict: bool = False) -> tuple:
@@ -226,8 +296,7 @@ def model_sources(folder, paths=None, file_pattern=None) -> list[str]:
     if is_zarr(folder):
         return [str(folder)]
     pattern = file_pattern or "{}.nc"
-    files = sorted((f for f in glob.glob(os.path.join(str(folder), pattern.replace("{}", "*")))
-                    if file_year(f, whole_number=True) is not None), key=lambda f: (file_year(f, whole_number=True), f))
+    files = [path for year, path in pattern_files(folder, pattern) if year is not None]
     if not files:
         raise FileNotFoundError(f"No forecast file of the pattern {pattern!r} in {folder}")
     return files

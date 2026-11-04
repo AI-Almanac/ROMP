@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-import xarray as xr
 
 from hcwf.config.schema import has_blend
 from hcwf.config.model import CLIMATOLOGY_REFERENCES, CONDITIONAL_CLIMATOLOGY, climatology_years, evaluation_years
@@ -149,7 +148,7 @@ def _source(dic: dict, key: str) -> str:
 
 
 def _open(path):
-    """Open a NetCDF file or zarr store lazily.
+    """Open a NetCDF file or zarr store lazily, as `hcwf.config.detect.open_data` does.
 
     Parameters
     ----------
@@ -161,62 +160,47 @@ def _open(path):
     xarray.Dataset
         The lazy Dataset; it is a context manager that closes it.
     """
-    from hcwf.config.datasets import is_zarr
+    from hcwf.config.detect import open_data
 
-    return xr.open_zarr(str(path), chunks=None) if is_zarr(path) else xr.open_dataset(path)
-
-
-def _store_has_year(store, year) -> bool:
-    """Return whether the zarr store has a datetime coordinate value in the year.
-
-    Parameters
-    ----------
-    store : str or pathlib.Path
-        The zarr store.
-    year : int
-        The year.
-
-    Returns
-    -------
-    bool
-        True when a one-dimensional datetime coordinate has a value in ``year``, and also when the store has no such
-        coordinate (nothing can be said, so the year is taken as present).
-    """
-    ds = xr.open_zarr(str(store), chunks=None)
-    for coord in ds.coords.values():
-        if coord.ndim == 1 and np.issubdtype(coord.dtype, np.datetime64):
-            return bool((coord.dt.year == year).any())
-    return True
+    return open_data(str(path))
 
 
-def _find(folder, patterns, year):
-    """Return the path of the yearly file in ``folder`` matching one of the patterns, or None.
+def _find(folder, patterns, year, *, forecast: bool = False, dims=None):
+    """Return the path of the file that holds the year, found as a run finds it, or None.
 
-    A folder that is a zarr store holds all years: the store is returned if it has times in the year.
+    A folder that is a zarr store holds all years: the store is returned if it has times (init times for ``forecast``)
+    in the year. Otherwise `hcwf.io.stores.observation_source` or `hcwf.io.stores.forecast_sources` finds the file.
 
     Parameters
     ----------
     folder : str or pathlib.Path
         The folder of the files, or a zarr store.
     patterns : iterable of str
-        The file name patterns, each formatted with the year (``pattern.format(year)``).
+        The file name patterns (``{}`` for the year); the first that exists is used, and a forecast has the first only.
     year : int
         The year.
+    forecast : bool, default False
+        Look for forecasts (init times of a store) instead of observations.
+    dims : dict of str to str, optional
+        The names a forecast store uses for canonical dimensions.
 
     Returns
     -------
     pathlib.Path or None
-        The first file that exists (or the store), else None.
+        The file (or the store), else None; a zarr store with no time coordinate (no init time for ``forecast``) raises
+        `ValueError`, as no year can be found in it.
     """
     from hcwf.config.datasets import is_zarr
+    from hcwf.io.stores import forecast_sources, observation_source, store_years
 
     if is_zarr(folder):
-        return Path(str(folder)) if _store_has_year(folder, year) else None
-    for pattern in patterns:
-        path = Path(str(folder)) / pattern.format(year)
-        if path.exists():
-            return path
-    return None
+        return Path(str(folder)) if year in store_years(folder, forecast, dims) else None
+    try:
+        found = forecast_sources(year, folder, tuple(patterns)[0])[0] if forecast \
+            else observation_source(year, folder, tuple(patterns))[1]
+    except OSError:
+        return None
+    return Path(found)
 
 
 def _settings(dic: dict, report: CheckReport) -> None:
@@ -338,8 +322,17 @@ def _files(dic: dict, report: CheckReport) -> dict:
     samples = {}
     if dic.get("obs_paths") or dic.get("model_paths_list"):
         return _listed_files(dic, report)
+
+    def look(folder, patterns, years, **kw):
+        """Return each year's file or None; a store that cannot say what years it holds is an error, and no year is found."""
+        try:
+            return {y: _find(folder, patterns, y, **kw) for y in years}
+        except ValueError as exc:
+            report.error(str(exc))
+            return dict.fromkeys(years)
+
     patterns = tuple(dic.get("obs_file_pattern") or ("{}.nc",))
-    found = {y: _find(dic["obs_dir"], patterns, y) for y in sorted(obs_years)}
+    found = look(dic["obs_dir"], patterns, sorted(obs_years))
     missing = [y for y, p in found.items() if p is None]
     samples["observations"] = next((p for y, p in found.items() if p is not None and y in years), None) \
         or next((p for p in found.values() if p is not None), None)
@@ -350,7 +343,7 @@ def _files(dic: dict, report: CheckReport) -> dict:
                      f"(pattern {', '.join(patterns)})")
     for i, model in enumerate(dic["model_list"]):
         folder, pattern = dic["model_dir_list"][i], dic["file_pattern_list"][i]
-        got = {y: _find(folder, (pattern,), y) for y in years}
+        got = look(folder, (pattern,), years, forecast=True, dims=(dic.get("model_dims_list") or [None] * (i + 1))[i])
         gone = [y for y, p in got.items() if p is None]
         samples[model] = next((p for p in got.values() if p is not None), None)
         report.add(f"{model}: {len(got) - len(gone)} of {len(got)} yearly files found in {folder}")
@@ -358,7 +351,7 @@ def _files(dic: dict, report: CheckReport) -> dict:
             report.error(f"{model} forecast files missing for {_short(gone)} in {folder} (pattern {pattern})")
     ref = dic.get("ref_model")
     if ref and ref not in CLIMATOLOGY_REFERENCES and dic.get("ref_model_dir"):
-        got = {y: _find(dic["ref_model_dir"], (dic.get("ref_model_file_pattern") or "{}.nc",), y) for y in years}
+        got = look(dic["ref_model_dir"], (dic.get("ref_model_file_pattern") or "{}.nc",), years, forecast=True)
         gone = [y for y, p in got.items() if p is None]
         report.add(f"reference {ref}: {len(got) - len(gone)} of {len(got)} yearly files found")
         if gone:
@@ -714,6 +707,7 @@ def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
         report.add(line)
     report.add(f"windows {dic['verification_window_list']} with tolerances {dic['tolerance_days_list']} days; "
                f"max forecast day {dic['max_forecast_day']}; day bins {dic['day_bins']}")
+    from hcwf.io.dims import find_dim
     from hcwf.onset import ingest
 
     for i, model in enumerate(dic["model_list"]):
@@ -722,10 +716,8 @@ def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
             continue
         try:
             with _open(path) as ds:
-                names = [d for d in ds.dims if str(d).lower() in ("step", "lead", "prediction_timedelta", "day",
-                                                                  "prediction_timedelta_daily")]
                 lead = (dic.get("model_dims_list") or [None] * 99)[i]
-                lead = (lead or {}).get("step") or (names[0] if names else None)
+                lead = (lead or {}).get("step") or find_dim([str(d) for d in ds.dims], "step")
                 if lead is None:
                     continue
                 hours = ingest.lead_hours(ds, lead)

@@ -32,7 +32,6 @@ through `hcwf.cache.Store`.
 """
 from __future__ import annotations
 
-import glob
 import os
 import re
 import warnings
@@ -49,6 +48,7 @@ from hcwf.cache import Store, file_identity, global_root, memo
 from hcwf.config.datasets import expand_path, file_year, is_zarr, resolve_paths, year_match
 from hcwf.onset import ingest
 from hcwf.io.dims import matches
+from hcwf.io.stores import data_files, pattern_files
 from hcwf.errors import DatasetError
 
 _PRECIP_RE = re.compile(r"(?i)precip|rain|prcp|(^|_)(tp|pr)($|_)")
@@ -554,8 +554,8 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
         if is_zarr(sample) or not obs.get("paths") and is_zarr(expand_path(obs["path"])):
             return None, "the sampled check does not read datasets given by paths. Fix: set lead_label"
         try:
-            listed = dataset_files(obs) if obs.get("paths") else sorted(Path(expand_path(obs["path"])).glob(
-                obs["file_pattern"].replace("{}", str(year) if year else "*")))
+            listed = dataset_files(obs) if obs.get("paths") else [path for found, path in pattern_files(
+                expand_path(obs["path"]), obs["file_pattern"]) if not year or found == year]
         except DatasetError as exc:
             return None, str(exc)
         files = [str(f) for f in listed if year is None or file_year(f) == year or not obs.get("paths")]
@@ -566,7 +566,7 @@ def _lead_label(values: dict, sample: str, obs: dict, roles: dict) -> tuple[str 
         if is_zarr(sample) or is_zarr(obs_dir):
             return _lead_label_sampled(values, sample, obs, roles, obs_dir)
         year = file_year(sample, whole_number=True)
-        files = sorted(glob.glob(os.path.join(obs_dir, obs["file_pattern"].replace("{}", str(year) if year else "*"))))
+        files = [path for found, path in pattern_files(obs_dir, obs["file_pattern"]) if not year or found == year]
         if not files:
             return None, f"no observation file for year {year if year else '?'} in {obs_dir}"
     obs_units, fc_units = obs.get("units"), values.get("units")
@@ -686,8 +686,7 @@ def dataset_files(entry: dict) -> list[Path]:
     if entry.get("paths"):
         return resolve_paths(entry["paths"], base, entry.get("years"))
     folder = Path(base)
-    return [folder] if is_zarr(folder) else sorted(
-        p for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr"))
+    return [folder] if is_zarr(folder) else data_files(folder)
 
 
 def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> dict | None:
@@ -848,8 +847,7 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         return _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_label, lead_label_default)
     if is_zarr(folder):
         return _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label, lead_label_default)
-    names = sorted(p.name for p in folder.iterdir() if ".nc" in p.name or p.name.endswith(".zarr")) \
-        if folder.is_dir() else []
+    names = [p.name for p in data_files(folder)] if folder.is_dir() else []
     needed = [k for k in ("file_pattern", "variable", "day_boundary", "lead_label", "units") if k not in values]
     if kind == "forecast" and "day_boundary" in needed:
         needed.remove("day_boundary")
@@ -876,7 +874,8 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
             problems["file_pattern"] = f"cannot be detected ({evidence}). Fix: set file_pattern, e.g. '{{}}.nc'"
         else:
             detected("file_pattern", pattern, evidence)
-    files = sorted(glob.glob(os.path.join(str(folder), values.get("file_pattern", "*").replace("{}", "*"))))
+    files = [path for _, path in pattern_files(folder, values["file_pattern"])] if "file_pattern" in values \
+        else [str(p) for p in data_files(folder)]
     if not files:
         problems["file_pattern"] = f"no file in {folder} matches {values.get('file_pattern')!r}"
         return res

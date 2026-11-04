@@ -8,9 +8,6 @@ a config.
 """
 from __future__ import annotations
 
-import os
-import re
-
 from hcwf.config.model import evaluation_years
 from hcwf.config.onset import forecast_reach, onset_setup
 from hcwf.io.paths import set_dir
@@ -34,27 +31,6 @@ def usable_last_lead(n_leads: int, reach: int) -> int:
         ``n_leads - reach + 1`` (below 1 when no lead can be searched).
     """
     return n_leads - reach + 1
-
-
-def available_years(folder: str, pattern: str) -> list[int]:
-    """Return the years that have a file in ``folder`` named by ``pattern``.
-
-    Parameters
-    ----------
-    folder : str
-        The folder of the yearly files; a folder that does not exist has no years.
-    pattern : str
-        The file name as a format string with the year placeholder, e.g. ``"{}.nc"``.
-
-    Returns
-    -------
-    list of int
-        The years found, ascending; empty when none are found.
-    """
-    if not os.path.isdir(folder):
-        return []
-    found = re.compile("^" + re.sub(r"\\\{[^}]*\\\}", lambda _: r"(\d{4})", re.escape(pattern)) + "$")
-    return sorted({int(m.group(1)) for name in os.listdir(folder) if (m := found.match(name))})
 
 
 def _years_text(years: list[int]) -> str:
@@ -98,12 +74,12 @@ def count_leads(dic: dict, index: int) -> int:
         No year is evaluated, or the first year's file does not exist.
     """
     from hcwf.config.detect import open_data
-    from hcwf.io.stores import forecast_sources
+    from hcwf.io.stores import forecast_sources, years_in_folder
 
     folder = set_dir(str(dic["model_dir_list"][index]))
     years = evaluation_years(dic)
     if not years:
-        have = available_years(folder, str(dic["file_pattern_list"][index]))
+        have = list(years_in_folder(folder, str(dic["file_pattern_list"][index])))
         raise OnsetConfigError(
             f"no year to evaluate: start_date {tuple(dic['start_date'])} and end_date {tuple(dic['end_date'])} give no "
             f"year (the first year must not be after the last). The {dic['model_list'][index]} files in {folder} "
@@ -115,7 +91,7 @@ def count_leads(dic: dict, index: int) -> int:
     try:
         path = forecast_sources(year, folder, str(dic["file_pattern_list"][index]), listed or None)[0]
     except FileNotFoundError as exc:
-        have = available_years(folder, str(dic["file_pattern_list"][index]))
+        have = list(years_in_folder(folder, str(dic["file_pattern_list"][index])))
         raise OnsetConfigError(f"cannot count the forecast leads of {dic['model_list'][index]}: {exc} "
                                f"(its files cover the years {_years_text(have)}; start_date starts at {year})") from None
     with open_data(folder if path is None else path) as ds:

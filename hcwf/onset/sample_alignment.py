@@ -28,7 +28,6 @@ lists of files, ``obs_paths``, ``obs_files_years``, ``model_paths`` and ``model_
 """
 from __future__ import annotations
 
-import os
 import threading
 import warnings
 from contextlib import nullcontext
@@ -42,7 +41,7 @@ import xarray as xr
 from hcwf.cache import Store, file_identity
 from hcwf.io.forecasts import init_dates
 from hcwf.io.stores import forecast_sources as _year_sources
-from hcwf.io.stores import listed_years, observation_source, open_store, years_in_folder
+from hcwf.io.stores import data_files, dataset_years, observation_source, open_store
 from hcwf.config.datasets import is_zarr
 from hcwf.spatial.select import load_blocks
 from hcwf.onset import ingest as ing
@@ -169,9 +168,7 @@ def _dataset_years(kw: dict, side: str) -> tuple:
         The years, increasing.
     """
     folder, paths, years_filter, pattern = _SIDES[side]
-    if kw.get(paths):
-        return listed_years(kw[paths], kw.get(folder) or None, kw.get(years_filter))
-    return years_in_folder(kw[folder], _patterns(kw.get(pattern))[0])
+    return dataset_years(kw.get(folder), kw.get(paths), kw.get(years_filter), _patterns(kw.get(pattern))[0])
 
 
 def _box_indices(values: np.ndarray, lo: float, hi: float, wrap: bool = False) -> np.ndarray:
@@ -817,7 +814,7 @@ def _files(kw: dict, side: str) -> list:
     if _is_store(kw, side):
         return [file_identity(kw[folder])]
     try:
-        return [file_identity(f) for f in sorted(os.scandir(kw[folder]), key=lambda e: e.name) if ".nc" in f.name]
+        return [file_identity(f) for f in data_files(kw[folder])]
     except OSError:
         return [[str(kw.get(folder)), None, None]]
 
