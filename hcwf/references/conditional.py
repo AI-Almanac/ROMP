@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from hcwf.config.model import Selection
-from hcwf.metrics.bins import LeadBins, PairArrays, bin_fields
+from hcwf.metrics.bins import LeadBins, PairArrays, bin_fields, onset_cases
 from hcwf.references.kde import conditional_probabilities, season_days
 from hcwf.spatial import axes
 import logging
@@ -165,25 +165,6 @@ def _align(clim_onset, like):
                               tolerance=_GRID_TOLERANCE)
 
 
-def _cases(inits, obs):
-    """Find the cases: the cells with an observed onset and the inits before it, init-major.
-
-    Parameters
-    ----------
-    inits : pandas.DatetimeIndex
-        The initialization dates.
-    obs : numpy.ndarray of datetime64[ns], shape spatial
-        The observed onset dates over the spatial axes, ``NaT`` where there is none.
-
-    Returns
-    -------
-    tuple of numpy.ndarray of int64
-        The index arrays ``(init, *spatial)``, one entry per case.
-    """
-    has_obs = ~np.isnat(obs)
-    return np.nonzero(has_obs[None] & (axes.broadcast_rows(inits.values.astype("datetime64[ns]"), obs.ndim + 1) < obs[None]))
-
-
 def conditional_lead_probabilities(clim_onset, year, init_dates, like, horizon, climatology_cv=None):
     """Compute the conditional onset probabilities of every init and cell for leads 1 to ``horizon``.
 
@@ -267,7 +248,7 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     clim = _align(clim_onset, obs_da)
     obs = obs_da.transpose(*spatial).values.astype("datetime64[ns]")
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
-    init_case, *where = _cases(inits, obs)
+    init_case, *where = onset_cases(inits, obs)
     if not len(init_case):
         return PairArrays.empty(bins, spatial)
 
@@ -452,7 +433,7 @@ def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, ob
     obs = observed_onset_da.transpose(*spatial).values.astype("datetime64[ns]")
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates])
     init_ns = inits.values.astype("datetime64[ns]")
-    init_case, *where = _cases(inits, obs)
+    init_case, *where = onset_cases(inits, obs)
     where = tuple(where)
     if not len(init_case):
         return pd.DataFrame([])

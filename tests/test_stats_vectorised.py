@@ -1048,13 +1048,21 @@ def _climatological_onsets(years=range(2010, 2021), seed=2):
     return xr.DataArray(dates, coords=[("year", list(years)), ("lat", LATS), ("lon", LONS)])
 
 
+NON_LEAP_YEARS = (2010, 2011, 2013, 2014, 2015, 2017, 2018, 2019)
+
+
 @pytest.mark.parametrize("day_bins", [((1, 5), (6, 10), (11, 15)), ((3, 9), (10, 16))])
 def test_climatological_pairs_match_loops(day_bins):
-    """The vectorised climatological pairs match the loop version apart from the documented difference."""
-    clim_onset = _climatological_onsets()
+    """The vectorised climatological pairs match the day-of-year loop version where the two rules agree.
+
+    The loop compares days of year; the pairs compare dates and place members by calendar date, which is the same in
+    years without a 29 February and seasons inside one calendar year (the other cases are in test_climatology_cases).
+    """
+    clim_onset = _climatological_onsets(NON_LEAP_YEARS)
+    inits = INITS + pd.DateOffset(years=-1)
     kwargs = dict(day_bins=day_bins, max_forecast_day=day_bins[-1][1])
-    old = _old_create_climatological_forecast_obs_pairs(clim_onset, 2020, INITS, **kwargs)
-    new = create_climatological_forecast_obs_pairs(clim_onset, 2020, INITS, day_bins=day_bins)
+    old = _old_create_climatological_forecast_obs_pairs(clim_onset, 2019, inits, **kwargs)
+    new = create_climatological_forecast_obs_pairs(clim_onset, 2019, inits, day_bins=day_bins)
     assert new.n_cases > 0
     _assert_pairs_match(old, new, extra=["total_members_with_onset"])
 

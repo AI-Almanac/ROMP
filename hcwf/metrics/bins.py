@@ -546,15 +546,67 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
     return pairs
 
 
+def onset_cases(inits, obs):
+    """Find the cases of one season: the places with an observed onset and the inits dated before it.
+
+    The one case rule of the model's pairs, the climatology reference and the conditional climatology: real dates.
+
+    Parameters
+    ----------
+    inits : pandas.DatetimeIndex
+        The initialization dates.
+    obs : numpy.ndarray of datetime64[ns], shape spatial
+        The observed onset dates over the spatial axes, ``NaT`` where there is none.
+
+    Returns
+    -------
+    tuple of numpy.ndarray of int64
+        The index arrays ``(init, *spatial)``, one entry per case, init-major.
+    """
+    has_obs = ~np.isnat(obs)
+    return np.nonzero(has_obs[None] & (axes.broadcast_rows(inits.values.astype("datetime64[ns]"), obs.ndim + 1) < obs[None]))
+
+
+def season_relative_days(dates, label_years):
+    """Count the days of dates from 1 January of their season's year, 29 February sharing the day of 1 March.
+
+    The day counter of the conditional climatology (`hcwf.references.kde.season_days` with ``leap_shift``), continued
+    past 31 December: a date in the year after its season's label year counts 365 more, so an onset in January of
+    the next year is placed after the init of a season that crosses the year boundary. Two dates counted against the
+    same labelled year differ by the real number of days, except across 29 February of a leap year.
+
+    Parameters
+    ----------
+    dates : numpy.ndarray of datetime64
+        The dates, any shape (``NaT`` allowed).
+    label_years : int or numpy.ndarray of int
+        The year of the season each date belongs to, broadcast against ``dates``.
+
+    Returns
+    -------
+    numpy.ndarray of float64
+        The day counts in the shape of ``dates``, NaN for ``NaT``.
+    """
+    from hcwf.references.kde import season_days   # the references import this module
+    dates = np.asarray(dates, dtype="datetime64[ns]")
+    days = season_days(dates, (1, 1), leap_shift=True).reshape(dates.shape)
+    years = pd.DatetimeIndex(dates.ravel()).year.to_numpy().reshape(dates.shape)
+    return days + 365.0 * (years - label_years)
+
+
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
 def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, observed_onset_da=None, *,
                                              day_bins, leave_one_out=False):
     """Create forecast-observation pairs from a climatological ensemble in which each year is a member.
 
-    Uses day of year instead of calendar dates for the onset comparison. The years of ``clim_onset`` are the members
-    (without the target year when ``leave_one_out`` is set); the observation is ``observed_onset_da``, by default the
-    target year's slice of ``clim_onset``. A case is a place with an observed onset and
-    an init before it, kept when at least one member has an onset; the probabilities use only the members with an onset.
+    The cases are those of the model's pairs (`onset_cases`: real dates). The leads of the members are those of the
+    conditional climatology: each member's onset is placed in the target season by calendar date (29 February with
+    1 March, an onset in the year after the member's year in the year after the target; `season_relative_days`) and
+    counted from the init, so the benchmark and the models are scored on the same cases and the same lead days. The
+    years of ``clim_onset`` are the members (without the target year when ``leave_one_out`` is set); the observation
+    is ``observed_onset_da``, by default the target year's slice of ``clim_onset``. A case is a place with an observed
+    onset and an init before it, kept when at least one member has an onset; the probabilities use only the members
+    with an onset.
 
     Parameters
     ----------
@@ -607,7 +659,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     log.debug(f"Processing {len(init_dates)} initialization dates")
     log.debug(f"Day bins: {day_bins}")
     log.debug(f"Extended bins include: 'Before day {min_forecast_day}' and 'After day {max_forecast_day}' ")
-    log.debug("Using day-of-year method for onset comparison")
+    log.debug("Placing member onsets in the target season by calendar date")
 
     # Get the actual coordinates (lat and lon, or unit ids) from the data
     spatial = axes.spatial_dims(obs_onset_da.dims)
@@ -617,30 +669,23 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     log.debug(f"Processing {n_places} unique {'/'.join(spatial)} locations")
 
     obs_onset = axes.snap(obs_onset_da.transpose(*spatial).values.astype("datetime64[ns]"), spatial, coords)
-    has_obs = ~np.isnat(obs_onset)
-    obs_onset_doy = np.where(has_obs, pd.DatetimeIndex(obs_onset.ravel()).dayofyear.to_numpy().reshape(obs_onset.shape),
-                             0).astype(np.int64)
     ensemble_onset = axes.snap(clim_onset.transpose("year", *spatial).values.astype("datetime64[ns]"), spatial, coords,
                                lead=1)
-    ensemble_doy = np.where(np.isnat(ensemble_onset), np.nan,
-                            pd.DatetimeIndex(ensemble_onset.ravel()).dayofyear.to_numpy()
-                            .reshape(ensemble_onset.shape).astype(float))
+    member_years = np.asarray(clim_onset.year.values, dtype=np.int64).reshape((-1,) + (1,) * len(spatial))
+    ensemble_day = season_relative_days(ensemble_onset, member_years)
 
     inits = pd.DatetimeIndex([pd.to_datetime(init_date) for init_date in init_dates])
-    init_doy = inits.dayofyear.to_numpy().astype(np.int64)
+    init_day = season_relative_days(inits.values.astype("datetime64[ns]"), int(target_year))
 
-    # A case is a location with an observed onset and an init before it (by day of year),
-    # ordered by init date, then lon, then lat (a grid's axes reversed; units by id)
-    reverse = tuple(reversed(range(len(spatial))))
-    cases = np.nonzero(has_obs.transpose(reverse)[None]
-                       & (axes.broadcast_rows(init_doy, has_obs.ndim + 1) < obs_onset_doy.transpose(reverse)[None]))
-    init_case, *backwards = cases
-    where = tuple(reversed(backwards))
-    case_obs_doy = obs_onset_doy[where]
-    obs_days_from_init = case_obs_doy - init_doy[init_case]
+    # The cases of the model's pairs, ordered by init date, then lon, then lat (a grid's axes reversed; units by id)
+    init_case, *where = onset_cases(inits, obs_onset)
+    order = np.lexsort((*where, init_case))
+    init_case, where = init_case[order], tuple(w[order] for w in where)
+    obs_days_from_init = ((obs_onset[where] - inits.values.astype("datetime64[ns]")[init_case])
+                          // np.timedelta64(1, "D")).astype(np.int64)
 
-    # Days from init of each year's onset at the case's location, NaN where the year has none
-    member_days = ensemble_doy[(slice(None), *where)].T - init_doy[init_case][:, None]
+    # Lead days of each year's onset at the case's location, NaN where the year has none
+    member_days = ensemble_day[(slice(None), *where)].T - init_day[init_case][:, None]
     has_onset = ~np.isnan(member_days)
 
     members_in_bin = []

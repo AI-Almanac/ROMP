@@ -14,7 +14,7 @@ from hcwf.cache import memo
 from hcwf.io.reference import reference_held, reference_rain_year, release_reference
 from hcwf.io.thresholds import thresholds_of
 from hcwf.onset.detect import detect_observed
-from hcwf.onset.climatology import ReferenceOnset, reduce_onset_days
+from hcwf.onset.climatology import ReferenceOnset, _doy_index, reduce_onset_days
 from hcwf.spatial import axes
 
 import numpy as np
@@ -203,13 +203,10 @@ def climatological_onset(rc, case, select=Selection()):
     if grid_point:
         rainfall_stack = xr.concat(rainfall_all_years, dim='year')
 
-        # create day-of-year coordinate (1-365)
-        rainfall_stack = rainfall_stack.sel(time=~((rainfall_stack['time'].dt.is_leap_year) &
-                                           (rainfall_stack['time'].dt.dayofyear == 366)))
-
-        # Create day-of-year index (just integer 1-365)
-        doy = rainfall_stack['time'].dt.dayofyear
-        rainfall_stack = rainfall_stack.assign_coords(doy=doy)
+        # 29 February is left out and every other date takes its day of the 365-day year (1 March is day 60 every year)
+        doy = _doy_index(rainfall_stack['time'].dt.month.values, rainfall_stack['time'].dt.day.values) + 1
+        rainfall_stack = rainfall_stack.isel(time=np.flatnonzero(doy > 0))
+        rainfall_stack = rainfall_stack.assign_coords(doy=('time', doy[doy > 0]))
 
         # Aggregate over years using groupby
         # explicitly reduce the 'time' dimension by taking mean
