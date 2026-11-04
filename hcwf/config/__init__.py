@@ -25,6 +25,7 @@ same name; see `hcwf.config.schema` for each key's type, default and help. Unset
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import re
 import textwrap
 from pathlib import Path
@@ -34,6 +35,7 @@ import yaml
 
 from hcwf.config import schema
 from hcwf.config.convert import plain, render_yaml
+from hcwf.config.maskspec import MaskSpec
 from hcwf.errors import ConfigSchemaError
 
 __all__ = [
@@ -244,6 +246,47 @@ def _document(cls: type, entries: dict[str, _Param | None]) -> None:
     params = [entries[f.name] for f in dataclasses.fields(cls) if entries[f.name] is not None]
     _PARAMETERS[cls] = params
     cls.__doc__ = (cls.__doc__ or "").rstrip() + "\n\n" + _parameters_section(params)
+    cls.__signature__ = _signature(cls)
+
+
+class _Shown:
+    """A default shown as the given text in a signature (``...`` prints as ``...``, not ``Ellipsis``).
+
+    Parameters
+    ----------
+    text : str
+        What `repr` returns.
+    """
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def __repr__(self) -> str:
+        """Return the text.
+
+        Returns
+        -------
+        str
+            The text given.
+        """
+        return self.text
+
+
+def _signature(cls: type) -> inspect.Signature:
+    """Return the keyword-only signature of a config class, as documented.
+
+    Parameters
+    ----------
+    cls : type
+        A config class that `_document` has described.
+
+    Returns
+    -------
+    inspect.Signature
+        One keyword-only parameter per documented key, its default shown as source text (``...`` for none).
+    """
+    return inspect.Signature([inspect.Parameter(p.name, inspect.Parameter.KEYWORD_ONLY, default=_Shown(p.default or "..."))
+                              for p in _PARAMETERS[cls]])
 
 
 def keyword_signature(cls: type) -> str:
@@ -260,7 +303,7 @@ def keyword_signature(cls: type) -> str:
         ``(*, key=default, ...)``: the schema default where the key has one, ``...`` where it has none (it is resolved
         when the config is used). Never the `UNSET` marker the classes use internally.
     """
-    return "(*, " + ", ".join(f"{p.name}={p.default or '...'}" for p in _PARAMETERS[cls]) + ")"
+    return str(_signature(cls))
 
 
 @dataclasses.dataclass
@@ -312,8 +355,7 @@ class Mask:
     Rainfall is never regridded. Parts given intersect: ``land`` (Natural Earth land), ``country`` (a name or list of
     names), ``file`` (0/1 NetCDF with ``variable`` and ``keep_value``, or a shapefile / GeoJSON) and ``condition``
     (``{file, variable, above, below}``). ``cell_rule`` is ``"centre"`` or ``"overlap_fraction"`` (with
-    ``overlap_fraction``, default 0.5); ``resolution`` is the Natural Earth resolution (``"10m"``, ``"50m"`` (default)
-    or ``"110m"``). Unset keys are `UNSET`. See `hcwf.spatial.masks`.
+    ``overlap_fraction``); ``resolution`` is the Natural Earth resolution (``"10m"``, ``"50m"`` or ``"110m"``). Unset keys are `UNSET`. See `hcwf.spatial.masks`.
     """
 
     land: Any = UNSET
@@ -394,6 +436,11 @@ _DATASET_ENTRIES = {
 }
 """The description of each `Dataset` key."""
 _document(Dataset, _DATASET_ENTRIES)
+_MASK_DEFAULTS = {f.name: f.default for f in dataclasses.fields(MaskSpec)
+                  if f.name in schema.MASK_KEYS and f.default not in (False, None, ())}
+"""The value each ``mask:`` key takes when left out, read from the fields of `hcwf.config.maskspec.MaskSpec`."""
+
+
 def _mask_param(key: str, help: str, py_type: str, note: str) -> _Param:
     """Describe a `Mask` key from the schema's `hcwf.config.schema.MASK_KEYS`.
 
@@ -402,7 +449,7 @@ def _mask_param(key: str, help: str, py_type: str, note: str) -> _Param:
     key : str
         The key.
     help : str
-        The schema help; a default it states is dropped (the type line shows `hcwf.config.schema.MASK_DEFAULTS`).
+        The schema help; a default it states is dropped (the type line shows the field default of `hcwf.config.maskspec.MaskSpec`).
     py_type : str
         The Python type, a ``{...}`` set for a key with choices.
     note : str
@@ -416,7 +463,7 @@ def _mask_param(key: str, help: str, py_type: str, note: str) -> _Param:
     choices = tuple(re.findall(r"'([^']+)'", py_type)) if py_type.startswith("{") else None
     help = re.sub(r"(\s*\(default [^)]*\)|;\s*default \S+)$", "", _prose(help))
     text = _choice_bullets(help, choices) or _sentence(help)
-    default = schema.MASK_DEFAULTS.get(key)
+    default = _MASK_DEFAULTS.get(key)
     return _Param(key, py_type, None if default is None else repr(default), text + (" " + note if note else ""))
 
 

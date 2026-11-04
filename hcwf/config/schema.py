@@ -761,8 +761,6 @@ MASK_KEYS = {
                    "(default '50m')", "{'10m', '50m', '110m'}", ""),
 }
 """The keys of the ``mask:`` section: ``(wording, help, python_type, note)`` as in `KINDS`."""
-MASK_DEFAULTS = {"keep_value": 1, "cell_rule": "centre", "overlap_fraction": 0.5, "resolution": "50m"}
-"""The value each ``mask:`` key takes when it is left out (keys not listed: the part is not used)."""
 _MASK_CONDITION_KEYS = ("file", "variable", "above", "below")
 
 
@@ -944,6 +942,8 @@ KINDS: dict[str, tuple[str, Callable, str, str]] = {
         "{'cells', 'regrid', 'cell_transform'} or dict of str to str", "A mapping gives one mode per source name."),
     "any": ("any value", _anything,
         "object", ""),
+    "any_mapping": ("any value", _anything,
+        "dict", ""),
 }
 """Value kinds: ``(wording, checker, python_type, note)``.
 
@@ -1063,9 +1063,9 @@ def _fields() -> tuple[Field, ...]:
     onset = [
         Field("onset_definition", "str", "registry id or path of a definition YAML (null: the region's)", None,
               "onset", "definition", nullable=True, fill=False),
-        Field("onset_override", "any", "changes merged into the definition (same rules as `extends`), e.g. "
+        Field("onset_override", "any_mapping", "changes merged into the definition (same rules as `extends`), e.g. "
               "{season: {from: 05-15}}", None, "onset", "override", nullable=True, fill=False),
-        Field("onset_rule", "any", "a complete definition written inline instead of a registry id", None, "onset",
+        Field("onset_rule", "any_mapping", "a complete definition written inline instead of a registry id", None, "onset",
               "rule", nullable=True, fill=False),
         Field("onset_season", "name", "season name, for definitions with several", None, "onset", "season",
               nullable=True),
