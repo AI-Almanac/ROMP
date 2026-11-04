@@ -9,7 +9,7 @@ week bins are their sums.
 
 Everything is arrays. The numerics are onset-forest's (its ``fit``, ``predict`` and ``cross_validate``,
 ``github.com/AI-Almanac/onset-forest`` at 61a7f5a): the same feature columns in the same order, the same median
-imputation and targets, and the same trees (`hcwf.blend._crps_tree`), so a seeded forest reproduces its predictions
+imputation and targets, and the same trees (``hcwf.blend._crps_tree``), so a seeded forest reproduces its predictions
 exactly. `hcwf.blend.evaluation` cross-validates and fits it, and `hcwf.blend.forecast` applies it to live files.
 """
 
@@ -82,14 +82,14 @@ def feature_names(inputs: DailyInputs, model_names) -> list[str]:
 
 
 def feature_matrix(weekly: Weekly, inputs: DailyInputs, rows: np.ndarray, model_names) -> np.ndarray:
-    """Return the features of some samples, in the column order of `feature_names`.
+    """Return the features of some samples, in the column order of ``feature_names``.
 
     Parameters
     ----------
     weekly : hcwf.blend.samples.Weekly
         The weekly samples (``lat``, ``lon`` and ``time`` are read).
     inputs : hcwf.blend.samples.DailyInputs
-        The forest's inputs, one row per sample of `weekly`.
+        The forest's inputs, one row per sample of ``weekly``.
     rows : numpy.ndarray of int, shape (row,)
         The positions of the samples to take.
     model_names : iterable of str
@@ -103,7 +103,7 @@ def feature_matrix(weekly: Weekly, inputs: DailyInputs, rows: np.ndarray, model_
     Raises
     ------
     ValueError
-        The times of `inputs` differ from those of `weekly`.
+        The times of ``inputs`` differ from those of ``weekly``.
     """
     if not np.array_equal(inputs.data["time"].values, weekly["time"]):
         raise ValueError("the forest's inputs are not for these weekly samples")
@@ -236,7 +236,7 @@ def workers(train_rows: int, workers: int, budget_bytes: int | None) -> int:
 def fit(X: np.ndarray, onset_lead: np.ndarray, names, params: Params) -> FittedForest:
     """Fit the forest on a feature matrix, as ``onset_forest.fit`` does.
 
-    The training samples are those of `target`; the columns they observe (not all ``NaN``) are kept, and missing
+    The training samples are those of ``target``; the columns they observe (not all ``NaN``) are kept, and missing
     values are imputed with the column median.
 
     Parameters
@@ -246,7 +246,7 @@ def fit(X: np.ndarray, onset_lead: np.ndarray, names, params: Params) -> FittedF
     onset_lead : numpy.ndarray of float64, shape (sample,)
         The observed onset's lead day after the issue date, ``NaN`` for a season without an onset.
     names : sequence of str
-        The feature names, one per column of `X`.
+        The feature names, one per column of ``X``.
     params : Params
         The settings.
 
@@ -333,7 +333,7 @@ def folds(training_years, cv_holdout_years, true_holdout_years=(), years_per_fol
     """Lay out the cross-validation folds.
 
     The true holdouts come first, one fold each, then the CV holdouts in contiguous blocks of up to
-    `years_per_fold` (sorted first when that is above 1); each fold trains on the training years minus its test years
+    ``years_per_fold`` (sorted first when that is above 1); each fold trains on the training years minus its test years
     and every true holdout.
 
     Parameters
@@ -379,7 +379,7 @@ def cross_validate(X: np.ndarray, onset_lead: np.ndarray, names, year: np.ndarra
     onset_lead : numpy.ndarray of float64, shape (sample,)
         The observed onset's lead day after the issue date, ``NaN`` for a season without an onset.
     names : sequence of str
-        The feature names, one per column of `X`.
+        The feature names, one per column of ``X``.
     year : numpy.ndarray of int, shape (sample,)
         The year of each sample.
     trainable : numpy.ndarray of bool, shape (sample,)

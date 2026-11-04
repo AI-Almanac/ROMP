@@ -33,7 +33,7 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
     """Plot a spatial map of a gridded 2D field (e.g. onset day of year or a spatial metric).
 
     Draws the map on the given or a new figure, optionally prints the values in the cells and the CMZ mean onset,
-    and shows it unless `panel` is true. The figure is not saved: the file path it would have is returned.
+    and shows it unless ``panel`` is true. The figure is not saved: the file path it would have is returned.
 
     Parameters
     ----------
@@ -42,19 +42,19 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
     model_name : str
         The model (or title) written at the top right and part of the file name.
     spec : object
-        The run's ``FigureSpec``: ``polygon``, ``region``, ``dir_fig`` and what `set_basemap` reads.
+        The run's ``FigureSpec``: ``polygon``, ``region``, ``dir_fig`` and what `~hcwf.figures.visual.set_basemap` reads.
     window : tuple of (int, int), optional
         The verification window, named in the would-be file.
     fig : matplotlib.figure.Figure, optional
         The figure to draw on; a new 8 by 6 inch figure when None.
     ax : matplotlib.axes.Axes, optional
-        The axes to draw on; a new PlateCarree axes on `fig` when None.
+        The axes to draw on; a new PlateCarree axes on ``fig`` when None.
     cmap : str, default "YlOrRd"
         The colormap name.
     n_colors : int, default 10
-        The number of discrete colours; 0 or less gives a continuous map from `vmin` to `vmax`.
+        The number of discrete colours; 0 or less gives a continuous map from ``vmin`` to ``vmax``.
     int_bin : bool, default True
-        Use integer bin edges between the floor of `vmin` and the ceiling of `vmax`.
+        Use integer bin edges between the floor of ``vmin`` and the ceiling of ``vmax``.
     onset_plot : bool, default False
         The field is an onset day of year: cell values are printed as integers and the CMZ mean onset is shown.
     cbar_ssn : bool, default False
@@ -72,7 +72,7 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
     text_scale : float, default 1.0
         Factor on all text sizes.
     vmin : float, optional
-        Lower colour limit; if `vmin` or `vmax` is None the 10 % and 90 % quantiles of `da` are used for both.
+        Lower colour limit; if ``vmin`` or ``vmax`` is None the 10 % and 90 % quantiles of ``da`` are used for both.
     vmax : float, optional
         Upper colour limit.
     rect_box : bool, default False

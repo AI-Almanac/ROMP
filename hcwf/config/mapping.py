@@ -7,7 +7,7 @@ them; detect the region from the data if it is not given; derive what follows fr
 (climatology years from the region, reference data from the observations); fill defaults.
 Defaults, region values and detections are resolved here at run time, not copied into the file.
 Every problem found is reported together in one ``ConfigSchemaError``. `hcwf.config.build` calls it, and
-`hcwf.config.Config.to_flat` is a thin wrapper.
+``hcwf.config.Config.to_flat`` is a thin wrapper.
 
 Besides the flat keys the result carries ``dataset_report`` (printable lines saying where each
 dataset value came from) and ``config_sources`` (flat key -> where its value came from).
@@ -127,7 +127,7 @@ def _explicit_entry(given: dict, ref, datasets, kind, written, errors) -> tuple[
     Raises
     ------
     DatasetError
-        `ref` is not a string; raised inside the function and recorded in `errors`.
+        ``ref`` is not a string; raised inside the function and recorded in ``errors``.
     """
     entry, sources = {}, {}
     if ref is not None:
@@ -144,7 +144,7 @@ def _explicit_entry(given: dict, ref, datasets, kind, written, errors) -> tuple[
 
 
 def _problems(res: detect.Resolution, written: str, errors: list[str]) -> None:
-    """Move a resolution's problems to `errors`, naming the key as written in the config.
+    """Move a resolution's problems to ``errors``, naming the key as written in the config.
 
     Parameters
     ----------
@@ -319,7 +319,7 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
     Returns
     -------
     None
-        Nothing; the lists are written into `config`.
+        Nothing; the lists are written into ``config``.
     """
     if not isinstance(models, list) or not models:
         errors.append(f"'models': expected a non-empty list of models, got {models!r}. Fix: write one "
@@ -639,7 +639,7 @@ def build_config(raw, source="<config>") -> dict:
     Raises
     ------
     ConfigSchemaError
-        `raw` is not a mapping, or any value is invalid or missing.
+        ``raw`` is not a mapping, or any value is invalid or missing.
     """
     errors: list[str] = []
     if raw is None:

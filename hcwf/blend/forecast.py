@@ -1,13 +1,13 @@
 """Operational forecasts: a trained blend applied to live forecast files.
 
 Only the live files (and, optionally, the issue date) come from the caller. The run config, onset definition, recipe,
-reference data and observed onsets all come from the `TrainedBlend`, and the live files must have the structure the
+reference data and observed onsets all come from the `~hcwf.blend.trained.TrainedBlend`, and the live files must have the structure the
 blend was trained on (`hcwf.config.detect.signature_differences`); every difference is reported before any work
-starts. The live files are read through `hcwf.io.input` (only the tiles of the trained units), onsets are detected by
+starts. The live files are read through ``hcwf.io.input`` (only the tiles of the trained units), onsets are detected by
 `hcwf.onset.detect` with the frozen definition and options, and the features are `hcwf.blend.features`'.
 
 Operationally each raw model gives one file holding one initialisation, and that is the issue date forecast. Files
-holding a season of issues (a replay) forecast every issue in it, or the one `issue_date` names.
+holding a season of issues (a replay) forecast every issue in it, or the one ``issue_date`` names.
 """
 
 from __future__ import annotations
@@ -128,8 +128,8 @@ class Forecast:
         """Write the forecast's files into a new directory, all or nothing.
 
         The files are blending's contract CSVs (weekly, and daily for a random forest blend). They are written to a
-        staging directory next to `directory` and moved into place at the end, so a failure leaves nothing behind.
-        `Forecast.folder` is set to `directory`.
+        staging directory next to ``directory`` and moved into place at the end, so a failure leaves nothing behind.
+        `Forecast.folder` is set to ``directory``.
 
         Parameters
         ----------
@@ -146,7 +146,7 @@ class Forecast:
         Raises
         ------
         FileExistsError
-            `directory` exists and is not empty.
+            ``directory`` exists and is not empty.
         BaseException
             Whatever the writing raised; the staging directory is removed first.
         """

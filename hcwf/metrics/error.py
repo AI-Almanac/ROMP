@@ -24,12 +24,12 @@ def year_points(metrics_df, onset_da, spatial, coords):
     spatial : sequence of str
         The spatial dims (``lat`` and ``lon``, or ``unit``).
     coords : dict of str to numpy.ndarray
-        The coordinates of the output grid for each dim of `spatial`.
+        The coordinates of the output grid for each dim of ``spatial``.
 
     Returns
     -------
     points : pandas.DataFrame
-        The kept rows of `metrics_df`.
+        The kept rows of ``metrics_df``.
     index : tuple of numpy.ndarray of int64
         One index array per spatial dim, the position of each kept row on the output grid.
     """

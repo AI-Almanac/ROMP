@@ -63,7 +63,7 @@ class LeadBins:
 
     @classmethod
     def uniform(cls, count, days):
-        """Return `count` bins of `days` days each from lead 1 (blending's ``features.bins.count`` and ``days``).
+        """Return ``count`` bins of ``days`` days each from lead 1 (blending's ``features.bins.count`` and ``days``).
 
         Parameters
         ----------
@@ -105,7 +105,7 @@ class LeadBins:
         return all(a[1] + 1 == b[0] for a, b in zip(self.inner, self.inner[1:]))
 
     def label(self, k, style="days"):
-        """Return the label of the bin at position `k` of `extended`.
+        """Return the label of the bin at position ``k`` of `extended`.
 
         Parameters
         ----------
@@ -122,7 +122,7 @@ class LeadBins:
         Raises
         ------
         ValueError
-            `style` is neither ``"days"`` nor ``"week"``, or ``"week"`` is asked of bins that are not contiguous from
+            ``style`` is neither ``"days"`` nor ``"week"``, or ``"week"`` is asked of bins that are not contiguous from
             lead 1.
         """
         if style == "days":
@@ -137,7 +137,7 @@ class LeadBins:
         raise ValueError(f"style must be 'days' or 'week', not {style!r}")
 
     def labels(self, style="days", *, earlier=True):
-        """Return the labels in bin order: before (when `earlier`), the inner bins, after.
+        """Return the labels in bin order: before (when ``earlier``), the inner bins, after.
 
         Parameters
         ----------
@@ -165,10 +165,10 @@ class LeadBins:
             raise ValueError(f"week labels need contiguous bins from lead 1, not {self.inner}")
 
     def in_bin(self, lead, k, *, nan_after=False):
-        """Return which leads fall in the bin at position `k` of `extended`.
+        """Return which leads fall in the bin at position ``k`` of `extended`.
 
         A bin holds the leads from its first to its last day (the before bin everything below the first day, the
-        after bin everything above the last day). NaN falls in no bin, or in the after bin with `nan_after` (a member
+        after bin everything above the last day). NaN falls in no bin, or in the after bin with ``nan_after`` (a member
         with no onset in the window is an onset later than it).
 
         Parameters
@@ -183,7 +183,7 @@ class LeadBins:
         Returns
         -------
         numpy.ndarray of bool
-            ``True`` where the lead is in the bin; the shape of `lead`.
+            ``True`` where the lead is in the bin; the shape of ``lead``.
         """
         lead = np.asarray(lead, dtype=float)
         if k == 0:
@@ -196,7 +196,7 @@ class LeadBins:
     def codes(self, lead, *, earlier=False):
         """Return the position of the bin of each lead, in ``labels(earlier=earlier)``.
 
-        The code is -1 for NaN and, without `earlier`, for leads below the first day. Needs contiguous bins; a lead
+        The code is -1 for NaN and, without ``earlier``, for leads below the first day. Needs contiguous bins; a lead
         past the last day is in the after bin. These are blending's outcome codes.
 
         Parameters
@@ -209,7 +209,7 @@ class LeadBins:
         Returns
         -------
         numpy.ndarray of int8
-            The bin position of each lead; the shape of `lead`.
+            The bin position of each lead; the shape of ``lead``.
 
         Raises
         ------
@@ -334,7 +334,7 @@ class PairArrays:
 
     @classmethod
     def concat(cls, parts):
-        """Join the cases of `parts` one after the other (the years of a run, in order).
+        """Join the cases of ``parts`` one after the other (the years of a run, in order).
 
         An optional per-case field is joined only when every part has it, otherwise it is None.
 
@@ -365,7 +365,7 @@ class PairArrays:
         return replace(first, place=place, **joined)
 
     def bins_where(self, keep):
-        """Return the pairs of the bins flagged in `keep`, with the matrices as views where the bins are adjacent.
+        """Return the pairs of the bins flagged in ``keep``, with the matrices as views where the bins are adjacent.
 
         Parameters
         ----------
@@ -383,7 +383,7 @@ class PairArrays:
                        end=self.end[at], labels=tuple(self.labels[k] for k in at))
 
     def select(self, day_bins):
-        """Return the pairs of the bins whose ``(first day, last day)`` is one of `day_bins`, in the stored order.
+        """Return the pairs of the bins whose ``(first day, last day)`` is one of ``day_bins``, in the stored order.
 
         Parameters
         ----------
@@ -420,7 +420,7 @@ class PairArrays:
 
 
 def bin_fields(bins):
-    """Return the bin edges and labels of `bins` as the `PairArrays` fields.
+    """Return the bin edges and labels of ``bins`` as the `PairArrays` fields.
 
     Parameters
     ----------
@@ -551,7 +551,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
                                              day_bins):
     """Create forecast-observation pairs from a climatological ensemble in which each year is a member.
 
-    Uses day of year instead of calendar dates for the onset comparison. All years of `clim_onset` (the target year
+    Uses day of year instead of calendar dates for the onset comparison. All years of ``clim_onset`` (the target year
     included) are the members; the target year's onset is the observation. A case is a place with an observed onset and
     an init before it, kept when at least one member has an onset; the probabilities use only the members with an onset.
 
@@ -575,7 +575,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     Raises
     ------
     ValueError
-        `target_year` is not in `clim_onset`.
+        ``target_year`` is not in ``clim_onset``.
     """
     # the forecast window is the span of day_bins
     bins = LeadBins.from_day_bins(day_bins)

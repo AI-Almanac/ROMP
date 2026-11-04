@@ -39,7 +39,7 @@ def fine_amounts(allowed: bool = True) -> Iterator[None]:
     """Allow fixed amounts finer than 0.1 mm to parse, within the block.
 
     Inside the block `parse_comparison` returns ``Amount(mm=...)`` for such an amount instead of raising. These
-    amounts only run at ``rain_resolution: exact``; `hcwf.onset.definition.resolve_amounts` rejects them otherwise.
+    amounts only run at ``rain_resolution: exact``; `~hcwf.onset.plan.resolve_amounts` rejects them otherwise.
 
     Parameters
     ----------
@@ -71,12 +71,12 @@ def _normalize(text: object, example: str) -> str:
     Returns
     -------
     str
-        `text` stripped, with every run of whitespace replaced by one space.
+        ``text`` stripped, with every run of whitespace replaced by one space.
 
     Raises
     ------
     UnitsError
-        `text` is not a string.
+        ``text`` is not a string.
     """
     if not isinstance(text, str):
         raise UnitsError(f"expected text but found {text!r}. Fix: write it as text, e.g. '{example}'")
@@ -101,7 +101,7 @@ def split_comparator(text: object, example: str = "at least 20 mm") -> tuple[Op,
     Raises
     ------
     UnitsError
-        `text` is not a string, has no leading comparator, or nothing after it.
+        ``text`` is not a string, has no leading comparator, or nothing after it.
     """
     text = _normalize(text, example)
     match = _COMPARATOR_RE.match(text)
@@ -133,7 +133,7 @@ def parse_comparison(text: object) -> Comparison:
     Raises
     ------
     UnitsError
-        `text` is not text, has no comparator or no unit, is finer than 0.1 mm outside `fine_amounts`, or
+        ``text`` is not text, has no comparator or no unit, is finer than 0.1 mm outside `fine_amounts`, or
         the amount is neither a number with ``mm`` nor a threshold name.
     """
     op, rest = split_comparator(text)
@@ -171,7 +171,7 @@ def parse_count(text: object) -> tuple[Op, int]:
     Raises
     ------
     UnitsError
-        `text` has no comparator or what follows it is not a whole number.
+        ``text`` has no comparator or what follows it is not a whole number.
     """
     op, rest = split_comparator(text, "at least 3")
     if not re.fullmatch(r"\d+", rest):
@@ -195,7 +195,7 @@ def parse_duration(text: object) -> int:
     Raises
     ------
     UnitsError
-        `text` is not a whole number of days, or is below 1.
+        ``text`` is not a whole number of days, or is below 1.
     """
     text = _normalize(text, "5 days")
     match = re.fullmatch(r"(\d+)\s+days?", text, re.IGNORECASE)
@@ -226,8 +226,8 @@ def parse_span(text: object, window: int | None = None) -> Span:
     Raises
     ------
     UnitsError
-        `text` cannot be read, ends before it starts, is not positive, says nothing about what it counts from, or
-        needs `window` and none is given.
+        ``text`` cannot be read, ends before it starts, is not positive, says nothing about what it counts from, or
+        needs ``window`` and none is given.
     """
     text = _normalize(text, "days 11 to 20")
     lowered = text.lower()
@@ -275,12 +275,12 @@ def _make_span(first: int, last: int, text: str) -> Span:
     Returns
     -------
     hcwf.onset.model.Span
-        The span from `first` to `last`.
+        The span from ``first`` to ``last``.
 
     Raises
     ------
     UnitsError
-        `last` is before `first`.
+        ``last`` is before ``first``.
     """
     if last < first:
         raise UnitsError(f"'{text}' ends before it starts. Fix: write the earlier day first, e.g. 'days {last} to {first}'")
@@ -303,7 +303,7 @@ def parse_dayref(text: object) -> DayRef:
     Raises
     ------
     UnitsError
-        `text` is ``02-29``, not a valid month-day, or cannot be read.
+        ``text`` is ``02-29``, not a valid month-day, or cannot be read.
     """
     text = _normalize(text, "06-02")
     match = re.fullmatch(r"(\d{2})-(\d{2})", text)
@@ -339,7 +339,7 @@ def parse_during(text: object) -> tuple[DayRef, DayRef] | None:
     Raises
     ------
     UnitsError
-        `text` cannot be read, or a month-day in it is invalid.
+        ``text`` cannot be read, or a month-day in it is invalid.
     """
     text = _normalize(text, "04-01 to 10-31")
     if text.lower() == "whole year":
@@ -366,7 +366,7 @@ def parse_dry_run(text: object) -> DryRun:
     Raises
     ------
     UnitsError
-        `text` cannot be read or the run is shorter than one day.
+        ``text`` cannot be read or the run is shorter than one day.
     """
     text = _normalize(text, "at least 7 days")
     match = re.fullmatch(r"(at least|more than) (\d+) days?", text.lower())
@@ -394,7 +394,7 @@ def parse_dry_window(text: object) -> DryWindow:
     Raises
     ------
     UnitsError
-        `text` cannot be read, the length is below 1, or the comparison is invalid (see `parse_comparison`).
+        ``text`` cannot be read, the length is below 1, or the comparison is invalid (see `parse_comparison`).
     """
     text = _normalize(text, "10 days with less than 5 mm")
     match = re.fullmatch(r"(\d+) days? with (.+)", text, re.IGNORECASE)

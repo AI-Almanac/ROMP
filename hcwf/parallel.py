@@ -13,11 +13,11 @@ cores available, never more than the years):
 
 * Every year goes to a worker. While the workers boot (they are started first, with the "spawn" method: a fork
   after numba's threads ran is unsafe; each gets ``cores // workers`` numba and BLAS threads, `THREAD_LIMITS`) this process pre-warms what all the
-  years share (thresholds, masks; see the `prewarm` argument), so each is read, built and logged once, here, and
+  years share (thresholds, masks; see the ``prewarm`` argument), so each is read, built and logged once, here, and
   then travels to the workers as one small snapshot. The pool is kept for the run (see `shutdown`), so the next
   stage (the climatology pairs after the model pairs) reuses the booted workers, and this process is free to do
   work of its own (the climatological onsets) while the workers run: `start_items` returns at once with a
-  `Pending` whose `results()` waits.
+  `Pending` whose ``results()`` waits.
 * Workers receive file paths and settings, never data cubes: each reads its own year. What a worker detects or
   builds is sent back and absorbed here in year order, so the observed-onset cache on disk is written once, by this
   process.
@@ -149,9 +149,9 @@ def _run_item(func, item, args, kwargs, state, token, label):
     item : object
         The item to process.
     args : tuple
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     kwargs : dict
-        Keyword arguments of `func`.
+        Keyword arguments of ``func``.
     state : dict
         The snapshot to install, from `snapshot`.
     token : int
@@ -162,7 +162,7 @@ def _run_item(func, item, args, kwargs, state, token, label):
     Returns
     -------
     tuple
-        ``(result, found)``: the result of `func` and what `collect` found, for `absorb`.
+        ``(result, found)``: the result of ``func`` and what `collect` found, for `absorb`.
     """
     install(state, token)
     logs.set_worker_year(label)
@@ -177,21 +177,21 @@ def _years_call(year, func, args, skip):
     year : int
         The year to compute.
     func : callable
-        Takes a list of years and `args`.
+        Takes a list of years and ``args``.
     args : tuple
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     skip : str or None
         Start of the ``ValueError`` message that means the year has no data; None re-raises every error.
 
     Returns
     -------
     object or None
-        The result of `func`, or None for a skipped year.
+        The result of ``func``, or None for a skipped year.
 
     Raises
     ------
     ValueError
-        Any ``ValueError`` of `func` that does not start with `skip`.
+        Any ``ValueError`` of ``func`` that does not start with ``skip``.
     """
     try:
         return func([year], *args)
@@ -242,7 +242,7 @@ def reader_pool(size: int) -> ProcessPoolExecutor:
     Returns
     -------
     concurrent.futures.ProcessPoolExecutor
-        The reader pool, with at least `size` workers.
+        The reader pool, with at least ``size`` workers.
     """
     executor, held = _pool.get("readers"), _pool.get("readers_size", 0)
     if executor is not None and held >= size:
@@ -296,7 +296,7 @@ imported later (scipy's own OpenBLAS), and N workers on N BLAS threads each is s
 
 
 def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
-    """Return the run's pool of `size` booted workers with `threads` numba threads each, started now if there is none like it.
+    """Return the run's pool of ``size`` booted workers with ``threads`` numba threads each, started now if there is none like it.
 
     A pool is reused while the size, thread count and log handlers are the same; otherwise the old one is stopped.
     New workers begin importing the task modules at once.
@@ -416,7 +416,7 @@ def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, co
 
     Runs in worker processes of the run's pool when there is more than one worker, all items in workers (see the module
     text); a failure cancels the items still queued. With one worker the items run here, one after the other, before this
-    returns. With `sink`, each result goes to ``sink(position, result)`` in item order as soon as it and the ones before it
+    returns. With ``sink``, each result goes to ``sink(position, result)`` in item order as soon as it and the ones before it
     are done, and is not kept (the Pending gives None): results too big to hold together are placed one at a time.
 
     Parameters
@@ -424,15 +424,15 @@ def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, co
     func : callable
         A module-level function (workers are spawned).
     items : iterable
-        The items to process; each is passed as the first argument of `func`.
+        The items to process; each is passed as the first argument of ``func``.
     args : tuple, default ()
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     kwargs : dict, optional
-        Keyword arguments of `func`; None means none.
+        Keyword arguments of ``func``; None means none.
     config : dict, optional
-        Gives the worker count through `worker_count`; default `kwargs`.
+        Gives the worker count through `worker_count`; default ``kwargs``.
     workers : int, optional
-        The number of workers; None takes `worker_count` of `config` for the number of items.
+        The number of workers; None takes `worker_count` of ``config`` for the number of items.
     label : callable, optional
         ``label(item)`` names the item in the log lines a worker forwards.
     prewarm : callable, optional
@@ -443,7 +443,7 @@ def start_items(func, items, args: tuple = (), kwargs: dict | None = None, *, co
     Returns
     -------
     Pending
-        Its `Pending.result` gives the list of results in item order (None with `sink`).
+        Its `Pending.result` gives the list of results in item order (None with ``sink``).
     """
     items, kwargs = list(items), kwargs or {}
     workers = worker_count(config if config is not None else kwargs, len(items)) if workers is None else workers
@@ -488,9 +488,9 @@ def map_items(func, items, args: tuple = (), kwargs: dict | None = None, **optio
     items : iterable
         The items to process.
     args : tuple, default ()
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     kwargs : dict, optional
-        Keyword arguments of `func`.
+        Keyword arguments of ``func``.
     **options : dict
         Passed on to `start_items` (``config``, ``workers``, ``label``, ``prewarm``, ``sink``).
 
@@ -507,9 +507,9 @@ def map_items(func, items, args: tuple = (), kwargs: dict | None = None, **optio
 # ----------------------------------------------------------------------------------------------------------------------
 
 def spec_workers(parallel, tasks: int, item_bytes: int | None = None) -> int:
-    """Return the workers for `tasks` items under a ParallelSpec (`hcwf.config.model`).
+    """Return the workers for ``tasks`` items under a ParallelSpec (`hcwf.config.model`).
 
-    That is `worker_count` of its two settings, cut to what fits the memory budget when `item_bytes` is given.
+    That is `worker_count` of its two settings, cut to what fits the memory budget when ``item_bytes`` is given.
 
     Parameters
     ----------
@@ -533,17 +533,17 @@ def start_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DA
                     prewarm: Callable[[], None] | None = None, item_bytes: int | None = None) -> Pending:
     """Start ``func([year], *args)`` for each year; the Pending gives the results in year order.
 
-    This is `start_items` over the years in workers when `parallel` allows and there is more than one year. `args` travel
+    This is `start_items` over the years in workers when ``parallel`` allows and there is more than one year. ``args`` travel
     to each worker: pass the run and the case, not data.
 
     Parameters
     ----------
     func : callable
-        A module-level function taking a list of years and `args`.
+        A module-level function taking a list of years and ``args``.
     years : iterable of int
         The years to compute.
     args : tuple
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     parallel : hcwf.config.model.ParallelSpec
         The ``parallel:`` settings.
     skip : str or None, default `NO_DATA`
@@ -571,11 +571,11 @@ def map_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA
     Parameters
     ----------
     func : callable
-        A module-level function taking a list of years and `args`.
+        A module-level function taking a list of years and ``args``.
     years : iterable of int
         The years to compute.
     args : tuple
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     parallel : hcwf.config.model.ParallelSpec
         The ``parallel:`` settings.
     skip : str or None, default `NO_DATA`
@@ -597,18 +597,18 @@ def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], 
                       combine: Callable[[list], Any] | None = None) -> Pending:
     """Start the pair tables of ``func(years, *args)``; the Pending gives them concatenated.
 
-    With one worker `func` runs once on all the years before this returns. Otherwise each year is computed by
+    With one worker ``func`` runs once on all the years before this returns. Otherwise each year is computed by
     `start_year_args` and the tables joined in year order; a year without data is left out, and a ``ValueError`` is raised
     (when the result is asked for) if none has any.
 
     Parameters
     ----------
     func : callable
-        A module-level function taking a list of years and `args`; it returns a table.
+        A module-level function taking a list of years and ``args``; it returns a table.
     years : iterable of int
         The years to compute.
     args : tuple
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     parallel : hcwf.config.model.ParallelSpec
         The ``parallel:`` settings.
     prewarm : callable, optional
@@ -647,11 +647,11 @@ def concat_year_args(func, years, args: tuple, parallel, prewarm: Callable[[], N
     Parameters
     ----------
     func : callable
-        A module-level function taking a list of years and `args`; it returns a table.
+        A module-level function taking a list of years and ``args``; it returns a table.
     years : iterable of int
         The years to compute.
     args : tuple
-        Extra positional arguments of `func`.
+        Extra positional arguments of ``func``.
     parallel : hcwf.config.model.ParallelSpec
         The ``parallel:`` settings.
     prewarm : callable, optional
@@ -662,7 +662,7 @@ def concat_year_args(func, years, args: tuple, parallel, prewarm: Callable[[], N
     Returns
     -------
     pandas.DataFrame
-        The concatenated table (whatever `combine` returns).
+        The concatenated table (whatever ``combine`` returns).
     """
     return start_concat_args(func, years, args, parallel, prewarm, combine).result()
 
@@ -740,10 +740,10 @@ def workers_within(item_bytes: Sequence[int], workers: int, budget_bytes: int | 
 
 def worker_count(config: Mapping, tasks: int, item_bytes: Sequence[int] | None = None,
                  budget_bytes: int | None = None) -> int:
-    """Return the workers to use for `tasks` independent tasks: 1 (serial) when ``config["parallel"]`` is false.
+    """Return the workers to use for ``tasks`` independent tasks: 1 (serial) when ``config["parallel"]`` is false.
 
-    Otherwise ``config["parallel_workers"]`` when set, else the cores available, never more than `tasks`. With
-    `item_bytes` the count is also cut to what fits `budget_bytes`.
+    Otherwise ``config["parallel_workers"]`` when set, else the cores available, never more than ``tasks``. With
+    ``item_bytes`` the count is also cut to what fits ``budget_bytes``.
 
     Parameters
     ----------
@@ -772,7 +772,7 @@ def worker_count(config: Mapping, tasks: int, item_bytes: Sequence[int] | None =
 
 
 def reader_count(parallel) -> int:
-    """Return the processes one file's chunks may be read by, for a run with the ParallelSpec `parallel`.
+    """Return the processes one file's chunks may be read by, for a run with the ParallelSpec ``parallel``.
 
     That is 1 (read in this process) when parallel is off or this process is itself a worker, else its ``workers``
     setting or the cores available.
@@ -812,12 +812,12 @@ def limit_blas_threads(threads: int) -> None:
 
 
 def ordered_prefetch(func: Callable, items: Iterable, workers: int, ahead: int | None = None) -> Iterator:
-    """Yield ``func(item)`` for each item in order, computing up to `ahead` items in worker threads in advance.
+    """Yield ``func(item)`` for each item in order, computing up to ``ahead`` items in worker threads in advance.
 
-    With one worker or fewer this is a plain generator (`func` runs when the result is asked for). Otherwise the first
+    With one worker or fewer this is a plain generator (``func`` runs when the result is asked for). Otherwise the first
     item runs in the calling thread (so one-time setup such as masks is not raced) and the rest in threads;
-    results come back in item order, and only `ahead` are held at a time, so memory stays bounded however many items
-    there are. An exception of `func` is raised when its item's turn comes.
+    results come back in item order, and only ``ahead`` are held at a time, so memory stays bounded however many items
+    there are. An exception of ``func`` is raised when its item's turn comes.
 
     Parameters
     ----------
@@ -828,12 +828,12 @@ def ordered_prefetch(func: Callable, items: Iterable, workers: int, ahead: int |
     workers : int
         The threads to use; 1 or less runs everything lazily in the calling thread.
     ahead : int, optional
-        How many results may be computed ahead of the consumer; default `workers`.
+        How many results may be computed ahead of the consumer; default ``workers``.
 
     Yields
     ------
     object
-        The result of `func` for each item, in item order.
+        The result of ``func`` for each item, in item order.
     """
     items = list(items)
     if workers <= 1 or len(items) <= 1:

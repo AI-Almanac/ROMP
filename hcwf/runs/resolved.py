@@ -57,7 +57,7 @@ def resolved_mapping(cfg: dict) -> tuple[dict, dict, object]:
     sources : dict of str to str
         Where each value came from.
     setup : hcwf.config.onset.OnsetSetup
-        The onset setup of `cfg`.
+        The onset setup of ``cfg``.
     """
     flat = {k: v for k, v in cfg.items()}
     sources = dict(cfg.get("config_sources") or {})

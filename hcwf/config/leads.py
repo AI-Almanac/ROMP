@@ -21,7 +21,7 @@ from hcwf.errors import OnsetConfigError
 
 
 def usable_last_lead(n_leads: int, reach: int) -> int:
-    """Return the last lead a candidate can be on when the rule reads `reach` days from the candidate.
+    """Return the last lead a candidate can be on when the rule reads ``reach`` days from the candidate.
 
     Parameters
     ----------
@@ -39,7 +39,7 @@ def usable_last_lead(n_leads: int, reach: int) -> int:
 
 
 def available_years(folder: str, pattern: str) -> list[int]:
-    """Return the years that have a file in `folder` named by `pattern`.
+    """Return the years that have a file in ``folder`` named by ``pattern``.
 
     Parameters
     ----------
@@ -126,7 +126,7 @@ def count_leads(dic: dict, index: int) -> int:
 
 
 def _clip(pairs, last: int):
-    """Clip windows to the lead `last`; windows starting after it are dropped.
+    """Clip windows to the lead ``last``; windows starting after it are dropped.
 
     Parameters
     ----------
@@ -155,12 +155,12 @@ def apply_lead_window(dic: dict, n_leads=count_leads) -> dict:
     dic : dict
         The flat config, changed in place.
     n_leads : callable, default `count_leads`
-        ``n_leads(dic, index)`` gives the number of leads of the model at `index`; a test passes its own.
+        ``n_leads(dic, index)`` gives the number of leads of the model at ``index``; a test passes its own.
 
     Returns
     -------
     dict
-        `dic`.
+        ``dic``.
 
     Raises
     ------

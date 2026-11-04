@@ -48,7 +48,7 @@ def reports_back_dated(onset, model_name):
 
     Parameters
     ----------
-    onset : hcwf.config.model.OnsetSetup
+    onset : hcwf.config.onset.OnsetSetup
         The onset setup of the run; its ``forecast_history`` is read.
     model_name : str
         The source being scored.
@@ -56,7 +56,7 @@ def reports_back_dated(onset, model_name):
     Returns
     -------
     bool
-        True when `model_name` is not a climatology reference and ``forecast_history`` is ``"observed"``.
+        True when ``model_name`` is not a climatology reference and ``forecast_history`` is ``"observed"``.
     """
     if model_name in CLIMATOLOGY_REFERENCES:
         return False
@@ -173,7 +173,7 @@ def _tables_of_years(years, rc, case, select, ens, extra):
 def share_ensemble_tables(rc, model, tables, select=Selection()):
     """Hand the ensemble onset tables that a pass over the run's years has made to `onset_tables`.
 
-    The spatial metrics of `model` then read and detect nothing again. `tables` are made with this run's thresholds,
+    The spatial metrics of ``model`` then read and detect nothing again. ``tables`` are made with this run's thresholds,
     history and members, as `_tables_of_years` makes them. Only a set that covers every year of the run is kept (a year
     skipped for a missing file is left to `onset_tables`, which reports it).
 

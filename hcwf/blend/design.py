@@ -88,14 +88,14 @@ class Plan:
         j : int
             The position of the design column in `columns`.
         values : callable
-            ``values(name)`` returns the values of the feature `name`, one per row of the source.
+            ``values(name)`` returns the values of the feature ``name``, one per row of the source.
         rows : numpy.ndarray of int, shape (row,), optional
             The positions of the rows to take; ``None`` takes every row.
 
         Returns
         -------
         numpy.ndarray of float64, shape (row,)
-            The column; a new array that does not share memory with what `values` returned.
+            The column; a new array that does not share memory with what ``values`` returned.
         """
         out = None
         for name in self.factors[j]:
@@ -115,18 +115,18 @@ class Plan:
         Parameters
         ----------
         values : callable
-            ``values(name)`` returns the values of the feature `name`, one per row of the source.
+            ``values(name)`` returns the values of the feature ``name``, one per row of the source.
         rows : numpy.ndarray of int, shape (row,), optional
             The positions of the rows to take; ``None`` takes every row.
         out : numpy.ndarray of float64, shape (row, column), optional
             Where to write the matrix; a new array when ``None``.
         order : {"F", "C"}, default "F"
-            The memory order of a new array (ignored when `out` is given).
+            The memory order of a new array (ignored when ``out`` is given).
 
         Returns
         -------
         numpy.ndarray of float64, shape (row, column)
-            The design matrix, `out` itself when it was given.
+            The design matrix, ``out`` itself when it was given.
         """
         if out is None:
             n = len(rows) if rows is not None else len(np.asarray(values(self.factors[0][0])))
@@ -139,7 +139,7 @@ class Plan:
 def plan(formula: str, dtypes: Mapping[str, object]) -> Plan | None:
     """Return the design plan of a formula, or ``None`` if it needs Patsy.
 
-    A formula has a plan when every term is a product of numeric columns of `dtypes` and Patsy's column names
+    A formula has a plan when every term is a product of numeric columns of ``dtypes`` and Patsy's column names
     (asked of Patsy on one row) are exactly the terms'.
 
     Parameters
@@ -277,7 +277,7 @@ def _joined(lhs: str, terms: list[str]) -> str:
     Returns
     -------
     str
-        ``lhs ~ term + term ...``, or only the right-hand side when `lhs` is empty.
+        ``lhs ~ term + term ...``, or only the right-hand side when ``lhs`` is empty.
     """
     rhs = " + ".join(terms)
     return f"{lhs} ~ {rhs}" if lhs else rhs
@@ -351,7 +351,7 @@ def formulas(entries: Mapping[str, Formula], window_variants: Sequence[WindowVar
     entries : mapping of str to Formula
         The named formulas; those not enabled are skipped.
     window_variants : sequence of WindowVariant
-        The variants to add; one whose `WindowVariant.only_if_cutoff_mode` differs from `cutoff_mode` is skipped.
+        The variants to add; one whose `WindowVariant.only_if_cutoff_mode` differs from ``cutoff_mode`` is skipped.
     unavailable : iterable of str
         The columns that cannot be built (see `resolve`).
     n_bins : int
@@ -369,7 +369,7 @@ def formulas(entries: Mapping[str, Formula], window_variants: Sequence[WindowVar
     Raises
     ------
     ValueError
-        `entries` is empty, an enabled formula has no text, a variant's base is not an enabled formula, or a
+        ``entries`` is empty, an enabled formula has no text, a variant's base is not an enabled formula, or a
         formula has no constructible term.
     """
     if not entries:

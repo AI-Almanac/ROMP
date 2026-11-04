@@ -22,7 +22,7 @@ def select_key_at_level(d, level, key):
     """Select a key at a given nesting level in a nested dict and remove that level from the returned dict.
 
     Levels count from 1: ``level=1`` is the top level and ``level=2`` the second one. Branches that have nothing under
-    `key` are left out of the result.
+    ``key`` are left out of the result.
 
     Parameters
     ----------
@@ -36,7 +36,7 @@ def select_key_at_level(d, level, key):
     Returns
     -------
     dict
-        The selected subtree (``{}`` if `key` is missing) for ``level=1``, otherwise a dict of the top-level keys that
+        The selected subtree (``{}`` if ``key`` is missing) for ``level=1``, otherwise a dict of the top-level keys that
         have a non-empty subtree.
     """
     if level == 1:
@@ -165,7 +165,7 @@ def _stacked(frames):
     Returns
     -------
     pandas.DataFrame
-        The rows of all `frames` with a fresh index.
+        The rows of all ``frames`` with a fresh index.
     """
     import pandas as pd
 

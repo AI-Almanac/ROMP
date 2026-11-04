@@ -2,7 +2,7 @@
 
 One implementation for HCWF's pooled ensemble scores and the blending package's per-unit, pooled and per-year
 scores. Everything is array-based: ``P`` holds the probabilities and ``Y`` the 0/1 outcomes of (samples, bins) with
-the bins in lead order; `members` (the ensemble size behind each probability, a scalar, one per sample or one per
+the bins in lead order; ``members`` (the ensemble size behind each probability, a scalar, one per sample or one per
 entry) switches on the fair scores, which take out the sampling noise of the probability, ``p(1-p)/(members-1)``.
 
 Conventions are options, never second implementations:
@@ -87,7 +87,7 @@ def clean(P: np.ndarray) -> np.ndarray:
 def _compensated_column_means(values):
     """Compute the mean of each column over its non-NaN entries, added in order with Kahan compensation.
 
-    This is the way pandas' groupby mean adds. Compiled with numba (``njit``): `values` must be a C-contiguous
+    This is the way pandas' groupby mean adds. Compiled with numba (``njit``): ``values`` must be a C-contiguous
     ``float64`` array.
 
     Parameters
@@ -138,7 +138,7 @@ def _bin_means(values, how, skipna=False):
     Raises
     ------
     ValueError
-        `how` is not in `BIN_MEANS`.
+        ``how`` is not in `BIN_MEANS`.
     """
     if how not in BIN_MEANS:
         raise ValueError(f"bin_mean must be one of {BIN_MEANS}, not {how!r}")
@@ -173,9 +173,9 @@ def _fair_terms(squares, P, members):
 
 def brier_scores(P: np.ndarray, Y: np.ndarray, members=None, *, scale: str = "sample", by_bin: bool = False,
                  bin_mean: str = "numpy", skipna: bool = False) -> dict:
-    """Compute the Brier score, and with `members` the fair Brier score, of probabilities and outcomes.
+    """Compute the Brier score, and with ``members`` the fair Brier score, of probabilities and outcomes.
 
-    The fair score subtracts ``p(1-p)/(members-1)`` from each squared error, so `members` must exceed 1 (an infinite
+    The fair score subtracts ``p(1-p)/(members-1)`` from each squared error, so ``members`` must exceed 1 (an infinite
     member count, as of a climatology, takes nothing off). With the ``"sample"`` and ``"pooled"`` scales and one member
     count per sample or for all, the correction is summed over the bins before it is taken off, as blending does.
 
@@ -199,13 +199,13 @@ def brier_scores(P: np.ndarray, Y: np.ndarray, members=None, *, scale: str = "sa
     Returns
     -------
     dict
-        ``brier`` (float); ``fair_brier`` (only with `members`); with `by_bin` also ``bin_brier`` and ``bin_fair_brier``,
+        ``brier`` (float); ``fair_brier`` (only with ``members``); with ``by_bin`` also ``bin_brier`` and ``bin_fair_brier``,
         the mean over the samples of each bin's entries (``float64`` arrays, one value per column).
 
     Raises
     ------
     ValueError
-        `scale` is not in `BRIER_SCALES`, or `bin_mean` is not in `BIN_MEANS` (with `by_bin`).
+        ``scale`` is not in `BRIER_SCALES`, or ``bin_mean`` is not in `BIN_MEANS` (with ``by_bin``).
     """
     if scale not in BRIER_SCALES:
         raise ValueError(f"scale must be one of {BRIER_SCALES}, not {scale!r}")
@@ -254,7 +254,7 @@ def brier(P: np.ndarray, Y: np.ndarray, *, scale: str = "sample") -> float:
 
 def rps_cases(P: np.ndarray, Y: np.ndarray, members=None, *, summation: str = "cumulative",
               valid: np.ndarray | None = None):
-    """Compute the RPS of every sample, and with `members` the fair RPS.
+    """Compute the RPS of every sample, and with ``members`` the fair RPS.
 
     The RPS is the sum over the bins ``k`` of ``(cumulative p - cumulative y)^2``; the fair RPS takes
     ``cum_p(1-cum_p)/(members-1)`` off each term.
@@ -278,12 +278,12 @@ def rps_cases(P: np.ndarray, Y: np.ndarray, members=None, *, summation: str = "c
     rps : numpy.ndarray of float64, shape (samples,)
         The RPS of each sample.
     fair_rps : numpy.ndarray of float64, shape (samples,) or None
-        The fair RPS of each sample; None without `members`.
+        The fair RPS of each sample; None without ``members``.
 
     Raises
     ------
     ValueError
-        `summation` is not in `RPS_SUMMATIONS`, or `valid` is given with the ``"cumulative"`` summation.
+        ``summation`` is not in `RPS_SUMMATIONS`, or ``valid`` is given with the ``"cumulative"`` summation.
     """
     if summation not in RPS_SUMMATIONS:
         raise ValueError(f"summation must be one of {RPS_SUMMATIONS}, not {summation!r}")
@@ -418,7 +418,7 @@ def pietra(P: np.ndarray, Y: np.ndarray) -> float:
     P : numpy.ndarray
         The predicted probabilities, any shape.
     Y : numpy.ndarray
-        The outcomes (0 or 1), the shape of `P`.
+        The outcomes (0 or 1), the shape of ``P``.
 
     Returns
     -------
@@ -448,7 +448,7 @@ def skill_score(score, reference):
     Returns
     -------
     float or numpy.ndarray
-        The skill score; ``inf``, ``-inf`` or NaN when `reference` is 0 (floats follow numpy division).
+        The skill score; ``inf``, ``-inf`` or NaN when ``reference`` is 0 (floats follow numpy division).
     """
     return 1 - (score / reference)
 
@@ -464,13 +464,13 @@ def cell_metrics(P: np.ndarray, outcome: np.ndarray, ids: np.ndarray, labels, *,
     Parameters
     ----------
     P : numpy.ndarray of float64, shape (samples, bins)
-        The probabilities of the interval bins (`labels`).
+        The probabilities of the interval bins (``labels``).
     outcome : numpy.ndarray of int, shape (samples,)
         The code of the bin that happened (-1 without one).
     ids : numpy.ndarray, shape (samples,)
         The unit of each sample.
     labels : sequence of str
-        The label of each column of `P`.
+        The label of each column of ``P``.
     allowed : numpy.ndarray of bool, shape (samples,), optional
         The samples scored (the dissemination units); all when None.
     earlier : numpy.ndarray of float64, shape (samples,), optional
@@ -568,7 +568,7 @@ def yearly_metrics(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, model: 
     Raises
     ------
     ValueError
-        `auc_method` is not in `AUC_METHODS`.
+        ``auc_method`` is not in `AUC_METHODS`.
     """
     if auc_method not in AUC_METHODS:
         raise ValueError(f"auc_method must be one of {AUC_METHODS}, not {auc_method!r}")
@@ -596,7 +596,7 @@ def _sklearn_auc(Y: np.ndarray, P: np.ndarray) -> float:
     Y : numpy.ndarray
         The outcomes (0 or 1), any shape.
     P : numpy.ndarray
-        The probabilities, the shape of `Y`.
+        The probabilities, the shape of ``Y``.
 
     Returns
     -------
@@ -632,7 +632,7 @@ def pooled_skill(cells: pd.DataFrame, baseline: str = "unc_clim_raw") -> pd.Data
     Raises
     ------
     ValueError
-        No pooled row of `baseline` is in `cells`.
+        No pooled row of ``baseline`` is in ``cells``.
     """
     pooled = cells[cells["id"] == "ALL"].copy()
     reference = pooled[pooled["model"] == baseline]

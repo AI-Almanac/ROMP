@@ -41,7 +41,7 @@ _COMPRESSION = {"zlib": True, "complevel": 4, "shuffle": True}
 def save_score_results(score_results, case, paths, output):
     """Save overall and binned skill scores of one case to CSV files in ``output.data_dir``.
 
-    The files are named by `paths` (see `hcwf.runs.folder.file_name`) and the tables are logged.
+    The files are named by ``paths`` (see `hcwf.runs.folder.file_name`) and the tables are logged.
 
     Parameters
     ----------
@@ -90,7 +90,7 @@ def with_unit_labels(obj, units):
     Returns
     -------
     xarray.DataArray or xarray.Dataset
-        `obj` with the coordinates ``unit_name``, ``lat`` and ``lon`` over ``unit``.
+        ``obj`` with the coordinates ``unit_name``, ``lat`` and ``lon`` over ``unit``.
     """
     if "unit" not in obj.dims:
         return obj
@@ -176,7 +176,7 @@ def netcdf_attrs(attrs: dict, *, none: str = "drop") -> dict:
 def save_metrics_to_netcdf(spatial_metrics, case, paths, output, ev, units, desc_dict=None, fname='spatial_metrics',
                            allowed_attrs=('model', 'years', 'tolerance_days', 'verification_window',
                                           'max_forecast_day', 'lead_window')):
-    """Create a Dataset from `spatial_metrics`, attach global attributes and save it to a NetCDF file.
+    """Create a Dataset from ``spatial_metrics``, attach global attributes and save it to a NetCDF file.
 
     For a field over ``unit`` the table and GeoJSON of `save_unit_tables` are written beside the file.
 
@@ -275,7 +275,7 @@ def days_of(values, calendar: str) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64
-        The day numbers, same shape as `values`, ``NaN`` for none.
+        The day numbers, same shape as ``values``, ``NaN`` for none.
     """
     values = np.asarray(values)
     if values.dtype.kind == "M":
@@ -304,7 +304,7 @@ def to_dates(days, calendar: str) -> np.ndarray:
     -------
     numpy.ndarray
         ``datetime64[ns]`` (``NaT`` for none) for a standard calendar, else an object array of cftime dates (None for
-        none); same shape as `days`.
+        none); same shape as ``days``.
     """
     days = np.asarray(days, dtype=float)
     present = ~np.isnan(days)
@@ -348,7 +348,7 @@ def day_of_year(days, calendar: str) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64
-        The day of year, same shape as `days`, ``NaN`` for none.
+        The day of year, same shape as ``days``, ``NaN`` for none.
     """
     dates = to_dates(days, calendar)
     if standard_calendar(calendar):
@@ -364,7 +364,7 @@ def date_var(days, dims, calendar: str, long_name: str, comment: str = "") -> xr
     days : array_like of float
         The day numbers since 1970-01-01, ``NaN`` for none.
     dims : sequence of str
-        The dimension names of `days`.
+        The dimension names of ``days``.
     calendar : str
         The calendar; a standard one is written as ``"standard"``.
     long_name : str
@@ -391,7 +391,7 @@ def float_var(values, dims, long_name: str, units: str = "", comment: str = "") 
     values : array_like
         The values.
     dims : sequence of str
-        The dimension names of `values`.
+        The dimension names of ``values``.
     long_name : str
         The ``long_name`` attribute.
     units : str, default ""
@@ -423,7 +423,7 @@ def status_var(codes, dims, long_name: str = "onset search outcome") -> xr.DataA
     codes : array_like of int
         The status codes.
     dims : sequence of str
-        The dimension names of `codes`.
+        The dimension names of ``codes``.
     long_name : str, default "onset search outcome"
         The ``long_name`` attribute.
 
@@ -439,7 +439,7 @@ def status_var(codes, dims, long_name: str = "onset search outcome") -> xr.DataA
 
 
 def coord_attrs(ds: xr.Dataset, lead_label: str | None, lead_comment: str) -> None:
-    """Attach CF attributes to the coordinates present in `ds`, in place.
+    """Attach CF attributes to the coordinates present in ``ds``, in place.
 
     Parameters
     ----------
@@ -454,7 +454,7 @@ def coord_attrs(ds: xr.Dataset, lead_label: str | None, lead_comment: str) -> No
     Returns
     -------
     None
-        Nothing; `ds` is changed in place.
+        Nothing; ``ds`` is changed in place.
     """
     attrs = {
         "lat": {"units": "degrees_north", "standard_name": "latitude", "long_name": "latitude", "axis": "Y"},
@@ -526,7 +526,7 @@ def _chunks(var: xr.DataArray) -> tuple[int, ...]:
     Returns
     -------
     tuple of int
-        The chunk size along each dimension of `var`.
+        The chunk size along each dimension of ``var``.
     """
     whole = ("lat", "lon", "unit", "lead", "status_code", "member")
     chunk = [min(n, 512) if d in whole else 1 for d, n in zip(var.dims, var.shape)]

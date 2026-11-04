@@ -66,7 +66,7 @@ def lon_swap(ds_tag, *, region):
         The western bound in degrees, conformed to the dataset's longitude range (-180..180 when the data has
         negative longitudes).
     lone : float
-        The eastern bound in degrees, conformed like `lonw`.
+        The eastern bound in degrees, conformed like ``lonw``.
     ds_tag : xarray.Dataset or xarray.DataArray
         The data with ``lat`` and ``lon`` coordinates.
 
@@ -149,7 +149,7 @@ def coords_fmt(ds_tag, *, region):
 
 
 def has_box(ds, region) -> bool:
-    """Tell whether `ds` is cut to a region's box.
+    """Tell whether ``ds`` is cut to a region's box.
 
     That is the case when it has a lat/lon grid (not a ``"unit"`` dimension) and a region is named.
 
@@ -169,10 +169,10 @@ def has_box(ds, region) -> bool:
 
 
 def region_box(ds, *, region):
-    """Subset `ds` to the region's lat/lon box, lazily: nothing is read from file here.
+    """Subset ``ds`` to the region's lat/lon box, lazily: nothing is read from file here.
 
     Longitude and latitude are put in HCWF's orientation first (see `coords_fmt`). Without a region, or for data on a
-    string ``"unit"`` dimension (admin units), there is no box: `ds` is returned as it is, in the file's own order.
+    string ``"unit"`` dimension (admin units), there is no box: ``ds`` is returned as it is, in the file's own order.
     A longitude box that crosses the longitude seam of the data is not supported (`lon_swap` raises ``ValueError``).
 
     Parameters
@@ -259,7 +259,7 @@ def _picked_rows(da, axis=None):
     read : callable
         ``read(key)`` reads the same variable, with the same decoding, through another outer index ``key``.
     key : tuple
-        The outer index of the lazy selection: one entry per dim of `da`, a slice or an integer array.
+        The outer index of the lazy selection: one entry per dim of ``da``, a slice or an integer array.
     stored : int
         The length of the file's chunks along the axis.
     shape : tuple of int
@@ -267,7 +267,7 @@ def _picked_rows(da, axis=None):
     axis : int
         The axis of the list.
     None
-        Returned alone (not as a tuple) when `da` is not such a selection.
+        Returned alone (not as a tuple) when ``da`` is not such a selection.
     """
     try:
         import copy
@@ -317,21 +317,21 @@ def _along(entry, extent, part):
     Parameters
     ----------
     entry : slice or numpy.ndarray of int
-        The index of the axis (a slice or an integer array, over an axis of length `extent`).
+        The index of the axis (a slice or an integer array, over an axis of length ``extent``).
     extent : int
         The length of the axis.
     part : slice
-        The slice to take of what `entry` selects.
+        The slice to take of what ``entry`` selects.
 
     Returns
     -------
     slice or numpy.ndarray of int
-        The narrowed index; `entry` itself when `part` takes everything.
+        The narrowed index; ``entry`` itself when ``part`` takes everything.
 
     Raises
     ------
     ValueError
-        `entry` is a slice and the result would run backwards.
+        ``entry`` is a slice and the result would run backwards.
     """
     if part == slice(None):
         return entry
@@ -356,7 +356,7 @@ def _read_slices(da, index, axis):
     da : xarray.DataArray
         The lazy array.
     index : sequence of slice
-        One entry per dim of `da`: a slice (``slice(None)`` for the whole dim).
+        One entry per dim of ``da``: a slice (``slice(None)`` for the whole dim).
     axis : int
         The axis whose selection is blocked by the caller (the rows are picked along the list's own axis, whichever
         it is).
@@ -364,7 +364,7 @@ def _read_slices(da, index, axis):
     Returns
     -------
     numpy.ndarray
-        The values, with the dtype `da` decodes to.
+        The values, with the dtype ``da`` decodes to.
     """
     plan = _picked_rows(da)
     if plan is None:
@@ -399,7 +399,7 @@ _READ_BYTES_EACH = 32 * 1024 * 1024
 
 
 def _row_blocks(da, axis, rows):
-    """Split an axis into blocks of about `rows` rows.
+    """Split an axis into blocks of about ``rows`` rows.
 
     When the rows are the picked inits of a NetCDF file (see `_picked_rows`) a block ends where a stored chunk's rows
     end, so a chunk is decoded for one block only.
@@ -467,7 +467,7 @@ def _read_task(da, index, axis):
     da : xarray.DataArray
         The lazy array.
     index : sequence of slice
-        One slice per dim of `da`.
+        One slice per dim of ``da``.
     axis : int
         The axis of the list, as for `_read_slices`.
 
@@ -480,7 +480,7 @@ def _read_task(da, index, axis):
 
 
 def _read_workers(da, readers) -> int:
-    """Return how many reader processes a read of `da` is split over.
+    """Return how many reader processes a read of ``da`` is split over.
 
     It is 1 (this process) unless the selection is big enough and an increasing list of rows is picked (see
     `_picked_rows`).
@@ -503,9 +503,9 @@ def _read_workers(da, readers) -> int:
 
 
 def _read_ahead(da, indexes, axis, readers) -> Iterator[np.ndarray]:
-    """Yield the blocks `_read_slices` gives for each index of `indexes`, in order.
+    """Yield the blocks `_read_slices` gives for each index of ``indexes``, in order.
 
-    With `readers` (the most processes allowed, see `hcwf.parallel.reader_count`) above one and a selection big enough,
+    With ``readers`` (the most processes allowed, see `hcwf.parallel.reader_count`) above one and a selection big enough,
     the blocks are decoded by reader processes (a NetCDF/HDF5 file is decoded by one thread at a time), a few ahead of
     the one being placed, so memory stays at those blocks; otherwise one at a time in this process. When the reader
     processes cannot start, the rest is read in this process.
@@ -515,7 +515,7 @@ def _read_ahead(da, indexes, axis, readers) -> Iterator[np.ndarray]:
     da : xarray.DataArray
         The lazy array.
     indexes : list of sequence of slice
-        The block indexes, one slice per dim of `da` each.
+        The block indexes, one slice per dim of ``da`` each.
     axis : int
         The axis of the list, as for `_read_slices`.
     readers : int or None
@@ -568,23 +568,23 @@ def _read_ahead(da, indexes, axis, readers) -> Iterator[np.ndarray]:
 
 
 def load_blocks(da, block_dim, keep=None, keep_dims=None, *, compact=False, readers=None):
-    """Read a (lazy) DataArray into memory once, filled block by block along `block_dim`.
+    """Read a (lazy) DataArray into memory once, filled block by block along ``block_dim``.
 
     The result is allocated once; each block (about 64 MB, a whole number of stored chunks when the source is
     chunked) is read and copied in, so the reader's temporaries for fancy-indexed reads stay block sized instead of
     the size of the whole selection. An array already in memory is returned as it is.
 
-    `keep` is an optional boolean array over the spatial dims `keep_dims`. Only the storage tiles of those dims that
-    hold a kept cell are read, a block at a time; every cell outside `keep` is NaN in the result (onset_blending reads
-    global and admin-unit files this way). The array must be floating point; the result has the shape of `da`.
+    ``keep`` is an optional boolean array over the spatial dims ``keep_dims``. Only the storage tiles of those dims that
+    hold a kept cell are read, a block at a time; every cell outside ``keep`` is NaN in the result (onset_blending reads
+    global and admin-unit files this way). The array must be floating point; the result has the shape of ``da``.
 
-    With `compact` (a 2-D `keep`, an array not yet in memory) only the kept cells are allocated: the result has the
-    dims of `da` without the two spatial ones, then ``"cell"`` (the kept cells in latitude-major order), with the
+    With ``compact`` (a 2-D ``keep``, an array not yet in memory) only the kept cells are allocated: the result has the
+    dims of ``da`` without the two spatial ones, then ``"cell"`` (the kept cells in latitude-major order), with the
     cells' ``lat`` and ``lon`` as coordinates over ``"cell"`` and ``"cell"`` itself the cell's position in the whole
     grid.
 
-    A ``ValueError`` is raised when `keep` is given and the array is not floating point, when `keep` does not match
-    `keep_dims`, when `block_dim` is one of `keep_dims`, or when `compact` is asked with a `keep` that is not 2-D.
+    A ``ValueError`` is raised when ``keep`` is given and the array is not floating point, when ``keep`` does not match
+    ``keep_dims``, when ``block_dim`` is one of ``keep_dims``, or when ``compact`` is asked with a ``keep`` that is not 2-D.
 
     Parameters
     ----------
@@ -593,9 +593,9 @@ def load_blocks(da, block_dim, keep=None, keep_dims=None, *, compact=False, read
     block_dim : str
         The dim the blocks are cut along.
     keep : numpy.ndarray of bool, optional
-        The cells to read, over `keep_dims`; None reads everything.
+        The cells to read, over ``keep_dims``; None reads everything.
     keep_dims : tuple of str, optional
-        The dims `keep` is over; None means ``("lat", "lon")`` for a 2-D mask and the one spatial dim (``"unit"``,
+        The dims ``keep`` is over; None means ``("lat", "lon")`` for a 2-D mask and the one spatial dim (``"unit"``,
         else ``"lat"``) for a 1-D mask.
     compact : bool, default False
         Allocate only the kept cells (see above).
@@ -605,7 +605,7 @@ def load_blocks(da, block_dim, keep=None, keep_dims=None, *, compact=False, read
     Returns
     -------
     xarray.DataArray
-        The loaded array, with the shape of `da` (or the compact shape above).
+        The loaded array, with the shape of ``da`` (or the compact shape above).
     """
     if keep is not None and not da.variable._in_memory and block_dim in da.dims and da.ndim:
         return _load_kept(da, block_dim, np.asarray(keep, dtype=bool), keep_dims, compact, readers)
@@ -636,7 +636,7 @@ def load_blocks(da, block_dim, keep=None, keep_dims=None, *, compact=False, read
 def _load_kept(da, block_dim, keep, keep_dims, compact=False, readers=None):
     """Read a keep mask's cells for `load_blocks`: the (block, spatial tile) pieces that hold a kept cell.
 
-    Every other cell is NaN (or, with `compact`, not allocated; see `load_blocks`).
+    Every other cell is NaN (or, with ``compact``, not allocated; see `load_blocks`).
 
     Parameters
     ----------
@@ -645,9 +645,9 @@ def _load_kept(da, block_dim, keep, keep_dims, compact=False, readers=None):
     block_dim : str
         The dim the blocks are cut along.
     keep : numpy.ndarray of bool
-        The cells to read, over `keep_dims`.
+        The cells to read, over ``keep_dims``.
     keep_dims : tuple of str or None
-        The dims `keep` is over; None picks them as `load_blocks` does.
+        The dims ``keep`` is over; None picks them as `load_blocks` does.
     compact : bool, default False
         Allocate only the kept cells.
     readers : int, optional
@@ -661,8 +661,8 @@ def _load_kept(da, block_dim, keep, keep_dims, compact=False, readers=None):
     Raises
     ------
     ValueError
-        The array is not floating point, `keep` does not match `keep_dims`, `block_dim` is one of `keep_dims`, or
-        `compact` is asked with a `keep` that is not 2-D.
+        The array is not floating point, ``keep`` does not match ``keep_dims``, ``block_dim`` is one of ``keep_dims``, or
+        ``compact`` is asked with a ``keep`` that is not 2-D.
     """
     if not np.issubdtype(da.dtype, np.floating):
         raise ValueError(f"a keep mask needs floating point data, got {da.dtype}")
@@ -747,13 +747,13 @@ def in_memory(da):
     Returns
     -------
     xarray.DataArray
-        `da` when it is in memory, else the loaded array.
+        ``da`` when it is in memory, else the loaded array.
     """
     return da if da.variable._in_memory else da.load()
 
 
 def scale_in_place(da, factor):
-    """Multiply the loaded array by `factor` in its own memory (float32 stays float32), if there is a factor.
+    """Multiply the loaded array by ``factor`` in its own memory (float32 stays float32), if there is a factor.
 
     Parameters
     ----------
@@ -765,7 +765,7 @@ def scale_in_place(da, factor):
     Returns
     -------
     xarray.DataArray
-        `da`, changed in place.
+        ``da``, changed in place.
     """
     if factor:
         data = da.values
@@ -798,7 +798,7 @@ def read_selection(obj, block_dim, keep=None, readers=None):
 
 
 def _mask_in_place(da, keep):
-    """Set the cells outside `keep` to NaN in the array's own memory.
+    """Set the cells outside ``keep`` to NaN in the array's own memory.
 
     An integer array cannot hold NaN: it is masked with ``where`` into a float copy instead.
 
@@ -812,7 +812,7 @@ def _mask_in_place(da, keep):
     Returns
     -------
     xarray.DataArray
-        `da`, changed in place (a masked copy for a non-floating array).
+        ``da``, changed in place (a masked copy for a non-floating array).
     """
     if not np.issubdtype(da.dtype, np.floating):
         return da.where(xr.DataArray(keep, dims=("lat", "lon"), coords={"lat": da["lat"], "lon": da["lon"]}))
@@ -823,9 +823,9 @@ def _mask_in_place(da, keep):
 
 
 def implicit_keep(obj, area: AreaSpec, select: Selection | None = None):
-    """Return the cells the implicit land and country masks keep in a box-selected `obj`.
+    """Return the cells the implicit land and country masks keep in a box-selected ``obj``.
 
-    The result is None when the cells are chosen another way (a ``mask`` section or an ``nc_mask``), when `obj` has no
+    The result is None when the cells are chosen another way (a ``mask`` section or an ``nc_mask``), when ``obj`` has no
     box, when both implicit masks are off, or when every cell is kept.
 
     Parameters
@@ -893,9 +893,9 @@ def mask_region_loaded(obj, *, area: AreaSpec, select: Selection | None = None, 
 
 
 def _readable_by_cells(obj, block_dim) -> bool:
-    """Tell whether every variable of `obj` can be read with a cell mask (`load_blocks` ``keep``).
+    """Tell whether every variable of ``obj`` can be read with a cell mask (`load_blocks` ``keep``).
 
-    That needs it still on file, floating point, and over `block_dim`, ``lat`` and ``lon``.
+    That needs it still on file, floating point, and over ``block_dim``, ``lat`` and ``lon``.
 
     Parameters
     ----------
@@ -961,23 +961,23 @@ def region_select_masks(ds_reg, *, area: AreaSpec, select: Selection | None = No
 
 def region_select(ds, *, area: AreaSpec, select: Selection | None = None, dataset_name=None, dir_fig=None,
                   read_by=None, keep=None, readers=None, skip_masked=False, compact=False):
-    """Subset `ds` to the region's lat/lon box, then limit it to the cells of the run's mask.
+    """Subset ``ds`` to the region's lat/lon box, then limit it to the cells of the run's mask.
 
-    With a mask in `area` (the config's ``mask:`` section) the mask is built on this dataset's own grid by
-    `hcwf.spatial.masks` (`dataset_name` labels it in messages, records and the PNG saved to `dir_fig`); it replaces
+    With a mask in ``area`` (the config's ``mask:`` section) the mask is built on this dataset's own grid by
+    `hcwf.spatial.masks` (``dataset_name`` labels it in messages, records and the PNG saved to ``dir_fig``); it replaces
     the implicit land and country masks below and cannot be combined with ``nc_mask``. Without a mask the old
     behaviour is unchanged: the optional NetCDF mask ``area.nc_mask``, then the land mask and the country-shapefile
     mask (each off when `select` says ``land_only`` / ``shp_only`` is False).
 
-    Without `read_by` the result stays lazy and the masks are applied with ``where``. With `read_by` (a dim name) the
+    Without ``read_by`` the result stays lazy and the masks are applied with ``where``. With ``read_by`` (a dim name) the
     box is read into memory once, block by block along that dim, and the implicit masks are then written in place
-    (see `mask_region_loaded`): slice inits, leads and members before calling so only those are read. `keep` (a
+    (see `mask_region_loaded`): slice inits, leads and members before calling so only those are read. ``keep`` (a
     boolean array over the box's cells, see `load_blocks`) then reads only the storage tiles holding a kept cell; the
     other cells are NaN.
 
-    With `skip_masked` the cells of the implicit masks are not read at all (the storage tiles with none of the run's
+    With ``skip_masked`` the cells of the implicit masks are not read at all (the storage tiles with none of the run's
     cells are skipped, the others' masked cells set to NaN as they are read): the same array as masking it after the
-    read. With `compact` too, a selection that has masked cells comes back as only its kept cells (the dims without
+    read. With ``compact`` too, a selection that has masked cells comes back as only its kept cells (the dims without
     ``lat`` and ``lon``, then ``"cell"``, see `load_blocks`), nothing allocated for the others.
 
     With no region, or on a ``"unit"`` dimension, there is no box and no cell mask: the data is read as it is. It
@@ -999,13 +999,13 @@ def region_select(ds, *, area: AreaSpec, select: Selection | None = None, datase
     read_by : str, optional
         The dim to read the box along, block by block; None keeps the result lazy.
     keep : numpy.ndarray of bool, shape (lat, lon), optional
-        The cells to read with `read_by` (see `load_blocks`).
+        The cells to read with ``read_by`` (see `load_blocks`).
     readers : int, optional
         The most processes the read may use (see `load_blocks`); None reads in this process.
     skip_masked : bool, default False
-        Do not read the cells of the implicit masks (needs `read_by`).
+        Do not read the cells of the implicit masks (needs ``read_by``).
     compact : bool, default False
-        With `skip_masked`, return only the kept cells.
+        With ``skip_masked``, return only the kept cells.
 
     Returns
     -------

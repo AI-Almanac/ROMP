@@ -58,7 +58,7 @@ def _mae_stats_across_years(spatial_metrics, polygon_lon, polygon_lat, polygon_d
     """Compute the mean and standard error across years of the yearly MAE maps.
 
     The spatial average of each year's map is taken (inside the CMZ polygon and over the whole map), then the mean
-    and standard error across years. Years are the ``mae_<year>`` entries of `spatial_metrics` (``mae_combined`` is
+    and standard error across years. Years are the ``mae_<year>`` entries of ``spatial_metrics`` (``mae_combined`` is
     skipped).
 
     Parameters
@@ -120,7 +120,7 @@ def _mae_stats_across_years(spatial_metrics, polygon_lon, polygon_lat, polygon_d
 
 
 def _draw_outline(ax, india_boundaries, region, linewidth):
-    """Draw the region outline on `ax`: the given boundary lines, or else the region's shapefile outline.
+    """Draw the region outline on ``ax``: the given boundary lines, or else the region's shapefile outline.
 
     Parameters
     ----------
@@ -128,9 +128,9 @@ def _draw_outline(ax, india_boundaries, region, linewidth):
         The axes to draw on.
     india_boundaries : list of tuple or None
         The ``(lon, lat)`` boundary lines from `hcwf.figures.visual.get_india_outline`; None draws the outline of
-        `region` with `hcwf.figures.visual.shp_outline` instead.
+        ``region`` with `hcwf.figures.visual.shp_outline` instead.
     region : str
-        The region name, for `shp_outline`.
+        The region name, for ``shp_outline``.
     linewidth : float
         The width of the boundary lines.
     """

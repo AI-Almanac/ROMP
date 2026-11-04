@@ -7,7 +7,7 @@ validates it with `hcwf.config.validate` and returns the `hcwf.config.model.RunC
     rc = resolve(cfg, {"max_forecast_day": 12})                      # with overrides (flat keys, validated)
     rc = resolve_command_line(sys.argv[1:])                          # the command line: -p path and override flags
 
-`resolve` returns the `RunConfig`. Every entry (``hcwf.run`` / ``hcwf.check``, ``hcwf-run`` and ``--check``,
+`resolve` returns the `~hcwf.config.model.RunConfig`. Every entry (``hcwf.run`` / ``hcwf.check``, ``hcwf-run`` and ``--check``,
 ``hcwf.runs.export``, the run-wide config of the apps) goes through the same steps: read the source, apply the overrides
 (normalised against the schema and recorded in ``config_sources``), resolve the paths, plan the lead window and the run
 folder, then validate. Nothing is created on disk: ``flat["run_paths"]`` says where the run will write.
@@ -34,14 +34,14 @@ _MODEL_KEYS = tuple(f.key for f in schema.FIELDS if f.internal and f.key.endswit
 
 def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool = True, tmp: Path | None = None,
             override_source: str = "override", check: bool = False):
-    """Return the validated `RunConfig` of a run, finished (paths, lead window, run folder plan).
+    """Return the validated `~hcwf.config.model.RunConfig` of a run, finished (paths, lead window, run folder plan).
 
-    A config with a problem raises ``HCWFConfigError``, unless `check` is true.
+    A config with a problem raises ``HCWFConfigError``, unless ``check`` is true.
 
     Parameters
     ----------
     source : hcwf.config.model.RunConfig or str or pathlib.Path or hcwf.config.Config or dict or types.SimpleNamespace
-        A `RunConfig` (returned as it is; overrides then raise ``TypeError``), the path of a run YAML, a
+        A `~hcwf.config.model.RunConfig` (returned as it is; overrides then raise ``TypeError``), the path of a run YAML, a
         `hcwf.config.Config`, a nested mapping, a namespace or a flat dict.
     overrides : collections.abc.Mapping, optional
         Flat config keys to override, see `_resolve_values`.
@@ -57,13 +57,13 @@ def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool =
     Returns
     -------
     hcwf.config.model.RunConfig or tuple
-        The config; with `check`, the pair of the config (None when a fatal problem means it cannot be resolved)
+        The config; with ``check``, the pair of the config (None when a fatal problem means it cannot be resolved)
         and the `hcwf.config.validate.Problems` found.
 
     Raises
     ------
     TypeError
-        `source` is a `RunConfig` and `overrides` are given.
+        ``source`` is a `~hcwf.config.model.RunConfig` and ``overrides`` are given.
     """
     from hcwf.config.model import RunConfig
 
@@ -83,7 +83,7 @@ def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool =
 
 
 def resolve_command_line(cli_args=None, **kwargs):
-    """Return the validated `RunConfig` named by ``-p/--param`` (or ``HCWF_CONFIG``) of the command line.
+    """Return the validated `~hcwf.config.model.RunConfig` named by ``-p/--param`` (or ``HCWF_CONFIG``) of the command line.
 
     Its override flags are applied and recorded as ``"command line"``.
 
@@ -109,11 +109,11 @@ def resolve_command_line(cli_args=None, **kwargs):
 def _resolve_values(source, overrides, *, write, tmp, override_source, check):
     """Run the steps of `resolve`, to the validated flat dict.
 
-    `source` is the path of a run YAML, a `hcwf.config.Config`, a nested mapping (as the YAML), a ``SimpleNamespace`` or a
-    flat dict (finishing a flat dict that is already finished changes nothing). `overrides` are flat config keys
+    ``source`` is the path of a run YAML, a `hcwf.config.Config`, a nested mapping (as the YAML), a ``SimpleNamespace`` or a
+    flat dict (finishing a flat dict that is already finished changes nothing). ``overrides`` are flat config keys
     (``model_list`` selects some of the configured models); each is normalised like a YAML value and recorded in
-    ``config_sources`` as `override_source`. ``write=False`` (a run that writes no files) switches every writing step
-    off and, with `tmp`, puts the outputs in that folder and keeps the observed-onset cache in memory.
+    ``config_sources`` as ``override_source``. ``write=False`` (a run that writes no files) switches every writing step
+    off and, with ``tmp``, puts the outputs in that folder and keeps the observed-onset cache in memory.
 
     Validation is `hcwf.config.validate.problems`: any problem (the units' and the blend's too) raises one
     ``HCWFConfigError`` before a run folder exists.
@@ -136,7 +136,7 @@ def _resolve_values(source, overrides, *, write, tmp, override_source, check):
     Returns
     -------
     dict or tuple
-        The validated flat dict; with `check`, ``(values, problems)`` where ``values`` is None when a fatal problem
+        The validated flat dict; with ``check``, ``(values, problems)`` where ``values`` is None when a fatal problem
         means the config cannot be resolved (a units or blend problem is left for the report).
     """
     from hcwf.config import validate
@@ -176,9 +176,9 @@ def _read(source) -> tuple[dict, str | None]:
     Raises
     ------
     HCWFConfigError
-        `source` is a path that is not a YAML file.
+        ``source`` is a path that is not a YAML file.
     TypeError
-        `source` is none of the accepted kinds.
+        ``source`` is none of the accepted kinds.
     """
     from hcwf.config import Config
     from hcwf.errors import HCWFConfigError
@@ -203,7 +203,7 @@ def _read(source) -> tuple[dict, str | None]:
 
 
 def _apply_overrides(values: dict, overrides: Mapping[str, Any], origin: str) -> None:
-    """Put the overrides into `values` (normalised, recorded in ``config_sources`` as `origin`); ``model_list`` selects models.
+    """Put the overrides into ``values`` (normalised, recorded in ``config_sources`` as ``origin``); ``model_list`` selects models.
 
     Parameters
     ----------
@@ -238,7 +238,7 @@ def _apply_overrides(values: dict, overrides: Mapping[str, Any], origin: str) ->
 
 
 def _select_models(values: dict, names, errors: list[str]) -> None:
-    """Keep only the models `names` (in that order) of the configured models, with each of their per-model entries.
+    """Keep only the models ``names`` (in that order) of the configured models, with each of their per-model entries.
 
     Parameters
     ----------
@@ -247,7 +247,7 @@ def _select_models(values: dict, names, errors: list[str]) -> None:
     names : str or iterable of str
         The models to keep, in the order wanted.
     errors : list of str
-        Takes the message when a name is unknown, none is given or one is named twice; `values` is then left alone.
+        Takes the message when a name is unknown, none is given or one is named twice; ``values`` is then left alone.
     """
     names = (names,) if isinstance(names, str) else tuple(names)
     have = list(values["model_list"])
@@ -279,7 +279,7 @@ def finish(values: dict, config_file: str | None, write: bool = True) -> dict:
     Returns
     -------
     dict
-        `values`, with ``lead_window``, ``onset_lead_lines`` and the run folder plan added.
+        ``values``, with ``lead_window``, ``onset_lead_lines`` and the run folder plan added.
     """
     from hcwf.runs import folder as run_folder
 
@@ -328,7 +328,7 @@ def _resolve_paths(dic):
     Returns
     -------
     dict
-        `dic`.
+        ``dic``.
     """
     for key in ["ref_model_dir", "dir_out", "dir_fig", "obs_dir"]:
         if key in dic and not Path(str(dic[key])).is_absolute():
@@ -376,7 +376,7 @@ def _anchor_units_paths(dic):
     Returns
     -------
     None
-        Nothing; `dic` is changed in place.
+        Nothing; ``dic`` is changed in place.
     """
     config_file = dic.get("config_file")
     if not config_file:
@@ -410,7 +410,7 @@ def _anchor_mme_weights(dic):
     Returns
     -------
     None
-        Nothing; `dic` is changed in place.
+        Nothing; ``dic`` is changed in place.
     """
     mme = dic.get("blend_mme")
     if not isinstance(mme, dict) or not isinstance(mme.get("weights"), (str, Path)):
@@ -431,7 +431,7 @@ def _resolve_threshold_ref(ref):
     Returns
     -------
     str
-        The reference with its path resolved against the data folder, or `ref` unchanged when it has no ``:`` part
+        The reference with its path resolved against the data folder, or ``ref`` unchanged when it has no ``:`` part
         or is already absolute.
     """
     path, sep, var = str(ref).rpartition(":")

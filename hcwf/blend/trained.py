@@ -205,7 +205,7 @@ def frozen_config(mapping: dict, definition_text: str | None = None):
     """Return the run config of a run mapping, without reading any data.
 
     The config's sections are flattened and typed as a run config's are, the model lists are made from the model
-    entries (no files: a forecast names its own), and the onset definition is the frozen one (`definition_text`) when
+    entries (no files: a forecast names its own), and the onset definition is the frozen one (``definition_text``) when
     given, else the run's own inline rule. Its ``onset`` is the OnsetSetup and its ``blend`` the recipe (the
     invariants of a run that read data are not checked).
 
@@ -337,9 +337,9 @@ class FrozenUnits:
         Returns
         -------
         units : hcwf.spatial.units.EvaluationUnits
-            The units: the given `ids`, the targets of the weights, or the grid cells.
+            The units: the given ``ids``, the targets of the weights, or the grid cells.
         positions : numpy.ndarray of int, shape (kept,)
-            The positions in `units` of the kept units, ordered by id.
+            The positions in ``units`` of the kept units, ordered by id.
 
         Raises
         ------
@@ -689,7 +689,7 @@ class TrainedBlend:
     # -- files --------------------------------------------------------------------------------------------------
 
     def save(self, path) -> Path:
-        """Write the blend to `path` (hcwf's format), atomically.
+        """Write the blend to ``path`` (hcwf's format), atomically.
 
         Parameters
         ----------
@@ -699,7 +699,7 @@ class TrainedBlend:
         Returns
         -------
         pathlib.Path
-            `path`.
+            ``path``.
 
         Raises
         ------

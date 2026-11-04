@@ -79,9 +79,9 @@ def _block_cells() -> int:
 
 def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[str, np.ndarray],
            jobs: Jobs, *, trace: bool = False, amount_windows=None) -> Detection:
-    """Run every job on the GPU and return the onset day index (-1 if none) and `Status` per job (NumPy arrays).
+    """Run every job on the GPU and return the onset day index (-1 if none) and `~hcwf.onset.model.Status` per job (NumPy arrays).
 
-    Amounts may be ``(S, W)`` with `amount_windows` the ``W`` window start leads (`hcwf.onset.backends.windowed`).
+    Amounts may be ``(S, W)`` with ``amount_windows`` the ``W`` window start leads (`hcwf.onset.backends.windowed`).
 
     Parameters
     ----------
@@ -98,7 +98,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
     trace : bool, default False
         Must be false: traces come from the reference backend.
     amount_windows : array_like of int, optional
-        The ``W`` window start leads when `amounts` have ``W`` columns.
+        The ``W`` window start leads when ``amounts`` have ``W`` columns.
 
     Returns
     -------
@@ -286,7 +286,7 @@ class _Tables:
         return _prefix(holds, cp.int32)
 
     def next_wet(self, series, lo):
-        """Return the first wet day at or after `lo` in each series, ``n_time`` if there is none.
+        """Return the first wet day at or after ``lo`` in each series, ``n_time`` if there is none.
 
         Parameters
         ----------
@@ -358,7 +358,7 @@ def _prefix(values, dtype):
 
     Returns
     -------
-    cupy.ndarray of `dtype`, shape (series, time + 1)
+    cupy.ndarray of ``dtype``, shape (series, time + 1)
         The prefix sums.
     """
     if np.dtype(dtype).kind == "f":
@@ -541,7 +541,7 @@ def _status_from_flags(flags):
     Returns
     -------
     cupy.ndarray of int8
-        The `Status` code, same shape as `flags`.
+        The `~hcwf.onset.model.Status` code, same shape as ``flags``.
     """
     return cp.where(flags == HORIZON_FLAG, int(Status.CENSORED), int(Status.INSUFFICIENT_DATA)).astype(cp.int8)
 
@@ -563,7 +563,7 @@ def _first_passage_block(plan: P.Plan, tables: _Tables, job: _Block):
     day : cupy.ndarray of int64, shape (jobs,)
         The reported day index, ``-1`` for none.
     status : cupy.ndarray of int8, shape (jobs,)
-        The `Status` code.
+        The `~hcwf.onset.model.Status` code.
     """
     shape = job.d.shape
     unknown_flags = cp.zeros(shape, dtype=cp.int8)
@@ -630,7 +630,7 @@ def _curve_block(plan: P.Plan, tables: _Tables, job: _Block):
     day : cupy.ndarray of int64, shape (jobs,)
         The reported day index, ``-1`` for none.
     status : cupy.ndarray of int8, shape (jobs,)
-        The `Status` code.
+        The `~hcwf.onset.model.Status` code.
     """
     start, end, series = job.start[:, 0], job.end[:, 0], job.series[:, 0]
     ok, flags = _observe(tables, job, job.start, job.end + 1)
@@ -669,7 +669,7 @@ def _variants(cell: np.ndarray, amount: np.ndarray):
     amounts : numpy.ndarray of int64, shape (variants,)
         The amount of each unique pair.
     inverse : numpy.ndarray of int64, shape (jobs,)
-        The index of each job's pair in `cells` and `amounts`.
+        The index of each job's pair in ``cells`` and ``amounts``.
     """
     pairs = np.stack([cell, amount], axis=1)
     unique, inverse = np.unique(pairs, axis=0, return_inverse=True)
@@ -708,7 +708,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     trace : bool, default False
         Must be false: traces come from the reference backend.
     amount_windows : array_like of int, optional
-        The ``W`` window start leads when `amounts` have ``W`` columns.
+        The ``W`` window start leads when ``amounts`` have ``W`` columns.
 
     Returns
     -------
@@ -953,7 +953,7 @@ class _StitchedBlock:
 
 
 def _g(tables: _StitchedTables, hist_table, fc_table, hist_row, job: _StitchedBlock, t):
-    """Return the prefix value at stitched index `t`.
+    """Return the prefix value at stitched index ``t``.
 
     The value is ``P_hist(min(t, split))`` plus ``P_fc(t - split)`` once past the split (the forecast table is 0 at
     0). Only differences of two values are meaningful.
@@ -967,7 +967,7 @@ def _g(tables: _StitchedTables, hist_table, fc_table, hist_row, job: _StitchedBl
     fc_table : cupy.ndarray, shape (series, n_fc + 1)
         The matching forecast prefix table.
     hist_row : cupy.ndarray of int64, shape (jobs, 1)
-        The row of `hist_table` of each job.
+        The row of ``hist_table`` of each job.
     job : _StitchedBlock
         The block of jobs.
     t : cupy.ndarray of int64, shape (jobs, candidates)
@@ -1116,7 +1116,7 @@ def _veto_s(veto: P.VetoPlan, spell_prefix, variant, fc_prefix, tables: _Stitche
     spell_prefix : cupy.ndarray of int32, shape (variants, width + 1)
         The history spell-start prefix table of this veto.
     variant : cupy.ndarray of int64, shape (jobs, 1)
-        The row of `spell_prefix` of each job.
+        The row of ``spell_prefix`` of each job.
     fc_prefix : cupy.ndarray of int32, shape (series, n_fc + 2)
         The forecast spell-start prefix table of this veto.
     tables : _StitchedTables
@@ -1181,7 +1181,7 @@ def _first_wet_day_s(tables: _StitchedTables, job: _StitchedBlock, onset, pick_d
     Returns
     -------
     cupy.ndarray of int64, shape (jobs,)
-        `day` with the onset days moved to the first wet day of the span where there is one.
+        ``day`` with the onset days moved to the first wet day of the span where there is one.
     """
     first, last, since = report_span
     a = job.origin[:, 0] if since else pick_day + first
@@ -1223,7 +1223,7 @@ def _first_passage_block_s(plan: P.Plan, tables: _StitchedTables, job: _Stitched
     day : cupy.ndarray of int64, shape (jobs,)
         The reported stitched day index, ``-1`` for none.
     status : cupy.ndarray of int8, shape (jobs,)
-        The `Status` code.
+        The `~hcwf.onset.model.Status` code.
     """
     shape = job.d.shape
     unknown_flags = cp.zeros(shape, dtype=cp.int8)
@@ -1283,7 +1283,7 @@ def _curve_block_s(plan: P.Plan, tables: _StitchedTables, job: _StitchedBlock):
     day : cupy.ndarray of int64, shape (jobs,)
         The reported stitched day index, ``-1`` for none.
     status : cupy.ndarray of int8, shape (jobs,)
-        The `Status` code.
+        The `~hcwf.onset.model.Status` code.
     """
     start, end, series = job.start[:, 0], job.end[:, 0], job.series[:, 0]
     ok, flags = _observe_s(tables, job, job.start, job.end + 1)

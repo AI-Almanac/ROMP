@@ -45,7 +45,7 @@ def _flags(argv):
 
 
 def config_paths(argv) -> list[str]:
-    """Return the run files named by ``-p``/``--param`` in `argv` (repeatable), else ``$HCWF_CONFIG``.
+    """Return the run files named by ``-p``/``--param`` in ``argv`` (repeatable), else ``$HCWF_CONFIG``.
 
     A glob names every file it matches.
 
@@ -78,7 +78,7 @@ def config_paths(argv) -> list[str]:
 
 
 def _argv_for(argv, path: str) -> list[str]:
-    """Return `argv` with every ``-p``/``--param`` replaced by the one run file `path`; the other arguments are kept.
+    """Return ``argv`` with every ``-p``/``--param`` replaced by the one run file ``path``; the other arguments are kept.
 
     Parameters
     ----------
@@ -175,7 +175,7 @@ def _run(cfg, flags, cli_args=None) -> int:
     flags : argparse.Namespace
         The run-control flags (`_flags`).
     cli_args : list of str, optional
-        The command line to read the config from when `cfg` is None; ``sys.argv`` when None.
+        The command line to read the config from when ``cfg`` is None; ``sys.argv`` when None.
 
     Returns
     -------

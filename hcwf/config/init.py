@@ -216,7 +216,7 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
 
 
 def write_init(target, force=False, **kwargs) -> Path:
-    """Render the starting config and write it to `target` (or print it for ``"-"``).
+    """Render the starting config and write it to ``target`` (or print it for ``"-"``).
 
     The text is loaded as a `hcwf.config.Config` first, so a starting config that does not load is never written.
 
@@ -225,19 +225,19 @@ def write_init(target, force=False, **kwargs) -> Path:
     target : str or pathlib.Path
         The file to write; ``"-"`` prints the text to the standard output.
     force : bool, default False
-        Overwrite `target` when it exists.
+        Overwrite ``target`` when it exists.
     **kwargs : dict
         Passed on to `render`.
 
     Returns
     -------
     pathlib.Path
-        `target`, or ``Path("-")`` when the text was printed.
+        ``target``, or ``Path("-")`` when the text was printed.
 
     Raises
     ------
     FileExistsError
-        `target` exists and `force` is false.
+        ``target`` exists and ``force`` is false.
     """
     from hcwf.config import Config
 

@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 def extract_binned_dict(dic, second_level_key, bin_key="clean_bins"):
     """Extract one binned score per model from a 2-level nested dictionary.
 
-    The binned scores are saved as lists without bin keys; the bins are named by the list under `bin_key`.
+    The binned scores are saved as lists without bin keys; the bins are named by the list under ``bin_key``.
 
     Parameters
     ----------
@@ -35,7 +35,7 @@ def extract_binned_dict(dic, second_level_key, bin_key="clean_bins"):
     first_level_keys : list of str
         The first-level keys (the models).
     bins : list or None
-        The bin labels; None when `bin_key` is absent.
+        The bin labels; None when ``bin_key`` is absent.
     """
     # 1st-level keys
     first_level_keys = list(dic.keys())

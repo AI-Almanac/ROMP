@@ -249,7 +249,7 @@ def _on_kept_cells(rain, rows, cols, flat):
     Returns
     -------
     xarray.DataArray
-        `rain` as it was if it has a ``cell`` dimension, else the kept cells picked from the whole box.
+        ``rain`` as it was if it has a ``cell`` dimension, else the kept cells picked from the whole box.
     """
     if "cell" in rain.dims:
         return rain
@@ -257,7 +257,7 @@ def _on_kept_cells(rain, rows, cols, flat):
 
 
 def _cells_of_reference(one, grid, dims, flat, source, options, onset):
-    """Return the `hcwf.onset.model.Cells` of reference years ingested as `one` (a year on the kept cells).
+    """Return the `hcwf.onset.model.Cells` of reference years ingested as ``one`` (a year on the kept cells).
 
     What the masked cells are as ingestion gives them is found by ingesting one all-``NaN`` cell.
 
@@ -314,7 +314,7 @@ def _stream_reference(onset, years, read, source):
     Returns
     -------
     hcwf.onset.model.DailyRain
-        The years as one ingested rainfall, tenths of mm over all days of `years`.
+        The years as one ingested rainfall, tenths of mm over all days of ``years``.
 
     Raises
     ------
@@ -379,7 +379,7 @@ def _reference_year(year, read, keep=None):
     read : hcwf.io.observations.ObsRead
         The typed inputs of the observation reading.
     keep : collection of int, optional
-        The years held by the run's observation cache; None takes them from `read`.
+        The years held by the run's observation cache; None takes them from ``read``.
 
     Returns
     -------

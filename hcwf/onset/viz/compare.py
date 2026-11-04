@@ -40,7 +40,7 @@ def _nearest(rain: DailyRain, lat: float, lon: float) -> tuple[tuple[slice, ...]
     Returns
     -------
     slices : tuple of slice
-        One slice per spatial dim of `rain`, of length 1 along ``lat`` and ``lon``.
+        One slice per spatial dim of ``rain``, of length 1 along ``lat`` and ``lon``.
     lat : float
         Latitude of the cell, in degrees.
     lon : float
@@ -49,7 +49,7 @@ def _nearest(rain: DailyRain, lat: float, lon: float) -> tuple[tuple[slice, ...]
     Raises
     ------
     ValueError
-        `rain` lacks a ``lat`` or ``lon`` dim, or the point is farther than one grid step from the nearest cell.
+        ``rain`` lacks a ``lat`` or ``lon`` dim, or the point is farther than one grid step from the nearest cell.
     """
     index = []
     found = {}
@@ -171,7 +171,7 @@ def _detect(definition: Definition, cell: DailyRain, year: int, thresholds, thre
     Raises
     ------
     ValueError
-        The definition needs thresholds or derived seasons and `threshold_years` is None, or `season` is not one of
+        The definition needs thresholds or derived seasons and ``threshold_years`` is None, or ``season`` is not one of
         its seasons.
     """
     needs = bool(definition.thresholds)
@@ -256,7 +256,7 @@ def compare_definitions(definitions: list[Definition], rain: DailyRain, *, lat: 
         The year to show.
     thresholds : dict, optional
         Maps a definition id to ``{name: xarray.DataArray}``; definitions that need thresholds and are not in it get
-        them computed from `rain` over `threshold_years`.
+        them computed from ``rain`` over ``threshold_years``.
     threshold_years : tuple of (int, int), optional
         The first and last year of the climatology for computed thresholds (also needed for derived seasons).
     season : str, optional
@@ -272,7 +272,7 @@ def compare_definitions(definitions: list[Definition], rain: DailyRain, *, lat: 
     Raises
     ------
     ValueError
-        `definitions` is empty, the calendar is not standard, or the cell, thresholds or season cannot be resolved
+        ``definitions`` is empty, the calendar is not standard, or the cell, thresholds or season cannot be resolved
         (see `_nearest` and `_detect`).
     """
     definitions = list(definitions)

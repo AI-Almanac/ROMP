@@ -1,4 +1,4 @@
-"""Write the anatomy plot and `explain` log of the observed onset for the cells named in ``explain_cells``.
+"""Write the anatomy plot and ``explain`` log of the observed onset for the cells named in ``explain_cells``.
 
 `write_explain_cells` is the run-level entry point: for each evaluation year it ingests the observations, traces the
 observed onset at every configured cell with `hcwf.onset.explain.trace_observed` and writes a PNG
@@ -74,7 +74,7 @@ def write_explain_cells(rc) -> list[Path]:
 
     Parameters
     ----------
-    rc : hcwf.config.RunConfig
+    rc : hcwf.config.model.RunConfig
         The run configuration: ``onset_options.explain_cells`` (list of ``(lat, lon)``), ``onset``, ``output``,
         ``models``, ``evaluation.years``.
 

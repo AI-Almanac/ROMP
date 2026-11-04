@@ -31,10 +31,10 @@ with a missing day in a calendar year from that year's means (see `unit_series`)
 
 
 def unit_transform(units, lat, lon, positions=None, *, tolerance=None, wrap_longitude=False, convention=None):
-    """Build the transform of `units` from the cells of a (lat, lon) grid, restricted to the units at `positions`.
+    """Build the transform of ``units`` from the cells of a (lat, lon) grid, restricted to the units at ``positions``.
 
     The weights are matched to the grid's cells by exact coordinates (as onset_blending matches them) or within
-    `tolerance`; `wrap_longitude` first puts the weights' longitudes in the grid's convention.
+    ``tolerance``; ``wrap_longitude`` first puts the weights' longitudes in the grid's convention.
 
     Parameters
     ----------
@@ -67,7 +67,7 @@ def unit_transform(units, lat, lon, positions=None, *, tolerance=None, wrap_long
 def _cell_positions(transform, lat, lon, flat=None):
     """Find each cell's position among the transform's sources (-1 for a cell that is none).
 
-    The cells are those of the (lat, lon) grid in latitude-major order, or, with `flat` (each cell's position in the
+    The cells are those of the (lat, lon) grid in latitude-major order, or, with ``flat`` (each cell's position in the
     whole grid), the cells given one by one as lat and lon arrays. A coordinate-keyed transform has the grid's cells
     themselves as its sources, so a cell's position is its place in the grid.
 
@@ -76,9 +76,9 @@ def _cell_positions(transform, lat, lon, flat=None):
     transform : hcwf.spatial.regrid.SparseTransform
         The transform whose sources are searched.
     lat : numpy.ndarray of float64
-        The latitudes: the grid's axis, or one per cell with `flat`.
+        The latitudes: the grid's axis, or one per cell with ``flat``.
     lon : numpy.ndarray of float64
-        The longitudes: the grid's axis, or one per cell with `flat`.
+        The longitudes: the grid's axis, or one per cell with ``flat``.
     flat : array_like of int, optional
         The position of each cell in the whole (lat, lon) grid, for cells given one by one.
 
@@ -121,19 +121,19 @@ def feeding_cells(transform, lat, lon):
 
 
 def unit_series(da, transform, *, missing="flag", post_scale=None, support=False, dtype=None):
-    """Average a loaded DataArray with lat and lon dims onto the units of `transform`: dims become (the others, unit).
+    """Average a loaded DataArray with lat and lon dims onto the units of ``transform``: dims become (the others, unit).
 
     Each unit is the weighted mean of its observed (finite) source cells, in float64 mm, NaN where none is observed
-    (`SparseTransform.observed_mean`). `missing` is applied to the sources first (``"zero"`` counts NaN as 0 mm;
+    (`~hcwf.spatial.regrid.SparseTransform.observed_mean`). ``missing`` is applied to the sources first (``"zero"`` counts NaN as 0 mm;
     ``"drop"`` needs a ``time`` dim and removes a cell from the means of every calendar year in which it has a missing
-    day, see `SOURCE_POLICIES`). `post_scale` multiplies the means (a unit factor applied after the averaging, as
-    onset_blending does for a regrid; apply it to `da` first for a cell transform). The array is read in column blocks,
+    day, see `SOURCE_POLICIES`). ``post_scale`` multiplies the means (a unit factor applied after the averaging, as
+    onset_blending does for a regrid; apply it to ``da`` first for a cell transform). The array is read in column blocks,
     so working memory stays one block beyond the result.
 
     The array may hold only some of the grid's cells (``load_blocks(..., compact=True)``: the dims others + ``cell``,
     with ``lat`` and ``lon`` over ``cell``); the cells it lacks are not observed. Units that are the cells themselves
     (one source of weight 1) take their cell's value directly, without the weighted sums. The result is float64, or
-    `dtype` when that changes nothing but the storage (cells' own values, no `post_scale`).
+    ``dtype`` when that changes nothing but the storage (cells' own values, no ``post_scale``).
 
     Parameters
     ----------
@@ -153,14 +153,14 @@ def unit_series(da, transform, *, missing="flag", post_scale=None, support=False
     Returns
     -------
     xarray.DataArray or tuple of (xarray.DataArray, numpy.ndarray, numpy.ndarray)
-        The unit series with dims (the others, ``unit``), float64 or `dtype`. With `support` a tuple of that, the
+        The unit series with dims (the others, ``unit``), float64 or ``dtype``. With ``support`` a tuple of that, the
         ``bool`` array of shape (unit, year) of which units have a source that year, and the years (``int``, shape
         (year,); ``[0]`` when the array has no ``time``).
 
     Raises
     ------
     ValueError
-        `missing` is not one of `SOURCE_POLICIES`, or is ``"drop"`` and the dims are not ``(time, lat, lon)``.
+        ``missing`` is not one of `SOURCE_POLICIES`, or is ``"drop"`` and the dims are not ``(time, lat, lon)``.
     """
     if missing not in SOURCE_POLICIES:
         raise ValueError(f"missing must be one of {SOURCE_POLICIES}, got {missing!r}")
@@ -253,17 +253,17 @@ def unit_series(da, transform, *, missing="flag", post_scale=None, support=False
 
 def read_on_units(da, units, *, block_dim, region=None, positions=None, tolerance=None, wrap_longitude=False,
                   convention=None, scale=None, post_scale=None, missing="flag", support=False, dtype=None):
-    """Read a lazy DataArray (dims named as HCWF's, lat and lon among them) onto `units`, reading only what feeds them.
+    """Read a lazy DataArray (dims named as HCWF's, lat and lon among them) onto ``units``, reading only what feeds them.
 
-    The transform of `units` from the array's own cells is compiled (`unit_transform`; the array's lat and lon are
+    The transform of ``units`` from the array's own cells is compiled (`unit_transform`; the array's lat and lon are
     matched as they are, so give it the cut or uncut array in the order you want matched), only the storage tiles
-    holding a source cell of the wanted `positions` are read (block by block along `block_dim`, `load_blocks`), `scale`
+    holding a source cell of the wanted ``positions`` are read (block by block along ``block_dim``, `~hcwf.spatial.select.load_blocks`), ``scale``
     multiplies the cells in place before they are averaged (as for a cell transform), and `unit_series` averages them
-    (`post_scale`, `missing`, `support` and `dtype` as there). Only the cells that feed a unit are held in memory, not
+    (``post_scale``, ``missing``, ``support`` and ``dtype`` as there). Only the cells that feed a unit are held in memory, not
     the whole grid.
 
-    With a `region` the array is first cut to the region's box (latitude ascending, longitude in the region's
-    convention, so use `wrap_longitude` with weights written in the other one); no cell mask is applied, the weights
+    With a ``region`` the array is first cut to the region's box (latitude ascending, longitude in the region's
+    convention, so use ``wrap_longitude`` with weights written in the other one); no cell mask is applied, the weights
     decide which cells count. Without a region the file's own order and extent are read.
 
     Parameters
@@ -298,7 +298,7 @@ def read_on_units(da, units, *, block_dim, region=None, positions=None, toleranc
     Returns
     -------
     xarray.DataArray or tuple of (xarray.DataArray, numpy.ndarray, numpy.ndarray)
-        The unit series, dims (the others, ``unit``); with `support` the tuple `unit_series` returns.
+        The unit series, dims (the others, ``unit``); with ``support`` the tuple `unit_series` returns.
     """
     if region is not None:
         da = region_box(da, region=region)
@@ -331,12 +331,12 @@ def read_unit_dim(da, *, block_dim, ids=None, scale=None):
     Returns
     -------
     xarray.DataArray
-        The array with its ``unit`` dim reduced to `ids`, in that order.
+        The array with its ``unit`` dim reduced to ``ids``, in that order.
 
     Raises
     ------
     KeyError
-        A unit of `ids` is not in the data.
+        A unit of ``ids`` is not in the data.
     """
     labels = np.asarray(da["unit"].values).astype(str)
     if ids is None:
@@ -354,7 +354,7 @@ def read_unit_dim(da, *, block_dim, ids=None, scale=None):
 
 
 def _units_of(source) -> UnitsSpec | None:
-    """Return the evaluation units of a source: the `UnitsSpec` itself, or that of an observation, model or reference spec.
+    """Return the evaluation units of a source: the `~hcwf.spatial.units.UnitsSpec` itself, or that of an observation, model or reference spec.
 
     Parameters
     ----------
@@ -371,9 +371,9 @@ def _units_of(source) -> UnitsSpec | None:
 
 
 def units_spec(source) -> UnitsSpec | None:
-    """Return the evaluation units of a source: its resolved `UnitsSpec`, or None when the config has no ``units`` keys.
+    """Return the evaluation units of a source: its resolved `~hcwf.spatial.units.UnitsSpec`, or None when the config has no ``units`` keys.
 
-    With none, the grid cells are used. `UnitsSpec.from_flat` made the specification once, when the run configuration
+    With none, the grid cells are used. `~hcwf.spatial.units.UnitsSpec.from_flat` made the specification once, when the run configuration
     was built.
 
     Parameters
@@ -423,7 +423,7 @@ def point_dims(source) -> tuple:
 
 
 def unit_table(source, ids) -> EvaluationUnits:
-    """Build the run's evaluation units of the string `ids`, in that order: their names, centroids and, for polygons, geometry.
+    """Build the run's evaluation units of the string ``ids``, in that order: their names, centroids and, for polygons, geometry.
 
     Polygon (shapefile) and weights units come from the specification; ids of cells or of a pre-aggregated file are
     labelled with the centroids table, or with the cell they spell (``<lat>_<lon>``).
@@ -438,7 +438,7 @@ def unit_table(source, ids) -> EvaluationUnits:
     Returns
     -------
     hcwf.spatial.units.EvaluationUnits
-        The units, in the order of `ids`.
+        The units, in the order of ``ids``.
 
     Raises
     ------
@@ -460,7 +460,7 @@ def unit_table(source, ids) -> EvaluationUnits:
 
 
 def declared_scale(da, unit_cvt) -> float | None:
-    """Find the millimetres per unit of the array's rainfall: its declared ``units`` attribute, else `unit_cvt`.
+    """Find the millimetres per unit of the array's rainfall: its declared ``units`` attribute, else ``unit_cvt``.
 
     Parameters
     ----------
@@ -508,7 +508,7 @@ def read_units(da, spec: UnitsSpec, units, positions, *, block_dim, scale=None, 
     """Read the array's rain on the used units, dims (the others, ``unit``).
 
     The result is float64 for averaged units and the file's dtype for its own cells or units. A regrid scales after
-    averaging, a cell transform before (see `UnitsSpec`); with `support` a cell transform also returns which units
+    averaging, a cell transform before (see `~hcwf.spatial.units.UnitsSpec`); with ``support`` a cell transform also returns which units
     have a source each year and the years.
 
     Parameters
@@ -533,7 +533,7 @@ def read_units(da, spec: UnitsSpec, units, positions, *, block_dim, scale=None, 
     Returns
     -------
     xarray.DataArray or tuple of (xarray.DataArray, numpy.ndarray, numpy.ndarray)
-        The rain on the used units; with `support` the tuple `unit_series` returns.
+        The rain on the used units; with ``support`` the tuple `unit_series` returns.
     """
     if "unit" in da.dims:
         return read_unit_dim(da, block_dim=block_dim, ids=units.ids[positions], scale=scale)

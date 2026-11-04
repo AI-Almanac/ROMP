@@ -29,9 +29,9 @@ _DAY_UNITS = ("day", "days")
 
 
 def matches(names, role, *, exclude=(), fuzzy=False, coords=None):
-    """Return the names that can play `role`: an alias, else (if `fuzzy`) one holding a keyword of the role.
+    """Return the names that can play ``role``: an alias, else (if ``fuzzy``) one holding a keyword of the role.
 
-    Exact aliases are compared in lower case and returned in the table's order of preference. `exclude` lists names
+    Exact aliases are compared in lower case and returned in the table's order of preference. ``exclude`` lists names
     taken by other roles. For the step role a coordinate whose units attribute is days also counts, when no name
     does.
 
@@ -66,7 +66,7 @@ def matches(names, role, *, exclude=(), fuzzy=False, coords=None):
 
 
 def find_dim(names, role, *, exclude=(), fuzzy=False, coords=None):
-    """Return the first name that can play `role`, or None.
+    """Return the first name that can play ``role``, or None.
 
     Parameters
     ----------
@@ -195,7 +195,7 @@ def rename_model_dims(ds, model_dims=None):
     Raises
     ------
     ValueError
-        A name in `model_dims` is not a variable of the dataset.
+        A name in ``model_dims`` is not a variable of the dataset.
     """
     if not model_dims:
         return ds
@@ -219,7 +219,7 @@ def _init_time_coord(ds, coord_list):
     ds : xarray.Dataset
         The dataset.
     coord_list : list of str
-        The coordinate names of `ds`.
+        The coordinate names of ``ds``.
 
     Returns
     -------

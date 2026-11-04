@@ -335,7 +335,7 @@ def apply(dic: dict, paths: RunPaths) -> dict:
     Returns
     -------
     dict
-        `dic`, the same object.
+        ``dic``, the same object.
     """
     dic["dir_out"], dic["dir_fig"] = str(paths.dir_out), str(paths.dir_fig)
     dic["cache_dir"] = str(paths.cache_dir) if paths.cache_dir is not None else None
@@ -347,7 +347,7 @@ def apply(dic: dict, paths: RunPaths) -> dict:
 def prepare(paths: RunPaths, overwrite: bool = False) -> None:
     """Create the run's folders.
 
-    A run folder that already holds a run is refused, or cleared with `overwrite`. Only the run folder itself is
+    A run folder that already holds a run is refused, or cleared with ``overwrite``. Only the run folder itself is
     cleared (never ``runs/.cache`` or an explicit ``dir_out``).
 
     Parameters
@@ -360,7 +360,7 @@ def prepare(paths: RunPaths, overwrite: bool = False) -> None:
     Raises
     ------
     RunExistsError
-        The run folder already holds a run and `overwrite` is false, or it is not directly inside ``runs_dir`` and so
+        The run folder already holds a run and ``overwrite`` is false, or it is not directly inside ``runs_dir`` and so
         will not be cleared.
     """
     if not paths.explicit and paths.exists:
@@ -403,7 +403,7 @@ def file_name(paths, kind: str, *parts) -> str:
     Raises
     ------
     ValueError
-        `kind` is not a known kind.
+        ``kind`` is not a known kind.
     """
     short = paths is not None and paths.short_names
     if kind == "overall":

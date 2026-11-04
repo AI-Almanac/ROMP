@@ -25,7 +25,7 @@ def cbar_season():
     cmap_jjas : matplotlib.colors.ListedColormap
         The colormap of 40 colours.
     norm_jjas : matplotlib.colors.BoundaryNorm
-        The norm mapping day of year onto `cmap_jjas`.
+        The norm mapping day of year onto ``cmap_jjas``.
     bounds : list of float
         The 41 boundaries of the norm, in day of year.
     """
@@ -149,7 +149,7 @@ def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
     Returns
     -------
     matplotlib.axes.Axes
-        `ax` (the rectangle is added to it).
+        ``ax`` (the rectangle is added to it).
     """
     import matplotlib.patches as mpatches
     from hcwf.onset.regions import box
@@ -244,13 +244,13 @@ def portrait_plot(
     fig : matplotlib.figure.Figure, optional
         The figure to plot on. When None a new figure is created.
     ax : matplotlib.axes.Axes, optional
-        The axes to plot on. When None a new subplot of `fig` is created.
+        The axes to plot on. When None a new subplot of ``fig`` is created.
     annotate : bool, default False
         Add the value as text in each cell.
     annotate_data : numpy.ndarray, optional
-        The values written in the cells. None uses `data`.
+        The values written in the cells. None uses ``data``.
     annotate_textcolors : tuple of (str, str), default ("black", "white")
-        The text colours below and above `annotate_textcolors_threshold`.
+        The text colours below and above ``annotate_textcolors_threshold``.
     annotate_textcolors_threshold : tuple of (float, float), optional
         Passed to `annotate_heatmap` as its ``threshold``: the text colour switches outside it.
     annotate_fontsize : float, default 15
@@ -260,7 +260,7 @@ def portrait_plot(
     figsize : tuple of (float, float), default (12, 10)
         The figure size in inches, when a figure is created.
     vrange : tuple of (float, float), optional
-        The range of the colour scale. None uses the minimum and maximum of `data`.
+        The range of the colour scale. None uses the minimum and maximum of ``data``.
     xaxis_fontsize : float, default 12
         The font size of the column tick labels (and the title).
     yaxis_fontsize : float, default 12
@@ -303,12 +303,12 @@ def portrait_plot(
     im : matplotlib.collections.QuadMesh
         The drawn mesh, for a common colorbar.
     cbar : matplotlib.colorbar.Colorbar
-        The colorbar; returned (as a fourth value) only when `colorbar_off` is false.
+        The colorbar; returned (as a fourth value) only when ``colorbar_off`` is false.
 
     Raises
     ------
     ValueError
-        When `data` is stacked, or the labels or `annotate_data` do not match its shape.
+        When ``data`` is stacked, or the labels or ``annotate_data`` do not match its shape.
     """
     # ----------------
     # Prepare plotting
@@ -472,7 +472,7 @@ def portrait_plot(
 # Prepare data
 # ----------------------------------------------------------------------
 def prepare_data(data, xaxis_labels, yaxis_labels, debug=False):
-    """Convert `data` to a numpy array and check its shape against the labels.
+    """Convert ``data`` to a numpy array and check its shape against the labels.
 
     Raises ValueError when the data are not a 2D or 3D array, a list that is not made of 2D arrays, or when the
     labels do not match the shape (an empty label list matches anything).
@@ -604,14 +604,14 @@ def annotate_heatmap(
     """Annotate a heatmap with the value of each cell.
 
     The text colour is black or white, whichever contrasts with the cell colour (`contrast_text_color`, against a
-    norm from the 10 % and 90 % quantiles of `data`); with a tuple `threshold` it is picked from `textcolors`
-    instead. The font size is ``fontsize * 2 / number of columns`` (``fontsize`` from `textkw`, default the
+    norm from the 10 % and 90 % quantiles of ``data``); with a tuple ``threshold`` it is picked from ``textcolors``
+    instead. The font size is ``fontsize * 2 / number of columns`` (``fontsize`` from ``textkw``, default the
     matplotlib ``font.size``).
 
     Parameters
     ----------
     im : matplotlib.collections.QuadMesh
-        The drawn heatmap to label. Its array is used when `data` is not a list or array.
+        The drawn heatmap to label. Its array is used when ``data`` is not a list or array.
     ax : matplotlib.axes.Axes
         The axes of the heatmap.
     data : numpy.ndarray, shape (row, column), optional
@@ -619,11 +619,11 @@ def annotate_heatmap(
     cmap : str or matplotlib.colors.Colormap, optional
         The colormap of the image.
     annotate_data : numpy.ndarray, shape (row, column), optional
-        The values written in the cells. None uses `data`.
+        The values written in the cells. None uses ``data``.
     valfmt : str or matplotlib.ticker.Formatter, default "{x:.2f}"
         The format of the annotations: a `str.format` string with ``x``, or a formatter.
     textcolors : tuple of (str, str), default ("black", "white")
-        The colours of values inside and outside a tuple `threshold` (``(low, high)``).
+        The colours of values inside and outside a tuple ``threshold`` (``(low, high)``).
     threshold : tuple of (float, float), optional
         The cells outside ``[min, max]`` get the second colour. None applies the contrast rule.
     **textkw : dict
@@ -632,7 +632,7 @@ def annotate_heatmap(
     Returns
     -------
     matplotlib.axes.Axes
-        `ax`, with a text per cell.
+        ``ax``, with a text per cell.
     """
     if not isinstance(data, (list, np.ndarray)):
         data = im.get_array().reshape(im._meshHeight, im._meshWidth)
@@ -693,7 +693,7 @@ def contrast_text_color(value, cmap_obj, norm, threshold=0.5):
     cmap_obj : matplotlib.colors.Colormap
         The colormap.
     norm : matplotlib.colors.Normalize
-        The norm mapping `value` to the colormap.
+        The norm mapping ``value`` to the colormap.
     threshold : float, default 0.5
         The luminance (WCAG perceived luminance, 0 to 1) above which the background counts as light.
 
@@ -733,7 +733,7 @@ def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
     Returns
     -------
     cartopy.mpl.geoaxes.GeoAxes
-        `ax`.
+        ``ax``.
     """
     import cartopy.crs as ccrs
     from shapely.geometry import Polygon as ShapelyPolygon
@@ -761,7 +761,7 @@ def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
 
 
 def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
-    """Draw the polygon boundary for a field on `ax` when `polygon` is truthy and a boundary is defined.
+    """Draw the polygon boundary for a field on ``ax`` when ``polygon`` is truthy and a boundary is defined.
 
     Parameters
     ----------
@@ -770,7 +770,7 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
     da : xarray.DataArray
         The field; the boundary depends on its grid (see `hcwf.onset.regions.polygon_boundary`).
     polygon : bool
-        Draw the boundary; with a false value nothing is drawn (and `return_polygon` must be false).
+        Draw the boundary; with a false value nothing is drawn (and ``return_polygon`` must be false).
     return_polygon : bool, default False
         Also return the polygon vertices.
     linewidth : float, default 1.25
@@ -781,11 +781,11 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
     ax : cartopy.mpl.geoaxes.GeoAxes
         The axes.
     polygon_lat : numpy.ndarray
-        Latitudes of the polygon vertices; only with `return_polygon`.
+        Latitudes of the polygon vertices; only with ``return_polygon``.
     polygon_lon : numpy.ndarray
-        Longitudes of the polygon vertices; only with `return_polygon`.
+        Longitudes of the polygon vertices; only with ``return_polygon``.
     polygon_defined : bool
-        Whether the polygon exists for this grid; only with `return_polygon`.
+        Whether the polygon exists for this grid; only with ``return_polygon``.
     """
     from hcwf.onset.regions import polygon_boundary
 
@@ -862,7 +862,7 @@ def shp_outline(ax, region='Ethiopia', resolution='10m'):
     Returns
     -------
     matplotlib.axes.Axes
-        `ax`.
+        ``ax``.
     """
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature

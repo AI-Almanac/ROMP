@@ -1,7 +1,7 @@
 """Where the data is: the zarr stores, the NetCDF files of a year, and how a forecast file is opened.
 
-The files of a year come from `file_pattern` (one per year, ``"{}"`` for the year), a zarr store of all years, or an
-explicit list of files (`paths`, any number per year, optionally filtered by `years`): see `year_files`. Nothing here
+The files of a year come from ``file_pattern`` (one per year, ``"{}"`` for the year), a zarr store of all years, or an
+explicit list of files (``paths``, any number per year, optionally filtered by ``years``): see `year_files`. Nothing here
 decodes data. The readers `hcwf.io.observations` and `hcwf.io.forecasts` use these functions to find what to read,
 and `hcwf.io.dims` supplies the dimension standardisation applied when a forecast is opened.
 """
@@ -45,18 +45,18 @@ def open_store(path):
 
 
 def year_files(paths, base, years_filter, year) -> list[str]:
-    """Return the files of `year` among those a dataset lists in `paths`.
+    """Return the files of ``year`` among those a dataset lists in ``paths``.
 
-    The year of a file is the first 19xx or 20xx in its name (the rule of onset_blending); `years_filter` keeps only
+    The year of a file is the first 19xx or 20xx in its name (the rule of onset_blending); ``years_filter`` keeps only
     the files of those years first. Any number of files may fall in a year (live files hold one init each); they
     come in the order `hcwf.config.datasets.resolve_paths` gives, by year and name.
 
     Parameters
     ----------
     paths : list of str
-        File names or globs; relative ones are taken under `base`.
+        File names or globs; relative ones are taken under ``base``.
     base : str or pathlib.Path, optional
-        The folder relative entries of `paths` are under; None for the current directory.
+        The folder relative entries of ``paths`` are under; None for the current directory.
     years_filter : collection of int, optional
         Keep only the files of these years before picking; None keeps all.
     year : int
@@ -65,12 +65,12 @@ def year_files(paths, base, years_filter, year) -> list[str]:
     Returns
     -------
     list of str
-        The paths of the files whose year is `year`, possibly empty.
+        The paths of the files whose year is ``year``, possibly empty.
 
     Raises
     ------
     FileNotFoundError
-        `paths` cannot be resolved (the message of the underlying `hcwf.errors.DatasetError`).
+        ``paths`` cannot be resolved (the message of the underlying `hcwf.errors.DatasetError`).
     """
     try:
         files = resolve_paths(paths, base, years_filter)
@@ -82,9 +82,9 @@ def year_files(paths, base, years_filter, year) -> list[str]:
 def observation_source(year, obs_dir, obs_file_pattern, paths=None, years_filter=None):
     """Find where the year's observations are.
 
-    With `paths` (see `year_files`) the year's listed files are the source: one path, or a tuple of paths when
-    several files hold the year. Otherwise a zarr store `obs_dir` holds all years, else the first of the
-    patterns that exists in `obs_dir` is used.
+    With ``paths`` (see `year_files`) the year's listed files are the source: one path, or a tuple of paths when
+    several files hold the year. Otherwise a zarr store ``obs_dir`` holds all years, else the first of the
+    patterns that exists in ``obs_dir`` is used.
 
     Parameters
     ----------
@@ -97,13 +97,13 @@ def observation_source(year, obs_dir, obs_file_pattern, paths=None, years_filter
     paths : list of str, optional
         An explicit list of files or globs, which replaces the patterns.
     years_filter : collection of int, optional
-        The years kept among `paths`.
+        The years kept among ``paths``.
 
     Returns
     -------
     tuple of (str or None, str or tuple of str or None)
         ``(store path, None)`` for a zarr store, or ``(None, file path)`` for NetCDF (a tuple of paths when
-        several files of `paths` hold the year).
+        several files of ``paths`` hold the year).
 
     Raises
     ------
@@ -135,7 +135,7 @@ def observation_source(year, obs_dir, obs_file_pattern, paths=None, years_filter
 def forecast_sources(year, model_dir, file_pattern, paths=None, years_filter=None) -> list:
     """Find what holds the year's forecasts: ``[None]`` for a zarr store (all years), else the file paths.
 
-    One file, ``file_pattern.format(year)`` in `model_dir`, or the listed `paths` (see `year_files`) of the year, one
+    One file, ``file_pattern.format(year)`` in ``model_dir``, or the listed ``paths`` (see `year_files`) of the year, one
     init or many in each.
 
     Parameters
@@ -149,7 +149,7 @@ def forecast_sources(year, model_dir, file_pattern, paths=None, years_filter=Non
     paths : list of str, optional
         An explicit list of files or globs, which replaces the pattern.
     years_filter : collection of int, optional
-        The years kept among `paths`.
+        The years kept among ``paths``.
 
     Returns
     -------
@@ -201,9 +201,9 @@ def fix_dims_for(ensemble):
 def open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered_dates_yr, file_path=None, multi=False):
     """Open the year's forecasts lazily and select its inits.
 
-    A `model_dir` that is a zarr store holds all years: the inits of the year are picked by time. Otherwise the
-    year's NetCDF file ``file_pattern.format(year)``, or `file_path` when the caller names it, is opened. With
-    `multi` (one of several files of the year) a file without a wanted init gives ``(None, None)`` instead of an
+    A ``model_dir`` that is a zarr store holds all years: the inits of the year are picked by time. Otherwise the
+    year's NetCDF file ``file_pattern.format(year)``, or ``file_path`` when the caller names it, is opened. With
+    ``multi`` (one of several files of the year) a file without a wanted init gives ``(None, None)`` instead of an
     error.
 
     Parameters
@@ -229,14 +229,14 @@ def open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered_
     -------
     tuple of (xarray.Dataset or None, callable or None)
         The dataset (standardised dimension names, restricted to the wanted inits) and a function that closes it
-        (a no-op for the shared zarr store). Both None for `multi` without a wanted init.
+        (a no-op for the shared zarr store). Both None for ``multi`` without a wanted init.
 
     Raises
     ------
     FileNotFoundError
         The year's file is absent, or a zarr store has no forecasts of the year.
     ValueError
-        The file has no init time among `filtered_dates_yr`.
+        The file has no init time among ``filtered_dates_yr``.
     """
     fix = fix_dims_for(ensemble)
     if file_path is None and is_zarr(model_dir):

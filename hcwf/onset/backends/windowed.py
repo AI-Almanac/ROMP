@@ -26,7 +26,7 @@ _FAR = 1 << 40
 def prepare(amounts: dict[str, np.ndarray], windows) -> tuple[dict[str, np.ndarray], np.ndarray | None]:
     """Validate amounts and windows and collapse one-column amounts.
 
-    One-column ``(S, 1)`` amounts collapse to ``(S,)``. Amounts with ``W > 1`` columns need `windows` to hold ``W``
+    One-column ``(S, 1)`` amounts collapse to ``(S,)``. Amounts with ``W > 1`` columns need ``windows`` to hold ``W``
     strictly increasing start leads.
 
     Parameters
@@ -46,8 +46,8 @@ def prepare(amounts: dict[str, np.ndarray], windows) -> tuple[dict[str, np.ndarr
     Raises
     ------
     ValueError
-        The amounts have different window counts, `windows` is missing or its length differs from the number of
-        columns, or `windows` is not strictly increasing.
+        The amounts have different window counts, ``windows`` is missing or its length differs from the number of
+        columns, or ``windows`` is not strictly increasing.
     """
     widths = {np.shape(v)[1] for v in amounts.values() if np.ndim(v) == 2}
     if not widths:
@@ -66,7 +66,7 @@ def prepare(amounts: dict[str, np.ndarray], windows) -> tuple[dict[str, np.ndarr
 
 
 def _column(amounts: dict[str, np.ndarray], w: int) -> dict[str, np.ndarray]:
-    """Return the ``(S,)`` amounts of window `w`.
+    """Return the ``(S,)`` amounts of window ``w``.
 
     Parameters
     ----------
@@ -78,7 +78,7 @@ def _column(amounts: dict[str, np.ndarray], w: int) -> dict[str, np.ndarray]:
     Returns
     -------
     dict of str to numpy.ndarray
-        The amounts with two-dimensional arrays reduced to column `w`; one-dimensional arrays are passed through.
+        The amounts with two-dimensional arrays reduced to column ``w``; one-dimensional arrays are passed through.
     """
     return {k: (v[:, w] if np.ndim(v) == 2 else v) for k, v in amounts.items()}
 
@@ -141,7 +141,7 @@ def run(plan: P.Plan, amounts: dict[str, np.ndarray], starts: np.ndarray, jobs, 
 
 
 def compare(op: int, value, amount):
-    """Compare `value` with `amount` elementwise using an operator code.
+    """Compare ``value`` with ``amount`` elementwise using an operator code.
 
     Parameters
     ----------
@@ -150,7 +150,7 @@ def compare(op: int, value, amount):
     value : numpy.ndarray
         The left-hand side.
     amount : numpy.ndarray or int or float
-        The right-hand side, broadcastable against `value`.
+        The right-hand side, broadcastable against ``value``.
 
     Returns
     -------

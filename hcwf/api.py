@@ -92,7 +92,7 @@ def check(cfg, overwrite: bool = False, **overrides):
     overwrite : bool, default False
         Plan as if ``--overwrite`` were given (an existing run folder is then not an error).
     **overrides : dict
-        Flat config keys that override values of `cfg`.
+        Flat config keys that override values of ``cfg``.
 
     Returns
     -------
@@ -125,7 +125,7 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
         A run YAML path, a `hcwf.config.Config`, a nested mapping (as the YAML) or a flat config dict.
     write : bool, default False
         False writes no files; True writes the run as the command line does and refuses a run folder that already holds
-        a run unless `overwrite` is True.
+        a run unless ``overwrite`` is True.
     overwrite : bool, default False
         Re-run a run folder that exists, clearing it first (with ``write=True``).
     quiet : bool, default False
@@ -133,7 +133,7 @@ def run(cfg, *, write: bool = False, overwrite: bool = False, quiet: bool = Fals
     verbose : bool, default False
         Also print debug lines.
     **overrides : dict
-        Flat config keys that override values of `cfg`.
+        Flat config keys that override values of ``cfg``.
 
     Returns
     -------
@@ -216,7 +216,7 @@ def _scores(results, probabilistic_tables) -> dict:
 def _execute_blend(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int) -> RunResult:
     """Train the blend a config's ``blend:`` section describes (`hcwf.blend.training.train`).
 
-    The run folder is prepared as for a benchmark (refused when it exists unless `overwrite`), run.log and the resolved
+    The run folder is prepared as for a benchmark (refused when it exists unless ``overwrite``), run.log and the resolved
     config are written, and the TrainingResult is saved into the run folder's ``blend/`` subfolder (artifact names are
     kept).
 
@@ -283,7 +283,7 @@ def execute(rc: RunConfig, *, write: bool, overwrite: bool, verbosity: int = log
         Write the run folder and its files.
     overwrite : bool
         Clear an existing run folder first.
-    verbosity : int, default `hcwf.log.NORMAL`
+    verbosity : int, default ``NORMAL``
         The console verbosity (see `hcwf.log.session`).
 
     Returns
@@ -395,12 +395,12 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
     fewer_members : bool, default False
         Let an ensemble hold only some of the trained members.
     output : str or pathlib.Path, optional
-        The folder the forecast is saved into with `write`; default ``forecasts/<issue date>/`` beside the blend file
+        The folder the forecast is saved into with ``write``; default ``forecasts/<issue date>/`` beside the blend file
         (``Forecast.folder``).
     write : bool, default False
         Save the forecast; the CSVs are the product.
     netcdf : bool, default False
-        With `write`, add a NetCDF twin of the probabilities.
+        With ``write``, add a NetCDF twin of the probabilities.
 
     Returns
     -------
@@ -410,7 +410,7 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
     Raises
     ------
     ValueError
-        `write` is True without `output` for a blend that was not read from a file.
+        ``write`` is True without ``output`` for a blend that was not read from a file.
     """
     from hcwf.blend.trained import TrainedBlend
 

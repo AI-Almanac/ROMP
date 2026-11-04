@@ -1,11 +1,11 @@
 """Turn seasons and forecast leads into onset jobs, run a backend, and package the results as xarray Datasets.
 
-This module is the bridge between the data containers of `hcwf.onset.model` (`DailyRain`, `ForecastRain`) and the
+This module is the bridge between the data containers of `hcwf.onset.model` (`~hcwf.onset.model.DailyRain`, `~hcwf.onset.model.ForecastRain`) and the
 detection backends in `hcwf.onset.backends`. The public entry points are `detect_observed` (one search per year,
 season and cell of observed rain) and `detect_forecast` (one search per init, member, season and cell of a forecast,
 optionally stitched onto an observed history). Each builds the jobs (`build_observed_jobs`, `build_forecast_jobs`,
 `build_stitched_jobs`), compiles the definition with `hcwf.onset.plan.compile`, runs the chosen backend in chunks of
-series, and returns an `xarray.Dataset` of onset dates or leads and `Status` codes. Season bounds come from
+series, and returns an `xarray.Dataset` of onset dates or leads and `~hcwf.onset.model.Status` codes. Season bounds come from
 `hcwf.onset.calendar`.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from hcwf.onset.model import (
     MISSING_POLICIES, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, StitchedJobs, resolution_of)
 
 NO_PRESET = -1
-"""The ``preset`` value of a job that still needs a search (a `Status` code is never negative)."""
+"""The ``preset`` value of a job that still needs a search (a `~hcwf.onset.model.Status` code is never negative)."""
 MAX_TABLE_CELLS = 20_000_000
 """Series x time cells whose prefix tables are built at one time."""
 
@@ -36,7 +36,7 @@ _BACKEND_MODULES = {"reference": "reference", "numba": "numba_cpu", "gpu": "gpu"
 
 @dataclass
 class JobLayout:
-    """How a flat `Jobs` array maps back to output dims.
+    """How a flat ``Jobs`` array maps back to output dims.
 
     The job array reshapes to ``shape + (n_series,)``.
     """
@@ -44,7 +44,7 @@ class JobLayout:
     shape: tuple[int, ...]
     """The outer shape of the jobs."""
     preset: np.ndarray
-    """A `Status` code per job decided without a search (``NO_PRESET`` otherwise), int8 of shape (job,)."""
+    """A `~hcwf.onset.model.Status` code per job decided without a search (``NO_PRESET`` otherwise), int8 of shape (job,)."""
     season_names: list[str]
     """The labels of the season axis."""
     n_series: int
@@ -82,7 +82,7 @@ def _load_backend(name: str):
     Raises
     ------
     ValueError
-        `name` is not a known backend.
+        ``name`` is not a known backend.
     ImportError
         The backend module cannot be imported (for example the GPU stack is missing).
     """
@@ -98,8 +98,8 @@ def _load_backend(name: str):
 def _threshold_windows(plan: plan_mod.Plan, thresholds, threshold_windows) -> np.ndarray | None:
     """Return the window start leads for thresholds that have a ``"window"`` dim.
 
-    `threshold_windows` overrides the starts; otherwise they come from the ``window_first`` coordinate that
-    `hcwf.onset.thresholds.compute_thresholds_from_forecasts` writes.
+    ``threshold_windows`` overrides the starts; otherwise they come from the ``window_first`` coordinate that
+    `~hcwf.onset.climatology.compute_thresholds_from_forecasts` writes.
 
     Parameters
     ----------
@@ -137,7 +137,7 @@ def _series_thresholds(plan: plan_mod.Plan, thresholds, spatial_dims: tuple[str,
                        first_window_only: bool = False) -> dict[str, np.ndarray]:
     """Return per-series float arrays for the thresholds the plan needs, broadcast from per-cell values.
 
-    A threshold with a ``"window"`` dim becomes ``(series, W)``; `first_window_only` keeps just its first column (used
+    A threshold with a ``"window"`` dim becomes ``(series, W)``; ``first_window_only`` keeps just its first column (used
     for history-only searches, whose candidates all lie before lead 1).
 
     Parameters
@@ -163,7 +163,7 @@ def _series_thresholds(plan: plan_mod.Plan, thresholds, spatial_dims: tuple[str,
     Raises
     ------
     KeyError
-        A needed threshold is missing from `thresholds`.
+        A needed threshold is missing from ``thresholds``.
     """
     out = {}
     for spec in plan.amount_specs:
@@ -213,9 +213,9 @@ def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, threshold
     thresholds : dict of str to numpy.ndarray of float64
         Per-series thresholds from `_series_thresholds`.
     jobs : hcwf.onset.model.Jobs
-        The jobs; ``jobs.series`` indexes the first axis of `tenths`.
+        The jobs; ``jobs.series`` indexes the first axis of ``tenths``.
     preset : numpy.ndarray of int8, shape (job,)
-        A `Status` code for jobs decided without a search, ``NO_PRESET`` (-1) otherwise.
+        A `~hcwf.onset.model.Status` code for jobs decided without a search, ``NO_PRESET`` (-1) otherwise.
     backend : {"reference", "numba", "gpu"}
         The backend to run.
     windows : numpy.ndarray of int64, optional
@@ -224,7 +224,7 @@ def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, threshold
     Returns
     -------
     tuple of (numpy.ndarray of int64, numpy.ndarray of int8)
-        The onset day index of each job (-1 where none) and its `Status` code, each shape (job,).
+        The onset day index of each job (-1 where none) and its `~hcwf.onset.model.Status` code, each shape (job,).
     """
     extra = {} if windows is None else {"amount_windows": windows}
     module = _load_backend(backend)
@@ -262,12 +262,12 @@ def _run(plan: plan_mod.Plan, tenths: np.ndarray, missing: np.ndarray, threshold
 def _climatology_doys(definition: Definition, climatology: xr.Dataset, spatial_dims: tuple[str, ...], n_series: int):
     """Return the per-cell season bounds of a season climatology.
 
-    The start and end variables are the ones the definition's `DerivedSeasons` bounds refer to.
+    The start and end variables are the ones the definition's `~hcwf.onset.model.DerivedSeasons` bounds refer to.
 
     Parameters
     ----------
     definition : hcwf.onset.model.Definition
-        A definition whose seasons are `DerivedSeasons` with climatological bounds.
+        A definition whose seasons are `~hcwf.onset.model.DerivedSeasons` with climatological bounds.
     climatology : xarray.Dataset
         The season climatology: ``onset_doy`` and ``cessation_doy`` over ``(season, *spatial)`` and, optionally,
         ``n_seasons`` over the spatial dims.
@@ -317,7 +317,7 @@ def _derived_bounds(definition: Definition, keys: np.ndarray, years: np.ndarray,
     Parameters
     ----------
     definition : hcwf.onset.model.Definition
-        A definition with `DerivedSeasons`.
+        A definition with `~hcwf.onset.model.DerivedSeasons`.
     keys : numpy.ndarray of int64, shape (time,)
         The label keys (``year*10000 + month*100 + day``) of the time axis.
     years : numpy.ndarray of int64, shape (year,)
@@ -361,8 +361,8 @@ def build_observed_jobs(definition: Definition, rain: DailyRain, years=None,
                         season_climatology: xr.Dataset | None = None) -> tuple[Jobs, JobLayout]:
     """Build one job per (year, season, cell), in that C order, with the cells as backend series.
 
-    Fixed seasons use `hcwf.onset.calendar.fixed_bounds`; `DerivedSeasons` use `hcwf.onset.calendar.doy_bounds` on
-    `season_climatology` (``n_seasons``, ``onset_doy``, ``cessation_doy`` with dims ``(season, *spatial)``), which is
+    Fixed seasons use `hcwf.onset.calendar.fixed_bounds`; `~hcwf.onset.model.DerivedSeasons` use `hcwf.onset.calendar.doy_bounds` on
+    ``season_climatology`` (``n_seasons``, ``onset_doy``, ``cessation_doy`` with dims ``(season, *spatial)``), which is
     then required. A season start outside the data presets the job to ``INSUFFICIENT_DATA``; a cell without that
     derived season presets ``NOT_FOUND``. A season end past the data is clamped to the last day (the horizon flag then
     decides). ``data_end`` is the length of the time axis.
@@ -374,9 +374,9 @@ def build_observed_jobs(definition: Definition, rain: DailyRain, years=None,
     rain : hcwf.onset.model.DailyRain
         The observed daily rain, with dims ``(*spatial, time)``.
     years : array_like of int, optional
-        The years to search; default the unique years of `rain`.
+        The years to search; default the unique years of ``rain``.
     season_climatology : xarray.Dataset, optional
-        Required for `DerivedSeasons`: ``n_seasons``, ``onset_doy`` and ``cessation_doy`` over ``(season, *spatial)``.
+        Required for `~hcwf.onset.model.DerivedSeasons`: ``n_seasons``, ``onset_doy`` and ``cessation_doy`` over ``(season, *spatial)``.
 
     Returns
     -------
@@ -386,7 +386,7 @@ def build_observed_jobs(definition: Definition, rain: DailyRain, years=None,
     Raises
     ------
     ValueError
-        The seasons are derived and `season_climatology` is missing or does not match the grid.
+        The seasons are derived and ``season_climatology`` is missing or does not match the grid.
     """
     keys = cal.label_keys(rain.year, rain.month, rain.day)
     n_time = len(keys)
@@ -430,7 +430,7 @@ def _add_days(calendar: str, year, month, day, offsets: np.ndarray):
     """Return the labels of (year, month, day) plus a number of days in a calendar.
 
     Standard calendars use ``datetime64`` arithmetic; other calendars (for example ``noleap`` or ``360_day``) use
-    `cftime`.
+    ``cftime``.
 
     Parameters
     ----------
@@ -482,9 +482,9 @@ def _dates_from_labels(calendar: str, year: np.ndarray, month: np.ndarray, day: 
         The calendar name.
     year : numpy.ndarray of int64
         The year labels.
-    month : numpy.ndarray of int64, same shape as `year`
+    month : numpy.ndarray of int64, same shape as ``year``
         The month labels.
-    day : numpy.ndarray of int64, same shape as `year`
+    day : numpy.ndarray of int64, same shape as ``year``
         The day-of-month labels.
     valid : numpy.ndarray of bool
         Where the label is a real date.
@@ -493,7 +493,7 @@ def _dates_from_labels(calendar: str, year: np.ndarray, month: np.ndarray, day: 
     -------
     numpy.ndarray
         For standard calendars ``datetime64[ns]`` with ``NaT`` where not valid; otherwise an object array of
-        `cftime.datetime` with ``None`` where not valid. Same shape as `year`.
+        ``cftime.datetime`` with ``None`` where not valid. Same shape as ``year``.
     """
     if calendar in _STANDARD_CALENDARS:
         year, month, day = (np.where(valid, a, fill) for a, fill in ((year, 1970), (month, 1), (day, 1)))
@@ -520,9 +520,9 @@ def _status_var(values: np.ndarray, dims: tuple[str, ...]) -> xr.DataArray:
     Parameters
     ----------
     values : numpy.ndarray
-        The `Status` codes.
+        The `~hcwf.onset.model.Status` codes.
     dims : tuple of str
-        The dim names of `values`.
+        The dim names of ``values``.
 
     Returns
     -------
@@ -548,7 +548,7 @@ def _spatial_coords(dims: tuple[str, ...], coords: dict[str, np.ndarray]) -> dic
     Returns
     -------
     dict of str to numpy.ndarray
-        The entries of `coords` whose name is in `dims`.
+        The entries of ``coords`` whose name is in ``dims``.
     """
     return {d: coords[d] for d in dims if d in coords}
 
@@ -609,7 +609,7 @@ def _flat_missing(data: DailyRain | ForecastRain, policy: str, n_series: int) ->
 def _drop_incomplete_years(rain: DailyRain, years: np.ndarray, layout: JobLayout) -> None:
     """Preset ``INSUFFICIENT_DATA`` for every (year, cell) with a missing day anywhere in that year (the ``"drop"`` policy).
 
-    `layout.preset` is changed in place.
+    ``layout.preset`` is changed in place.
 
     Parameters
     ----------
@@ -640,7 +640,7 @@ def _stack_starts(jobs: Jobs, preset: np.ndarray, starts: list[np.ndarray]) -> t
     jobs : hcwf.onset.model.Jobs
         The base jobs.
     preset : numpy.ndarray of int8, shape (job,)
-        The preset `Status` codes of the base jobs.
+        The preset `~hcwf.onset.model.Status` codes of the base jobs.
     starts : list of numpy.ndarray
         One array per variant, each shape (job,), of earliest day indices (-1: no restriction).
 
@@ -671,12 +671,12 @@ def _date_keys(values, calendar: str) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of int64
-        The label keys, same shape as `values`.
+        The label keys, same shape as ``values``.
 
     Raises
     ------
     ValueError
-        `values` are not ``datetime64`` or the calendar is not standard.
+        ``values`` are not ``datetime64`` or the calendar is not standard.
     """
     values = np.asarray(values)
     if not np.issubdtype(values.dtype, np.datetime64):
@@ -694,7 +694,7 @@ def _entry_keys(entry, rows: np.ndarray, row_dim: str, spatial_dims: tuple[str, 
                 calendar: str) -> np.ndarray:
     """Return the label keys of a ``search_start`` entry as (row, cell).
 
-    An ``"MM-DD"`` string means that day of each row's year; a `xarray.DataArray` holds dates over `row_dim` (optional)
+    An ``"MM-DD"`` string means that day of each row's year; a `xarray.DataArray` holds dates over ``row_dim`` (optional)
     and the spatial dims (optional), ``NaT`` for no restriction.
 
     Parameters
@@ -704,7 +704,7 @@ def _entry_keys(entry, rows: np.ndarray, row_dim: str, spatial_dims: tuple[str, 
     rows : numpy.ndarray of int64, shape (row,)
         The years (or init years) of the output.
     row_dim : str
-        The dim of `entry` that runs over `rows`.
+        The dim of ``entry`` that runs over ``rows``.
     spatial_dims : tuple of str
         The spatial dim names.
     spatial_shape : tuple of int
@@ -720,9 +720,9 @@ def _entry_keys(entry, rows: np.ndarray, row_dim: str, spatial_dims: tuple[str, 
     Raises
     ------
     TypeError
-        `entry` is neither a string nor a `xarray.DataArray`.
+        ``entry`` is neither a string nor a `xarray.DataArray`.
     ValueError
-        `entry` has dims other than `row_dim` and the spatial dims, or holds invalid dates.
+        ``entry`` has dims other than ``row_dim`` and the spatial dims, or holds invalid dates.
     """
     n_cell = int(np.prod(spatial_shape, dtype=np.int64))
     if isinstance(entry, str):
@@ -794,13 +794,13 @@ def detect_observed(definition: Definition, rain: DailyRain, *, thresholds=None,
     """Detect onset in every (year, season, cell).
 
     Returns a Dataset with dims ``(year, season, *spatial)`` and variables ``onset_date`` (``datetime64[ns]``, or
-    `cftime` objects for non-standard calendars), ``onset_index`` (index on the time axis, -1 if none) and ``status``
-    (int8 `Status` codes).
+    ``cftime`` objects for non-standard calendars), ``onset_index`` (index on the time axis, -1 if none) and ``status``
+    (int8 `~hcwf.onset.model.Status` codes).
 
-    Run options (not part of the definition; recorded in attrs): `horizon` is ``"censor"`` (a span past the data ends
-    the search ``CENSORED``), ``"truncate"`` or ``"reject"`` (see `hcwf.onset.plan.compile`); `missing` overrides the
-    policy ingest recorded on `rain`, and ``"drop"`` marks every (year, cell) with a missing day in that year
-    ``INSUFFICIENT_DATA``; ``rain_resolution`` is the one of `rain`. `search_start` maps a name to dates (``"MM-DD"``,
+    Run options (not part of the definition; recorded in attrs): ``horizon`` is ``"censor"`` (a span past the data ends
+    the search ``CENSORED``), ``"truncate"`` or ``"reject"`` (see `hcwf.onset.plan.compile`); ``missing`` overrides the
+    policy ingest recorded on ``rain``, and ``"drop"`` marks every (year, cell) with a missing day in that year
+    ``INSUFFICIENT_DATA``; ``rain_resolution`` is the one of ``rain``. ``search_start`` maps a name to dates (``"MM-DD"``,
     or a `xarray.DataArray` of dates over year and the spatial dims, ``NaT`` for none): each adds a variant whose
     search starts at ``max(season start, date)``, and the result gets a ``"start"`` dim, ``"base"`` first, then the
     names. Variants share one backend call.
@@ -814,9 +814,9 @@ def detect_observed(definition: Definition, rain: DailyRain, *, thresholds=None,
     thresholds : dict of str to (xarray.DataArray or numpy.ndarray or float), optional
         Threshold values by name, in mm per cell (a `xarray.DataArray` over the spatial dims, or an array).
     years : array_like of int, optional
-        The years to search; default the unique years of `rain`.
+        The years to search; default the unique years of ``rain``.
     season_climatology : xarray.Dataset, optional
-        Required for `DerivedSeasons`: ``n_seasons``, ``onset_doy``, ``cessation_doy`` over ``(season, *spatial)``.
+        Required for `~hcwf.onset.model.DerivedSeasons`: ``n_seasons``, ``onset_doy``, ``cessation_doy`` over ``(season, *spatial)``.
     backend : {"reference", "numba", "gpu"}, default "numba"
         The detection backend.
     attrs : dict, optional
@@ -824,7 +824,7 @@ def detect_observed(definition: Definition, rain: DailyRain, *, thresholds=None,
     horizon : {"censor", "truncate", "reject"}, default "censor"
         What to do with a span that runs past the data.
     missing : str, optional
-        The missing-rain policy; default the one recorded on `rain`.
+        The missing-rain policy; default the one recorded on ``rain``.
     search_start : dict of str to (str or xarray.DataArray), optional
         Extra search-start variants by name.
 
@@ -898,7 +898,7 @@ def _option_attrs(data: DailyRain | ForecastRain, horizon: str, policy: str, sea
 
 
 def _bound_key(calendar: str, year: np.ndarray, ref) -> np.ndarray:
-    """Return the label key of a month-day season bound plus its day offset in each of `year`.
+    """Return the label key of a month-day season bound plus its day offset in each of ``year``.
 
     Parameters
     ----------
@@ -931,7 +931,7 @@ def _derived_windows(definition: Definition, calendar: str, init_year: np.ndarra
     Parameters
     ----------
     definition : hcwf.onset.model.Definition
-        A definition with `DerivedSeasons`.
+        A definition with `~hcwf.onset.model.DerivedSeasons`.
     calendar : str
         The calendar name.
     init_year : array_like of int
@@ -1087,7 +1087,7 @@ def _expand_rows(a: np.ndarray, n_member: int, n_cell: int) -> np.ndarray:
 
 
 def _require_climatology(season_climatology: xr.Dataset | None) -> xr.Dataset:
-    """Return `season_climatology`, or raise when it is missing.
+    """Return ``season_climatology``, or raise when it is missing.
 
     Parameters
     ----------
@@ -1097,12 +1097,12 @@ def _require_climatology(season_climatology: xr.Dataset | None) -> xr.Dataset:
     Returns
     -------
     xarray.Dataset
-        `season_climatology` itself.
+        ``season_climatology`` itself.
 
     Raises
     ------
     ValueError
-        `season_climatology` is ``None`` (derived seasons need one).
+        ``season_climatology`` is ``None`` (derived seasons need one).
     """
     if season_climatology is None:
         raise ValueError("derived seasons need season_climatology (n_seasons, onset_doy, cessation_doy)")
@@ -1111,14 +1111,14 @@ def _require_climatology(season_climatology: xr.Dataset | None) -> xr.Dataset:
 
 def _derived_forecast_jobs(definition: Definition, forecast: ForecastRain, allowed: np.ndarray,
                            season_climatology: xr.Dataset | None) -> tuple[Jobs, JobLayout]:
-    """Build forecast jobs for `DerivedSeasons`, restricted to each cell's own season.
+    """Build forecast jobs for `~hcwf.onset.model.DerivedSeasons`, restricted to each cell's own season.
 
-    A missing `season_climatology` raises `ValueError` (in `_require_climatology`).
+    A missing ``season_climatology`` raises `ValueError` (in `_require_climatology`).
 
     Parameters
     ----------
     definition : hcwf.onset.model.Definition
-        A definition with `DerivedSeasons`.
+        A definition with `~hcwf.onset.model.DerivedSeasons`.
     forecast : hcwf.onset.model.ForecastRain
         The forecast.
     allowed : numpy.ndarray of bool, shape (lead,)
@@ -1163,12 +1163,12 @@ def _lead_window_bounds(lead_window: tuple[int, int], n_leads: int, from_first: 
     Returns
     -------
     tuple of (int, int)
-        The first lead and the last lead, cut to `n_leads`.
+        The first lead and the last lead, cut to ``n_leads``.
 
     Raises
     ------
     ValueError
-        The window starts before lead 1, or after it when `from_first`.
+        The window starts before lead 1, or after it when ``from_first``.
     """
     first, last = int(lead_window[0]), int(lead_window[1])
     if first < 1 or (from_first and first != 1):
@@ -1182,11 +1182,11 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
                         ) -> tuple[Jobs, JobLayout]:
     """Build one job per (season, series) with series = (init, [member], cell) rows over the lead axis.
 
-    Candidates are the leads in `lead_window` (1-based, inclusive) whose date label falls in a window of the season,
+    Candidates are the leads in ``lead_window`` (1-based, inclusive) whose date label falls in a window of the season,
     taken from the earliest of the init's year minus one, the init's year and the year after that has any such lead;
-    the qualifying leads are contiguous. With none, the job is ``NOT_FOUND``. With `restrict_to_season` false there
-    is one season, ``"window"``, and every lead of `lead_window` is a candidate. `DerivedSeasons` with
-    `restrict_to_season` true need `season_climatology` (as for `build_observed_jobs`): each cell's windows come from
+    the qualifying leads are contiguous. With none, the job is ``NOT_FOUND``. With ``restrict_to_season`` false there
+    is one season, ``"window"``, and every lead of ``lead_window`` is a candidate. `~hcwf.onset.model.DerivedSeasons` with
+    ``restrict_to_season`` true need ``season_climatology`` (as for `build_observed_jobs`): each cell's windows come from
     its own season bounds, the season year is chosen per (init, cell) as above, and a cell without that season is
     ``NOT_FOUND``, so first, last and the status vary by series row. ``data_end`` is the number of leads.
 
@@ -1201,7 +1201,7 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
     restrict_to_season : bool, default True
         Limit the candidates to the seasons of the definition.
     season_climatology : xarray.Dataset, optional
-        Required for `DerivedSeasons` when `restrict_to_season` is true.
+        Required for `~hcwf.onset.model.DerivedSeasons` when ``restrict_to_season`` is true.
 
     Returns
     -------
@@ -1300,13 +1300,13 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
     The forecast row of a job is the flat (init, [member], cell) series index and its history row the cell. ``split``
     is the history index of lead 1's date label (init for ``lead_label`` ``"start"``, init + 1 for ``"end"``); the
     history must contain that label. The season year is chosen as in `build_forecast_jobs`, with the window needing
-    one lead of `lead_window` inside it; candidates then run from the season start (in the history, or lead 1's day
-    onward when the season starts later) to the earlier of the season end and the last lead of `lead_window`. A season
+    one lead of ``lead_window`` inside it; candidates then run from the season start (in the history, or lead 1's day
+    onward when the season starts later) to the earlier of the season end and the last lead of ``lead_window``. A season
     start before the history gives ``INSUFFICIENT_DATA``, a season missing from the init's years ``NOT_FOUND``. With
-    `restrict_to_season` false there is one season, ``"window"``, whose candidates are the leads of `lead_window`.
-    `DerivedSeasons` with `restrict_to_season` true need `season_climatology`: the same rules apply with each cell's
+    ``restrict_to_season`` false there is one season, ``"window"``, whose candidates are the leads of ``lead_window``.
+    `~hcwf.onset.model.DerivedSeasons` with ``restrict_to_season`` true need ``season_climatology``: the same rules apply with each cell's
     own season window (the season start is then per cell, and a cell without that season is ``NOT_FOUND``).
-    `lead_window` must start at 1. ``data_end`` is ``split`` plus the number of leads. See spec section 13.
+    ``lead_window`` must start at 1. ``data_end`` is ``split`` plus the number of leads. See spec section 13.
 
     Parameters
     ----------
@@ -1321,7 +1321,7 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
     restrict_to_season : bool, default True
         Limit the candidates to the seasons of the definition.
     season_climatology : xarray.Dataset, optional
-        Required for `DerivedSeasons` when `restrict_to_season` is true.
+        Required for `~hcwf.onset.model.DerivedSeasons` when ``restrict_to_season`` is true.
 
     Returns
     -------
@@ -1331,7 +1331,7 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
     Raises
     ------
     ValueError
-        `lead_window` does not start at 1 (see `build_forecast_jobs`), the history and forecast grids differ, the history dates are not strictly
+        ``lead_window`` does not start at 1 (see `build_forecast_jobs`), the history and forecast grids differ, the history dates are not strictly
         increasing, or the history does not reach the date of lead 1 of some init.
     """
     n_leads = forecast.tenths.shape[-1]
@@ -1420,12 +1420,12 @@ def _derived_stitched_windows(definition: Definition, forecast: ForecastRain, hi
     """Return the first and last lead, presence and history start of the derived seasons of a stitched search.
 
     ``start_hist`` is the history index of the season start when it is on or before lead 1's day (-2 when the history
-    lacks that day), else -1. A missing `season_climatology` raises `ValueError` (in `_require_climatology`).
+    lacks that day), else -1. A missing ``season_climatology`` raises `ValueError` (in `_require_climatology`).
 
     Parameters
     ----------
     definition : hcwf.onset.model.Definition
-        A definition with `DerivedSeasons`.
+        A definition with `~hcwf.onset.model.DerivedSeasons`.
     forecast : hcwf.onset.model.ForecastRain
         The forecast.
     hist_keys : numpy.ndarray of int64, shape (time,)
@@ -1474,7 +1474,7 @@ def _prior_search(plan: plan_mod.Plan, history: DailyRain, jobs: StitchedJobs, l
     jobs : hcwf.onset.model.StitchedJobs
         The stitched jobs.
     layout : StitchedLayout
-        The layout of `jobs`.
+        The layout of ``jobs``.
     per_cell : dict of str to numpy.ndarray of float64
         The history-only thresholds (first window), shape (cell,).
     backend : str
@@ -1514,7 +1514,7 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
                   policy: str | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Decide ``PRIOR`` from the history alone, then run the stitched search for the other jobs.
 
-    `policy` is the run's missing-rain policy for the history and the forecast alike (default: the forecast's recorded
+    ``policy`` is the run's missing-rain policy for the history and the forecast alike (default: the forecast's recorded
     one); under ``"zero"`` the days already hold 0 and no flag is passed, as in the plain search. The ``PRIOR`` search
     is skipped for curve rules, whose onset is a minimum over the whole window and so can move when the window grows
     (spec section 13).
@@ -1534,7 +1534,7 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
     jobs : hcwf.onset.model.StitchedJobs
         The stitched jobs.
     layout : StitchedLayout
-        The layout of `jobs`.
+        The layout of ``jobs``.
     backend : str
         The backend name.
     windows : numpy.ndarray of int64, optional
@@ -1545,7 +1545,7 @@ def _run_stitched(plan: plan_mod.Plan, history: DailyRain, forecast: ForecastRai
     Returns
     -------
     tuple of (numpy.ndarray of int64, numpy.ndarray of int8)
-        The onset day index of each job (-1 where none; an index into history followed by forecast) and its `Status`
+        The onset day index of each job (-1 where none; an index into history followed by forecast) and its `~hcwf.onset.model.Status`
         code, each shape (job,).
     """
     module = _load_backend(backend)
@@ -1609,7 +1609,7 @@ def lead_counts(lead: np.ndarray, max_lead: int, axis: int = 0) -> np.ndarray:
     max_lead : int
         The largest lead counted.
     axis : int, default 0
-        The axis of `lead` to count over (for example the member axis); it is replaced by the lead axis, last.
+        The axis of ``lead`` to count over (for example the member axis); it is replaced by the lead axis, last.
 
     Returns
     -------
@@ -1624,16 +1624,16 @@ def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...
                       max_lead: int, onset_count: bool = False) -> dict[str, xr.DataArray]:
     """Return ``members_by_status`` and ``onset_probability`` of an ensemble, optionally ``onset_count`` and ``members``.
 
-    With `onset_count`, also ``onset_count`` (members with their onset on each lead ``0..max_lead``) and ``members``.
+    With ``onset_count``, also ``onset_count`` (members with their onset on each lead ``0..max_lead``) and ``members``.
 
     Parameters
     ----------
     lead : numpy.ndarray of float64, shape (init, member, season, [start], *spatial)
         The onset leads (``NaN`` where none).
     status : numpy.ndarray of int8
-        The `Status` codes, same shape as `lead`.
+        The `~hcwf.onset.model.Status` codes, same shape as ``lead``.
     dims : tuple of str
-        The dim names of `lead`.
+        The dim names of ``lead``.
     coords : dict
         The coordinates of the dataset; those of the output dims are kept.
     max_lead : int
@@ -1644,7 +1644,7 @@ def _ensemble_summary(lead: np.ndarray, status: np.ndarray, dims: tuple[str, ...
     Returns
     -------
     dict of str to xarray.DataArray
-        ``members_by_status``, ``onset_probability`` and, with `onset_count`, ``onset_count`` and ``members``.
+        ``members_by_status``, ``onset_probability`` and, with ``onset_count``, ``onset_count`` and ``members``.
     """
     codes = np.array([s.value for s in Status], dtype=np.int8)
     counts = np.stack([(status == c).sum(axis=1) for c in codes]).astype(np.int64)
@@ -1730,27 +1730,27 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     onset, ``NaN`` if none), ``onset_date`` (the date label of that day in the forecast's calendar) and ``status``. See
     `build_forecast_jobs` for how candidates are chosen; thresholds are per cell and broadcast over inits and members.
 
-    With `history` (observed rainfall on the forecast grid) the searched series is the history up to the day before
+    With ``history`` (observed rainfall on the forecast grid) the searched series is the history up to the day before
     lead 1 followed by the forecast, as in spec section 13: `build_stitched_jobs` chooses the candidates, onsets
     decided in the history are ``PRIOR``, and ``onset_lead`` is 0 or negative for onsets before lead 1. Without it the
     forecast is searched alone and ``onset_lead`` is at least 1. ``attrs["forecast_history"]`` is ``"observed"`` or
     ``"none"``. When the forecast has members, ``members_by_status`` and ``onset_probability`` summarise them per
     init.
 
-    A threshold with a ``"window"`` dim (`hcwf.onset.thresholds.compute_thresholds_from_forecasts` with windows) is
-    applied per candidate by the window its lead falls in; the window start leads come from `threshold_windows` or the
+    A threshold with a ``"window"`` dim (`~hcwf.onset.climatology.compute_thresholds_from_forecasts` with windows) is
+    applied per candidate by the window its lead falls in; the window start leads come from ``threshold_windows`` or the
     threshold's ``window_first`` coordinate (spec section 13).
 
-    `DerivedSeasons` with `restrict_to_season` true need `season_climatology` (``n_seasons``, ``onset_doy``,
+    `~hcwf.onset.model.DerivedSeasons` with ``restrict_to_season`` true need ``season_climatology`` (``n_seasons``, ``onset_doy``,
     ``cessation_doy`` with dims ``(season, *spatial)`` on the forecast's grid, as for `detect_observed`): candidates
     are then limited to each cell's own season, the season coordinate is the climatology's (1, 2, ...), and a cell
     without that season is ``NOT_FOUND``. Stitched, curve rules accumulate from the cell's season start.
 
-    Run options (not part of the definition; recorded in attrs), as for `detect_observed`: `horizon` ``"truncate"``
-    (what blending does with forecasts) lets a veto see only the leads that exist; `missing` overrides the policy
-    ingest recorded (``"drop"`` is for observed rain only); `search_start` adds variants (dates over ``init_time`` and
+    Run options (not part of the definition; recorded in attrs), as for `detect_observed`: ``horizon`` ``"truncate"``
+    (what blending does with forecasts) lets a veto see only the leads that exist; ``missing`` overrides the policy
+    ingest recorded (``"drop"`` is for observed rain only); ``search_start`` adds variants (dates over ``init_time`` and
     the spatial dims, or ``"MM-DD"`` of each init's year) searching from the first lead on or after the date, with a
-    ``"start"`` dim after season. They need ``forecast_history`` ``"none"``. `onset_count` adds, for an ensemble,
+    ``"start"`` dim after season. They need ``forecast_history`` ``"none"``. ``onset_count`` adds, for an ensemble,
     ``onset_count`` (members with their onset on each lead ``0..lead_window[1]``, per start) and ``members``.
 
     Parameters
@@ -1774,11 +1774,11 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     threshold_windows : sequence of int, optional
         The start lead of each window of a windowed threshold.
     season_climatology : xarray.Dataset, optional
-        Required for `DerivedSeasons` when `restrict_to_season` is true.
+        Required for `~hcwf.onset.model.DerivedSeasons` when ``restrict_to_season`` is true.
     horizon : {"censor", "truncate", "reject"}, default "censor"
         What to do with a span that runs past the data.
     missing : str, optional
-        The missing-rain policy; default the one recorded on `forecast`.
+        The missing-rain policy; default the one recorded on ``forecast``.
     search_start : dict of str to (str or xarray.DataArray), optional
         Extra search-start variants by name.
     onset_count : bool, default False
@@ -1793,8 +1793,8 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
     Raises
     ------
     ValueError
-        The policy is ``"drop"``, `search_start` is combined with `history`, `onset_count` is set without a member
-        dim, or a `search_start` name is ``"base"``.
+        The policy is ``"drop"``, ``search_start`` is combined with ``history``, ``onset_count`` is set without a member
+        dim, or a ``search_start`` name is ``"base"``.
     """
     _check_search_start(search_start)
     policy = _missing_policy(forecast, missing)

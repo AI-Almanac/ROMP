@@ -32,7 +32,7 @@ def score_tables(score_results):
         One row per ``Days a-b`` bin both the forecast and the reference score: the Brier skill score, the AUCs and
         the Brier scores of the forecast and of the climatology.
     binned_data : dict
-        The columns of `binned_df` as lists.
+        The columns of ``binned_df`` as lists.
     overall_scores_nested : dict of str to float
         The overall scores as ``{metric: value}``.
     """
@@ -84,7 +84,7 @@ def score_tables(score_results):
 def back_dated_member_share(pairs):
     """Return the share of the scored member onsets dated on or before their init, or None when the pairs do not track them.
 
-    Reads the per-case `back_dated` and `onset_members` counts of the forecast pairs (present for definition runs with
+    Reads the per-case ``back_dated`` and ``onset_members`` counts of the forecast pairs (present for definition runs with
     ``forecast_history: observed``).
 
     Parameters
@@ -95,7 +95,7 @@ def back_dated_member_share(pairs):
     Returns
     -------
     float or None
-        The share, NaN when no member found an onset, None when `pairs` is None or has no `PairArrays.back_dated`.
+        The share, NaN when no member found an onset, None when ``pairs`` is None or has no ``PairArrays.back_dated``.
     """
     if pairs is None or pairs.back_dated is None:
         return None
@@ -121,7 +121,7 @@ def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
     Returns
     -------
     dict of str to xarray.DataArray
-        `spatial_metrics`, the same object.
+        ``spatial_metrics``, the same object.
     """
     tables = [df for df in metrics_df_dict.values() if 'n_back_dated' in df.columns]
     if not tables:

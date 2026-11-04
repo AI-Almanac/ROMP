@@ -7,7 +7,7 @@ optionally ``name``, ``parent``, the polygon ``geometry`` and named boolean subs
 `read_centroids`, `read_id_list` and `read_shapes` read the tables and shapes it is built from. The weights
 themselves are built in `hcwf.spatial.regrid`, the grid-id conventions live in `hcwf.spatial.ids`.
 
-`EvaluationUnits.transform(source_lat, source_lon)` gives the `~hcwf.spatial.regrid.SparseTransform` from the cells
+``EvaluationUnits.transform(source_lat, source_lon)`` gives the `~hcwf.spatial.regrid.SparseTransform` from the cells
 of a source grid (observations or a model) to the units, compiled once per grid. Rain is read on the source grid,
 averaged with ``observed_mean`` onto the units in float mm and only then rounded to tenths
 (`EvaluationUnits.from_region` is the one-unit case), so the engine runs on a ``("unit",)`` spatial axis unchanged.
@@ -55,7 +55,7 @@ _LON_NAMES = ("lon", "center_lon", "longitude")
 def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
     """Read the unit centroids as a table of (id, lat, lon), from a CSV path or a table.
 
-    The id column is `id_col`, else the first of ``target_id``, ``id``, ``adm3_name``, else the first column;
+    The id column is ``id_col``, else the first of ``target_id``, ``id``, ``adm3_name``, else the first column;
     latitude and longitude are ``lat`` / ``center_lat`` / ``latitude`` and ``lon`` / ``center_lon`` / ``longitude``.
     There is one row per id.
 
@@ -74,9 +74,9 @@ def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
     Raises
     ------
     FileNotFoundError
-        `source` is a path that does not exist.
+        ``source`` is a path that does not exist.
     ValueError
-        `id_col` is not a column of the table, or the table has no latitude or longitude column.
+        ``id_col`` is not a column of the table, or the table has no latitude or longitude column.
     """
     if isinstance(source, (str, os.PathLike)):
         if not os.path.exists(source):
@@ -101,8 +101,8 @@ def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
 def read_id_list(path, id_col: str | None = None, *, explicit=None, authoritative_ids=None) -> pd.Series:
     """Read the ids of a CSV list of units (for instance the dissemination units) as normalised strings.
 
-    The id column is `id_col`, else ``id`` / ``adm3_name``, else grid ids made from ``lat`` and ``lon``, else (with a
-    warning) the first column. Grid ids are written under the convention the `authoritative_ids` (the units')
+    The id column is ``id_col``, else ``id`` / ``adm3_name``, else grid ids made from ``lat`` and ``lon``, else (with a
+    warning) the first column. Grid ids are written under the convention the ``authoritative_ids`` (the units')
     establish.
 
     Parameters
@@ -124,9 +124,9 @@ def read_id_list(path, id_col: str | None = None, *, explicit=None, authoritativ
     Raises
     ------
     FileNotFoundError
-        `path` does not exist.
+        ``path`` does not exist.
     ValueError
-        `id_col` is not a column of the file.
+        ``id_col`` is not a column of the file.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"unit list not found: {path}")
@@ -170,7 +170,7 @@ def read_shapes(path, unit_id_col: str, unit_name_col: str | None = None, parent
     Raises
     ------
     FileNotFoundError
-        `path` does not exist.
+        ``path`` does not exist.
     ValueError
         A requested attribute is not in the file, or the ids are not unique.
     """
@@ -285,7 +285,7 @@ class EvaluationUnits:
     Raises
     ------
     ValueError
-        `kind` is not one of `KINDS`, the ids are not unique, or a subset does not have one entry per unit.
+        `kind` is not one of ``KINDS``, the ids are not unique, or a subset does not have one entry per unit.
     """
 
     def __init__(self, table: pd.DataFrame, kind: str, *, geometry=None, subsets=None, weights=None, cells=None,
@@ -357,9 +357,9 @@ class EvaluationUnits:
     @classmethod
     def from_grid(cls, lat, lon, keep=None, *, convention: unit_ids.GridIdConvention | None = None,
                   explicit: unit_ids.GridIdConvention | None = None, mask_record=None) -> "EvaluationUnits":
-        """Build grid units from the cells of a (lat, lon) grid where `keep` is True.
+        """Build grid units from the cells of a (lat, lon) grid where ``keep`` is True.
 
-        The units are in latitude-major order. Ids are ``<lat>_<lon>`` under `convention`, else the explicit or
+        The units are in latitude-major order. Ids are ``<lat>_<lon>`` under ``convention``, else the explicit or
         inferred one.
 
         Parameters
@@ -371,11 +371,11 @@ class EvaluationUnits:
         keep : array_like of bool, shape (lat, lon), optional
             The cells to keep; None keeps all.
         convention : hcwf.spatial.ids.GridIdConvention, optional
-            The convention to write the ids under; None resolves one from `explicit` or the coordinates.
+            The convention to write the ids under; None resolves one from ``explicit`` or the coordinates.
         explicit : hcwf.spatial.ids.GridIdConvention, optional
-            A convention set by the configuration, used when `convention` is None.
+            A convention set by the configuration, used when ``convention`` is None.
         mask_record : object, optional
-            The record of the mask that gave `keep`, stored on the units.
+            The record of the mask that gave ``keep``, stored on the units.
 
         Returns
         -------
@@ -385,7 +385,7 @@ class EvaluationUnits:
         Raises
         ------
         ValueError
-            `keep` has the wrong shape or keeps no cell.
+            ``keep`` has the wrong shape or keeps no cell.
         """
         lat, lon = np.asarray(lat, dtype=float).reshape(-1), np.asarray(lon, dtype=float).reshape(-1)
         keep = np.ones((lat.size, lon.size), dtype=bool) if keep is None else np.asarray(keep, dtype=bool)
@@ -488,9 +488,9 @@ class EvaluationUnits:
             The weights table, or the path of its CSV (see `hcwf.spatial.regrid.read_weights`); its ``target_id``
             column names the units.
         centroids : str or os.PathLike or pandas.DataFrame, optional
-            The centroids, as for `read_centroids`; None takes them from the ids.
+            The centroids, as for `~hcwf.spatial.units.read_centroids`; None takes them from the ids.
         centroid_id_col : str, optional
-            The id column of `centroids`.
+            The id column of ``centroids``.
 
         Returns
         -------
@@ -538,7 +538,7 @@ class EvaluationUnits:
         Raises
         ------
         ValueError
-            `weights` is not one of the choices, `keep` does not match the grid, or it selects no cell.
+            ``weights`` is not one of the choices, ``keep`` does not match the grid, or it selects no cell.
         """
         if weights not in ("cos_lat", "equal"):
             raise ValueError(f"weights must be 'cos_lat' or 'equal', got {weights!r}")
@@ -559,7 +559,7 @@ class EvaluationUnits:
     # -- subsets and area of interest ----------------------------------------------------------------------
 
     def subset_from_csv(self, name: str, path, id_col: str | None = None, *, explicit=None) -> "EvaluationUnits":
-        """Return a copy with a subset named by a CSV list of unit ids (see `read_id_list`).
+        """Return a copy with a subset named by a CSV list of unit ids (see `~hcwf.spatial.units.read_id_list`).
 
         The listed ids that are not units are ignored, as listing a cell outside the data is harmless.
 
@@ -586,7 +586,7 @@ class EvaluationUnits:
         return out
 
     def restrict(self, keep) -> "EvaluationUnits":
-        """Return the units where `keep` is True (or in the named subset), in order, with their subsets and weights.
+        """Return the units where ``keep`` is True (or in the named subset), in order, with their subsets and weights.
 
         Parameters
         ----------
@@ -692,7 +692,7 @@ class EvaluationUnits:
         Raises
         ------
         ValueError
-            `boundary` is not one of the choices.
+            ``boundary`` is not one of the choices.
         """
         import shapely
 
@@ -752,7 +752,7 @@ class EvaluationUnits:
         Returns
         -------
         EvaluationUnits
-            The copy; it shares the geometry, weights and cells with `self` and has its own transform cache.
+            The copy; it shares the geometry, weights and cells with ``self`` and has its own transform cache.
         """
         out = EvaluationUnits(table.copy(), self.kind, geometry=self.geometry, weights=self._weights,
                               cells=self._cells, weight_options=self._weight_options, mask_record=self.mask_record)
@@ -765,9 +765,9 @@ class EvaluationUnits:
                   convention: unit_ids.GridIdConvention | None = None, wrap_longitude: bool = False) -> SparseTransform:
         """Return the transform from the cells of a source grid to the units, compiled once per grid and tolerance.
 
-        Weights from a table are matched to the grid's cells by exact coordinates, or within `tolerance` (the
+        Weights from a table are matched to the grid's cells by exact coordinates, or within ``tolerance`` (the
         parity path for tables written by onset_blending is the exact one). Grid and region units use a
-        selection when the grid holds all their cells within `tolerance` (default: HCWF's coordinate tolerance)
+        selection when the grid holds all their cells within ``tolerance`` (default: HCWF's coordinate tolerance)
         and conservative area weights otherwise.
 
         Parameters
@@ -901,15 +901,15 @@ class UnitsSpec:
     dissemination_id_col: str | None = None
     """The id column of the dissemination list."""
     mode: str | None = None
-    """How rain reaches the units, one of `MODES`; None picks it from the other fields (see `how`)."""
+    """How rain reaches the units, one of `~hcwf.spatial.units.MODES`; None picks it from the other fields (see `how`)."""
     box: tuple | None = None
     """The area of interest as sorted (key, value) pairs; a mapping given is converted."""
     outline: str | None = None
     """A GeoJSON or shapefile outline of the area of interest."""
     boundary: str = "contains"
-    """Whether a centroid on the edge of the outline is inside, one of `BOUNDARIES`."""
+    """Whether a centroid on the edge of the outline is inside, one of `~hcwf.spatial.units.BOUNDARIES`."""
     dissemination_scope: str = "inputs"
-    """What the dissemination list does, one of `DISSEMINATION_SCOPES`."""
+    """What the dissemination list does, one of `~hcwf.spatial.units.DISSEMINATION_SCOPES`."""
     id_digits: int | None = None
     """The number of decimals of the coordinates in grid ids."""
     id_format: str = "trimmed"
@@ -1046,8 +1046,8 @@ class UnitsSpec:
     def build(self, lat=None, lon=None, ids=None) -> EvaluationUnits:
         """Build the units of a source.
 
-        They are the units of the file's `ids` when it has a ``"unit"`` dimension (centroids from the spec's table),
-        else of the source grid (`lat`, `lon`) in ``"cells"`` mode, else the shapefile's or the weights' units. The
+        They are the units of the file's ``ids`` when it has a ``"unit"`` dimension (centroids from the spec's table),
+        else of the source grid (``lat``, ``lon``) in ``"cells"`` mode, else the shapefile's or the weights' units. The
         dissemination list is a boolean subset of that name.
 
         Parameters
@@ -1089,7 +1089,7 @@ class UnitsSpec:
         """Return the positions of the units used, ordered by id.
 
         A unit is used when it is inside the box or outline, in the dissemination list (scope ``"inputs"``) and among
-        `keep_ids`.
+        ``keep_ids``.
 
         Parameters
         ----------
@@ -1101,7 +1101,7 @@ class UnitsSpec:
         Returns
         -------
         numpy.ndarray of int64, shape (kept,)
-            The positions in `units`, sorted by id.
+            The positions in ``units``, sorted by id.
 
         Raises
         ------

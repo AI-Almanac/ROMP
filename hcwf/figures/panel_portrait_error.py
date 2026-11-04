@@ -16,8 +16,8 @@ log = logging.getLogger(__name__)
 def nested_dict_to_array(nested_dict, metric_key):
     """Convert a 3-level nested dict to a 2D array over its first two levels.
 
-    Every cell is the mean of the value at `metric_key` (an array-like with a ``mean`` method). A cell whose model,
-    window or `metric_key` is absent from `nested_dict` is ``NaN``.
+    Every cell is the mean of the value at ``metric_key`` (an array-like with a ``mean`` method). A cell whose model,
+    window or ``metric_key`` is absent from ``nested_dict`` is ``NaN``.
 
     Parameters
     ----------
@@ -60,7 +60,7 @@ def nested_dict_to_array(nested_dict, metric_key):
 def panel_portrait_mae_far_mr(results, spec):
     """Draw portrait plots of mean MAE, FAR and MR as differences from the last row (climatology).
 
-    Each metric is taken from `results` via `nested_dict_to_array`; the last row is subtracted from the others.
+    Each metric is taken from ``results`` via `nested_dict_to_array`; the last row is subtracted from the others.
     The figure is shown if ``spec.show_panel`` is true and always saved to ``spec.dir_fig`` (300 dpi), named from the
     run's first model and ``max_forecast_day``.
 

@@ -55,7 +55,7 @@ def units_from_cvt(cvt, where: str) -> str:
     Raises
     ------
     ConfigSchemaError
-        `cvt` is not None, 1 or 1000.
+        ``cvt`` is not None, 1 or 1000.
     """
     if cvt is None or cvt == 1:
         return "mm"
@@ -111,7 +111,7 @@ def flat_to_mapping(flat: dict, sources: dict | None = None) -> tuple[dict, dict
     Raises
     ------
     ConfigSchemaError
-        A key of `flat` is neither a config key nor an internal one, or the multiplier of a source is not 1 or 1000.
+        A key of ``flat`` is neither a config key nor an internal one, or the multiplier of a source is not 1 or 1000.
     """
     sources = sources or {}
     top: dict = {}
@@ -255,7 +255,7 @@ THRESHOLD_NAME = "legacy_threshold"
 
 
 def _tenths(flat: dict, key: str) -> int:
-    """Return the value of `key` in whole tenths of a mm.
+    """Return the value of ``key`` in whole tenths of a mm.
 
     Parameters
     ----------
@@ -303,7 +303,7 @@ def _mm(tenths: int) -> str:
 
 
 def _days(flat: dict, key: str, minimum: int) -> int:
-    """Return the value of `key` as a whole number of at least `minimum`.
+    """Return the value of ``key`` as a whole number of at least ``minimum``.
 
     Parameters
     ----------
@@ -322,7 +322,7 @@ def _days(flat: dict, key: str, minimum: int) -> int:
     Raises
     ------
     ConfigSchemaError
-        The value is not a whole number of at least `minimum`.
+        The value is not a whole number of at least ``minimum``.
     """
     value = flat[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value or value < minimum:
@@ -331,7 +331,7 @@ def _days(flat: dict, key: str, minimum: int) -> int:
 
 
 def _normalised(flat: dict) -> dict:
-    """Return `flat` without null values and with its dates normalised.
+    """Return ``flat`` without null values and with its dates normalised.
 
     The dates in the forms the old schema accepted (``"YYYY-MM-DD"``, ``"MM-DD"``, lists, YAML dates) are turned into
     ``(year, month, day)`` and ``(month, day)`` tuples by the schema's own kinds.
@@ -386,7 +386,7 @@ def _season_end(end_date, window: int, start: tuple[int, int]) -> datetime.date:
     Raises
     ------
     ConfigSchemaError
-        `end_date` is 29 February, the season end would differ in leap years, or the season is longer than a year.
+        ``end_date`` is 29 February, the season end would differ in leap years, or the season is longer than a year.
     """
     days = EXTEND_END_DAYS - (window - 1)
     try:
@@ -485,7 +485,7 @@ _OLD_YEARS = {"years": "years", "years_clim": "climatology_years"}
 
 
 def convert_flat_onset(source, target, force: bool = False) -> Path:
-    """Write a copy of the run config `source` with its flat onset keys turned into an ``onset: {rule: ...}`` section.
+    """Write a copy of the run config ``source`` with its flat onset keys turned into an ``onset: {rule: ...}`` section.
 
     The keys are the ones earlier versions read at the top level (`FLAT_ONSET_KEYS`); the rule is checked by loading
     it as a definition. The old run took forecasts as given and labelled leads by ``end``, so
@@ -500,19 +500,19 @@ def convert_flat_onset(source, target, force: bool = False) -> Path:
     target : str or pathlib.Path
         The file to write.
     force : bool, default False
-        Overwrite `target` when it exists.
+        Overwrite ``target`` when it exists.
 
     Returns
     -------
     pathlib.Path
-        `target`.
+        ``target``.
 
     Raises
     ------
     FileExistsError
-        `target` exists and `force` is false.
+        ``target`` exists and ``force`` is false.
     ConfigSchemaError
-        `source` is not a mapping, has no flat onset keys, already has ``onset.definition`` or ``onset.rule``, or
+        ``source`` is not a mapping, has no flat onset keys, already has ``onset.definition`` or ``onset.rule``, or
         its flat keys cannot be converted (see `flat_onset_to_rule`).
     """
     from hcwf.onset import definition as definition_mod

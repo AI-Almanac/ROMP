@@ -50,7 +50,7 @@ if numba is not None:
 
     @njit(inline="always")
     def _cmp(op, value, amount):
-        """Compare `value` with `amount` using an operator code (GE=0, GT=1, LE=2, LT=3).
+        """Compare ``value`` with ``amount`` using an operator code (GE=0, GT=1, LE=2, LT=3).
 
         Parameters
         ----------
@@ -85,7 +85,7 @@ if numba is not None:
         a : int
             The first day of the interval; before day 0 sets the missing bit.
         b : int
-            The end of the interval, exclusive; past `data_end` sets the horizon bit.
+            The end of the interval, exclusive; past ``data_end`` sets the horizon bit.
         data_end : int
             The end of usable data, exclusive.
         keep : bool
@@ -109,7 +109,7 @@ if numba is not None:
     def _build_tables(tenths, missing, wet_op, wet_amount, use_pd, dry_op, dry_amount, px, pm, pw, pd):
         """Fill the prefix tables of rain, missing days, wet days and optionally dry days, each with a leading zero.
 
-        Runs in parallel over series. Without `use_pd`, `pd` is never touched. Missing days contribute zero rain and
+        Runs in parallel over series. Without ``use_pd``, ``pd`` is never touched. Missing days contribute zero rain and
         are neither wet nor dry. The tables are filled in place.
 
         Parameters
@@ -121,13 +121,13 @@ if numba is not None:
         wet_op : int
             The operator code of the wet-day comparison.
         wet_amount : numpy.ndarray, shape (series,)
-            The wet-day amount per series, in the unit of `tenths`.
+            The wet-day amount per series, in the unit of ``tenths``.
         use_pd : bool
             Build the dry-day table (the definition has its own ``dry_day``).
         dry_op : int
-            The operator code of the dry-day comparison (unused without `use_pd`).
+            The operator code of the dry-day comparison (unused without ``use_pd``).
         dry_amount : numpy.ndarray, shape (series,)
-            The dry-day amount per series (unused without `use_pd`).
+            The dry-day amount per series (unused without ``use_pd``).
         px : numpy.ndarray of int64 or float64, shape (series, time + 1)
             Output: the prefix sums of rain (float64 for float rain).
         pm : numpy.ndarray of int32, shape (series, time + 1)
@@ -135,7 +135,7 @@ if numba is not None:
         pw : numpy.ndarray of int32, shape (series, time + 1)
             Output: the prefix counts of wet days.
         pd : numpy.ndarray of int32, shape (series, time + 1)
-            Output: the prefix counts of dry days, written only with `use_pd`.
+            Output: the prefix counts of dry days, written only with ``use_pd``.
         """
         n_series, n_time = tenths.shape
         for s in prange(n_series):
@@ -167,9 +167,9 @@ if numba is not None:
 
     @njit(inline="always")
     def _dry_count(pm, pw, pd, use_pd, s, u, length):
-        """Return the number of dry days in ``[u, u + length)`` for series `s`.
+        """Return the number of dry days in ``[u, u + length)`` for series ``s``.
 
-        Uses the dry table when `use_pd`, else counts the days that are neither missing nor wet.
+        Uses the dry table when ``use_pd``, else counts the days that are neither missing nor wet.
 
         Parameters
         ----------
@@ -178,9 +178,9 @@ if numba is not None:
         pw : numpy.ndarray of int32, shape (series, time + 1)
             The prefix counts of wet days.
         pd : numpy.ndarray of int32, shape (series, time + 1)
-            The prefix counts of dry days (read only with `use_pd`).
+            The prefix counts of dry days (read only with ``use_pd``).
         use_pd : bool
-            Whether `pd` holds the dry table.
+            Whether ``pd`` holds the dry table.
         s : int
             The series row.
         u : int
@@ -199,10 +199,10 @@ if numba is not None:
 
     @njit(parallel=True, cache=True)
     def _build_spells(px, pm, pw, pd, use_pd, kind, length, op, amount, begin, sp):
-        """Fill `sp` cumulatively with the count of spell starts whose spell lies in the data and holds.
+        """Fill ``sp`` cumulatively with the count of spell starts whose spell lies in the data and holds.
 
-        ``sp[s, u + 1]`` counts the starts ``<= u``. Runs in parallel over series and writes `sp` in place. With
-        `begin`, a dry run only counts when the day before it is not dry.
+        ``sp[s, u + 1]`` counts the starts ``<= u``. Runs in parallel over series and writes ``sp`` in place. With
+        ``begin``, a dry run only counts when the day before it is not dry.
 
         Parameters
         ----------
@@ -213,9 +213,9 @@ if numba is not None:
         pw : numpy.ndarray of int32, shape (series, time + 1)
             The prefix counts of wet days.
         pd : numpy.ndarray of int32, shape (series, time + 1)
-            The prefix counts of dry days (read only with `use_pd`).
+            The prefix counts of dry days (read only with ``use_pd``).
         use_pd : bool
-            Whether `pd` holds the dry table.
+            Whether ``pd`` holds the dry table.
         kind : int
             0 for a dry run, anything else for a rain-total spell.
         length : int
@@ -255,8 +255,8 @@ if numba is not None:
                        series, start, end, data_end, origin, day, status):
         """Find the first candidate that is not False for every job (three-valued logic, early exit).
 
-        Runs in parallel over jobs and writes `day` and `status` in place. `horizon` is 0 censor, 1 truncate,
-        2 reject; `keep` ignores missing days (a missing candidate is rejected).
+        Runs in parallel over jobs and writes ``day`` and ``status`` in place. ``horizon`` is 0 censor, 1 truncate,
+        2 reject; ``keep`` ignores missing days (a missing candidate is rejected).
 
         Parameters
         ----------
@@ -281,7 +281,7 @@ if numba is not None:
         c_op : numpy.ndarray of int64, shape (conditions,)
             The operator codes.
         c_key : numpy.ndarray of int64, shape (conditions,)
-            The row of `amounts` of a total requirement.
+            The row of ``amounts`` of a total requirement.
         c_count : numpy.ndarray of int64, shape (conditions,)
             The wet-day count compared with.
         v_kind : numpy.ndarray of int64, shape (vetoes,)
@@ -319,7 +319,7 @@ if numba is not None:
         day : numpy.ndarray of int64, shape (jobs,)
             Output: the onset day index, ``-1`` when none.
         status : numpy.ndarray of int8, shape (jobs,)
-            Output: the `Status` code.
+            Output: the `~hcwf.onset.model.Status` code.
         """
         n_time = pm.shape[1] - 1
         for j in prange(len(series)):
@@ -398,7 +398,7 @@ if numba is not None:
     def _curve(px, pm, amounts, key, after, series, start, end, data_end, day, status):
         """Find the minimum of the cumulative anomaly for every job.
 
-        Runs in parallel over jobs and writes `day` and `status` in place. A minimum on the last candidate is
+        Runs in parallel over jobs and writes ``day`` and ``status`` in place. A minimum on the last candidate is
         ``NOT_FOUND``; an interval that is not observable is ``CENSORED`` (horizon only) or ``INSUFFICIENT_DATA``.
 
         Parameters
@@ -410,7 +410,7 @@ if numba is not None:
         amounts : numpy.ndarray of int64, shape (keys, series)
             The stacked amounts, one row per key.
         key : int
-            The row of `amounts` holding the baseline (tenths per day).
+            The row of ``amounts`` holding the baseline (tenths per day).
         after : bool
             Report the day after the minimum instead of the minimum.
         series : numpy.ndarray of int64, shape (jobs,)
@@ -424,7 +424,7 @@ if numba is not None:
         day : numpy.ndarray of int64, shape (jobs,)
             Output: the onset day index, ``-1`` when none.
         status : numpy.ndarray of int8, shape (jobs,)
-            Output: the `Status` code.
+            Output: the `~hcwf.onset.model.Status` code.
         """
         n_time = pm.shape[1] - 1
         for j in prange(len(series)):
@@ -454,10 +454,10 @@ if numba is not None:
 
     @njit(inline="always")
     def _g(th, tf, hr, fr, c0, split, t):
-        """Return the prefix value at stitched index `t`: the history table up to the split, then the forecast one.
+        """Return the prefix value at stitched index ``t``: the history table up to the split, then the forecast one.
 
-        Past the split the value is ``P_hist(split) + P_fc(t - split)``. The columns of `th` start at history day
-        `c0`, so ``th[:, i]`` sums days ``[c0, c0 + i)``. Only differences of two values are meaningful, which is all
+        Past the split the value is ``P_hist(split) + P_fc(t - split)``. The columns of ``th`` start at history day
+        ``c0``, so ``th[:, i]`` sums days ``[c0, c0 + i)``. Only differences of two values are meaningful, which is all
         callers use.
 
         Parameters
@@ -467,11 +467,11 @@ if numba is not None:
         tf : numpy.ndarray, shape (series, lead + 1)
             The matching forecast prefix table.
         hr : int
-            The row of `th`.
+            The row of ``th``.
         fr : int
-            The row of `tf`.
+            The row of ``tf``.
         c0 : int
-            The history day of the first column of `th`.
+            The history day of the first column of ``th``.
         split : int
             The job's split (the first forecast day, in stitched days).
         t : int
@@ -501,7 +501,7 @@ if numba is not None:
         fr : int
             The forecast row of the job.
         c0 : int
-            The history day of the first column of `hpm`.
+            The history day of the first column of ``hpm``.
         split : int
             The job's split in stitched days.
         a : int
@@ -531,7 +531,7 @@ if numba is not None:
     def _build_hist_tables(x, missing, px, pm):
         """Fill the prefix tables of rain and missing days over the history columns, each with a leading zero.
 
-        Runs in parallel over rows and writes `px` and `pm` in place; missing days add no rain.
+        Runs in parallel over rows and writes ``px`` and ``pm`` in place; missing days add no rain.
 
         Parameters
         ----------
@@ -561,7 +561,7 @@ if numba is not None:
     def _build_hist_wet(x, missing, wet_op, vcell, vamt, pw):
         """Fill the prefix table of wet days for each (cell, amount) variant row.
 
-        Runs in parallel over variants and writes `pw` in place. Missing days are not wet.
+        Runs in parallel over variants and writes ``pw`` in place. Missing days are not wet.
 
         Parameters
         ----------
@@ -572,7 +572,7 @@ if numba is not None:
         wet_op : int
             The operator code of the comparison.
         vcell : numpy.ndarray of int64, shape (variants,)
-            The row of `x` of each variant.
+            The row of ``x`` of each variant.
         vamt : numpy.ndarray of int64, shape (variants,)
             The amount of each variant, in tenths of mm.
         pw : numpy.ndarray of int32, shape (variants, columns + 1)
@@ -589,9 +589,9 @@ if numba is not None:
 
     @njit(inline="always")
     def _hist_dry_day(hpm, hdry, use_pd, c, v, t):
-        """Return whether history column `t` is a dry day.
+        """Return whether history column ``t`` is a dry day.
 
-        With `use_pd` it comes from the dry table, else the day is dry when it is neither missing nor wet (`hdry` then
+        With ``use_pd`` it comes from the dry table, else the day is dry when it is neither missing nor wet (``hdry`` then
         counts wet days).
 
         Parameters
@@ -599,13 +599,13 @@ if numba is not None:
         hpm : numpy.ndarray of int32, shape (cells, columns + 1)
             The history prefix counts of missing days.
         hdry : numpy.ndarray of int32, shape (variants, columns + 1)
-            The prefix counts of dry days (`use_pd`) or of wet days.
+            The prefix counts of dry days (``use_pd``) or of wet days.
         use_pd : bool
-            Whether `hdry` is the dry table.
+            Whether ``hdry`` is the dry table.
         c : int
-            The row of `hpm`.
+            The row of ``hpm``.
         v : int
-            The row of `hdry`.
+            The row of ``hdry``.
         t : int
             The history column.
 
@@ -622,8 +622,8 @@ if numba is not None:
     def _build_hist_spells(kind, length, op, vcell, vamt, hpx, hpm, hdry, use_pd, begin, sp):
         """Fill the cumulative count of history-only spell starts for each variant row.
 
-        Runs in parallel over variants and writes `sp` in place. Dry runs read `hdry`: the dry-day table of
-        (cell, dry amount) rows when `use_pd`, else the wet-day table of the wet variants. With `begin`, a run only
+        Runs in parallel over variants and writes ``sp`` in place. Dry runs read ``hdry``: the dry-day table of
+        (cell, dry amount) rows when ``use_pd``, else the wet-day table of the wet variants. With ``begin``, a run only
         counts when the column before it is not dry.
 
         Parameters
@@ -643,9 +643,9 @@ if numba is not None:
         hpm : numpy.ndarray of int32, shape (cells, columns + 1)
             The history prefix counts of missing days.
         hdry : numpy.ndarray of int32, shape (variants, columns + 1)
-            The prefix counts of dry days (`use_pd`) or of wet days.
+            The prefix counts of dry days (``use_pd``) or of wet days.
         use_pd : bool
-            Whether `hdry` is the dry table.
+            Whether ``hdry`` is the dry table.
         begin : bool
             The veto is "beginning within": a run must not continue a dry day.
         sp : numpy.ndarray of int32, shape (variants, columns + 1)
@@ -675,9 +675,9 @@ if numba is not None:
                    n_fc):
         """Fill the cumulative indicator of the seam spells that hold, those straddling the split.
 
-        The spells start in ``[split - length + 1, split - 1]`` (up to `split` with `begin`). Counts come from the
-        stitched history and forecast tables; `hdry` and `fdry` count wet days, or dry days with `use_pd` (`hd` is
-        the job's row of `hdry`). A begin run also needs the history day before it not to be dry. `seam` is written
+        The spells start in ``[split - length + 1, split - 1]`` (up to ``split`` with ``begin``). Counts come from the
+        stitched history and forecast tables; ``hdry`` and ``fdry`` count wet days, or dry days with ``use_pd`` (``hd`` is
+        the job's row of ``hdry``). A begin run also needs the history day before it not to be dry. ``seam`` is written
         in place.
 
         Parameters
@@ -695,23 +695,23 @@ if numba is not None:
         begin : int
             1 for a "beginning within" veto, else 0.
         use_pd : bool
-            Whether `hdry` and `fdry` are dry tables.
+            Whether ``hdry`` and ``fdry`` are dry tables.
         hpx : numpy.ndarray of int64
             The history prefix sums of rain.
         hpm : numpy.ndarray of int32
             The history prefix counts of missing days.
         hdry : numpy.ndarray of int32
-            The history prefix counts of dry days (`use_pd`) or of wet days.
+            The history prefix counts of dry days (``use_pd``) or of wet days.
         fpx : numpy.ndarray of int64
             The forecast prefix sums of rain.
         fpm : numpy.ndarray of int32
             The forecast prefix counts of missing days.
         fdry : numpy.ndarray of int32
-            The forecast prefix counts of dry days (`use_pd`) or of wet days.
+            The forecast prefix counts of dry days (``use_pd``) or of wet days.
         hc : int
             The history row of the job.
         hd : int
-            The row of `hdry` of the job.
+            The row of ``hdry`` of the job.
         fr : int
             The forecast row of the job.
         c0 : int
@@ -743,14 +743,14 @@ if numba is not None:
         """Return the number of holding spells with start ``u`` in ``[lo, hi)``.
 
         The count adds the history-only starts, the seam and the forecast-only starts. The seam covers starts in
-        ``[split - length + 1, split)`` (through `split` with `begin`).
+        ``[split - length + 1, split)`` (through ``split`` with ``begin``).
 
         Parameters
         ----------
         hsp : numpy.ndarray of int32, shape (rows, columns + 1)
             The cumulative history spell starts per variant row.
         vrow : int
-            The row of `hsp` of the job.
+            The row of ``hsp`` of the job.
         fsp : numpy.ndarray of int32, shape (series, lead + 1)
             The cumulative forecast spell starts of this veto.
         fr : int
@@ -821,8 +821,8 @@ if numba is not None:
         """Find the first candidate that is not False for every stitched job.
 
         The same scan as `_first_passage`, with intervals split at each job's split. Runs in parallel over jobs and
-        writes `day` and `status` in place. `hpd` and `fpd` are the dry-day tables (the wet-day ones when `use_pd`
-        is false), `dv` the job's row of `hpd`. The condition and veto arrays are as in `_first_passage`.
+        writes ``day`` and ``status`` in place. ``hpd`` and ``fpd`` are the dry-day tables (the wet-day ones when ``use_pd``
+        is false), ``dv`` the job's row of ``hpd``. The condition and veto arrays are as in `_first_passage`.
 
         Parameters
         ----------
@@ -837,7 +837,7 @@ if numba is not None:
         hpw : numpy.ndarray of int32, shape (variants, columns + 1)
             The history prefix counts of wet days per (cell, wet amount) variant.
         hpd : numpy.ndarray of int32, shape (variants, columns + 1)
-            The history prefix counts of dry days (or `hpw` when `use_pd` is false).
+            The history prefix counts of dry days (or ``hpw`` when ``use_pd`` is false).
         hsp : numpy.ndarray of int32, shape (rows, columns + 1)
             The cumulative history spell starts of all vetoes, stacked.
         fx : numpy.ndarray of int32, shape (series, lead)
@@ -851,7 +851,7 @@ if numba is not None:
         fpw : numpy.ndarray of int32, shape (series, lead + 1)
             The forecast prefix counts of wet days.
         fpd : numpy.ndarray of int32, shape (series, lead + 1)
-            The forecast prefix counts of dry days (or `fpw`).
+            The forecast prefix counts of dry days (or ``fpw``).
         fsp : numpy.ndarray of int32, shape (veto, series, lead + 1)
             The cumulative forecast spell starts per veto.
         amounts : numpy.ndarray of int64, shape (keys, series)
@@ -861,7 +861,7 @@ if numba is not None:
         wet_op : int
             The operator code of the wet-day comparison.
         wet_key : int
-            The row of `amounts` of the wet-day amount.
+            The row of ``amounts`` of the wet-day amount.
         use_pd : bool
             Whether the dry tables are separate from the wet ones.
         c_kind : numpy.ndarray of int64, shape (conditions,)
@@ -875,7 +875,7 @@ if numba is not None:
         c_op : numpy.ndarray of int64, shape (conditions,)
             The operator codes.
         c_key : numpy.ndarray of int64, shape (conditions,)
-            The row of `amounts` of a total requirement.
+            The row of ``amounts`` of a total requirement.
         c_count : numpy.ndarray of int64, shape (conditions,)
             The wet-day count compared with.
         v_kind : numpy.ndarray of int64, shape (vetoes,)
@@ -891,9 +891,9 @@ if numba is not None:
         v_op : numpy.ndarray of int64, shape (vetoes,)
             The operator code of each veto's rain-total comparison.
         v_key : numpy.ndarray of int64, shape (vetoes,)
-            The row of `amounts` of each veto's amount.
+            The row of ``amounts`` of each veto's amount.
         v_off : numpy.ndarray of int64, shape (vetoes,)
-            The first row of each veto in `hsp`.
+            The first row of each veto in ``hsp``.
         report : bool
             Report the first wet day of the report span instead of the candidate day.
         r_first : int
@@ -913,11 +913,11 @@ if numba is not None:
         split : numpy.ndarray of int64, shape (jobs,)
             The split in stitched days.
         wv : numpy.ndarray of int64, shape (jobs,)
-            The row of `hpw` of each job.
+            The row of ``hpw`` of each job.
         dv : numpy.ndarray of int64, shape (jobs,)
-            The row of `hpd` of each job.
+            The row of ``hpd`` of each job.
         vv : numpy.ndarray of int64, shape (vetoes, jobs)
-            The variant row of each job within each veto's block of `hsp`.
+            The variant row of each job within each veto's block of ``hsp``.
         start : numpy.ndarray of int64, shape (jobs,)
             The first candidate day (stitched).
         end : numpy.ndarray of int64, shape (jobs,)
@@ -929,7 +929,7 @@ if numba is not None:
         day : numpy.ndarray of int64, shape (jobs,)
             Output: the onset day index (stitched), ``-1`` when none.
         status : numpy.ndarray of int8, shape (jobs,)
-            Output: the `Status` code.
+            Output: the `~hcwf.onset.model.Status` code.
         """
         n_fc = fpm.shape[1] - 1
         lmax = 1
@@ -1029,7 +1029,7 @@ if numba is not None:
         """Find the minimum of the cumulative anomaly for every stitched job.
 
         The same as `_curve`, over the history and forecast tables joined at each job's split. Runs in parallel
-        over jobs and writes `day` and `status` in place.
+        over jobs and writes ``day`` and ``status`` in place.
 
         Parameters
         ----------
@@ -1044,7 +1044,7 @@ if numba is not None:
         amounts : numpy.ndarray of int64, shape (keys, series)
             The stacked amounts.
         key : int
-            The row of `amounts` holding the baseline (tenths per day).
+            The row of ``amounts`` holding the baseline (tenths per day).
         after : bool
             Report the day after the minimum instead of the minimum.
         c0 : int
@@ -1064,7 +1064,7 @@ if numba is not None:
         day : numpy.ndarray of int64, shape (jobs,)
             Output: the onset day index (stitched), ``-1`` when none.
         status : numpy.ndarray of int8, shape (jobs,)
-            Output: the `Status` code.
+            Output: the `~hcwf.onset.model.Status` code.
         """
         n_fc = fpm.shape[1] - 1
         for j in prange(len(series)):
@@ -1129,7 +1129,7 @@ def _stack_amounts(plan: P.Plan, amounts: dict[str, np.ndarray], exact: bool) ->
     stack : numpy.ndarray of int64 or float64, shape (keys, series)
         One row per distinct key, in first-use order.
     index : dict of str to int
-        The row of each key in `stack`.
+        The row of each key in ``stack``.
     """
     keys = [plan.wet.key]
     if plan.dry is not None:
@@ -1156,7 +1156,7 @@ def _dry_args(plan: P.Plan, stack: np.ndarray, index: dict[str, int]) -> tuple[b
     stack : numpy.ndarray, shape (keys, series)
         The stacked amounts from `_stack_amounts`.
     index : dict of str to int
-        The row of each key in `stack`.
+        The row of each key in ``stack``.
 
     Returns
     -------
@@ -1174,10 +1174,10 @@ def _dry_args(plan: P.Plan, stack: np.ndarray, index: dict[str, int]) -> tuple[b
 
 def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[str, np.ndarray],
            jobs: Jobs, *, trace: bool = False, amount_windows=None) -> Detection:
-    """Run every job and return the onset day index (-1 if none) and `Status` per job.
+    """Run every job and return the onset day index (-1 if none) and `~hcwf.onset.model.Status` per job.
 
     The result is bit-identical to `hcwf.onset.backends.reference.detect`. Amounts may be ``(S, W)`` with
-    `amount_windows` the ``W`` window start leads (`hcwf.onset.backends.windowed`).
+    ``amount_windows`` the ``W`` window start leads (`hcwf.onset.backends.windowed`).
 
     Parameters
     ----------
@@ -1194,7 +1194,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
     trace : bool, default False
         Must be false: traces come from the reference backend.
     amount_windows : array_like of int, optional
-        The ``W`` window start leads when `amounts` have ``W`` columns.
+        The ``W`` window start leads when ``amounts`` have ``W`` columns.
 
     Returns
     -------
@@ -1288,7 +1288,7 @@ def _variants(cell: np.ndarray, amount: np.ndarray) -> tuple[np.ndarray, np.ndar
     amounts : numpy.ndarray of int64, shape (variants,)
         The amount of each unique pair.
     inverse : numpy.ndarray of int64, shape (jobs,)
-        The index of each job's pair in `cells` and `amounts`.
+        The index of each job's pair in ``cells`` and ``amounts``.
     """
     if cell.size and cell.dtype == np.int64 and amount.dtype == np.int64:
         c0, a0 = int(cell.min()), int(amount.min())
@@ -1336,7 +1336,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     trace : bool, default False
         Must be false: traces come from the reference backend.
     amount_windows : array_like of int, optional
-        The ``W`` window start leads when `amounts` have ``W`` columns.
+        The ``W`` window start leads when ``amounts`` have ``W`` columns.
 
     Returns
     -------

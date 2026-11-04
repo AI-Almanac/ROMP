@@ -2,8 +2,8 @@
 
 Values come from the validated reference palette of the data-visualisation guidelines (categorical slots 1-3 pass
 every colour-vision check in both modes; aqua is below 3:1 contrast on the light surface, so it always ships with a
-visible label). Roles, not hues, are what figure code should use. `Palette` holds the roles of one mode, `LIGHT` and
-`DARK` are the two palettes, `status_style` gives the colour, icon and label of a `hcwf.onset.model.Status` and
+visible label). Roles, not hues, are what figure code should use. `Palette` holds the roles of one mode, ``LIGHT`` and
+``DARK`` are the two palettes, `status_style` gives the colour, icon and label of a `hcwf.onset.model.Status` and
 `figure_style` applies the matplotlib settings. The other modules of `hcwf.onset.viz` build on this one.
 """
 from __future__ import annotations
@@ -57,7 +57,7 @@ STATUS_STYLE = {
     Status.PRIOR: ("#52514e", "◂", "onset before the forecast"),
     Status.INSUFFICIENT_DATA: ("#d03b3b", "!", "missing data"),
 }
-"""The ``(colour, icon, label)`` of each `Status`. Status colours are reserved for statuses and always travel with an
+"""The ``(colour, icon, label)`` of each `~hcwf.onset.model.Status`. Status colours are reserved for statuses and always travel with an
 icon and a label."""
 
 MODE_STATUS_COLOUR = {("light", Status.CENSORED): "#b87a00"}
@@ -87,12 +87,12 @@ def palette(mode: str = "light") -> Palette:
     Returns
     -------
     Palette
-        `LIGHT` or `DARK`.
+        ``LIGHT`` or ``DARK``.
 
     Raises
     ------
     ValueError
-        `mode` is neither ``"light"`` nor ``"dark"``.
+        ``mode`` is neither ``"light"`` nor ``"dark"``.
     """
     if mode not in ("light", "dark"):
         raise ValueError(f"mode must be 'light' or 'dark', got {mode!r}")

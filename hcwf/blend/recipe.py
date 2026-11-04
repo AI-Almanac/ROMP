@@ -86,7 +86,7 @@ class RainPredictor:
     agg: Literal["diff", "max", "min"]
     """How the rolling sums are aggregated."""
     window: int | str = "trigger"
-    """The window in days, or a token of the onset definition (`Definition.windows`): ``trigger``, ``dry_spell``
+    """The window in days, or a token of the onset definition (`~hcwf.onset.model.Definition.windows`): ``trigger``, ``dry_spell``
     (the dry window), ``follow``, ``min_dry`` (the dry run's length)."""
 
 
@@ -200,7 +200,7 @@ class ClimatologySpec:
     """The workers of the climatology fit; None for the run's default."""
 
     def horizon_dicts(self) -> list[dict] | None:
-        """Return the horizons as `issue_grid` takes them.
+        """Return the horizons as ``issue_grid`` takes them.
 
         Returns
         -------
@@ -496,7 +496,7 @@ class Recipe:
     def window_days(self, predictor: RainPredictor, definition: Definition) -> int:
         """Return a rain predictor's window in days.
 
-        A token is read from the onset definition (`Definition.windows`).
+        A token is read from the onset definition (`~hcwf.onset.model.Definition.windows`).
 
         Parameters
         ----------
@@ -1498,7 +1498,7 @@ def recipe_from_config(cfg: dict, setup=None) -> Recipe:
     Raises
     ------
     RecipeError
-        The ``blend:`` section has problems, or `setup`'s definition fails `Recipe.check`.
+        The ``blend:`` section has problems, or ``setup``'s definition fails `Recipe.check`.
     """
     problems: list[str] = []
     names = tuple(cfg.get("model_list") or ())

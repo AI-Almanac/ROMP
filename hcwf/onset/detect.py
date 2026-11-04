@@ -74,7 +74,7 @@ def _on_grid(da, lat, lon):
     Returns
     -------
     xarray.DataArray or xarray.Dataset
-        `da` reindexed to ``lat`` and ``lon``.
+        ``da`` reindexed to ``lat`` and ``lon``.
     """
     if "lat" not in da.dims or "lon" not in da.dims:
         return da
@@ -111,7 +111,7 @@ def _at_cells(da, lat, lon):
 
 
 def _like(da, coords):
-    """Put a per-cell or per-unit array on the spatial axes `coords`.
+    """Put a per-cell or per-unit array on the spatial axes ``coords``.
 
     Cells are matched within tolerance and units by id; whatever is missing is NaN.
 
@@ -126,7 +126,7 @@ def _like(da, coords):
     Returns
     -------
     xarray.DataArray or xarray.Dataset
-        `da` on those axes.
+        ``da`` on those axes.
     """
     if "unit" in coords:
         return da.reindex(unit=np.asarray(coords["unit"]).astype(str))
@@ -172,7 +172,7 @@ def _field(value, coords, convention=None):
     Returns
     -------
     float or xarray.DataArray
-        The threshold on the axes of `coords`.
+        The threshold on the axes of ``coords``.
     """
     if "unit" in coords:
         return _on_units(value, coords["unit"], convention)
@@ -190,7 +190,7 @@ def _thresholds(thresh_slice, coords, per_window=True, convention=None):
     Parameters
     ----------
     thresh_slice : mapping or None
-        The named thresholds from `hcwf.io.input.load_thresholds`; None or empty gives no thresholds.
+        The named thresholds from `~hcwf.io.thresholds.load_thresholds`; None or empty gives no thresholds.
     coords : dict
         The rainfall's spatial coordinates (``lat`` and ``lon``, or ``unit``).
     per_window : bool, default True
@@ -218,7 +218,7 @@ def _season_climatology(setup, thresh_slice, coords):
     setup : hcwf.config.onset.OnsetSetup
         The onset setup; its ``derived_seasons`` flag decides whether the analysis is needed.
     thresh_slice : object
-        The thresholds from `hcwf.io.input.load_thresholds`; its ``season_climatology`` attribute is read.
+        The thresholds from `~hcwf.io.thresholds.load_thresholds`; its ``season_climatology`` attribute is read.
     coords : dict
         The rainfall's spatial coordinates (see `_like`).
 
@@ -273,7 +273,7 @@ def detect_observed_dataset(rain_slice, thresh_slice, year, rc, select=Selection
     rain_slice : xarray.DataArray or hcwf.onset.model.DailyRain
         Daily rainfall in mm with dims ``(time, lat, lon)`` or ``(time, unit)``, or that rainfall already ingested.
     thresh_slice : object
-        The thresholds from `hcwf.io.input.load_thresholds`.
+        The thresholds from `~hcwf.io.thresholds.load_thresholds`.
     year : int
         The year to detect.
     rc : hcwf.config.model.RunConfig
@@ -309,7 +309,7 @@ def detect_observed_dataset(rain_slice, thresh_slice, year, rc, select=Selection
 def detect_observed(rain_slice, thresh_slice, year, rc, select=Selection()):
     """Detect the observed onset dates for one year.
 
-    `rain_slice` is daily rainfall in mm with dims ``(time, lat, lon)``, or ``(time, unit)`` for evaluation units (the
+    ``rain_slice`` is daily rainfall in mm with dims ``(time, lat, lon)``, or ``(time, unit)`` for evaluation units (the
     reader's ``present`` coordinate says which units have a series), or that rainfall already ingested as a
     `hcwf.onset.model.DailyRain` (the climatology years the thresholds were computed from), or a function that reads
     it, called only when the onsets are not cached (for cells the function needs a ``probe`` attribute whose ``coords``
@@ -323,7 +323,7 @@ def detect_observed(rain_slice, thresh_slice, year, rc, select=Selection()):
     rain_slice : xarray.DataArray or hcwf.onset.model.DailyRain or callable
         The rainfall, as described above; a callable takes no arguments.
     thresh_slice : object
-        The thresholds from `hcwf.io.input.load_thresholds` (the definition's named thresholds).
+        The thresholds from `~hcwf.io.thresholds.load_thresholds` (the definition's named thresholds).
     year : int
         The year to detect.
     rc : hcwf.config.model.RunConfig
@@ -375,14 +375,14 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
 
     The cube may hold only some cells of the grid (the loader's ``cells``: ``(init_time, [member], step, cell)``, with
     ``lat`` and ``lon`` as coordinates over ``cell``): only those are ingested and detected, and the arrays and the
-    ``"place"`` function that names a point's columns (``lat`` and ``lon``) are over them. `p_model` may also be a
+    ``"place"`` function that names a point's columns (``lat`` and ``lon``) are over them. ``p_model`` may also be a
     function that reads the cube; it is called here, and the cube is dropped once ingested (peak memory: the cube and
     its tenths, not the cube through the detection).
 
     The cube may be over evaluation units instead of ``lat`` and ``lon`` (``(init_time, member, unit, step)``).
-    `search_start` (variants that start the search later, see `hcwf.onset.engine.detect_forecast`),
-    `restrict_to_season` (False: one season covering every lead) and `onset_count` (the member onset counts of
-    `count_members`) may then be given; with `onset_count` there is no observed onset to line up with (`onset_da` is
+    ``search_start`` (variants that start the search later, see `hcwf.onset.engine.detect_forecast`),
+    ``restrict_to_season`` (False: one season covering every lead) and ``onset_count`` (the member onset counts of
+    `count_members`) may then be given; with ``onset_count`` there is no observed onset to line up with (``onset_da`` is
     None) and the dict holds ``"counts"`` ``(init_time, start, unit, lead)`` instead of the day, date and status
     arrays.
 
@@ -391,9 +391,9 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     p_model : xarray.DataArray or callable
         The forecast cube in mm, or a function with no arguments that reads it.
     thresh_slice : object
-        The thresholds from `hcwf.io.input.load_thresholds`.
+        The thresholds from `~hcwf.io.thresholds.load_thresholds`.
     onset_da : xarray.DataArray or None
-        The observed onset dates (`detect_observed`); None with `onset_count`.
+        The observed onset dates (`detect_observed`); None with ``onset_count``.
     rc : hcwf.config.model.RunConfig
         The run.
     case : object
@@ -414,7 +414,7 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
     Returns
     -------
     dict
-        ``"setup"``, ``"result"``, ``"calendar"`` and ``"init"`` always. With `onset_count`: ``"counts"`` and
+        ``"setup"``, ``"result"``, ``"calendar"`` and ``"init"`` always. With ``onset_count``: ``"counts"`` and
         ``"start"`` (the names of the search starts). Otherwise ``"spatial"`` (the spatial dims), ``"axes"``,
         ``"place"`` (a function from an index tuple to the point's columns), ``"member"`` (or None), ``"day"``,
         ``"date"``, ``"status"``, ``"valid"``, ``"obs"`` (observed dates, ``datetime64[ns]``) and ``"totals"`` (potential
@@ -484,9 +484,9 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
 def count_members(cube, thresh_slice, rc, case, select=Selection(), *, search_start=None):
     """Count the members whose onset falls on each lead day, for an ensemble forecast on evaluation units.
 
-    `cube` has dims ``(init_time, member, unit, step)`` in mm, its steps 1..n, with n the run's ``max_forecast_day``. The
+    ``cube`` has dims ``(init_time, member, unit, step)`` in mm, its steps 1..n, with n the run's ``max_forecast_day``. The
     counts are the number of members whose onset falls on each lead day 0..n, from the search that starts at lead 1
-    (``"base"`` first) and from each variant of `search_start` (the fixed cutoff date, the reference onset); the start
+    (``"base"`` first) and from each variant of ``search_start`` (the fixed cutoff date, the reference onset); the start
     names list them in that order.
 
     Parameters
@@ -494,7 +494,7 @@ def count_members(cube, thresh_slice, rc, case, select=Selection(), *, search_st
     cube : xarray.DataArray
         The forecast cube in mm.
     thresh_slice : object
-        The thresholds from `hcwf.io.input.load_thresholds`.
+        The thresholds from `~hcwf.io.thresholds.load_thresholds`.
     rc : hcwf.config.model.RunConfig
         The run.
     case : object
@@ -577,7 +577,7 @@ def _names(status):
     Returns
     -------
     numpy.ndarray of str
-        The names, in the shape of `status`.
+        The names, in the shape of ``status``.
     """
     labels = np.array([s.name for s in Status])
     return labels[np.asarray(status, dtype=np.int64)]
@@ -592,7 +592,7 @@ def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selec
         The forecast in mm with dims ``(init_time, lat, lon, step)``, or ``(init_time, unit, step)`` on evaluation units
         (or the cells of the loader's ``cells``, or a function that reads the cube: see `detect_forecast`).
     thresh_slice : object
-        The thresholds from `hcwf.io.input.load_thresholds`.
+        The thresholds from `~hcwf.io.thresholds.load_thresholds`.
     onset_da : xarray.DataArray
         The observed onset dates (`detect_observed`).
     rc : hcwf.config.model.RunConfig
@@ -660,7 +660,7 @@ def _ensemble_status(status, threshold, has_onset):
 
     Returns
     -------
-    numpy.ndarray of object, shape of `has_onset`
+    numpy.ndarray of object, shape of ``has_onset``
         The status names.
     """
     names = np.full(has_onset.shape, Status.NOT_FOUND.name, dtype=object)
@@ -675,7 +675,7 @@ def _ensemble_status(status, threshold, has_onset):
 def ensemble_onset(day, init, threshold):
     """Compute the ensemble onset HCWF scores from the member onset days.
 
-    The ensemble has an onset when the fraction of members with one is at least `threshold`; its day (days after the
+    The ensemble has an onset when the fraction of members with one is at least ``threshold``; its day (days after the
     init) is the mean member day rounded half to even.
 
     Parameters
@@ -718,7 +718,7 @@ def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(
         evaluation units (or the cells of the loader's ``cells``, or a function that reads the cube: see
         `detect_forecast`).
     thresh_slice : object
-        The thresholds from `hcwf.io.input.load_thresholds`.
+        The thresholds from `~hcwf.io.thresholds.load_thresholds`.
     onset_da : xarray.DataArray
         The observed onset dates (`detect_observed`).
     rc : hcwf.config.model.RunConfig

@@ -54,12 +54,12 @@ def scale_values(values, scale: ThresholdScale | None):
     values : numpy.ndarray or xarray.DataArray
         The thresholds, converted to ``float64`` when scaled.
     scale : ThresholdScale or None
-        The scaling; None returns `values` unchanged.
+        The scaling; None returns ``values`` unchanged.
 
     Returns
     -------
     numpy.ndarray of float64 or xarray.DataArray
-        The scaled values, of the shape of `values`; a ``DataArray`` when `values` is one.
+        The scaled values, of the shape of ``values``; a ``DataArray`` when ``values`` is one.
     """
     if scale is None:
         return values
@@ -81,7 +81,7 @@ def scale_table(table: pd.DataFrame, scale: ThresholdScale | None) -> pd.DataFra
     table : pandas.DataFrame
         The table, with an ``onset_thresh`` column.
     scale : ThresholdScale or None
-        The scaling; None returns `table` unchanged.
+        The scaling; None returns ``table`` unchanged.
 
     Returns
     -------
@@ -127,11 +127,11 @@ def read_threshold_table(path, *, scale: ThresholdScale | None = None, id_col: s
                          mat_value_name: str = "onset.day.thres") -> pd.DataFrame:
     """Read a threshold table (id or lat/lon, and ``onset_thresh``) from a CSV, NetCDF or MATLAB file.
 
-    CSV: the unit id is `id_col` when given (a `ValueError` is raised if the CSV has no such column), else an ``adm3_name`` column, else ``id``, else the table
-    is keyed by `lat_col` and `lon_col`; `value_col` holds the threshold. Values stay text until a join reads them.
-    NetCDF (``.nc``, ``.nc4``, ``.netcdf``): the variables `lat_var`, `lon_var` and `value_var`, each flattened
-    (netCDF4 reading, so masked entries show their stored value). ``.mat``: the vectors `mat_lat_name` and
-    `mat_lon_name` give every (lat, lon) pair and `mat_value_name` the values flattened over them.
+    CSV: the unit id is ``id_col`` when given (a `ValueError` is raised if the CSV has no such column), else an ``adm3_name`` column, else ``id``, else the table
+    is keyed by ``lat_col`` and ``lon_col``; ``value_col`` holds the threshold. Values stay text until a join reads them.
+    NetCDF (``.nc``, ``.nc4``, ``.netcdf``): the variables ``lat_var``, ``lon_var`` and ``value_var``, each flattened
+    (netCDF4 reading, so masked entries show their stored value). ``.mat``: the vectors ``mat_lat_name`` and
+    ``mat_lon_name`` give every (lat, lon) pair and ``mat_value_name`` the values flattened over them.
 
     Parameters
     ----------
@@ -169,7 +169,7 @@ def read_threshold_table(path, *, scale: ThresholdScale | None = None, id_col: s
     Raises
     ------
     FileNotFoundError
-        `path` does not exist.
+        ``path`` does not exist.
     """
     path = str(path)
     if not os.path.exists(path):
@@ -222,7 +222,7 @@ def _read_csv(path: str, id_col: str | None, value_col: str, lat_col: str, lon_c
     Raises
     ------
     ValueError
-        `id_col` is not a column of the CSV.
+        ``id_col`` is not a column of the CSV.
     """
     table = pd.read_csv(path, dtype=str)
     if id_col:
@@ -288,12 +288,12 @@ def unit_thresholds(thresholds, unit_ids, explicit: ids.GridIdConvention | None 
     unit_ids : array_like of str, shape (unit,)
         The ids of the units.
     explicit : hcwf.spatial.ids.GridIdConvention, optional
-        The grid-id convention to use for a table keyed by lat/lon; None detects it from `unit_ids`.
+        The grid-id convention to use for a table keyed by lat/lon; None detects it from ``unit_ids``.
 
     Returns
     -------
     numpy.ndarray of float64, shape (unit,)
-        The threshold of each unit, in the order of `unit_ids`; all NaN for None.
+        The threshold of each unit, in the order of ``unit_ids``; all NaN for None.
     """
     unit_ids = np.asarray(unit_ids)
     if isinstance(thresholds, pd.DataFrame) or (isinstance(thresholds, xr.DataArray) and "unit" in thresholds.dims):
@@ -320,7 +320,7 @@ def _join_units(thresholds, unit_ids, explicit) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64, shape (unit,)
-        The threshold of each unit, in the order of `unit_ids`.
+        The threshold of each unit, in the order of ``unit_ids``.
 
     Raises
     ------

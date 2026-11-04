@@ -47,7 +47,7 @@ CLIMATOLOGY_REFERENCES = ("climatology", "conditional_climatology")
 # ----------------------------------------------------------------------------------------------------------------------
 
 def years_tuple_clim(year_start: int, year_end: int) -> tuple[int, ...]:
-    """Create the tuple of the integers from `year_start` to `year_end` inclusive.
+    """Create the tuple of the integers from ``year_start`` to ``year_end`` inclusive.
 
     Parameters
     ----------
@@ -59,13 +59,13 @@ def years_tuple_clim(year_start: int, year_end: int) -> tuple[int, ...]:
     Returns
     -------
     tuple of int
-        The years, ascending; empty when `year_end` is before `year_start`.
+        The years, ascending; empty when ``year_end`` is before ``year_start``.
     """
     return tuple(range(year_start, year_end + 1))
 
 
 def years_tuple_model(start_date: tuple[int, int, int], end_date: tuple[int, int, int]) -> tuple[int, ...]:
-    """Create the tuple of the years from `start_date` to `end_date` inclusive.
+    """Create the tuple of the years from ``start_date`` to ``end_date`` inclusive.
 
     Parameters
     ----------
@@ -117,7 +117,7 @@ def climatology_years(dic: Mapping) -> tuple[int, ...]:
 
 
 def take_ensemble_members(members) -> tuple[int, ...] | None:
-    """Normalize `members` into a tuple of ints (or None).
+    """Normalize ``members`` into a tuple of ints (or None).
 
     Accepts a list or tuple of ints (returned as a tuple), a string ``"start-end"`` (expanded, end included), and
     None, empty or ``"All"`` (all members: None).
@@ -135,7 +135,7 @@ def take_ensemble_members(members) -> tuple[int, ...] | None:
     Raises
     ------
     TypeError
-        `members` is none of the accepted forms.
+        ``members`` is none of the accepted forms.
     """
     if not members or members == "All":
         return None
@@ -355,7 +355,7 @@ class EvaluationSpec:
 
 @dataclass(frozen=True, slots=True)
 class OnsetOptions:
-    """The onset-section keys that `OnsetSetup` does not hold (None: the option's own default)."""
+    """The onset-section keys that `~hcwf.config.onset.OnsetSetup` does not hold (None: the option's own default)."""
 
     rain_resolution: str | None
     """``"tenths"`` or ``"exact"``: the resolution rain is compared at."""
@@ -381,7 +381,7 @@ class OnsetOptions:
     """The ``(lat, lon)`` cells to explain, or None."""
 
     def ingest(self, forecast: bool, units, *, check_units=None) -> dict:
-        """Return the parity options that `ingest` (or, with `forecast`, `ingest_forecast_info`) takes, as keywords.
+        """Return the parity options that `ingest` (or, with ``forecast``, `~hcwf.onset.ingest.ingest_forecast_info`) takes, as keywords.
 
         The options are ``rain_resolution`` (``"tenths"`` or ``"exact"``), ``missing``, ``negatives`` (``"default"``
         or ``"keep"``), ``gaps`` (observations: ``"fill"`` or ``"refuse"``) and ``check_units`` (forecasts; a per-call
@@ -394,9 +394,9 @@ class OnsetOptions:
         forecast : bool
             True for the options of a forecast ingest (no ``gaps``), false for the observations'.
         units : UnitsSpec or None
-            The observations' units spec; its ``how`` is read when `forecast` is false.
+            The observations' units spec; its ``how`` is read when ``forecast`` is false.
         check_units : optional
-            The forecasts' ``check_units`` choice, passed on when `forecast` is true and it is not None.
+            The forecasts' ``check_units`` choice, passed on when ``forecast`` is true and it is not None.
 
         Returns
         -------
@@ -608,7 +608,7 @@ def complete_flat(kw: Mapping[str, Any]) -> dict:
     Returns
     -------
     dict
-        A copy of `kw` with the missing keys filled in.
+        A copy of ``kw`` with the missing keys filled in.
     """
     out = dict(kw)
     for item in schema.FIELDS:
@@ -658,7 +658,7 @@ def _get(values: Mapping, key: str):
     -------
     object
         The value; None when the key is absent and its schema field has ``fill=False`` (or it is not in the schema).
-        A key that the schema always fills (``fill=True``) and that is missing in `values` raises ``KeyError``.
+        A key that the schema always fills (``fill=True``) and that is missing in ``values`` raises ``KeyError``.
     """
     return values[key] if _FILLED.get(key, False) else values.get(key)
 
@@ -696,7 +696,7 @@ def _tuple(value) -> tuple | None:
 
 
 def _at(values: Mapping, key: str, i: int):
-    """Return entry `i` of a per-model list key.
+    """Return entry ``i`` of a per-model list key.
 
     Parameters
     ----------
@@ -799,7 +799,7 @@ def _project_blend(v, onset, lenient: bool = False):
     Raises
     ------
     ValueError
-        The recipe is invalid and `lenient` is false (``RecipeError`` is a ``ValueError``).
+        The recipe is invalid and ``lenient`` is false (``RecipeError`` is a ``ValueError``).
     """
     if not schema.has_blend(v):
         return None
@@ -915,7 +915,7 @@ def _project_evaluation(v) -> EvaluationSpec:
 
 
 def _project_onset_options(v) -> OnsetOptions:
-    """Project the onset options outside `OnsetSetup`.
+    """Project the onset options outside `~hcwf.config.onset.OnsetSetup`.
 
     Parameters
     ----------
@@ -992,7 +992,7 @@ def _project_generated(v, cls, section: str):
     Returns
     -------
     object
-        An instance of `cls`.
+        An instance of ``cls``.
     """
     return cls(**{f.nested_name: _get(v, f.key) for f in schema.FIELDS if f.section == section})
 
@@ -1068,7 +1068,7 @@ class RunConfig:
         Raises
         ------
         ValueError
-            The ``units:`` section or the blend recipe is invalid and `lenient` is false, or an invariant fails.
+            The ``units:`` section or the blend recipe is invalid and ``lenient`` is false, or an invariant fails.
         """
         run = _project_run(values)
         try:
@@ -1146,7 +1146,7 @@ class RunConfig:
     # -- cases -------------------------------------------------------------------------------------------------------
 
     def model(self, name: str) -> ModelSpec:
-        """Return the model called `name`.
+        """Return the model called ``name``.
 
         Parameters
         ----------
@@ -1182,7 +1182,7 @@ class RunConfig:
         """Return the reference with every window.
 
         The reference is read with its own settings (`ReferenceSpec.as_model`: its data, accumulation, daily boundary
-        and dims) in both flows. `for_model` (the ensemble flow, one forecast model at a time) only names the cases
+        and dims) in both flows. ``for_model`` (the ensemble flow, one forecast model at a time) only names the cases
         after that model, so that each model's results keep their own file names.
 
         Parameters
@@ -1202,7 +1202,7 @@ class RunConfig:
     def first_case(self, model: str, *, reference_as: str | None = None) -> Case:
         """Return the first window's case of one model.
 
-        The detection does not depend on the window, so that case stands for all. With `reference_as` (a source name:
+        The detection does not depend on the window, so that case stands for all. With ``reference_as`` (a source name:
         ``"climatology"`` or ``"conditional_climatology"``) the case is the reference's, under that name, built by
         `reference_cases`; `model` is then ignored.
 
@@ -1216,7 +1216,7 @@ class RunConfig:
         Returns
         -------
         Case
-            The case. A `model` that is not in the config (with `reference_as` None) raises ``StopIteration``.
+            The case. A `model` that is not in the config (with ``reference_as`` None) raises ``StopIteration``.
         """
         if reference_as is None:
             return next(c for c in self.cases() if c.model.name == model)

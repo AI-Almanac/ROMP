@@ -1,6 +1,6 @@
 """``hcwf-run -p run.yaml --check``: show everything a run would do and run nothing.
 
-``build_report(dic)`` takes the resolved flat config (`resolve(...).values`) and returns a
+``build_report(dic)`` takes the resolved flat config (``resolve(...).values``) and returns a
 ``CheckReport``: the settings with where each value came from, the datasets with what was detected and the
 evidence, the mask, the lead windows, which files exist or are missing, the sampled alignment of each model with
 the observations, sanity hints (each names the key to set), the run folder and the observed-onset cache that a run
@@ -111,7 +111,7 @@ class CheckReport:
 
 
 def _short(values, limit=_MAX_LISTED) -> str:
-    """Return a list of values as text, cut after `limit` items.
+    """Return a list of values as text, cut after ``limit`` items.
 
     Parameters
     ----------
@@ -179,7 +179,7 @@ def _store_has_year(store, year) -> bool:
     Returns
     -------
     bool
-        True when a one-dimensional datetime coordinate has a value in `year`, and also when the store has no such
+        True when a one-dimensional datetime coordinate has a value in ``year``, and also when the store has no such
         coordinate (nothing can be said, so the year is taken as present).
     """
     ds = xr.open_zarr(str(store), chunks=None)
@@ -190,7 +190,7 @@ def _store_has_year(store, year) -> bool:
 
 
 def _find(folder, patterns, year):
-    """Return the path of the yearly file in `folder` matching one of the patterns, or None.
+    """Return the path of the yearly file in ``folder`` matching one of the patterns, or None.
 
     A folder that is a zarr store holds all years: the store is returned if it has times in the year.
 
@@ -823,7 +823,7 @@ def _run_folder(dic: dict, report: CheckReport, overwrite: bool = False) -> None
     dic : dict
         The flat config; ``run_paths`` holds the planned folders.
     report : CheckReport
-        The report to add to; a run folder that exists is an error unless `overwrite`.
+        The report to add to; a run folder that exists is an error unless ``overwrite``.
     overwrite : bool, default False
         Whether ``--overwrite`` is given.
     """

@@ -98,7 +98,7 @@ members: 1                     # ensemble size, if an ensemble
 notes: free text
 """,
 }
-"""Blank dataset entries, as printed by `hcwf-run init --dataset-template`."""
+"""Blank dataset entries, as printed by ``hcwf-run init --dataset-template``."""
 
 
 @dataclass(frozen=True)
@@ -154,7 +154,7 @@ class Dataset:
 
     @property
     def expanded_path(self) -> str:
-        """The path with ``~`` and ``${ENV_VAR}`` expanded (`DatasetError` if a variable is unset and has no default)."""
+        """The path with ``~`` and ``${ENV_VAR}`` expanded (`~hcwf.errors.DatasetError` if a variable is unset and has no default)."""
         return expand_path(self.path, origin=self.source or "dataset")
 
     def files(self) -> list[Path]:
@@ -199,8 +199,8 @@ def suggest(name: str, candidates) -> str:
 def expand_env(text: str, origin: str = "") -> str:
     """Replace ``${VAR}`` and ``${VAR:-default}`` in a text by the environment.
 
-    An empty variable counts as unset; an unset one without a default raises `DatasetError` (from the replacement
-    function, named with `origin`).
+    An empty variable counts as unset; an unset one without a default raises `~hcwf.errors.DatasetError` (from the replacement
+    function, named with ``origin``).
 
     Parameters
     ----------
@@ -212,7 +212,7 @@ def expand_env(text: str, origin: str = "") -> str:
     Returns
     -------
     str
-        `text` with every reference replaced.
+        ``text`` with every reference replaced.
     """
     def sub(match):
         """Return the value of one ``${...}`` reference."""
@@ -230,7 +230,7 @@ def expand_env(text: str, origin: str = "") -> str:
 def expand_path(text: str, origin: str = "") -> str:
     """Expand ``${ENV_VAR}`` references and a leading ``~`` in a path string.
 
-    An unset variable without a default raises `DatasetError` (see `expand_env`).
+    An unset variable without a default raises `~hcwf.errors.DatasetError` (see `expand_env`).
 
     Parameters
     ----------
@@ -251,7 +251,7 @@ def year_match(name: str, whole_number: bool = False):
     """Find the year in a file name.
 
     By default the year is the first ``19xx`` or ``20xx`` anywhere in the name (as onset_blending reads it, so
-    ``20200101.nc`` holds 2020); with `whole_number`, the first ``18xx``, ``19xx`` or ``20xx`` that is not inside a
+    ``20200101.nc`` holds 2020); with ``whole_number``, the first ``18xx``, ``19xx`` or ``20xx`` that is not inside a
     longer run of digits (the year of a ``{}`` file pattern).
 
     Parameters
@@ -311,7 +311,7 @@ def parse_years(value, origin: str = "years") -> tuple[int, ...]:
     DatasetError
         The value is not a non-empty list of years or such a text, or a range runs backwards.
     ValueError
-        Never escapes: it is raised inside the function and turned into the `DatasetError`.
+        Never escapes: it is raised inside the function and turned into the `~hcwf.errors.DatasetError`.
     """
     try:
         if isinstance(value, bool):
@@ -371,7 +371,7 @@ def parse_year_list(value, origin: str = "years") -> tuple[int, ...]:
 
     The setting is a year, a list of years or of texts such as ``"2000:2010,2015"`` (or one such text); this is the one
     parser of ``blend.years``, ``evaluation.years`` and ``evaluation.climatology_years``. An item that is not a year
-    or a range raises `DatasetError` (see `parse_years`).
+    or a range raises `~hcwf.errors.DatasetError` (see `parse_years`).
 
     Parameters
     ----------
@@ -396,13 +396,13 @@ def resolve_paths(paths, base=None, years=None, origin: str = "paths") -> list[P
     """List the files named by ``paths`` (names or globs, ``~`` and ``${ENV_VAR}`` expanded).
 
     The result is sorted by (year in the name, path), as onset_blending lists files, and holds each file once;
-    `years` keeps only the files of those years (a file whose name has no year is dropped then). A name that is
+    ``years`` keeps only the files of those years (a file whose name has no year is dropped then). A name that is
     not a glob must exist; at least one file must remain.
 
     Parameters
     ----------
     paths : str or pathlib.Path or sequence of (str or pathlib.Path)
-        File names or globs; a relative one is looked up under `base`.
+        File names or globs; a relative one is looked up under ``base``.
     base : str or pathlib.Path, optional
         The folder of the relative names; None leaves them relative to the working directory.
     years : int or str or sequence, optional
@@ -515,7 +515,7 @@ def _text(data: dict, key: str, origin: str, required: bool = True):
     -------
     str or None
         The text, or None for a missing key that is not required. A required key that is missing, or a value that is
-        not non-empty text, raises `DatasetError`.
+        not non-empty text, raises `~hcwf.errors.DatasetError`.
     """
     value = data.get(key)
     if value is None:
@@ -545,7 +545,7 @@ def parse_dataset(data, origin: str, kind: str | None = None, require_id: bool =
     -------
     Dataset
         The validated entry. An entry that is not a mapping, has an unknown or wrongly used key, or holds an invalid
-        value raises `DatasetError`.
+        value raises `~hcwf.errors.DatasetError`.
     """
     from hcwf.onset.ingest import parse_day_boundary
 

@@ -22,7 +22,7 @@ __all__ = ["Predictions", "outcome_codes", "outcome_series"]
 
 
 def outcome_codes(values, labels) -> np.ndarray:
-    """Convert outcome labels to positions into `labels`.
+    """Convert outcome labels to positions into ``labels``.
 
     Parameters
     ----------
@@ -34,7 +34,7 @@ def outcome_codes(values, labels) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of int8, shape (sample,)
-        The position of each label in `labels`, -1 where missing, ``len(labels)`` for a label that is not a bin.
+        The position of each label in ``labels``, -1 where missing, ``len(labels)`` for a label that is not a bin.
     """
     index = {label: k for k, label in enumerate(labels)}
     other = len(labels)
@@ -86,7 +86,7 @@ class Predictions:
             The weekly samples; the keys ``id``, ``year``, the outcome and, when it has them, ``time``, ``lat`` and
             ``lon`` are taken from it.
         rows : numpy.ndarray of int, shape (sample,)
-            The positions in `weekly` of the samples predicted.
+            The positions in ``weekly`` of the samples predicted.
         probabilities : numpy.ndarray of float64, shape (sample, bin)
             The probability of each bin.
         labels : sequence of str

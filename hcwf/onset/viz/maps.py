@@ -137,7 +137,7 @@ def _draw_map(fig: Figure, ax, cax, pal: style.Palette, result: xr.Dataset, a: A
 def drill_down(result: xr.Dataset, anatomy: Anatomy, *, mode: str = "light") -> Figure:
     """Draw an onset map (day of year) with the anatomy of one marked cell beside it.
 
-    `result` is a ``detect_observed`` dataset (dims ``year, season, lat, lon``) and `anatomy` a
+    ``result`` is a ``detect_observed`` dataset (dims ``year, season, lat, lon``) and ``anatomy`` a
     `hcwf.onset.explain.trace_observed` anatomy of one of its cells and years; the map shows the anatomy's year and
     season, cells without an onset in neutral grey (the legend gives each status with its icon and count), and the
     anatomy's cell is outlined. The anatomy panels share the figure on the right.
@@ -147,7 +147,7 @@ def drill_down(result: xr.Dataset, anatomy: Anatomy, *, mode: str = "light") -> 
     result : xarray.Dataset
         The observed result, with variables ``status`` and ``onset_date`` over ``(year, season, lat, lon)``.
     anatomy : hcwf.onset.explain.Anatomy
-        The anatomy of one cell and year of `result`.
+        The anatomy of one cell and year of ``result``.
     mode : {"light", "dark"}, default "light"
         The colour mode.
 
@@ -159,7 +159,7 @@ def drill_down(result: xr.Dataset, anatomy: Anatomy, *, mode: str = "light") -> 
     Raises
     ------
     ValueError
-        `anatomy` is of a forecast or has no year, or `result` lacks ``lat`` or ``lon`` dims.
+        ``anatomy`` is of a forecast or has no year, or ``result`` lacks ``lat`` or ``lon`` dims.
     """
     if anatomy.is_forecast or anatomy.year is None:
         raise ValueError("drill_down needs an observed Anatomy (trace_observed)")

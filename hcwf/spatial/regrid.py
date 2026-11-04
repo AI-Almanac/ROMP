@@ -13,11 +13,11 @@ Where the weights come from:
 * another grid (`grid_weights`): conservative area-overlap weights between two regular lat/lon grids;
 * a one-for-one selection of cells (`selection`), or a weighted set of cells in one unit (a region).
 
-Cell areas are planar (degrees squared) by default; `cell_area="cos_lat"` multiplies by the cosine of the cell's
+Cell areas are planar (degrees squared) by default; ``cell_area="cos_lat"`` multiplies by the cosine of the cell's
 latitude, so a unit's weights follow the area on the sphere to first order.
 
 Source cells are the cells of a grid in latitude-major order (latitude axis outer, longitude inner), the order
-of `ravel` on a (lat, lon) array. Coordinates match exactly (float equality) by default, which reproduces
+of ``ravel`` on a (lat, lon) array. Coordinates match exactly (float equality) by default, which reproduces
 tables written by onset_blending; ``tolerance`` matches within a distance instead (HCWF's alignment tolerance).
 
 The module builds on `hcwf.spatial.ids` (grid-id conventions) and `hcwf.spatial.masks` (cell bounds and overlaps);
@@ -58,9 +58,9 @@ def default_tolerance() -> float:
 
 
 def match_axis(wanted, axis, tolerance: float | None = None) -> np.ndarray:
-    """Find the index into `axis` of each wanted coordinate, -1 where none matches.
+    """Find the index into ``axis`` of each wanted coordinate, -1 where none matches.
 
-    Exact float equality, or within `tolerance` of the nearest (HCWF's matching) when it is given.
+    Exact float equality, or within ``tolerance`` of the nearest (HCWF's matching) when it is given.
 
     Parameters
     ----------
@@ -74,7 +74,7 @@ def match_axis(wanted, axis, tolerance: float | None = None) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of int64, shape (wanted,)
-        The index in `axis` of each coordinate, -1 where none matches.
+        The index in ``axis`` of each coordinate, -1 where none matches.
     """
     wanted = np.asarray(wanted, dtype=float).reshape(-1)
     axis = np.asarray(axis, dtype=float).reshape(-1)
@@ -93,7 +93,7 @@ def match_axis(wanted, axis, tolerance: float | None = None) -> np.ndarray:
 
 
 def conform_longitudes(wanted, axis) -> np.ndarray:
-    """Put longitudes in the convention of `axis` (-180 to 180 when it has a negative value, else 0 to 360).
+    """Put longitudes in the convention of ``axis`` (-180 to 180 when it has a negative value, else 0 to 360).
 
     Only a value outside the axis' range is shifted by 360 (so a value already in range is returned exactly, as
     exact matching needs); a shifted value can carry float noise, which matching within a tolerance absorbs.
@@ -108,7 +108,7 @@ def conform_longitudes(wanted, axis) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64, shape (wanted,)
-        The longitudes in the convention of `axis`.
+        The longitudes in the convention of ``axis``.
     """
     wanted = np.array(wanted, dtype=float).reshape(-1)
     if np.min(axis) < 0:
@@ -162,7 +162,7 @@ def read_weights(source, context: str = "weights") -> pd.DataFrame:
     Raises
     ------
     FileNotFoundError
-        `source` is a path that does not exist.
+        ``source`` is a path that does not exist.
     ValueError
         The table breaks one of the rules above.
     """
@@ -387,15 +387,15 @@ class SparseTransform:
     def from_weights(cls, weights, lat=None, lon=None, *, target_ids=None,
                      convention: unit_ids.GridIdConvention | None = None,
                      tolerance: float | None = None, wrap_longitude: bool = False) -> "SparseTransform":
-        """Build the transform of a weight table (see `read_weights`; a raw table or CSV path is read first).
+        """Build the transform of a weight table (see `~hcwf.spatial.regrid.read_weights`; a raw table or CSV path is read first).
 
-        Weights keyed by coordinates need the source grid (`lat`, `lon` axes): its cells, latitude-major, are
-        the sources, and a weight's cell is found by exact coordinates, or within `tolerance`; a weight for a
+        Weights keyed by coordinates need the source grid (``lat``, ``lon`` axes): its cells, latitude-major, are
+        the sources, and a weight's cell is found by exact coordinates, or within ``tolerance``; a weight for a
         cell the grid lacks is an error. Weights keyed by source ids have the sources they name (sorted), and
         the grid-id `convention` (explicit, else the one the ids establish) names grid points
         (see `positions`). Targets are the table's, sorted, unless `target_ids` gives their order.
-        `wrap_longitude` puts the weights' longitudes in the convention of the grid before matching (a grid HCWF
-        swapped to 0..360 or -180..180); use it with a `tolerance` when a shifted longitude carries float noise.
+        ``wrap_longitude`` puts the weights' longitudes in the convention of the grid before matching (a grid HCWF
+        swapped to 0..360 or -180..180); use it with a ``tolerance`` when a shifted longitude carries float noise.
 
         Parameters
         ----------
@@ -423,7 +423,7 @@ class SparseTransform:
         ------
         ValueError
             Coordinate-keyed weights come without the grid, a weight's cell is not on the grid, a target is not among
-            `target_ids`, or the weights are invalid (see `read_weights`).
+            `target_ids`, or the weights are invalid (see `~hcwf.spatial.regrid.read_weights`).
         """
         weights = _canonical(weights)
         targets = tuple(sorted(weights["target_id"].unique())) if target_ids is None else tuple(target_ids)
@@ -501,7 +501,7 @@ class SparseTransform:
         Raises
         ------
         ValueError
-            `source_values` is not 2-D or its first axis is not the number of sources.
+            ``source_values`` is not 2-D or its first axis is not the number of sources.
         """
         source_values = np.asarray(source_values, dtype=float)
         if source_values.ndim != 2 or source_values.shape[0] != self.shape[1]:
@@ -534,8 +534,8 @@ class SparseTransform:
     def positions(self, lat, lon, *, tolerance: float | None = None, require_all: bool = False) -> np.ndarray:
         """Find each point's position among the sources (-1 for a point the weights do not use).
 
-        Coordinate-keyed sources match by exact coordinates, or within `tolerance`. Id-keyed sources match the
-        points' grid ids under the transform's convention (so it needs one). `require_all` refuses a source
+        Coordinate-keyed sources match by exact coordinates, or within ``tolerance``. Id-keyed sources match the
+        points' grid ids under the transform's convention (so it needs one). ``require_all`` refuses a source
         that no point matches. Two points on one source are refused.
 
         Parameters
@@ -557,7 +557,7 @@ class SparseTransform:
         Raises
         ------
         ValueError
-            The sources are ids without a grid-id convention, two points share a source, or `require_all` is true and a
+            The sources are ids without a grid-id convention, two points share a source, or ``require_all`` is true and a
             source has no point.
         """
         lat = np.asarray(lat, dtype=float).reshape(-1)
@@ -600,7 +600,7 @@ class SparseTransform:
         Raises
         ------
         ValueError
-            `require_all` is true and a source is named by none of `ids`, or two ids share a source.
+            ``require_all`` is true and a source is named by none of ``ids``, or two ids share a source.
         """
         index = self.source_index
         out = np.array([index.get(str(i), -1) for i in ids], dtype=np.int64)
@@ -614,7 +614,7 @@ class SparseTransform:
         return self._checked(out, False)
 
     def _checked(self, positions: np.ndarray, require_all: bool) -> np.ndarray:
-        """Check that no two points share a source (and, with `require_all`, that every source has a point).
+        """Check that no two points share a source (and, with ``require_all``, that every source has a point).
 
         Parameters
         ----------
@@ -631,7 +631,7 @@ class SparseTransform:
         Raises
         ------
         ValueError
-            Two points share a source, or `require_all` is true and a source has no point.
+            Two points share a source, or ``require_all`` is true and a source has no point.
         """
         used = positions[positions >= 0]
         if len(np.unique(used)) != len(used):
@@ -768,11 +768,11 @@ def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", mea
                     min_share: float = 1e-9, clip_to=None) -> pd.DataFrame:
     """Compute the weights of the cells of a grid in each polygon: a table of (target_id, lat, lon, weight).
 
-    The grid has centres `lat`, `lon` (any order; longitudes are wrapped to -180..180 for the overlap, the
+    The grid has centres ``lat``, ``lon`` (any order; longitudes are wrapped to -180..180 for the overlap, the
     table keeps the grid's own values). A cell's weight in a polygon is the area of their overlap (measure
-    ``"area"``, planar degrees squared, times cos(latitude) when `cell_area` is ``"cos_lat"``) or the share of the cell's
+    ``"area"``, planar degrees squared, times cos(latitude) when ``cell_area`` is ``"cos_lat"``) or the share of the cell's
     area inside the polygon (measure ``"share"``, onset_blending's legacy table: intersection / cell area). Cells
-    with a share of at most `min_share` are left out. `clip_to` is a geometry each polygon is first cut to (for
+    with a share of at most ``min_share`` are left out. ``clip_to`` is a geometry each polygon is first cut to (for
     instance the area the observations cover, see `coverage_geometry`).
 
     The overlap is the one `hcwf.spatial.masks.rasterise` thresholds (`hcwf.spatial.masks.cell_shares`).
@@ -841,7 +841,7 @@ def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", mea
 
 
 def coverage_geometry(lat, lon, keep=None):
-    """Build the union of the boxes of the grid's cells (those where `keep` is True).
+    """Build the union of the boxes of the grid's cells (those where ``keep`` is True).
 
     Parameters
     ----------
@@ -875,14 +875,14 @@ def coverage_geometry(lat, lon, keep=None):
 
 
 def _axis_intervals(centres, other):
-    """Compute the cell (lo, hi) edges of each centre, in the order the centres are given (see `cell_bounds`).
+    """Compute the cell (lo, hi) edges of each centre, in the order the centres are given (see `~hcwf.spatial.masks.cell_bounds`).
 
     Parameters
     ----------
     centres : array_like of float, shape (n,)
         The cell centres of one axis, in any order.
     other : array_like of float
-        The centres of the other axis (`cell_bounds` takes both).
+        The centres of the other axis (`~hcwf.spatial.masks.cell_bounds` takes both).
 
     Returns
     -------
@@ -938,7 +938,7 @@ def grid_weights(source_lat, source_lon, lat, lon, *, cell_area: str = "planar")
     Source longitudes are first shifted by whole turns to the target's convention. ``cell_area="cos_lat"``
     multiplies by the cosine of the source cell's latitude.
 
-    A ``ValueError`` is raised (by `_check_options`) when `cell_area` is not one of `CELL_AREAS`.
+    A ``ValueError`` is raised (by `_check_options`) when ``cell_area`` is not one of `CELL_AREAS`.
 
     Parameters
     ----------
@@ -973,7 +973,7 @@ def grid_weights(source_lat, source_lon, lat, lon, *, cell_area: str = "planar")
 
 
 def selection(positions, n_sources: int, weights=None) -> sparse.csr_matrix:
-    """Build a one-source-per-row matrix: row i weights source ``positions[i]`` (1 unless `weights` gives it).
+    """Build a one-source-per-row matrix: row i weights source ``positions[i]`` (1 unless ``weights`` gives it).
 
     Parameters
     ----------

@@ -48,7 +48,7 @@ def steps_needed(max_forecast_day, onset: OnsetSetup | None):
     """Return the last lead day onset detection reads, or None if it can't be told.
 
     The largest day any requirement or veto of the compiled plan reads for the last candidate day
-    `max_forecast_day`, so loading never truncates what the rule reads.
+    ``max_forecast_day``, so loading never truncates what the rule reads.
 
     Parameters
     ----------
@@ -60,7 +60,7 @@ def steps_needed(max_forecast_day, onset: OnsetSetup | None):
     Returns
     -------
     int or None
-        The last lead day to load, or None when `max_forecast_day` is not an integer.
+        The last lead day to load, or None when ``max_forecast_day`` is not an integer.
     """
     if not isinstance(max_forecast_day, int):
         return None
@@ -147,8 +147,8 @@ def ingest_forecast(cube, onset, model, options, select=NO_SELECTION, source=Non
 def _init_dates(year, date_filter_year, init_days, start_date, end_date):
     """Return the initialization dates of a year.
 
-    These are the days between `start_date` and `end_date` (month and day only) whose weekday in `date_filter_year`
-    is in `init_days`, moved to `year`.
+    These are the days between ``start_date`` and ``end_date`` (month and day only) whose weekday in ``date_filter_year``
+    is in ``init_days``, moved to ``year``.
 
     Parameters
     ----------
@@ -166,7 +166,7 @@ def _init_dates(year, date_filter_year, init_days, start_date, end_date):
     Returns
     -------
     pandas.DatetimeIndex
-        The initialization dates in `year`, ascending.
+        The initialization dates in ``year``, ascending.
     """
     start_MMDD = start_date[1:]
     end_MMDD = end_date[1:]
@@ -184,7 +184,7 @@ def _init_dates(year, date_filter_year, init_days, start_date, end_date):
 
 
 def initialization_dates(year, ev):
-    """Return the initialization dates of `year`.
+    """Return the initialization dates of ``year``.
 
     These are the days between ``ev.start_date`` and ``ev.end_date`` (month and day only) whose weekday in
     ``ev.date_filter_year`` is in ``ev.init_days`` (0 is Monday).
@@ -208,7 +208,7 @@ def _forecast_on_units(da, spec: UnitsSpec, keep_ids, unit_cvt):
     """Return the selected issues of a forecast variable on the run's evaluation units.
 
     The units are those of the observations (their ids, as the same specification builds them for this source), the
-    millimetre factor is the file's declared unit or `unit_cvt` (as `UnitForecast` reads it).
+    millimetre factor is the file's declared unit or ``unit_cvt`` (as `UnitForecast` reads it).
 
     Parameters
     ----------
@@ -298,10 +298,10 @@ def load_forecast(year, model, ev, area, options, onset, *, ensemble, select=NO_
     Filters for the init days (0 is Monday) of ``ev.date_filter_year``. The forecast file is expected to be named
     ``model.file_pattern.format(year)`` in ``model.dir`` (or ``model.dir`` is a zarr store of all years, or
     ``select.model_paths`` lists the files, any number per year) with the variable ``model.var``, daily accumulated
-    rainfall with dimensions ``(init_time, [member], lat, lon, step)``. With `ensemble` the members ``ev.members`` are
-    selected before the read. `onset` says which lead days the onset rule reads (the rest are not loaded); `options` is
+    rainfall with dimensions ``(init_time, [member], lat, lon, step)``. With ``ensemble`` the members ``ev.members`` are
+    selected before the read. ``onset`` says which lead days the onset rule reads (the rest are not loaded); ``options`` is
     the run's reading options (the ingest takes them: see `ingest_forecast`). A big file is decoded by up to
-    `readers` processes at once. With `cells` a gridded read of a region whose masks drop cells keeps only the kept
+    ``readers`` processes at once. With ``cells`` a gridded read of a region whose masks drop cells keeps only the kept
     ones: the array then has the dims ``(init_time, [member], step, cell)`` with the cells' lat and lon as
     coordinates over ``cell``, and ``cell`` holds their position in the region's box (see
     `hcwf.spatial.select.load_blocks`); the onset detection takes either form.
@@ -340,7 +340,7 @@ def load_forecast(year, model, ev, area, options, onset, *, ensemble, select=NO_
 
 
 def forecast_of(year, rc, model, *, ensemble, select=NO_SELECTION, cells=False):
-    """Call `load_forecast` with the settings of a run for the source `model`.
+    """Call `load_forecast` with the settings of a run for the source ``model``.
 
     Parameters
     ----------
@@ -377,7 +377,7 @@ _YEAR_BASE = 512 * 2**20
 
 
 def forecast_year_bytes(year, rc, model, *, ensemble, select=NO_SELECTION) -> int | None:
-    """Estimate the peak memory of one worker reading and detecting `year` of `model`'s forecasts.
+    """Estimate the peak memory of one worker reading and detecting ``year`` of ``model``'s forecasts.
 
     Looks at the selection only (inits, leads, members, the region's box and the cells its masks keep), reads no data.
 
@@ -427,11 +427,11 @@ def forecast_year_bytes(year, rc, model, *, ensemble, select=NO_SELECTION) -> in
 
 
 def select_leads(ds, first=None, last=None, *, strict=False, rain_horizon=None, where="forecast"):
-    """Select the lead days `first` to `last` of a dataset or array with a ``step`` dimension.
+    """Select the lead days ``first`` to ``last`` of a dataset or array with a ``step`` dimension.
 
-    Without `strict` this is HCWF's reading: a step 0 is dropped and the steps up to `last` kept as they come. With
-    `strict` (onset_blending's) the days must be whole, distinct and consecutive; they are put in ascending order and
-    the step labels become 1..n, the days themselves a ``lead_day`` coordinate. `rain_horizon` checks first that the
+    Without ``strict`` this is HCWF's reading: a step 0 is dropped and the steps up to ``last`` kept as they come. With
+    ``strict`` (onset_blending's) the days must be whole, distinct and consecutive; they are put in ascending order and
+    the step labels become 1..n, the days themselves a ``lead_day`` coordinate. ``rain_horizon`` checks first that the
     file holds the lead days 1..max_day, exactly (``"exact"``) or with later days permitted (``"truncate"``).
 
     Parameters
@@ -452,7 +452,7 @@ def select_leads(ds, first=None, last=None, *, strict=False, rain_horizon=None, 
     Returns
     -------
     xarray.Dataset or xarray.DataArray
-        The selected data; with `strict` also a ``lead_day`` coordinate over ``step``.
+        The selected data; with ``strict`` also a ``lead_day`` coordinate over ``step``.
 
     Raises
     ------
@@ -513,7 +513,7 @@ def _whole_day(value) -> int | None:
 
 
 def _check_rain_horizon(day_values, rain_day_max: int, where: str, *, allow_extra: bool) -> None:
-    """Check that a strict rain horizon holds: the lead days 1 to `rain_day_max` exactly (later days too, with `allow_extra`).
+    """Check that a strict rain horizon holds: the lead days 1 to ``rain_day_max`` exactly (later days too, with ``allow_extra``).
 
     Parameters
     ----------
@@ -524,12 +524,12 @@ def _check_rain_horizon(day_values, rain_day_max: int, where: str, *, allow_extr
     where : str
         What the data is, for the error message.
     allow_extra : bool
-        Accept days after `rain_day_max`.
+        Accept days after ``rain_day_max``.
 
     Raises
     ------
     ValueError
-        A label is not an integer, a day is duplicated, missing, non-positive or (without `allow_extra`) extra.
+        A label is not an integer, a day is duplicated, missing, non-positive or (without ``allow_extra``) extra.
     """
     parsed = [_whole_day(v) for v in day_values]
     invalid = [repr(v) for v, d in zip(day_values, parsed) if d is None]
@@ -557,7 +557,7 @@ def _check_rain_horizon(day_values, rain_day_max: int, where: str, *, allow_extr
 def select_members(ds, members=None, *, at_most=None, among=None, where="forecast"):
     """Select the members of a dataset or array with a ``member`` dimension.
 
-    `members` (HCWF's run setting) names members that must exist. `at_most` and `among` (onset_blending's) keep the
+    ``members`` (HCWF's run setting) names members that must exist. ``at_most`` and ``among`` (onset_blending's) keep the
     members present whose number is at most that and among those; none left is an error.
 
     Parameters
@@ -576,7 +576,7 @@ def select_members(ds, members=None, *, at_most=None, among=None, where="forecas
     Returns
     -------
     xarray.Dataset or xarray.DataArray
-        The selected data; `ds` itself when every member is kept.
+        The selected data; ``ds`` itself when every member is kept.
 
     Raises
     ------
@@ -604,10 +604,10 @@ class UnitForecast:
     """One forecast file read onto evaluation units, a run of issues at a time (memory stays one run).
 
     Opens the file lazily as `_load_forecast` does (dimension names, lead days, members), keeps every issue, and puts
-    the units of `spec` (those among `keep_ids`) in id order. `runs` yields ``(first, stop, rain)`` with rain over
+    the units of `spec` (those among ``keep_ids``) in id order. `runs` yields ``(first, stop, rain)`` with rain over
     ``(init_time, member, unit, step)`` in the file's dtype for cells and float64 for averaged units.
     When the first lead day kept is d (steps are renumbered 1..n) ``init_time`` is the issue plus d - 1 days, so every
-    step has its true date. `issue_dates` keeps only the issues on those days, and reads nothing of the others: a file
+    step has its true date. ``issue_dates`` keeps only the issues on those days, and reads nothing of the others: a file
     that has none of them has no issues and `runs` yields nothing. Use it as a context manager to close the file.
 
     Parameters

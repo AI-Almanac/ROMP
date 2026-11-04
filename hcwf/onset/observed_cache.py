@@ -397,7 +397,7 @@ def fingerprint_parts(rain, thresh, obs, area, onset, options, select, years) ->
         The run's observation settings.
     area : hcwf.config.model.AreaSpec
         The run's area settings.
-    onset : hcwf.config.model.OnsetSetup
+    onset : hcwf.config.onset.OnsetSetup
         The run's onset definition, season and observation day boundary.
     options : hcwf.config.model.OnsetOptions
         The run's onset options.

@@ -172,7 +172,7 @@ def _washes(ax, a: Anatomy, p: style.Palette, x0: int, handles: dict) -> None:
     p : hcwf.onset.viz.style.Palette
         The palette of the figure.
     x0 : int
-        Day index of the first plotted day (x is the day index minus `x0`).
+        Day index of the first plotted day (x is the day index minus ``x0``).
     handles : dict
         Legend handles by label; this adds the washes drawn.
     """
@@ -213,7 +213,7 @@ def _vetoing_spells(a: Anatomy) -> list[tuple[int, int, int]]:
 
 def _lane_label(ax, text: str, bars: list, y: float, days_per_inch: float, n: int, ink: dict,
                 only: int | None = None, avoid: tuple = ()) -> None:
-    """Label a baseline lane beside its first bar (or the bar `only`), on whichever side has room.
+    """Label a baseline lane beside its first bar (or the bar ``only``), on whichever side has room.
 
     Parameters
     ----------

@@ -65,7 +65,35 @@ Shape letters are the dimension names of the data (`year`, `lat`, `lon`, `member
 * Literal blocks (examples, trees): end the paragraph before with `::` and indent the block. A `>>>` doctest block is
   fine but is not run.
 * An object that Sphinx cannot resolve is a plain-text mistake: check the spelling, or use double backticks if it is
-  not an object.
+  not an object. The build is nitpicky (see below), so it fails on such a name.
+* Write the full dotted path of an HCWF object (`~hcwf.onset.model.Status`, `~hcwf.errors.DefinitionError`); the bare
+  name resolves only inside the module that defines it, and a name shared by several objects is ambiguous.
+* The name of a parameter, a local variable, a column or a dimension is not an object: write it as ``name``, not
+  `name`. Likewise ``hcwf-run ...`` commands, ``rc.onset``-style attribute paths of a variable and call expressions.
+* A module constant without an attribute docstring (``hcwf.log.NORMAL``) is not documented, so it cannot be linked:
+  write it as a literal.
+
+## Nitpicky mode
+
+`docs/conf.py` sets `nitpicky = True`, so every cross-reference that does not resolve is a warning, and the strict
+build (`-W`) fails on it. This covers the type lines too: napoleon turns each word of a type line into a reference.
+What keeps the conventions above passing:
+
+* `napoleon_type_aliases` maps the words of the type lines to what they stand for: dtype names (`float64`, `int32`, ...)
+  to the numpy objects, `array_like`, `sequence`, `iterable`, `mapping`, `callable`, `module` and `file object` to the
+  glossary terms of numpy and Python, and a few bare HCWF names (`Selection`, `NO_SELECTION`, `UnitsSpec`, ...) to
+  their full path. A new recurring word goes there, not into a docstring rewrite.
+* Shape groups (`shape (case, bin)`, `same shape as`) and the parentheses of `tuple of (int, int)` are rendered as text by a small
+  patch of napoleon's type converter in `docs/conf.py`, so shape groups never need an alias.
+* `nitpick_ignore_regex` is a short list of objects of libraries without an intersphinx inventory (cartopy, PyYAML, the
+  shapely geometry base class) and the one variable name in a `Raises` section. It is not a place for broken
+  references to HCWF, numpy, pandas or xarray objects: fix those in the docstring.
+* The intersphinx inventories (python, numpy, pandas, xarray, scipy, matplotlib, cupy, shapely, geopandas, numba,
+  scikit-learn) resolve the third-party types. To use a type of another library, add its inventory to
+  `intersphinx_mapping`.
+
+When the build reports `py:obj reference target not found: x`, the usual causes are a name written in single
+backticks that is not an object (use double backticks), a stale name after a rename, or a missing module path.
 
 ## Examples
 

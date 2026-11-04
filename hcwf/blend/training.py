@@ -1,18 +1,18 @@
 """Training a blend: every stage in memory, from input files to the fitted model.
 
-`train(rc)` runs the stages in order: the thresholds (`hcwf.io.input.thresholds_of`), the observed onsets, the forecast
+``train(rc)`` runs the stages in order: the thresholds (`~hcwf.io.thresholds.thresholds_of`), the observed onsets, the forecast
 onsets of each model (units the climatology keeps), the climatology and the weekly features (`hcwf.blend.features`, on
 HCWF's one detection adapter), then the cross-validated evaluation and the final fit (`hcwf.blend.evaluation`), and
-returns a `TrainingResult`. `rc` is the run's RunConfig: it holds the blend-only settings (`rc.blend`, a
-`hcwf.blend.recipe.Recipe`) and the resolved onset setup (`rc.onset`).
+returns a `TrainingResult`. ``rc`` is the run's RunConfig: it holds the blend-only settings (``rc.blend``, a
+`hcwf.blend.recipe.Recipe`) and the resolved onset setup (``rc.onset``).
 
 `TrainingResult.save` writes blending's output contract (docs/pipeline-redesign.md in onset_blending): the evaluation's
 artifacts under the contract's own names (not HCWF's short ones), plus the chosen intermediates. The trained blend
-(`trained.blend`, `hcwf.blend.trained.TrainedBlend.from_training`) is written beside them: it keeps the run's resolved
+(``trained.blend``, `hcwf.blend.trained.TrainedBlend.from_training`) is written beside them: it keeps the run's resolved
 config, the recipe, the fitted model and forest, the observed onsets, the units, the thresholds and reference onsets,
 and the climatology's years, which is all a forecast needs.
 
-Workers are the run's (`rc.parallel`; `hcwf.parallel`), the memory budget is half of the memory available now;
+Workers are the run's (``rc.parallel``; `hcwf.parallel`), the memory budget is half of the memory available now;
 every stage runs on the run's worker pool.
 """
 
@@ -98,7 +98,7 @@ def prepare(rc: RunConfig, *, test_years: tuple[int, int] | None = None,
             keep: tuple[str, ...] = STAGE_TABLES) -> Inputs:
     """Compute the stages of a run: observed and forecast onsets, the climatology and the weekly features.
 
-    The random forest's inputs are added when the recipe has one. Forecast and climatology arrays not in `keep` are
+    The random forest's inputs are added when the recipe has one. Forecast and climatology arrays not in ``keep`` are
     released once the features are built; the observed onsets and weekly features are always kept.
 
     Parameters
@@ -220,7 +220,7 @@ class TrainingResult:
         Raises
         ------
         FileExistsError
-            `directory` exists and is not empty.
+            ``directory`` exists and is not empty.
         ValueError
             An intermediate is not ``"observed"`` or ``"weekly"``.
         """

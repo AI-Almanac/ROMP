@@ -79,7 +79,7 @@ def _season_window(rc):
 def obs_onset_analysis(year, rc, lat_select=11, lon_select=39, incl_clim=True):
     """Detect the observed onset of a year and plot the rainfall time series at a grid point.
 
-    The grid point is the one nearest to `lat_select` and `lon_select`. The figure is saved in
+    The grid point is the one nearest to ``lat_select`` and ``lon_select``. The figure is saved in
     ``rc.output.figure_dir`` as ``onset_time_series_lat<lat>_lon<lon>_<year>.png``.
 
     Parameters

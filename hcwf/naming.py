@@ -8,7 +8,7 @@ The helpers here are small and dependency-free. Tuples such as a verification wi
 def combi_to_str(combi, sep="_", tuple_sep="-", suffix=""):
     """Convert a combination such as ``('a', (1, 15), 'X')`` into a string tag.
 
-    Strings and numbers are used as they are; tuples are joined with `tuple_sep`.
+    Strings and numbers are used as they are; tuples are joined with ``tuple_sep``.
 
     Parameters
     ----------

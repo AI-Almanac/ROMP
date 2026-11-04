@@ -2,7 +2,7 @@
 
 Two datasets that disagree about what a date means are usually shifted against each other by exactly one day. These
 checks correlate sqrt-rain anomalies at small lags and report which lag fits best. Lag ``L`` pairs day ``t`` of
-`other` (or the forecast's date label ``t``) with day ``t + L`` of the reference (observations).
+``other`` (or the forecast's date label ``t``) with day ``t + L`` of the reference (observations).
 
 The module holds the two report dataclasses (`AlignmentReport`, `ForecastAlignmentReport`), the checks that fill them
 (`check_alignment` for two observation-like datasets, `check_forecast_alignment` for a forecast against
@@ -104,7 +104,7 @@ class ForecastAlignmentReport:
 def _match_axis(ref: np.ndarray, other: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Match the values of two coordinate axes within the tolerance.
 
-    Each value of `ref` is paired with the nearest value of `other`; the pair is kept when they differ by at most
+    Each value of ``ref`` is paired with the nearest value of ``other``; the pair is kept when they differ by at most
     ``1e-6`` (the tolerance ``_COORD_TOL``).
 
     Parameters
@@ -117,7 +117,7 @@ def _match_axis(ref: np.ndarray, other: np.ndarray) -> tuple[np.ndarray, np.ndar
     Returns
     -------
     tuple of (numpy.ndarray of int64, numpy.ndarray of int64)
-        The indices into `ref` and into `other` of the matched values, in the order of `ref`; both empty when either
+        The indices into ``ref`` and into ``other`` of the matched values, in the order of ``ref``; both empty when either
         axis is empty.
     """
     ref = np.asarray(ref, dtype=float)
@@ -168,7 +168,7 @@ def _sqrt_field(tenths: np.ndarray, missing: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64, same shape as `tenths`
-        ``sqrt(mm)``, ``NaN`` where `missing`.
+        ``sqrt(mm)``, ``NaN`` where ``missing``.
     """
     return np.where(missing, np.nan, np.sqrt(np.maximum(tenths, 0) / 10.0))
 
@@ -293,7 +293,7 @@ def _boundary_shift(ref_boundary: str, other_boundary: str, other_label: str | N
     other_boundary : str
         The day boundary of the other dataset.
     other_label : str, optional
-        Replaces the labelling (``"start"`` or ``"end"``) of `other_boundary`, for a forecast's ``lead_label``.
+        Replaces the labelling (``"start"`` or ``"end"``) of ``other_boundary``, for a forecast's ``lead_label``.
 
     Returns
     -------
@@ -329,8 +329,8 @@ def _boundary_notes(shift: float | None, ref_boundary: str, other_boundary: str,
     Returns
     -------
     list of str
-        One note when the boundaries differ (saying whether the implied lag matches `best_lag`), a note that they could
-        not be parsed when `shift` is None, else an empty list.
+        One note when the boundaries differ (saying whether the implied lag matches ``best_lag``), a note that they could
+        not be parsed when ``shift`` is None, else an empty list.
     """
     if shift is None:
         return ["could not parse the declared day boundaries"]
@@ -375,7 +375,7 @@ def _empty_report(reference: str, other: str, note: str, notes: list[str]) -> Al
     other : str
         The source name of the other dataset.
     note : str
-        The reason, appended to `notes`.
+        The reason, appended to ``notes``.
     notes : list of str
         The notes collected so far.
 
@@ -400,16 +400,16 @@ def _check_dims(rain: DailyRain, who: str) -> None:
     Raises
     ------
     ValueError
-        The dims of `rain` are not exactly ``lat``, ``lon`` and ``time``.
+        The dims of ``rain`` are not exactly ``lat``, ``lon`` and ``time``.
     """
     if set(rain.dims) != {"lat", "lon", "time"}:
         raise ValueError(f"{who} must have dims lat, lon and time; got {rain.dims}")
 
 
 def check_alignment(reference: DailyRain, other: DailyRain, max_lag: int = 3) -> AlignmentReport:
-    """Correlate the sqrt-rain anomalies of `other` with `reference` at lags ``-max_lag`` to ``max_lag``.
+    """Correlate the sqrt-rain anomalies of ``other`` with ``reference`` at lags ``-max_lag`` to ``max_lag``.
 
-    Lag ``L`` compares day ``t`` of `other` with day ``t + L`` of `reference`. Cells are matched by coordinates
+    Lag ``L`` compares day ``t`` of ``other`` with day ``t + L`` of ``reference``. Cells are matched by coordinates
     (tolerance ``1e-6``, nothing is regridded); anomalies remove each cell's mean over the compared days and
     correlations are pooled over cells and days. The verdict is ``"likely shifted by N day(s)"`` when the best lag
     ``N != 0`` beats lag 0 by more than 0.02 with ``r > 0.1``, ``"aligned"`` when lag 0 has ``r > 0.1`` and no such shift
@@ -494,7 +494,7 @@ def check_forecast_alignment(obs: DailyRain, forecast: ForecastRain, leads=(1, 2
     Raises
     ------
     ValueError
-        `obs` does not have exactly the dims ``lat``, ``lon`` and ``time``, `forecast` lacks ``lat`` or ``lon``, or a
+        ``obs`` does not have exactly the dims ``lat``, ``lon`` and ``time``, ``forecast`` lacks ``lat`` or ``lon``, or a
         lead is not among the forecast leads.
     """
     _check_dims(obs, "obs")
@@ -615,13 +615,13 @@ def forecast_alignment_from_samples(obs_days: np.ndarray, forecast: np.ndarray, 
     ----------
     obs_days : numpy.ndarray, shape (init, day, cell)
         Sqrt-rain for day index ``j = (days after the init) + pad``, so it must reach from ``-pad`` to the largest lead
-        offset plus `max_lag`.
+        offset plus ``max_lag``.
     forecast : numpy.ndarray, shape (init, lead, cell)
-        The member-mean sqrt-rain of `leads`.
+        The member-mean sqrt-rain of ``leads``.
     leads : iterable of int
-        The lead days, in the order of the ``lead`` axis of `forecast`.
+        The lead days, in the order of the ``lead`` axis of ``forecast``.
     pad : int
-        The offset of day 0 in the day axis of `obs_days`.
+        The offset of day 0 in the day axis of ``obs_days``.
     lead_label : {"start", "end"}
         How a lead is dated.
     obs : str
@@ -631,7 +631,7 @@ def forecast_alignment_from_samples(obs_days: np.ndarray, forecast: np.ndarray, 
     n_inits : int
         The number of inits, reported as the overlap days of each lead.
     obs_boundary : str, default ""
-        The observation day boundary; with `forecast_boundary` it adds the implied-lag note.
+        The observation day boundary; with ``forecast_boundary`` it adds the implied-lag note.
     forecast_boundary : str, default ""
         The forecast day boundary.
     max_lag : int, default 3

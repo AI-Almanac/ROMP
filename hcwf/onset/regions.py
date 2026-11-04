@@ -72,7 +72,7 @@ class Region:
 
 
 def _fail(origin: str, path: str, message: str):
-    """Raise a `RegionError` naming the file and YAML path.
+    """Raise a `~hcwf.errors.RegionError` naming the file and YAML path.
 
     Parameters
     ----------
@@ -94,7 +94,7 @@ def _fail(origin: str, path: str, message: str):
 def _mapping(value, origin: str, path: str, allowed: tuple[str, ...]) -> dict:
     """Check that a value is a mapping with only allowed keys.
 
-    A `RegionError` is raised (by `_fail`) when `value` is not a mapping or has a key that is not allowed.
+    A `~hcwf.errors.RegionError` is raised (by `_fail`) when ``value`` is not a mapping or has a key that is not allowed.
 
     Parameters
     ----------
@@ -103,14 +103,14 @@ def _mapping(value, origin: str, path: str, allowed: tuple[str, ...]) -> dict:
     origin : str
         The file name, for error messages.
     path : str
-        The YAML path of `value`, for error messages.
+        The YAML path of ``value``, for error messages.
     allowed : tuple of str
         The keys the mapping may have.
 
     Returns
     -------
     dict
-        `value` itself.
+        ``value`` itself.
     """
     if not isinstance(value, dict):
         _fail(origin, path, f"expected a mapping but found {value!r}. Fix: write 'key: value' lines")
@@ -124,7 +124,7 @@ def _mapping(value, origin: str, path: str, allowed: tuple[str, ...]) -> dict:
 def _strings(value, origin: str, path: str) -> tuple[str, ...]:
     """Check that a value is a list of strings.
 
-    A `RegionError` is raised (by `_fail`) when it is not.
+    A `~hcwf.errors.RegionError` is raised (by `_fail`) when it is not.
 
     Parameters
     ----------
@@ -133,7 +133,7 @@ def _strings(value, origin: str, path: str) -> tuple[str, ...]:
     origin : str
         The file name, for error messages.
     path : str
-        The YAML path of `value`, for error messages.
+        The YAML path of ``value``, for error messages.
 
     Returns
     -------
@@ -148,7 +148,7 @@ def _strings(value, origin: str, path: str) -> tuple[str, ...]:
 def _span(value, origin: str, path: str) -> tuple[float, float]:
     """Check that a value is a ``[low, high]`` pair of numbers with ``low < high``.
 
-    A `RegionError` is raised (by `_fail`) when it is not.
+    A `~hcwf.errors.RegionError` is raised (by `_fail`) when it is not.
 
     Parameters
     ----------
@@ -157,7 +157,7 @@ def _span(value, origin: str, path: str) -> tuple[float, float]:
     origin : str
         The file name, for error messages.
     path : str
-        The YAML path of `value`, for error messages.
+        The YAML path of ``value``, for error messages.
 
     Returns
     -------
@@ -269,7 +269,7 @@ def _parse(text: str, origin: str, base: Path | None = None) -> Region:
 def _parse_units(value, origin: str, base: Path | None) -> UnitsSpec:
     """Validate a ``units:`` block: a shapefile (with its id column) or a weights table, and optional extras.
 
-    A `RegionError` is raised (by `_fail`) when the block has an unknown key, a value that is not text, a wrong
+    A `~hcwf.errors.RegionError` is raised (by `_fail`) when the block has an unknown key, a value that is not text, a wrong
     combination of keys, or is rejected by `hcwf.spatial.units.UnitsSpec`.
 
     Parameters
@@ -321,7 +321,7 @@ def region_ids() -> list[str]:
 def _index() -> dict[str, Region]:
     """Load every region, keyed by lower-cased id and alias.
 
-    The result is cached for the process. A `RegionError` is raised (by `_fail`) when a file is invalid, its id differs
+    The result is cached for the process. A `~hcwf.errors.RegionError` is raised (by `_fail`) when a file is invalid, its id differs
     from its file name, or an alias is used twice.
 
     Returns
@@ -451,7 +451,7 @@ def check_definition_region(defn: Definition, name: str) -> str | None:
 def box(name: str) -> tuple[float, float, float, float]:
     """Return the ``domain`` box of a region; the name matches by id or alias, ignoring case.
 
-    A `RegionError` is raised (by `_fail`) when the region has no domain box.
+    A `~hcwf.errors.RegionError` is raised (by `_fail`) when the region has no domain box.
 
     Parameters
     ----------

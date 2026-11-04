@@ -1,6 +1,6 @@
 """Climatological onset dates from observed rainfall, and climatology used as a baseline forecast.
 
-The functions take the typed inputs of `hcwf.config.model` (the run `rc`, the `case` and the per-call `select`).
+The functions take the typed inputs of `hcwf.config.model` (the run ``rc``, the ``case`` and the per-call `select`).
 `climatological_onset` and `climatological_onset_dataset` compute the climatology from the observed onsets of the
 climatology years (`hcwf.onset.detect.detect_observed`), and `compute_climatology_as_forecast` turns it into a baseline
 forecast table.
@@ -29,7 +29,7 @@ _MEMO = memo("references.climatology.onsets", maxsize=32)
 
 
 class _YearRain:
-    """One climatology year's observations, read when the object is called (`detect_observed` does so on a cache miss).
+    """One climatology year's observations, read when the object is called (``detect_observed`` does so on a cache miss).
 
     `probe` stands in for the rain where only its grid is needed (the observed-onset cache's fingerprint): the cells
     of the year from the file's coordinates, or the held reference rain's own, without reading any rainfall.
@@ -77,7 +77,7 @@ class _YearRain:
 
 
 def _year_readers(years, rc, select, shared=True):
-    """Make a `_YearRain` for each year: its observations are read only when called, on a cache miss of `detect_observed`.
+    """Make a `_YearRain` for each year: its observations are read only when called, on a cache miss of ``detect_observed``.
 
     Calling it returns the rain (`hcwf.io.observations.observation_years_of`: read in blocks or ahead) or raises the
     year's read error. A year the thresholds were just computed from comes as the ``DailyRain`` of that already read and
@@ -100,7 +100,7 @@ def _year_readers(years, rc, select, shared=True):
     Returns
     -------
     list of _YearRain
-        One reader per year, in the order of `years`.
+        One reader per year, in the order of ``years``.
     """
     years = list(years)
     held = {year: None for year in years}
@@ -234,7 +234,7 @@ def compute_climatology_as_forecast(climatological_onset_doy, init_dates, observ
     ----------
     climatological_onset_doy : xarray.DataArray or hcwf.onset.climatology.ReferenceOnset
         The climatological onset day of year, or a ``ReferenceOnset`` (its day-of-year field on the grid of
-        `observed_onset_da`).
+        ``observed_onset_da``).
     init_dates : pandas.DatetimeIndex
         The initialization dates.
     observed_onset_da : xarray.DataArray of datetime64

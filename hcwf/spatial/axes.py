@@ -21,7 +21,7 @@ GRID_TOLERANCE = 0.01
 
 
 def spatial_dims(names) -> tuple[str, ...]:
-    """Return the spatial dims: ``("unit",)`` when `names` hold a unit axis, else ``("lat", "lon")``.
+    """Return the spatial dims: ``("unit",)`` when ``names`` hold a unit axis, else ``("lat", "lon")``.
 
     Parameters
     ----------
@@ -56,7 +56,7 @@ def coords_of(obj, dims=None) -> dict:
 
 
 def first_close(values, targets, tolerance=GRID_TOLERANCE):
-    """Find the index in `values` of the first entry within `tolerance` of each target, -1 where there is none.
+    """Find the index in ``values`` of the first entry within ``tolerance`` of each target, -1 where there is none.
 
     Parameters
     ----------
@@ -91,13 +91,13 @@ def date_strings(values) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of object, shape (date,)
-        The strings, in the order of `values`.
+        The strings, in the order of ``values``.
     """
     return pd.DatetimeIndex(values).strftime("%Y-%m-%d").to_numpy(dtype=object)
 
 
 def columns_of(dims, coords, index) -> dict:
-    """Return the table columns of the points at `index`.
+    """Return the table columns of the points at ``index``.
 
     Parameters
     ----------
@@ -126,7 +126,7 @@ def locate(da, columns: dict):
     da : xarray.DataArray
         An array over the spatial dims (its coordinates are searched).
     columns : dict of str to array_like
-        The values of each row for the dims of `da`: ``{dim: values}``.
+        The values of each row for the dims of ``da``: ``{dim: values}``.
 
     Returns
     -------
@@ -150,7 +150,7 @@ def locate(da, columns: dict):
 
 
 def flat_positions(points: pd.DataFrame, dims, coords) -> np.ndarray:
-    """Find the position of each row of `points` in the raveled array over `dims` with `coords` (exact match).
+    """Find the position of each row of ``points`` in the raveled array over ``dims`` with ``coords`` (exact match).
 
     Parameters
     ----------
@@ -173,7 +173,7 @@ def flat_positions(points: pd.DataFrame, dims, coords) -> np.ndarray:
 
 
 def snap(values, dims, coords, lead: int = 0):
-    """Re-index the last ``len(dims)`` axes of `values` by the first coordinate within tolerance of each (grids only).
+    """Re-index the last ``len(dims)`` axes of ``values`` by the first coordinate within tolerance of each (grids only).
 
     The identity unless a coordinate repeats within the tolerance; units are matched by id and need no snapping.
 
@@ -191,7 +191,7 @@ def snap(values, dims, coords, lead: int = 0):
     Returns
     -------
     numpy.ndarray
-        The snapped array (`values` itself for units).
+        The snapped array (``values`` itself for units).
     """
     if dims == UNIT:
         return values
@@ -205,7 +205,7 @@ def snap(values, dims, coords, lead: int = 0):
 
 
 def broadcast_rows(rows, ndim: int):
-    """Shape one value per leading row to broadcast against arrays of `ndim` dims.
+    """Shape one value per leading row to broadcast against arrays of ``ndim`` dims.
 
     Parameters
     ----------

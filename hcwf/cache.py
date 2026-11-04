@@ -14,7 +14,7 @@ Without a root the store is in memory only. A failure of the disk (read-only fol
 never stops a run. `Store.entries` lists a kind's entries (size, age) and `Store.prune` deletes them (``hcwf-run cache``).
 
 The other half of this module is the in-memory side, the state of one run: every table a module keeps for the life of a
-run is a `Memo` made by `memo(name, ...)` and registered here, so that `reset_run_state` clears them all (`run_scope`
+run is a `Memo` made by ``memo(name, ...)`` and registered here, so that `reset_run_state` clears them all (`run_scope`
 does so at the start and the end of every run entry), the workers' snapshot takes the shared ones (`shared_state`,
 `install_shared_state`) and nothing depends on which tables a caller remembered to clear.
 """
@@ -45,11 +45,11 @@ _META = frozenset(("zarr.json", ".zmetadata", ".zgroup", ".zattrs", ".zarray"))
 
 
 class Memo:
-    """A registered in-memory table of one run: a small dict that keeps at most `maxsize` items (least recently used out).
+    """A registered in-memory table of one run: a small dict that keeps at most ``maxsize`` items (least recently used out).
 
     Make one with `memo`, never directly. It holds what a module learns during a run (a loaded threshold set, a built mask,
     the open zarr stores), keyed by what the value depends on. Every operation takes a lock, so the reader threads of a run
-    can share one. `share` marks a table whose items the workers need (it is part of `shared_state`); `persistent` one that
+    can share one. ``share`` marks a table whose items the workers need (it is part of `shared_state`); ``persistent`` one that
     holds only values fixed by the files of the installation (Natural Earth shapes), which a run reset keeps.
 
     Parameters
@@ -118,19 +118,19 @@ class Memo:
             return iter(list(self._items))
 
     def get(self, key, default=None):
-        """Return the item of `key` (it becomes the most recently used), else `default`.
+        """Return the item of ``key`` (it becomes the most recently used), else ``default``.
 
         Parameters
         ----------
         key : hashable
             The key to look up.
         default : object, optional
-            Returned when there is no item for `key`.
+            Returned when there is no item for ``key``.
 
         Returns
         -------
         object
-            The item, or `default`.
+            The item, or ``default``.
         """
         with self._lock:
             if key not in self._items:
@@ -178,7 +178,7 @@ class Memo:
                 self._items.popitem(last=False)
 
     def setdefault(self, key, value):
-        """Return the item of `key`, set to `value` first when there is none.
+        """Return the item of ``key``, set to ``value`` first when there is none.
 
         Parameters
         ----------
@@ -190,7 +190,7 @@ class Memo:
         Returns
         -------
         object
-            The item now held under `key`.
+            The item now held under ``key``.
         """
         with self._lock:
             if key not in self._items:
@@ -198,7 +198,7 @@ class Memo:
             return self.get(key)
 
     def get_or_make(self, key, make: Callable[[], Any]):
-        """Return the item of `key`; else make it, keep it and return it (one maker at a time, so a value is built once).
+        """Return the item of ``key``; else make it, keep it and return it (one maker at a time, so a value is built once).
 
         Parameters
         ----------
@@ -220,14 +220,14 @@ class Memo:
             return value
 
     def pop(self, key, *default):
-        """Remove and return the item of `key`, like ``dict.pop``.
+        """Remove and return the item of ``key``, like ``dict.pop``.
 
         Parameters
         ----------
         key : hashable
             The key.
         *default : object
-            Returned when there is no item for `key`; without it a missing key raises.
+            Returned when there is no item for ``key``; without it a missing key raises.
 
         Returns
         -------
@@ -260,7 +260,7 @@ class Memo:
             return list(self._items.values())
 
     def update(self, items: Mapping) -> None:
-        """Keep every item of a mapping (as `__setitem__` does).
+        """Keep every item of a mapping (as ``__setitem__`` does).
 
         Parameters
         ----------
@@ -272,7 +272,7 @@ class Memo:
                 self[key] = value
 
     def clear(self) -> None:
-        """Drop every item, calling `on_clear` with each (e.g. to close what it holds); a failure there is only logged."""
+        """Drop every item, calling ``on_clear`` with each (e.g. to close what it holds); a failure there is only logged."""
         with self._lock:
             held = list(self._items.values())
             self._items.clear()
@@ -294,7 +294,7 @@ _SCOPE_LOCK = threading.Lock()
 
 def memo(name: str, maxsize: int | None = None, *, share: bool = False, persistent: bool = False,
          on_clear: Callable[[Any], None] | None = None) -> Memo:
-    """Register and return the in-memory table `name`.
+    """Register and return the in-memory table ``name``.
 
     The name is the module path under hcwf and what the table holds, e.g. ``"io.thresholds.loaded"`` in
     hcwf/io/thresholds.py (a shared table's module is imported by name in the workers). Making a name again replaces
@@ -539,7 +539,7 @@ def part_hash(*values) -> str:
 
 
 def atomic_write(path, write: Callable[[Path], None]) -> None:
-    """Make `path` (a file, or a folder `write` creates) by writing a temporary path and renaming it over `path`.
+    """Make ``path`` (a file, or a folder ``write`` creates) by writing a temporary path and renaming it over ``path``.
 
     Nothing is left behind on failure.
 
@@ -553,7 +553,7 @@ def atomic_write(path, write: Callable[[Path], None]) -> None:
     Raises
     ------
     BaseException
-        Whatever `write` or the rename raised (including ``KeyboardInterrupt``), after the temporary path is removed.
+        Whatever ``write`` or the rename raised (including ``KeyboardInterrupt``), after the temporary path is removed.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -811,7 +811,7 @@ class Store:
     Parameters
     ----------
     kind : str
-        The kind of result; the folder name under `root`.
+        The kind of result; the folder name under ``root``.
     root : str or pathlib.Path, optional
         The cache root; None keeps the store in memory for this process.
     codec : Codec, default `PICKLE`
@@ -820,7 +820,7 @@ class Store:
         Starts the fingerprint (``obs-1a2b...``).
     label : str, optional
         Names the store in the log lines (hit, miss, and on a miss the parts that differ from the nearest entry); default
-        `kind`.
+        ``kind``.
     describe : callable, optional
         ``describe(value)`` returns text that is added to the line of a hit.
     miss_note : str, default ""
@@ -934,7 +934,7 @@ class Store:
         return value
 
     def put(self, parts: Mapping, value: Any) -> None:
-        """Keep `value` under these parts (memory, and disk when there is a root); a disk failure is only logged.
+        """Keep ``value`` under these parts (memory, and disk when there is a root); a disk failure is only logged.
 
         Parameters
         ----------
@@ -1060,7 +1060,7 @@ class Store:
         return sorted(found, key=lambda e: (e.mtime, e.name))
 
     def prune(self, *, older_than: float | None = None, dry_run: bool = False, now: float | None = None) -> list[Entry]:
-        """Delete this kind's entries last written more than `older_than` seconds ago.
+        """Delete this kind's entries last written more than ``older_than`` seconds ago.
 
         An entry that cannot be deleted is left and not returned.
 
@@ -1076,7 +1076,7 @@ class Store:
         Returns
         -------
         list of Entry
-            The entries deleted (or, with `dry_run`, the ones that would be).
+            The entries deleted (or, with ``dry_run``, the ones that would be).
         """
         now = time.time() if now is None else now
         chosen = [e for e in self.entries() if older_than is None or now - e.mtime > older_than]

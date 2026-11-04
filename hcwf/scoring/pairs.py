@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 
 def _case_of(rc, model):
-    """Return the case that reads `model` in the run's first window (the pairs do not depend on the window).
+    """Return the case that reads ``model`` in the run's first window (the pairs do not depend on the window).
 
     Parameters
     ----------
@@ -47,9 +47,9 @@ def _case_of(rc, model):
 
 
 def forecast_obs_pairs(rc, model, years, select=Selection()):
-    """Return the forecast-observation pairs of an ensemble forecast over `years`, and the onset tables made on the way.
+    """Return the forecast-observation pairs of an ensemble forecast over ``years``, and the onset tables made on the way.
 
-    Runs in this process. The run `rc` carries the observations, onset definition, day bins and everything else the pairs
+    Runs in this process. The run ``rc`` carries the observations, onset definition, day bins and everything else the pairs
     depend on. Each year is read and detected once: the ensemble onset table of its detection is what the spatial
     metrics are made from (see `hcwf.scoring.onset_tables.share_ensemble_tables`). A year whose model or observation file
     is missing is skipped.
@@ -169,11 +169,11 @@ def _pairs_of_years(years, rc, model, select):
 
 
 def start_pairs(rc, model, select=Selection()):
-    """Start the forecast-observation pairs of `model` over the run's years.
+    """Start the forecast-observation pairs of ``model`` over the run's years.
 
     The thresholds and masks every year needs are read here first (`hcwf.io.warmup.warm_up_of`); with workers, the
     years run in them while this process goes on, and each worker gets only ``(rc, model, select)``. The ensemble onset
-    tables of the years that come back with the pairs are handed to the spatial metrics (`share_ensemble_tables`).
+    tables of the years that come back with the pairs are handed to the spatial metrics (`~hcwf.scoring.onset_tables.share_ensemble_tables`).
 
     Parameters
     ----------
@@ -216,7 +216,7 @@ def start_pairs(rc, model, select=Selection()):
 def climatological_pairs(clim_onset, rc, *, years, day_bins):
     """Return the climatological forecast-observation pairs of all target years, concatenated.
 
-    The run `rc` carries the init dates. An error in any year propagates; a year without pairs is left out.
+    The run ``rc`` carries the init dates. An error in any year propagates; a year without pairs is left out.
 
     Parameters
     ----------
@@ -289,7 +289,7 @@ class PreparedPairs(NamedTuple):
 
 
 def _climatology_years(years, clim_onset, rc, case, select, day_bins):
-    """Return the climatology reference's pairs of `years` (the form `hcwf.parallel.concat_year_args` calls).
+    """Return the climatology reference's pairs of ``years`` (the form `hcwf.parallel.concat_year_args` calls).
 
     Parameters
     ----------
@@ -343,7 +343,7 @@ def _climatology_pairs(clim_onset, rc, case, select):
 
 
 def _reference_model(rc, model):
-    """Return the reference as a source to read when `model` is the forecast model it is scored against.
+    """Return the reference as a source to read when ``model`` is the forecast model it is scored against.
 
     The reference has its own settings, written once in `hcwf.config.model.RunConfig.reference_cases`.
 
@@ -363,7 +363,7 @@ def _reference_model(rc, model):
 
 
 def prepare_pairs(rc, model, select=Selection()):
-    """Build the forecast-observation pairs of `model` and of its reference, shared across its cases.
+    """Build the forecast-observation pairs of ``model`` and of its reference, shared across its cases.
 
     With worker processes the model's years are sent off first and the climatological onsets are computed here
     while they run; the climatology pairs then go to the same workers. Without them the years run inside

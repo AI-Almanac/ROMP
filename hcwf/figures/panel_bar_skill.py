@@ -26,7 +26,7 @@ def extract_overall_dict(dic, second_level_key):
     Returns
     -------
     array_1d : numpy.ndarray, shape (model,)
-        The value of `second_level_key` of each first-level entry, in the order of the keys.
+        The value of ``second_level_key`` of each first-level entry, in the order of the keys.
     first_level_keys : list of str
         The first-level keys (the models).
     """

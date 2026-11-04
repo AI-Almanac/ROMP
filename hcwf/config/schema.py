@@ -27,7 +27,7 @@ A YAML config is a mapping whose keys are either the flat config keys (e.g.
 `flatten_sections` maps a section entry to its flat key (`FIELDS` holds the mapping),
 `normalise` turns every value into the form the rest of HCWF expects (tuples, not lists;
 dates as ``(year, month, day)``), and `apply_defaults` fills the keys left out. All problems
-are collected and raised together as one `ConfigSchemaError`: unknown keys come with a
+are collected and raised together as one `~hcwf.errors.ConfigSchemaError`: unknown keys come with a
 "did you mean" suggestion, wrongly typed values name the key and the form expected.
 
 The module holds the table of keys (`FIELDS`, built from `Field`), the value kinds that check and normalise a value
@@ -420,7 +420,7 @@ def _years(value):
 def _pair(value, sep="-"):
     """Check a pair of whole numbers and return it as a tuple.
 
-    The pair is written ``[a, b]`` or as text ``"a-b"`` (with `sep` between the numbers).
+    The pair is written ``[a, b]`` or as text ``"a-b"`` (with ``sep`` between the numbers).
 
     Parameters
     ----------
@@ -1369,7 +1369,7 @@ def normalise_value(field: Field, value, written: str, errors: list[str]):
     Returns
     -------
     object
-        The normalised value; None for a null value and, with a message in `errors`, for an invalid one.
+        The normalised value; None for a null value and, with a message in ``errors``, for an invalid one.
     """
     if value is None:
         if field.nullable or field.kind == "any":
@@ -1463,7 +1463,7 @@ def raise_errors(errors: list[str], source: str) -> None:
     Raises
     ------
     ConfigSchemaError
-        `errors` is not empty.
+        ``errors`` is not empty.
     """
     if errors:
         report = "\n".join(f"  • {e}" for e in errors)

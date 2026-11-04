@@ -174,7 +174,7 @@ class ObservedOnsets:
         Returns
         -------
         frozenset of str
-            The ids of units with at least `min_onset_years` observed onsets over every season.
+            The ids of units with at least ``min_onset_years`` observed onsets over every season.
         """
         counts = (~np.isnan(self.data["onset_day"].values)).sum(axis=1)
         return frozenset(self.data["unit"].values[counts >= int(min_onset_years)].astype(str))
@@ -320,7 +320,7 @@ class Weekly:
         Raises
         ------
         KeyError
-            `name` is not a column.
+            ``name`` is not a column.
         """
         if name not in self.columns:
             raise KeyError(name)
@@ -347,7 +347,7 @@ class Weekly:
                 for name in self.columns}
 
     def outcome_codes(self, rows: np.ndarray | None = None, labels=None) -> np.ndarray:
-        """Return the samples' outcomes as positions into `labels`.
+        """Return the samples' outcomes as positions into ``labels``.
 
         Parameters
         ----------
@@ -359,8 +359,8 @@ class Weekly:
         Returns
         -------
         numpy.ndarray of int8, shape (sample,)
-            The position of each outcome in `labels`, -1 without an outcome, ``len(labels)`` for a label not in
-            `labels`.
+            The position of each outcome in ``labels``, -1 without an outcome, ``len(labels)`` for a label not in
+            ``labels``.
         """
         variable = self.data["outcome"]
         if "labels" not in variable.attrs:
@@ -543,7 +543,7 @@ class Weekly:
 
     @classmethod
     def of(cls, table) -> "Weekly":
-        """Return `table` as a `Weekly`.
+        """Return ``table`` as a `Weekly`.
 
         Parameters
         ----------
@@ -553,7 +553,7 @@ class Weekly:
         Returns
         -------
         Weekly
-            `table` itself if it is one, else `Weekly.from_frame` of it.
+            ``table`` itself if it is one, else `Weekly.from_frame` of it.
         """
         return table if isinstance(table, cls) else cls.from_frame(table)
 

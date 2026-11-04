@@ -79,7 +79,7 @@ def extent(da, units=None):
     Parameters
     ----------
     da : xarray.DataArray
-        The field; used for its ``lat`` and ``lon`` axes when `units` is None.
+        The field; used for its ``lat`` and ``lon`` axes when ``units`` is None.
     units : object, optional
         The unit table from `units_of`. None means a grid field.
 
@@ -120,7 +120,7 @@ def _path(geometry) -> Path:
 
     Parameters
     ----------
-    geometry : shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+    geometry : shapely.Polygon or shapely.MultiPolygon
         The geometry; every exterior and interior ring becomes a closed sub-path.
 
     Returns
@@ -193,9 +193,9 @@ def _draw_units(ax, da, units, style, edgecolor="grey", linewidth=0.3):
 
 
 def draw_field(ax, da, units=None, *, shading="auto", **style):
-    """Draw a field on `ax` and return the mappable to give a colorbar.
+    """Draw a field on ``ax`` and return the mappable to give a colorbar.
 
-    A ``(lat, lon)`` field is a pcolormesh. A ``(unit)`` field is drawn on the polygons of `units` (see `units_of`).
+    A ``(lat, lon)`` field is a pcolormesh. A ``(unit)`` field is drawn on the polygons of ``units`` (see `units_of`).
 
     Parameters
     ----------

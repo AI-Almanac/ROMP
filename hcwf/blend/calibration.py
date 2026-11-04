@@ -27,7 +27,7 @@ def cross_validated(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, traina
                     holdout_years, *, workers: int = 1) -> list[tuple[int, np.ndarray, np.ndarray]]:
     """Return the calibrated probabilities of each holdout year.
 
-    For each year of `holdout_years`, every bin's probability is recalibrated by a logistic regression of the
+    For each year of ``holdout_years``, every bin's probability is recalibrated by a logistic regression of the
     outcome on the raw probability, fitted on the trainable samples of the other years; a bin without enough such
     samples (fewer than 10 usable, or a single outcome class) keeps its raw probability. The rows are then
     normalised to sum to 1 (a zero sum is left as is). A year without samples is left out of the result.
@@ -162,7 +162,7 @@ def export_weights(P: np.ndarray, outcome: np.ndarray, labels) -> pd.DataFrame:
     outcome : numpy.ndarray of int, shape (sample,)
         The observed bin code of each sample, -1 where there is none.
     labels : sequence
-        The label of each bin, in the column order of `P`.
+        The label of each bin, in the column order of ``P``.
 
     Returns
     -------

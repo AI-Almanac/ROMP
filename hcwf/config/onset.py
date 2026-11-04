@@ -168,7 +168,7 @@ def _years(value, key: str) -> tuple[int, int]:
     Raises
     ------
     OnsetConfigError
-        `value` is not a pair of years, or the first is after the last.
+        ``value`` is not a pair of years, or the first is after the last.
     """
     try:
         first, last = (int(v) for v in value)
@@ -199,7 +199,7 @@ def _threshold_files(value, definition: Definition):
     Raises
     ------
     OnsetConfigError
-        `value` is not a mapping, names a threshold the definition does not use, or has a malformed reference.
+        ``value`` is not a mapping, names a threshold the definition does not use, or has a malformed reference.
     """
     if not value:
         return (), ()
@@ -240,7 +240,7 @@ def _backend(requested):
     Raises
     ------
     OnsetConfigError
-        `requested` is not one of `BACKENDS`.
+        ``requested`` is not one of `BACKENDS`.
     """
     if requested not in BACKENDS:
         raise OnsetConfigError(f"onset_backend = {requested!r} is unknown. Fix: use one of {', '.join(BACKENDS)}")
@@ -361,7 +361,7 @@ def _choices(cfg, key, allowed, default):
     Raises
     ------
     OnsetConfigError
-        The value is not one of `allowed`.
+        The value is not one of ``allowed``.
     """
     value = cfg.get(key)
     if value is None:

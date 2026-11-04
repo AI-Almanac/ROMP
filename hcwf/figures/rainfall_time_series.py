@@ -13,7 +13,7 @@ def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, lat_select,
     """Plot the rainfall time series of a grid point with the onset date marked.
 
     The grid point is the one nearest to the selected latitude and longitude. The figure is shown, and saved when
-    `save_path` is given.
+    ``save_path`` is given.
 
     Parameters
     ----------
@@ -30,11 +30,11 @@ def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, lat_select,
     save_path : str, optional
         Path to save the plot to (300 dpi); None does not save.
     incl_clim : bool, optional
-        Add the climatological rainfall `pr_clim` and the climatological onset `onset_clim`.
+        Add the climatological rainfall ``pr_clim`` and the climatological onset ``onset_clim``.
     pr_clim : xarray.DataArray, optional
-        Climatological daily rainfall in mm/day with a ``time`` coordinate; needed with `incl_clim`.
+        Climatological daily rainfall in mm/day with a ``time`` coordinate; needed with ``incl_clim``.
     onset_clim : datetime.datetime, optional
-        The climatological onset date; needed with `incl_clim`.
+        The climatological onset date; needed with ``incl_clim``.
 
     """
     # Select the nearest grid point

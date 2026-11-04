@@ -217,7 +217,7 @@ def _block_indices(n: int, per_index: int) -> list[np.ndarray]:
     """Return index blocks (start, middle, end of a length-n dim), each a run of consecutive positions.
 
     The run length is at most ``_SAMPLE_BLOCK_LEN`` and shrinks so the blocks stay within ``_SAMPLE_BUDGET`` values
-    (`per_index` values per position), but is never below 1.
+    (``per_index`` values per position), but is never below 1.
 
     Parameters
     ----------
@@ -251,14 +251,14 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
     da : xarray.DataArray
         The (lazy) variable.
     roles : dict of str to str
-        The role to dim name map of `da` (see ``_roles``).
+        The role to dim name map of ``da`` (see ``_roles``).
     key : hashable, optional
         A cache key, e.g. ``(path, mtime, variable)``; when given the result is kept in this process for the run.
 
     Returns
     -------
     xarray.DataArray
-        The loaded sample, with the attributes of `da`.
+        The loaded sample, with the attributes of ``da``.
     """
     if key is not None and key in _SAMPLES:
         return _SAMPLES[key]
@@ -292,7 +292,7 @@ def _sample(da: xr.DataArray, roles: dict) -> np.ndarray:
     da : xarray.DataArray
         The variable, preferably loaded.
     roles : dict of str to str
-        The role to dim name map of `da`.
+        The role to dim name map of ``da``.
 
     Returns
     -------
@@ -530,7 +530,7 @@ def _store() -> Store:
 
 
 def dataset_files(entry: dict) -> list[Path]:
-    """Return the files a dataset entry reads: its ``paths`` (see `resolve_paths`), the zarr store, or the NetCDF files.
+    """Return the files a dataset entry reads: its ``paths`` (see `~hcwf.config.datasets.resolve_paths`), the zarr store, or the NetCDF files.
 
     Parameters
     ----------
@@ -675,7 +675,7 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
     detect_lead_label : bool, default True
         Whether to detect ``lead_label`` by the alignment check when it is not given.
     lead_label_default : bool, default False
-        When ``lead_label`` is not given and not detected (`detect_lead_label` false), leave it unset ("derived from
+        When ``lead_label`` is not given and not detected (``detect_lead_label`` false), leave it unset ("derived from
         the day boundary") instead of making it a problem.
 
     Returns
@@ -761,7 +761,7 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
 def _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_label, lead_label_default):
     """Resolve a dataset that names its files in ``paths``: no ``file_pattern``; everything from the first file.
 
-    The files are the listed ones (`resolve_paths`), several per year if they are; the first holds the layout.
+    The files are the listed ones (`~hcwf.config.datasets.resolve_paths`), several per year if they are; the first holds the layout.
 
     Parameters
     ----------
@@ -785,7 +785,7 @@ def _resolve_listed(values, kind, res, specified, detected, obs, detect_lead_lab
     Returns
     -------
     Resolution
-        `res`.
+        ``res``.
     """
     problems = res.problems
     for key in ("paths", "years"):
@@ -857,7 +857,7 @@ def _resolve_zarr(folder, kind, res, specified, detected, obs, detect_lead_label
     Returns
     -------
     Resolution
-        `res`.
+        ``res``.
     """
     values, problems = res.values, res.problems
     try:
@@ -883,7 +883,7 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
                        lead_label_default=False):
     """Run the detections that need the opened sample file (variable, kind, dims, units, members, labels).
 
-    Everything is recorded in `res` (values, lines, problems, warnings, extent); a problem that makes the rest
+    Everything is recorded in ``res`` (values, lines, problems, warnings, extent); a problem that makes the rest
     meaningless (unknown variable, wrong kind, ambiguous variable) ends the detection early.
 
     Parameters
@@ -912,7 +912,7 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
     Returns
     -------
     None
-        Nothing; the outcome is in `res`.
+        Nothing; the outcome is in ``res``.
     """
     values, problems = res.values, res.problems
     gridded = [v for v in ds.data_vars if ds[v].ndim >= 3]
@@ -1091,9 +1091,9 @@ def _mtime(path) -> int:
 def _units(da, name, values, res, specified, detected, roles, guess=None, loaded=None):
     """Resolve the units (mm or m): given or read from the attribute; contradictions and unknowns are problems.
 
-    `guess` is the ``(units, evidence)`` of ``ingest.detect_units`` for forecasts: it names the likely units when none
-    can be read, and a given or attribute unit that disagrees with it is a warning. `loaded` is the in-memory sample
-    of `da` (`load_sample`); the magnitudes are read from it once, whichever checks need them.
+    ``guess`` is the ``(units, evidence)`` of ``ingest.detect_units`` for forecasts: it names the likely units when none
+    can be read, and a given or attribute unit that disagrees with it is a warning. ``loaded`` is the in-memory sample
+    of ``da`` (`load_sample`); the magnitudes are read from it once, whichever checks need them.
 
     Parameters
     ----------
@@ -1110,16 +1110,16 @@ def _units(da, name, values, res, specified, detected, roles, guess=None, loaded
     detected : callable
         ``detected(key, value, evidence)`` records a detected key.
     roles : dict of str to str
-        The role to dim name map of `da`.
+        The role to dim name map of ``da``.
     guess : tuple, optional
         The ``(units, evidence)`` guess from the daily totals (forecasts only).
     loaded : xarray.DataArray, optional
-        The loaded sample of `da`; `da` itself is sampled when None.
+        The loaded sample of ``da``; ``da`` itself is sampled when None.
 
     Returns
     -------
     None
-        Nothing; the outcome is in `res` and `values`.
+        Nothing; the outcome is in ``res`` and ``values``.
     """
     attr = da.attrs.get("units")
     from_attr = _units_from_attr(attr) if attr is not None else None
@@ -1176,7 +1176,7 @@ def finalize_units(values: dict) -> dict:
     Returns
     -------
     dict
-        `values`, with ``unit_cvt`` set when ``units`` is present.
+        ``values``, with ``unit_cvt`` set when ``units`` is present.
     """
     from hcwf.config.datasets import unit_factor
 
@@ -1299,11 +1299,11 @@ def read_forecast_file(path, entry: dict, *, lead_days=None, max_member=None, se
         The dataset keys the file is resolved with: ``variable``, and optionally ``dims`` (role to file dimension) and
         ``unit_cvt``, as `resolve_entry` takes them.
     lead_days : tuple of (int, int), optional
-        The model's lead-day window (first, last), applied when `selected`.
+        The model's lead-day window (first, last), applied when ``selected``.
     max_member : int, optional
-        The model's highest member id, applied when `selected`.
+        The model's highest member id, applied when ``selected``.
     selected : bool, default True
-        Give the signature after `lead_days` and `max_member`, as training reads the file; else everything the
+        Give the signature after ``lead_days`` and ``max_member``, as training reads the file; else everything the
         (live) file holds.
 
     Returns

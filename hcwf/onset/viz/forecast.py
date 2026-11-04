@@ -113,7 +113,7 @@ def _days(dates: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64
-        The days, ``NaN`` for ``NaT``; same shape as `dates`.
+        The days, ``NaN`` for ``NaT``; same shape as ``dates``.
     """
     values = dates.astype("datetime64[D]")
     return np.where(np.isnat(values), np.nan, values.astype("int64").astype(float))
@@ -162,7 +162,7 @@ def _climatology_cell(climatology: xr.Dataset, hist1: DailyRain, season: int) ->
     Raises
     ------
     ValueError
-        The cell has fewer than `season` seasons.
+        The cell has fewer than ``season`` seasons.
     """
     dims = hist1.dims[:-1]
     cell = climatology.sel({d: [float(hist1.coords[d][0])] for d in dims}, method="nearest")
@@ -208,7 +208,7 @@ def _observed_onsets(definition, hist1, thresholds, years, season_name, season_c
 
 
 def _thin(positions: list[float], priority: list[float], gap: float) -> list[int]:
-    """Return the indices to label: higher priority first, skipping any closer than `gap` to one already kept.
+    """Return the indices to label: higher priority first, skipping any closer than ``gap`` to one already kept.
 
     Parameters
     ----------
@@ -270,16 +270,16 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
                       season_climatology: xr.Dataset | None = None, mode: str = "light") -> Figure:
     """Draw the onset date of every ensemble member against the init date, with the observed onset as a line.
 
-    The dates come from ``engine.detect_forecast`` on the cell nearest ``(lat, lon)`` with `history` stitched in
+    The dates come from ``engine.detect_forecast`` on the cell nearest ``(lat, lon)`` with ``history`` stitched in
     before lead 1, and the observed onset from ``engine.detect_observed`` on the history. Each member with an onset is
     a dot; the median of the members that have one is the ink marker joined by a thin line; inits whose onset the
     history alone had decided (``PRIOR``) carry the status marker. Dots below the diagonal are back-dated into the
     history. Members without an onset are counted per init above the axes. Needs a standard calendar.
 
-    Derived (per-cell) seasons need `season_climatology` (``n_seasons``, ``onset_doy``, ``cessation_doy``, as from
-    ``climatology.harmonic_seasons``) and take `season` as 1 or 2 (default 1; `ValueError` when the cell has fewer).
+    Derived (per-cell) seasons need ``season_climatology`` (``n_seasons``, ``onset_doy``, ``cessation_doy``, as from
+    ``climatology.harmonic_seasons``) and take ``season`` as 1 or 2 (default 1; `ValueError` when the cell has fewer).
     The forecast and the observed onset both use that cell's derived season (``engine.detect_forecast`` with
-    `season_climatology`), and the subtitle names the season.
+    ``season_climatology``), and the subtitle names the season.
 
     Parameters
     ----------
@@ -312,7 +312,7 @@ def forecast_vs_truth(definition: Definition, forecast: ForecastRain, *, history
     Raises
     ------
     ValueError
-        The calendar is not standard, derived seasons lack `season_climatology`, `season` is below 1 or beyond the
+        The calendar is not standard, derived seasons lack ``season_climatology``, ``season`` is below 1 or beyond the
         cell's seasons, or the cell or season cannot be found.
     """
     if forecast.calendar not in _STANDARD:

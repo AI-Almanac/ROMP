@@ -4,6 +4,7 @@ Build with ``uv run --extra docs sphinx-build -W --keep-going -b html docs docs/
 See ``docs/contributing_docstrings.md`` for the docstring conventions this configuration renders.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -97,6 +98,124 @@ from sphinx.ext.napoleon.docstring import GoogleDocstring  # noqa: E402
 
 GoogleDocstring._parse_attribute_docstring = _attribute_docstring_without_inline_type
 
+# -- Type lines under nitpicky ------------------------------------------------------------------------------------------
+# napoleon turns every word of a type line into a cross-reference. The HCWF type lines also carry shape groups
+# (``shape (case, bin)``, ``same shape as `year```) and parenthesised tuples (``tuple of (int, int)``) that napoleon splits
+# at the commas into fragments such as "shape (case" and "bin)", which are not objects. Two small patches keep them
+# out of the cross-reference machinery without touching a docstring:
+#   * a shape group is rendered as a literal;
+#   * a "(" or ")" around an object is kept as text, so ``(int, int)`` still links both ``int``.
+# Everything else (dtype words, array_like, ...) is resolved with ``napoleon_type_aliases`` below.
+import sphinx.ext.napoleon.docstring as _napoleon_docstring  # noqa: E402
+
+_SHAPE_GROUP = re.compile(
+    r"\b(?:same |any )?shape\b"
+    r"(?: as `[^`]*`| ``[^`]*``| \((?:[^()]|\([^()]*\))*\)(?:,? or \((?:[^()]|\([^()]*\))*\))*| [A-Za-z_]\w*)?"
+)
+_SHAPE_MARK = re.compile(r":py:class:`\x00(\d+)\x00`")
+_original_convert_type_spec = _napoleon_docstring._convert_type_spec
+_original_convert_type_spec_obj = _napoleon_docstring._convert_type_spec_obj
+
+
+def _convert_type_spec_with_shapes(_type, translations=None, debug_location=None):
+    """Convert a type line, rendering its shape groups as literals instead of cross-references.
+
+    Parameters
+    ----------
+    _type : str
+        The type line.
+    translations : dict of str to str, optional
+        The ``napoleon_type_aliases``.
+    debug_location : str, optional
+        Where the line is, for napoleon's own warnings.
+
+    Returns
+    -------
+    str
+        The reST of the type line.
+    """
+    shapes = []
+
+    def mark(match):
+        """Replace a shape group by a placeholder object name and remember the group."""
+        shapes.append(match.group(0))
+        return f"\x00{len(shapes) - 1}\x00"
+
+    converted = _original_convert_type_spec(_SHAPE_GROUP.sub(mark, _type), translations, debug_location)
+    return _SHAPE_MARK.sub(lambda match: f"``{shapes[int(match.group(1))]}``", converted)
+
+
+def _convert_type_spec_obj_with_parentheses(obj, translations):
+    """Convert one object of a type line, keeping a surrounding ``(`` and ``)`` as plain text.
+
+    Parameters
+    ----------
+    obj : str
+        The object name, possibly with an opening or closing parenthesis from a tuple type.
+    translations : dict of str to str
+        The ``napoleon_type_aliases``.
+
+    Returns
+    -------
+    str
+        The reST of the object.
+    """
+    core = obj.strip("()")
+    head = obj[: len(obj) - len(obj.lstrip("("))]
+    tail = obj[len(obj.rstrip(")")) :]
+    if not re.fullmatch(r"[A-Za-z_][\w.\-]*(?:\[\w+\])?", core):
+        # Not an object name: punctuation such as "()" stays text, a number or an expression such as "1 << 22" is a literal.
+        return obj if not re.search(r"\w", core) else f"{head}``{core}``{tail}"
+    return head + _original_convert_type_spec_obj(core, translations) + tail
+
+
+_napoleon_docstring._convert_type_spec = _convert_type_spec_with_shapes
+_napoleon_docstring._convert_type_spec_obj = _convert_type_spec_obj_with_parentheses
+
+# Words of the type lines that are not importable objects, mapped to what they stand for.
+_NUMPY_DTYPES = ["int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float16", "float32", "float64"]
+napoleon_type_aliases = {
+    **{dtype: f":py:obj:`numpy.{dtype}`" for dtype in _NUMPY_DTYPES},
+    "datetime64": ":py:obj:`numpy.datetime64`",
+    "array_like": ":external+numpy:term:`array_like`",
+    "array-like": ":external+numpy:term:`array_like`",
+    "sequence": ":external+python:term:`sequence`",
+    "iterable": ":external+python:term:`iterable`",
+    "mapping": ":external+python:term:`mapping`",
+    "callable": ":external+python:term:`callable`",
+    "hashable": ":external+python:term:`hashable`",
+    "collection": ":class:`collections.abc.Collection`",
+    "module": ":external+python:term:`module`",
+    "file object": ":external+python:term:`file object`",
+    "datetime-like": ":literal:`datetime-like`",  # any of datetime.datetime, numpy.datetime64, pandas.Timestamp, cftime
+    "datetime64[ns]": ":py:obj:`datetime64[ns] <numpy.datetime64>`",
+    "datetime64[D]": ":py:obj:`datetime64[D] <numpy.datetime64>`",
+    "hashlib._Hash": ":literal:`hashlib._Hash`",  # the private type of hashlib's hash objects
+    # HCWF names written bare in type lines, where "default NO_SELECTION" and "Selection" cannot carry a module path.
+    "Selection": ":py:obj:`~hcwf.config.model.Selection`",
+    "NO_SELECTION": ":py:obj:`~hcwf.config.model.NO_SELECTION`",
+    "UnitsSpec": ":py:obj:`~hcwf.spatial.units.UnitsSpec`",
+    "ForecastRead": ":py:obj:`~hcwf.io.forecasts.ForecastRead`",
+    "Status": ":py:obj:`~hcwf.onset.model.Status`",
+    "NORMAL": ":literal:`NORMAL`",  # hcwf.log.NORMAL, a module constant that is not documented
+    "WASH_ALPHA": ":literal:`WASH_ALPHA`",  # hcwf.onset.viz.style.WASH_ALPHA, a module constant that is not documented
+    "_Context": ":literal:`_Context`",  # private dataclass of hcwf.blend.evaluation, not rendered
+    "_Cells": ":py:obj:`~hcwf.spatial.units._Cells`",
+}
+
+# Objects of libraries whose documentation publishes no inventory, and names that are not objects.
+nitpick_ignore_regex = [
+    # cartopy publishes no intersphinx inventory.
+    (r"py:class", r"cartopy\..*"),
+    # PyYAML publishes no intersphinx inventory.
+    (r"py:class", r"yaml\..*"),
+    (r"py:exc", r"yaml\..*"),
+    # shapely documents its geometry base class on a manual page only, so the class has no inventory entry.
+    (r"py:class", r"shapely\.(Geometry|geometry\.base\.BaseGeometry)"),
+    # The Raises section of hcwf.io.reference.read_years names the variable that is re-raised (`raise error`).
+    (r"py:exc", r"error"),
+]
+
 # -- Intersphinx --------------------------------------------------------------------------------------------------------
 
 intersphinx_mapping = {
@@ -106,8 +225,14 @@ intersphinx_mapping = {
     "xarray": ("https://docs.xarray.dev/en/stable/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "matplotlib": ("https://matplotlib.org/stable/", None),
+    "cupy": ("https://docs.cupy.dev/en/stable/", None),
+    "shapely": ("https://shapely.readthedocs.io/en/stable/", None),
+    "geopandas": ("https://geopandas.org/en/stable/", None),
+    "numba": ("https://numba.readthedocs.io/en/stable/", None),
+    "sklearn": ("https://scikit-learn.org/stable/", None),
 }
 intersphinx_timeout = 20
+nitpicky = True
 
 # -- Notebooks and markdown ---------------------------------------------------------------------------------------------
 

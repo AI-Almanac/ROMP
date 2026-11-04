@@ -240,7 +240,7 @@ def load_onset_thresholds(onset, obs, area, options, ev, output, *, model=None, 
 
     Files given in ``thresholds`` are used as they are; the others are computed from the observations of
     ``threshold_years`` (or the model's forecasts when ``threshold_source`` is ``"model"``) and cached under the
-    run's `cache_dir` (shared by runs), or the output's ``data_dir/.onset_cache`` when none is set. The returned
+    run's ``cache_dir`` (shared by runs), or the output's ``data_dir/.onset_cache`` when none is set. The returned
     thresholds also carry ``season_climatology`` for derived seasons.
 
     Parameters
@@ -367,8 +367,8 @@ def load_thresholds(onset, obs, area, options, ev, output, *, model=None,
                     select=NO_SELECTION, parallel=None, cache_dir=None):
     """Return the definition's named thresholds (what the onset detection takes as ``thresh_slice``).
 
-    `model` is the forecast model the thresholds come from when ``threshold_source`` is ``"model"``. Computed ones
-    are cached under `cache_dir`, or the output's data folder; the loaded set is kept for the run (see
+    ``model`` is the forecast model the thresholds come from when ``threshold_source`` is ``"model"``. Computed ones
+    are cached under ``cache_dir``, or the output's data folder; the loaded set is kept for the run (see
     `_loaded_thresholds`) and is the same object on the next call with the same inputs.
 
     Parameters
@@ -407,7 +407,7 @@ def load_thresholds(onset, obs, area, options, ev, output, *, model=None,
 
 
 def thresholds_of(rc, model, select=NO_SELECTION):
-    """Call `load_thresholds` with the settings of a run for the source `model`.
+    """Call `load_thresholds` with the settings of a run for the source ``model``.
 
     Parameters
     ----------

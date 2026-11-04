@@ -123,7 +123,7 @@ def _years_in(folder, pattern: str) -> tuple:
 
 
 def _listed_years(paths, base, years_filter) -> tuple:
-    """Return the years of the files a dataset lists in `paths`, sorted.
+    """Return the years of the files a dataset lists in ``paths``, sorted.
 
     Parameters
     ----------
@@ -362,7 +362,7 @@ def _candidate_inits(times, kw: dict) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of int64
-        The indices into `times`, increasing.
+        The indices into ``times``, increasing.
     """
     try:
         stamps = pd.to_datetime(np.asarray(times))
@@ -382,7 +382,7 @@ def _candidate_inits(times, kw: dict) -> np.ndarray:
 
 
 def _spread(n_available: int, n_wanted: int) -> np.ndarray:
-    """Return `n_wanted` indices spread evenly over ``range(n_available)``.
+    """Return ``n_wanted`` indices spread evenly over ``range(n_available)``.
 
     Parameters
     ----------
@@ -394,7 +394,7 @@ def _spread(n_available: int, n_wanted: int) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of int64
-        All of ``range(n_available)`` when `n_available` is not above `n_wanted`, else the distinct rounded points of an
+        All of ``range(n_available)`` when ``n_available`` is not above ``n_wanted``, else the distinct rounded points of an
         even spacing from the first to the last index.
     """
     if n_available <= n_wanted:
@@ -403,7 +403,7 @@ def _spread(n_available: int, n_wanted: int) -> np.ndarray:
 
 
 def _stride(n: int, step: int) -> np.ndarray:
-    """Return every `step`-th index of ``range(n)``, starting half a step in so the subgrid is centred.
+    """Return every ``step``-th index of ``range(n)``, starting half a step in so the subgrid is centred.
 
     Parameters
     ----------
@@ -480,7 +480,7 @@ def _member_count(da: xr.DataArray) -> int:
     Returns
     -------
     int
-        The number of members to read; ``SAMPLE_MEMBERS`` when `da` has no member dim or no chunk information.
+        The number of members to read; ``SAMPLE_MEMBERS`` when ``da`` has no member dim or no chunk information.
     """
     chunks = da.encoding.get("chunksizes") or da.encoding.get("chunks")
     if "member" not in da.dims or not chunks or len(chunks) != da.ndim:
@@ -632,7 +632,7 @@ def _obs_segments(kw: dict, years) -> list:
 def _read_obs(kw: dict, grid: tuple, forecast, pad: int, n_days: int):
     """Return the observed sqrt-rain for each init's days, read once per file or store.
 
-    For every init of `forecast` found in the observations, the days ``-pad .. n_days - pad - 1`` around its init date
+    For every init of ``forecast`` found in the observations, the days ``-pad .. n_days - pad - 1`` around its init date
     are read (rain rounded to tenths of mm; values below -0.05 mm are missing).
 
     Parameters
@@ -948,7 +948,7 @@ def check_models(jobs: dict, *, workers: int = 8, use_cache: bool = True) -> dic
     Parameters
     ----------
     jobs : dict
-        Maps a name to ``(kw, labels, options)`` where `options` are the keyword arguments of `check_labels`.
+        Maps a name to ``(kw, labels, options)`` where ``options`` are the keyword arguments of `check_labels`.
     workers : int, default 8
         The most threads; fewer when there are fewer jobs (one job runs in the calling thread).
     use_cache : bool, default True

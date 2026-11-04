@@ -41,7 +41,7 @@ def onset_metrics(onset_df, window, *, back_dated, default_dims):
     -------
     metrics_df : pandas.DataFrame
         One row per grid point (or evaluation unit, with a ``unit`` column instead of ``lat`` and ``lon``), in order of
-        first appearance in `onset_df`: the counts ``total_forecasts``, ``true_positive``, ``true_negative``,
+        first appearance in ``onset_df``: the counts ``total_forecasts``, ``true_positive``, ``true_negative``,
         ``false_positive``, ``false_negative``, ``num_onset``, ``num_no_onset``, the errors ``mae_combined``,
         ``mae_tp_only`` (days, NaN without cases), ``num_tp_errors``, ``num_fp_errors`` and the window columns.
     summary_stats : dict

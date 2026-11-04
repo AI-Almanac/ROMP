@@ -68,7 +68,7 @@ def configured(decimal_digits: int | None, number_format: str = "trimmed") -> Gr
     Returns
     -------
     GridIdConvention or None
-        The convention with source ``"spec"``, or None when `decimal_digits` is None.
+        The convention with source ``"spec"``, or None when ``decimal_digits`` is None.
     """
     if decimal_digits is None:
         return None
@@ -86,7 +86,7 @@ def parse_grid_id(value) -> tuple[float, float] | None:
     Returns
     -------
     tuple of (float, float) or None
-        The latitude and longitude, or None when `value` is not a grid id.
+        The latitude and longitude, or None when ``value`` is not a grid id.
     """
     if value is None or pd.isna(value):
         return None
@@ -114,7 +114,7 @@ def format_coord_component(value, convention: GridIdConvention) -> str:
     Raises
     ------
     ValueError
-        `value` is not finite.
+        ``value`` is not finite.
     """
     value = float(value)
     if not np.isfinite(value):
@@ -137,7 +137,7 @@ def format_grid_ids(lat, lon, convention: GridIdConvention) -> list[str]:
     lat : array_like of float
         The latitudes, in degrees (flattened).
     lon : array_like of float
-        The longitudes, in degrees (flattened); the same length as `lat`.
+        The longitudes, in degrees (flattened); the same length as ``lat``.
     convention : GridIdConvention
         The digits and the format.
 
@@ -149,7 +149,7 @@ def format_grid_ids(lat, lon, convention: GridIdConvention) -> list[str]:
     Raises
     ------
     ValueError
-        `lat` and `lon` differ in length, or a coordinate is not finite.
+        ``lat`` and ``lon`` differ in length, or a coordinate is not finite.
     """
     lat = np.asarray(lat).reshape(-1)
     lon = np.asarray(lon).reshape(-1)
@@ -205,7 +205,7 @@ def infer_convention(lat, lon, max_digits: int = 12, max_error_fraction: float =
     Raises
     ------
     ValueError
-        The coordinates are empty, unequal in length or not finite, or no precision up to `max_digits` is collision
+        The coordinates are empty, unequal in length or not finite, or no precision up to ``max_digits`` is collision
         free.
     """
     lat = np.asarray(lat, dtype=float).reshape(-1)
@@ -295,7 +295,7 @@ def established_convention(ids) -> GridIdConvention | None:
 
 
 def _reproduces(convention: GridIdConvention, ids) -> bool:
-    """Tell whether `convention` formats the existing grid ids exactly as they are.
+    """Tell whether ``convention`` formats the existing grid ids exactly as they are.
 
     Parameters
     ----------
@@ -374,7 +374,7 @@ def normalize(values, context: str = "spatial IDs") -> pd.Series:
     Returns
     -------
     pandas.Series of str
-        The stripped ids, with the index and name of `values`.
+        The stripped ids, with the index and name of ``values``.
 
     Raises
     ------
@@ -440,7 +440,7 @@ def with_id_column(df: pd.DataFrame, id_col: str = "id", explicit: GridIdConvent
                    convention: GridIdConvention | None = None, context: str = "spatial data") -> pd.DataFrame:
     """Return a copy with normalised ids: the id column, else ``adm3_name``, else grid ids from ``lat`` / ``lon``.
 
-    Grid ids use `convention` (resolved from `explicit` and the coordinates when not given).
+    Grid ids use ``convention`` (resolved from ``explicit`` and the coordinates when not given).
 
     Parameters
     ----------

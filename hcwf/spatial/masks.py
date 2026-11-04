@@ -170,7 +170,7 @@ class MaskResult:
 def cell_edges(centres, fallback=None) -> np.ndarray:
     """Compute the cell edges of ascending cell centres: midpoints between centres, half a step beyond the ends.
 
-    A single centre needs `fallback`, the cell size to assume.
+    A single centre needs ``fallback``, the cell size to assume.
 
     Parameters
     ----------
@@ -187,7 +187,7 @@ def cell_edges(centres, fallback=None) -> np.ndarray:
     Raises
     ------
     MaskError
-        There is a single centre and no `fallback`.
+        There is a single centre and no ``fallback``.
     """
     c = np.asarray(centres, dtype=float)
     if c.size == 1:
@@ -264,7 +264,7 @@ def _make_valid(geom):
     Returns
     -------
     shapely.Geometry
-        `geom`, or its repaired version when it was invalid.
+        ``geom``, or its repaired version when it was invalid.
     """
     import shapely
 
@@ -380,9 +380,9 @@ def cell_shares(geom, lat, lon):
 def rasterise(geom, lat, lon, rule="centre", fraction=0.5, strict=False) -> np.ndarray:
     """Rasterise a shape onto a grid: the cells it keeps under the cell rule.
 
-    With the rule ``"centre"`` the cell centre is inside the shape (on its boundary counts as inside unless `strict`).
+    With the rule ``"centre"`` the cell centre is inside the shape (on its boundary counts as inside unless ``strict``).
     With ``"overlap_fraction"`` the part of the cell's area (planar, in degrees squared) inside the shape is at least
-    `fraction` (see `cell_shares`). The shape is in longitude -180..180; cell longitudes are wrapped into that range.
+    ``fraction`` (see `cell_shares`). The shape is in longitude -180..180; cell longitudes are wrapped into that range.
 
     Parameters
     ----------
@@ -537,7 +537,7 @@ def country_geometry(names, resolution):
     geometry : shapely.Geometry
         The union of the countries, in longitude/latitude degrees.
     matched : list of str
-        The Natural Earth ``NAME`` of each country, in the order of `names`.
+        The Natural Earth ``NAME`` of each country, in the order of ``names``.
     path : str
         The path of the shapefile.
 
@@ -677,7 +677,7 @@ def read_raster_mask(path, variable=None, keep_value=1, condition=None):
     variable : str, optional
         The variable; None picks the only one on the (lat, lon) axes.
     keep_value : float, default 1
-        The value that marks a kept cell, when there is no `condition`.
+        The value that marks a kept cell, when there is no ``condition``.
     condition : dict, optional
         A threshold with ``above`` and / or ``below``, applied to the variable.
 
@@ -768,7 +768,7 @@ def _overlap(lo_a, hi_a, lo_b, hi_b) -> np.ndarray:
 
 
 def _nearest(values, targets) -> tuple[np.ndarray, np.ndarray]:
-    """Find the nearest of the ascending `values` to each target.
+    """Find the nearest of the ascending ``values`` to each target.
 
     Parameters
     ----------
@@ -780,7 +780,7 @@ def _nearest(values, targets) -> tuple[np.ndarray, np.ndarray]:
     Returns
     -------
     pick : numpy.ndarray of int64, shape (m,)
-        The index in `values` of the nearest value to each target.
+        The index in ``values`` of the nearest value to each target.
     distance : numpy.ndarray of float64, shape (m,)
         The distance of each target to that value.
     """
@@ -796,7 +796,7 @@ def align_raster_mask(kept, mlat, mlon, lat, lon, fraction=0.5, label="mask file
 
     The actions returned are the printable steps taken, in order: latitude flip, longitude wrap, then either direct use
     (coordinates equal within a hundredth of a cell) or the regridding of the mask (area-weighted fraction >=
-    `fraction` for a finer mask, nearest cell for a coarser or equally fine one; with ``regrid="nearest"`` also for a
+    ``fraction`` for a finer mask, nearest cell for a coarser or equally fine one; with ``regrid="nearest"`` also for a
     finer one).
 
     Parameters
@@ -958,7 +958,7 @@ def _rule_short(spec: MaskSpec) -> str:
 
 
 def build_mask(spec: MaskSpec, lat, lon, label="data") -> MaskResult:
-    """Build the mask of one dataset on its own grid, in the order of `lat` and `lon` given.
+    """Build the mask of one dataset on its own grid, in the order of ``lat`` and ``lon`` given.
 
     Every part of the spec is applied and the parts intersect. The result carries the printable lines and the
     record (sources with content hashes, rule, kept counts).
@@ -1163,7 +1163,7 @@ def region_mask(lat, lon, mask, dataset="data", dir_fig=None) -> np.ndarray:
     """Return the mask of one dataset's grid for a config's ``mask`` mapping, built once per grid.
 
     The first time a dataset's grid is seen, the mask is built, its description is logged, the PNG is saved
-    to ``dir_fig/mask_<dataset>.png`` (when `dir_fig` is given) and the record is stored for `records`. A mask that
+    to ``dir_fig/mask_<dataset>.png`` (when ``dir_fig`` is given) and the record is stored for `records`. A mask that
     cannot be built raises ``MaskError`` (see `build_mask`).
 
     Parameters
@@ -1182,7 +1182,7 @@ def region_mask(lat, lon, mask, dataset="data", dir_fig=None) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of bool, shape (lat, lon)
-        True for the cells kept, in the order of `lat` and `lon` given.
+        True for the cells kept, in the order of ``lat`` and ``lon`` given.
     """
     spec = MaskSpec.from_mapping(mask)
     lat = np.asarray(lat, dtype=float)
@@ -1202,7 +1202,7 @@ def region_mask(lat, lon, mask, dataset="data", dir_fig=None) -> np.ndarray:
 
 
 def apply_region_mask(ds, mask, dataset="data", dir_fig=None):
-    """Set the cells of `ds` outside the mask to NaN.
+    """Set the cells of ``ds`` outside the mask to NaN.
 
     The mask is built on this dataset's own grid, so the data are never regridded. Variables without both
     ``lat`` and ``lon`` dimensions are left as they are.
@@ -1227,7 +1227,7 @@ def apply_region_mask(ds, mask, dataset="data", dir_fig=None):
 
 
 def _where_keep(ds, keep):
-    """Set the cells of `ds` outside `keep` to NaN.
+    """Set the cells of ``ds`` outside ``keep`` to NaN.
 
     Parameters
     ----------
@@ -1349,7 +1349,7 @@ def _registry_title(region):
     Returns
     -------
     str
-        The title in the region registry, or `region` when it is not a registry region.
+        The title in the region registry, or ``region`` when it is not a registry region.
     """
     try:
         from hcwf.onset import regions
@@ -1360,7 +1360,7 @@ def _registry_title(region):
 
 
 def _country_record(region, resolution="10m"):
-    """Return the Natural Earth country record named `region` (``NAME``, or the registry title of the name).
+    """Return the Natural Earth country record named ``region`` (``NAME``, or the registry title of the name).
 
     Parameters
     ----------
@@ -1381,7 +1381,7 @@ def _country_record(region, resolution="10m"):
 
 
 def get_shp(region='Ethiopia', resolution='10m'):
-    """Return the Natural Earth country shape named `region` (``NAME``, or the registry title of the name).
+    """Return the Natural Earth country shape named ``region`` (``NAME``, or the registry title of the name).
 
     Parameters
     ----------
@@ -1407,11 +1407,11 @@ def default_mask(region=None, land_only=True, shp_only=True, nc_mask=None, resol
     Parameters
     ----------
     region : str, optional
-        The country for `shp_only`; a region that is not a country adds no part and a warning.
+        The country for ``shp_only``; a region that is not a country adds no part and a warning.
     land_only : bool, default True
         Keep land only (Natural Earth 110m).
     shp_only : bool, default True
-        Keep the country `region` only (Natural Earth `resolution`).
+        Keep the country ``region`` only (Natural Earth ``resolution``).
     nc_mask : str or os.PathLike, optional
         A 0/1 NetCDF file; each data cell takes the nearest mask cell.
     resolution : {"10m", "50m", "110m"}, default "10m"
@@ -1447,11 +1447,11 @@ def default_keep(lat, lon, region=None, land_only=True, shp_only=True, nc_mask=N
     lon : array_like of float, shape (lon,)
         The longitudes, in degrees.
     region : str, optional
-        The country for `shp_only`.
+        The country for ``shp_only``.
     land_only : bool, default True
         Keep land only.
     shp_only : bool, default True
-        Keep the country `region` only.
+        Keep the country ``region`` only.
     nc_mask : str or os.PathLike, optional
         A 0/1 NetCDF file.
 
@@ -1497,25 +1497,25 @@ def land_mask_for(lat, lon) -> np.ndarray:
 
 
 def apply_default_mask(obj, region=None, land_only=True, shp_only=True, nc_mask=None):
-    """Set the cells of `obj` outside the implicit masks to NaN.
+    """Set the cells of ``obj`` outside the implicit masks to NaN.
 
     Parameters
     ----------
     obj : xarray.Dataset or xarray.DataArray
         The data, with ``lat`` and ``lon`` coordinates.
     region : str, optional
-        The country for `shp_only`.
+        The country for ``shp_only``.
     land_only : bool, default True
         Keep land only.
     shp_only : bool, default True
-        Keep the country `region` only.
+        Keep the country ``region`` only.
     nc_mask : str or os.PathLike, optional
         A 0/1 NetCDF file.
 
     Returns
     -------
     xarray.Dataset or xarray.DataArray
-        `obj` itself when every cell is kept, else a masked copy.
+        ``obj`` itself when every cell is kept, else a masked copy.
     """
     keep = default_keep(obj["lat"].values, obj["lon"].values, region, land_only, shp_only, nc_mask)
     return obj if keep.all() else _where_keep(obj, keep)
@@ -1525,7 +1525,7 @@ def create_land_sea_mask(
     obj: Union[xr.Dataset, xr.DataArray],
     as_boolean: bool = False,
 ) -> xr.DataArray:
-    """Make a land-sea mask on the grid of `obj`.
+    """Make a land-sea mask on the grid of ``obj``.
 
     Parameters
     ----------
@@ -1545,7 +1545,7 @@ def create_land_sea_mask(
 
 
 def mask_land(da, land=True):
-    """Set the sea cells (or the land cells) of `da` to NaN.
+    """Set the sea cells (or the land cells) of ``da`` to NaN.
 
     Parameters
     ----------
@@ -1564,9 +1564,9 @@ def mask_land(da, land=True):
 
 
 def shp_mask(da, region='Ethiopia'):
-    """Set the cells of `da` whose centre is not strictly inside the country `region` to NaN.
+    """Set the cells of ``da`` whose centre is not strictly inside the country ``region`` to NaN.
 
-    This is the implicit ``shp_only`` mask. A region that is not a country of the shapefile leaves `da` as it is.
+    This is the implicit ``shp_only`` mask. A region that is not a country of the shapefile leaves ``da`` as it is.
 
     Parameters
     ----------
@@ -1578,7 +1578,7 @@ def shp_mask(da, region='Ethiopia'):
     Returns
     -------
     xarray.DataArray
-        The masked data, or `da` itself when the region is not a country.
+        The masked data, or ``da`` itself when the region is not a country.
     """
     spec = default_mask(region, False, True)
     if not spec.country:
@@ -1590,7 +1590,7 @@ def shp_mask(da, region='Ethiopia'):
 
 
 def apply_nc_mask(ds, nc_mask, mask_var=None, keep_value=1):
-    """Set the cells of `ds` where the 0/1 NetCDF mask `nc_mask` is not `keep_value` to NaN.
+    """Set the cells of ``ds`` where the 0/1 NetCDF mask ``nc_mask`` is not ``keep_value`` to NaN.
 
     Each data cell takes the nearest mask cell. A file that cannot be used as a mask raises ``MaskError`` (see
     `build_mask`).

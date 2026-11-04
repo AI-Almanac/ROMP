@@ -118,7 +118,7 @@ def dissemination_ids(units, weekly: Weekly | pd.DataFrame) -> np.ndarray:
 
     Parameters
     ----------
-    units : hcwf.config.UnitsSpec or None
+    units : hcwf.spatial.units.UnitsSpec or None
         The units specification; None (or one without a dissemination list) means every unit.
     weekly : hcwf.blend.samples.Weekly or pandas.DataFrame
         The weekly features (a legacy table is taken as a ``Weekly``).
@@ -160,7 +160,7 @@ def prepare_inputs(weekly: Weekly | pd.DataFrame, recipe: Recipe, dissemination=
     weekly : hcwf.blend.samples.Weekly or pandas.DataFrame
         The weekly features (a legacy table is taken as a ``Weekly``).
     recipe : hcwf.blend.recipe.Recipe
-        The blend recipe; its number of bins must match the climatology weeks of `weekly`.
+        The blend recipe; its number of bins must match the climatology weeks of ``weekly``.
     dissemination : sequence of str, optional
         The dissemination unit ids; None means every unit.
 
@@ -174,7 +174,7 @@ def prepare_inputs(weekly: Weekly | pd.DataFrame, recipe: Recipe, dissemination=
     Raises
     ------
     ValueError
-        The climatology weeks present in `weekly` are not ``1..n`` for the recipe's ``n`` bins.
+        The climatology weeks present in ``weekly`` are not ``1..n`` for the recipe's ``n`` bins.
     """
     if isinstance(weekly, Weekly):
         weekly = weekly.with_units(_normalised(weekly.units))
@@ -321,7 +321,7 @@ def evaluate(
 ) -> Evaluation:
     """Cross-validate the recipe's blends and score its baselines.
 
-    Up to `workers` processes fit the global CV folds (as many as `budget_bytes` holds) and the Platt calibration;
+    Up to ``workers`` processes fit the global CV folds (as many as ``budget_bytes`` holds) and the Platt calibration;
     results do not depend on either. The final formula is fitted alongside the global CV folds, on their design matrix.
     Formula and CV errors raise; climatology, forecast and MME source problems warn and skip that model, as the script
     did.
@@ -355,7 +355,7 @@ def evaluate(
     Raises
     ------
     ValueError
-        `workers` is below 1, the recipe has a random forest but `forest_inputs` is None, or an input is invalid.
+        ``workers`` is below 1, the recipe has a random forest but ``forest_inputs`` is None, or an input is invalid.
         (A formula's CV failure surfaces as `RuntimeError` from the CV stage.)
     """
     if workers < 1:

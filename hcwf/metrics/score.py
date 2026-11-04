@@ -112,7 +112,7 @@ def calculate_brier_score(pairs):
     Parameters
     ----------
     pairs : hcwf.metrics.bins.PairArrays
-        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (`PairArrays.select`).
+        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (``PairArrays.select``).
 
     Returns
     -------
@@ -179,7 +179,7 @@ def calculate_auc(pairs):
     Parameters
     ----------
     pairs : hcwf.metrics.bins.PairArrays
-        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (`PairArrays.select`).
+        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (``PairArrays.select``).
 
     Returns
     -------
@@ -207,7 +207,7 @@ def calculate_rps(pairs):
     Parameters
     ----------
     pairs : hcwf.metrics.bins.PairArrays
-        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (`PairArrays.select`).
+        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (``PairArrays.select``).
 
     Returns
     -------
@@ -255,7 +255,7 @@ def calculate_brier_score_climatology(pairs):
     ----------
     pairs : hcwf.metrics.bins.PairArrays
         Output of `hcwf.metrics.bins.create_climatological_forecast_obs_pairs`, restricted to the scored bins; needs
-        `PairArrays.members_with_onset`.
+        `~hcwf.metrics.bins.PairArrays.members_with_onset`.
 
     Returns
     -------

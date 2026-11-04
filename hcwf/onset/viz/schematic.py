@@ -1,4 +1,4 @@
-"""Rule schematics: a picture of what an onset definition asks for, drawn from the `Definition` alone.
+"""Rule schematics: a picture of what an onset definition asks for, drawn from the `~hcwf.onset.model.Definition` alone.
 
 First-passage rules become one labelled band per requirement and one bracket per veto on a shared axis of days
 relative to the candidate day (day 1); curve rules become a stylised cumulative-anomaly curve. All text is placed from
@@ -107,7 +107,7 @@ class _Measure:
         return h / self.fig.dpi * 1.35
 
     def wrap(self, text: str, size: float, max_width: float, weight: str = "normal") -> list[str]:
-        """Wrap text greedily so that every line is at most `max_width` inches (a longer single word stays whole).
+        """Wrap text greedily so that every line is at most ``max_width`` inches (a longer single word stays whole).
 
         Parameters
         ----------
@@ -527,7 +527,7 @@ class _Canvas:
         return self.xlim[0] + inches / self.per_day
 
     def text(self, x: float, y: float, s: str, *, ha="left", va="bottom", size=LABEL_PT, color=None, weight="normal"):
-        """Draw unclipped text at day `x` and inch `y`.
+        """Draw unclipped text at day `x` and inch ``y``.
 
         Parameters
         ----------
@@ -581,7 +581,7 @@ class _Canvas:
         return y_top - len(row.lines) * line_h
 
     def placed_inside_or_beside(self, s: str, x0: float, x1: float, y: float, height: float, size=SMALL_PT) -> None:
-        """Write `s` centred in ``[x0, x1]`` when it fits, else just right of `x1`, else just left of `x0`.
+        """Write ``s`` centred in ``[x0, x1]`` when it fits, else just right of ``x1``, else just left of ``x0``.
 
         Parameters
         ----------
@@ -646,7 +646,7 @@ def _draw_cells(cv: _Canvas, first: float, last: float, y: float, h: float, *, f
 
 
 def _draw_row(cv: _Canvas, row: _Row, y_top: float, anchor: float) -> None:
-    """Draw one requirement, veto or report row with its top at `y_top`.
+    """Draw one requirement, veto or report row with its top at ``y_top``.
 
     Parameters
     ----------
@@ -759,7 +759,7 @@ def _header_lines(defn: Definition, meas: _Measure, width: float) -> list[tuple[
     Returns
     -------
     list of tuple of (str, float, str, str, float)
-        For each line: the text, the font size in points, the weight, the colour role (a `Palette` field name) and
+        For each line: the text, the font size in points, the weight, the colour role (a `~hcwf.onset.viz.style.Palette` field name) and
         the space above in inches.
     """
     lines: list[tuple[str, float, str, str, float]] = []
@@ -918,11 +918,11 @@ def _curve_header_extra(defn: Definition) -> str:
 
 
 def schematic(definition: Definition, *, mode: str = "light", figsize: tuple[float, float] | None = None) -> Figure:
-    """Draw a figure that explains the rule of `definition` using nothing but the definition.
+    """Draw a figure that explains the rule of ``definition`` using nothing but the definition.
 
     First-passage rules show a labelled band per requirement and a bracket plus example spell per veto over days
     relative to the candidate (day 1); curve rules show a stylised cumulative-anomaly curve. A header gives the
-    generated sentence, the search window and the threshold definitions. `figsize` sets the width; the height grows as
+    generated sentence, the search window and the threshold definitions. ``figsize`` sets the width; the height grows as
     needed to fit the content.
 
     Parameters

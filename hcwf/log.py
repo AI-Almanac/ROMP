@@ -175,7 +175,7 @@ def session(verbosity: int = NORMAL, logfile=None) -> Iterator[logging.Logger]:
     Parameters
     ----------
     verbosity : int, default NORMAL
-        `QUIET` (warnings only), `NORMAL` (INFO) or `VERBOSE` (DEBUG) on the console.
+        ``QUIET`` (warnings only), ``NORMAL`` (INFO) or ``VERBOSE`` (DEBUG) on the console.
     logfile : str or pathlib.Path, optional
         A file that receives everything (DEBUG up, with time stamps); its folder is created. None writes no file.
 
@@ -228,13 +228,13 @@ def verbosity_from(quiet: bool = False, verbose: bool = False) -> int:
     Returns
     -------
     int
-        `QUIET`, `VERBOSE` or `NORMAL`.
+        ``QUIET``, ``VERBOSE`` or ``NORMAL``.
     """
     return QUIET if quiet else (VERBOSE if verbose else NORMAL)
 
 
 def progress(iterable, desc: str = "", total: int | None = None) -> Iterator:
-    """Iterate over `iterable`, showing progress: a tqdm bar, else ``desc: i/n`` log lines (none when quiet).
+    """Iterate over ``iterable``, showing progress: a tqdm bar, else ``desc: i/n`` log lines (none when quiet).
 
     tqdm is used only when it is installed, stderr is a terminal and the console shows INFO; it is never required.
 
@@ -250,7 +250,7 @@ def progress(iterable, desc: str = "", total: int | None = None) -> Iterator:
     Yields
     ------
     object
-        The items of `iterable`, one at a time.
+        The items of ``iterable``, one at a time.
     """
     items = iterable
     if total is None and hasattr(iterable, "__len__"):

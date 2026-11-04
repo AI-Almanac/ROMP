@@ -26,10 +26,10 @@ What each blending part becomes (the parity options make HCWF read the data exac
 * the rest (years, formulas, CV, baselines, MME, forest, climatology, features, reference onset, fixed cutoff, per-model
   lead days, rain horizon and predictors): the ``blend:`` section.
 
-The first half of the module converts a BlendConfig (`convert_blend`, `convert_blend_file`, the private `_Convert`);
+The first half of the module converts a BlendConfig (`convert_blend`, `convert_blend_file`, the private ``_Convert``);
 the second half ports the legacy spec sets of ``onset_blending.legacy.specs`` (`convert_specs`, `convert_spec_files`,
-the private `_Converter`), which build a BlendConfig mapping and hand it to `convert_blend`. The result is a
-`Conversion`, which ``hcwf-run convert`` writes out. `validate_conversion` checks a conversion against
+the private ``_Converter``), which build a BlendConfig mapping and hand it to `convert_blend`. The result is a
+`Conversion`, which ``hcwf-run convert`` writes out. ``validate_conversion`` checks a conversion against
 `hcwf.config.schema` without reading any data file.
 """
 from __future__ import annotations
@@ -361,10 +361,10 @@ def resolve_token(token: str, rule) -> int:
 
 
 def rule_body(r, threshold: tuple | None = None) -> str:
-    """Write the wet-day, dry-day, thresholds and onset parts of an HCWF definition for the rule `r`.
+    """Write the wet-day, dry-day, thresholds and onset parts of an HCWF definition for the rule ``r``.
 
     The definition searches as onset_blending's ``find_onsets`` does. The total the trigger needs is the threshold
-    ``thr``, the mean total over the trigger window unless `threshold` says over which days of each year it is computed
+    ``thr``, the mean total over the trigger window unless ``threshold`` says over which days of each year it is computed
     from the observations.
 
     Parameters
@@ -1172,7 +1172,7 @@ def is_blend_config(data) -> bool:
 def convert_blend(data: dict, *, data_root=None, region: str | None = None) -> Conversion:
     """Convert a BlendConfig given as a mapping (what its YAML holds) to an HCWF run.
 
-    Relative paths start at `data_root` (the config's own ``data_root`` key unless given; the working directory without
+    Relative paths start at ``data_root`` (the config's own ``data_root`` key unless given; the working directory without
     either) and are written absolute. A problem with the config raises `ConvertError`, which lists every problem.
 
     Parameters
@@ -2829,7 +2829,7 @@ def convert_specs(
 ) -> Conversion:
     """Convert a set of stage specs (as loaded from YAML) to an HCWF run.
 
-    The specs' paths are relative to the directory the old scripts ran from: give it as `data_root`.
+    The specs' paths are relative to the directory the old scripts ran from: give it as ``data_root``.
 
     Parameters
     ----------

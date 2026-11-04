@@ -22,14 +22,14 @@ def set_nested(result_dict, keys, value):
     result_dict : dict
         The nested dict, changed in place.
     keys : sequence
-        The keys from the top level down; the last one holds `value`.
+        The keys from the top level down; the last one holds ``value``.
     value : object
         What to store.
 
     Returns
     -------
     dict
-        `result_dict`, the same object.
+        ``result_dict``, the same object.
     """
     d = result_dict
     for key in keys[:-1]:
@@ -42,7 +42,7 @@ def spatial_far_mr_mae_map(rc):
     """Compute, save and plot spatial MAE, FAR and MR maps for each deterministic forecast case.
 
     Also evaluates the reference model (climatology or a user-specified model) when the run has one
-    (``rc.reference.model``). For an ensemble run the forecast onset is the ensemble onset (`compute_metrics` picks it
+    (``rc.reference.model``). For an ensemble run the forecast onset is the ensemble onset (`~hcwf.scoring.onset_tables.compute_metrics` picks it
     from the run's ``probabilistic`` setting); the climatology reference never reads a forecast. What is saved and
     plotted follows the ``output`` flags of the run.
 

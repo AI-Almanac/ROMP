@@ -1,4 +1,4 @@
-"""Explain why one cell got the onset date it did: a structured `Anatomy` of the search and a readable log.
+"""Explain why one cell got the onset date it did: a structured `~hcwf.onset.explain.Anatomy` of the search and a readable log.
 
 `trace_observed` and `trace_forecast` build the engine's own jobs for a single cell and evaluate them with the
 reference backend (`hcwf.onset.backends.reference.evaluate`), so the `Anatomy`'s result is the engine's result
@@ -435,7 +435,7 @@ def _nearest(coords: np.ndarray, value: float, name: str) -> int:
     Raises
     ------
     ValueError
-        The nearest coordinate is farther than half a grid step (the median spacing) from `value`.
+        The nearest coordinate is farther than half a grid step (the median spacing) from ``value``.
     """
     coords = np.asarray(coords, dtype=np.float64)
     i = int(np.argmin(np.abs(coords - value)))
@@ -464,7 +464,7 @@ def _cell_of(spatial_dims: tuple[str, ...], coords: dict, lat, lon) -> tuple[int
     Returns
     -------
     tuple of int
-        The index along each of `spatial_dims`; empty without spatial dims.
+        The index along each of ``spatial_dims``; empty without spatial dims.
 
     Raises
     ------
@@ -492,7 +492,7 @@ def _location(spatial_dims: tuple[str, ...], coords: dict, cell: tuple[int, ...]
     coords : dict
         The coordinate values by dim name.
     cell : tuple of int
-        The index along each of `spatial_dims`.
+        The index along each of ``spatial_dims``.
 
     Returns
     -------
@@ -521,7 +521,7 @@ def _slice_coords(coords: dict, sliced: dict) -> dict:
 
 
 def _single_rain(rain: DailyRain, cell: tuple[int, ...]) -> DailyRain:
-    """Return the one-cell `DailyRain` (spatial dims kept with length 1).
+    """Return the one-cell `~hcwf.onset.model.DailyRain` (spatial dims kept with length 1).
 
     Parameters
     ----------
@@ -533,7 +533,7 @@ def _single_rain(rain: DailyRain, cell: tuple[int, ...]) -> DailyRain:
     Returns
     -------
     hcwf.onset.model.DailyRain
-        The rain of that cell, with the calendar labels and metadata of `rain`.
+        The rain of that cell, with the calendar labels and metadata of ``rain``.
     """
     sl = tuple(slice(i, i + 1) for i in cell)
     sliced = dict(zip(rain.dims[:-1], sl))
@@ -542,7 +542,7 @@ def _single_rain(rain: DailyRain, cell: tuple[int, ...]) -> DailyRain:
 
 
 def _single_forecast(fc: ForecastRain, init: int, member: int | None, cell: tuple[int, ...]) -> ForecastRain:
-    """Return the one-init, one-member, one-cell `ForecastRain` (dims kept with length 1).
+    """Return the one-init, one-member, one-cell `~hcwf.onset.model.ForecastRain` (dims kept with length 1).
 
     Parameters
     ----------
@@ -609,7 +609,7 @@ def _threshold_values(plan: P.Plan, per_cell: dict, amounts: dict, exact: bool) 
     per_cell : dict of str to numpy.ndarray
         The threshold value at the cell in mm, by name (see `_cell_thresholds`).
     amounts : dict of str to numpy.ndarray
-        The resolved amounts by key, in tenths of a mm (thousandths for a baseline), or mm when `exact`.
+        The resolved amounts by key, in tenths of a mm (thousandths for a baseline), or mm when ``exact``.
     exact : bool
         Whether the rain is exact (amounts are then floats in mm).
 
@@ -647,7 +647,7 @@ def _threshold_name(key: str) -> str | None:
 
 
 def _requirement_check(ev: reference.Evaluation, i: int, c: int, amounts: dict) -> Check:
-    """Return requirement `i` of candidate `c` as the backend evaluated it.
+    """Return requirement ``i`` of candidate ``c`` as the backend evaluated it.
 
     Parameters
     ----------
@@ -683,7 +683,7 @@ def _requirement_check(ev: reference.Evaluation, i: int, c: int, amounts: dict) 
 
 
 def _veto_check(ev: reference.Evaluation, i: int, c: int, amounts: dict) -> Check:
-    """Return veto `i` of candidate `c` as the backend evaluated it.
+    """Return veto ``i`` of candidate ``c`` as the backend evaluated it.
 
     The confirmed dry spell is attached when the veto rejects the candidate.
 
@@ -769,12 +769,12 @@ def _season_index(names: list[str], season: str | None) -> int:
     Returns
     -------
     int
-        Its index in `names`; 0 when `season` is None.
+        Its index in ``names``; 0 when ``season`` is None.
 
     Raises
     ------
     ValueError
-        `season` is not one of `names`.
+        ``season`` is not one of ``names``.
     """
     if season is None:
         return 0
@@ -890,9 +890,9 @@ class _Case:
     data_end: int
     """The first day index without data."""
     preset: int
-    """A `Status` value fixed by the job layout, or a negative number when the search must run."""
+    """A `~hcwf.onset.model.Status` value fixed by the job layout, or a negative number when the search must run."""
     run: object
-    """The callback that decides the job; it takes the `reference.Tables`."""
+    """The callback that decides the job; it takes the `~hcwf.onset.backends.reference.Tables`."""
 
 
 def _build(defn: Definition, plan: P.Plan, case: _Case, per_cell: dict, amounts: dict, invalid: bool, *,
@@ -1003,7 +1003,7 @@ def _decide(plan: P.Plan, tables: reference.Tables, start: int, end: int, data_e
     Returns
     -------
     tuple of (Status, int, object, int)
-        The status, the onset day index (negative without one), the facts and `data_end`. The facts are the
+        The status, the onset day index (negative without one), the facts and ``data_end``. The facts are the
         first-passage ``Evaluation``, or the curve rule's trace arrays.
     """
     jobs = Jobs(np.zeros(1, np.int64), np.array([start]), np.array([end]), np.array([data_end]))
@@ -1031,7 +1031,7 @@ def _detect_single(plan: P.Plan, start: int, end: int, data_end: int):
     Returns
     -------
     callable
-        A function of the `reference.Tables` returning ``(status, day, facts, data_end)`` as `_decide` does.
+        A function of the `~hcwf.onset.backends.reference.Tables` returning ``(status, day, facts, data_end)`` as `_decide` does.
     """
     def run(tables: reference.Tables):
         """Return (status, day, facts, data_end) of the job."""
@@ -1042,13 +1042,13 @@ def _detect_single(plan: P.Plan, start: int, end: int, data_end: int):
 def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon: float | None, year: int,
                    season: str | None = None, thresholds=None, season_climatology: xr.Dataset | None = None,
                    horizon: str = "censor", missing: str | None = None) -> Anatomy:
-    """Trace the onset search of the cell nearest ``(lat, lon)`` in the season of `year`.
+    """Trace the onset search of the cell nearest ``(lat, lon)`` in the season of ``year``.
 
     The cell must lie within half a grid step of ``(lat, lon)``. The jobs are the engine's own
     (``build_observed_jobs`` on the one-cell series) and the `Anatomy`'s result equals ``detect_observed``'s.
-    `thresholds`, `horizon` and `missing` are as for ``detect_observed`` (exact rain, every missing policy, ``dry_day``
+    ``thresholds``, ``horizon`` and ``missing`` are as for ``detect_observed`` (exact rain, every missing policy, ``dry_day``
     and beginning-within vetoes all work). A cell farther than half a grid step from ``(lat, lon)``, or an unknown
-    `season`, raises `ValueError`.
+    ``season``, raises `ValueError`.
 
     Parameters
     ----------
@@ -1057,9 +1057,9 @@ def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon:
     rain : hcwf.onset.model.DailyRain
         The observed daily rain.
     lat : float, optional
-        Latitude of the cell, in degrees; required when `rain` has a ``lat`` dim.
+        Latitude of the cell, in degrees; required when ``rain`` has a ``lat`` dim.
     lon : float, optional
-        Longitude of the cell, in degrees; required when `rain` has a ``lon`` dim.
+        Longitude of the cell, in degrees; required when ``rain`` has a ``lon`` dim.
     year : int
         The year of the season to trace.
     season : str, optional
@@ -1067,11 +1067,11 @@ def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon:
     thresholds : mapping of str to xarray.DataArray, optional
         The named thresholds the definition refers to, in mm.
     season_climatology : xarray.Dataset, optional
-        The season climatology for derived seasons, on the grid of `rain`.
+        The season climatology for derived seasons, on the grid of ``rain``.
     horizon : {"censor", "reject"}, default "censor"
         The policy for spans that run past the data.
     missing : str, optional
-        The missing-day policy; None takes the engine's default for `rain`.
+        The missing-day policy; None takes the engine's default for ``rain``.
 
     Returns
     -------
@@ -1104,7 +1104,7 @@ def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon:
 
 
 def _find_init(forecast: ForecastRain, init) -> int:
-    """Return the index of the init whose date label equals `init`.
+    """Return the index of the init whose date label equals ``init``.
 
     Parameters
     ----------
@@ -1178,15 +1178,15 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
                    horizon: str = "censor", missing: str | None = None) -> Anatomy:
     """Trace the onset search of one init (and member) at the cell nearest ``(lat, lon)``.
 
-    With `history` the search is stitched (observed history before lead 1, then the forecast, with the engine's
+    With ``history`` the search is stitched (observed history before lead 1, then the forecast, with the engine's
     history-only ``PRIOR`` decision first); without it the forecast is searched alone. The jobs are the engine's own
     (``build_forecast_jobs`` / ``build_stitched_jobs`` on the one-cell series), so the result equals
     ``detect_forecast``'s. Days are indexed in the stitched series (lead 1 is day ``split``) or, without history, by
     lead - 1.
 
-    `DerivedSeasons` (with `restrict_to_season` true) need `season_climatology`, as for ``detect_forecast`` (dims
-    ``(season, *spatial)`` on the forecast's grid); the traced cell's own season is used and `season` picks among the
-    derived seasons by name (``"1"``, ``"2"``, ...; the first by default). `horizon` and `missing` are as for
+    `~hcwf.onset.model.DerivedSeasons` (with ``restrict_to_season`` true) need ``season_climatology``, as for ``detect_forecast`` (dims
+    ``(season, *spatial)`` on the forecast's grid); the traced cell's own season is used and ``season`` picks among the
+    derived seasons by name (``"1"``, ``"2"``, ...; the first by default). ``horizon`` and ``missing`` are as for
     ``detect_forecast``.
 
     Parameters
@@ -1228,7 +1228,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
     Raises
     ------
     ValueError
-        The definition has derived seasons but no `season_climatology` is given, the missing policy is ``"drop"``,
+        The definition has derived seasons but no ``season_climatology`` is given, the missing policy is ``"drop"``,
         or the cell, init, member or season cannot be found.
     """
     if isinstance(defn.seasons, DerivedSeasons) and restrict_to_season and season_climatology is None:
@@ -1310,7 +1310,7 @@ def _stitched_run(plan: P.Plan, amounts: dict, start: int, end: int, data_end: i
     Returns
     -------
     callable
-        A function of the `reference.Tables` returning ``(status, day, facts, data_end)`` as the engine decides it.
+        A function of the `~hcwf.onset.backends.reference.Tables` returning ``(status, day, facts, data_end)`` as the engine decides it.
     """
     def run(tables: reference.Tables):
         """Return (status, day, facts, data_end) as the engine decides it."""

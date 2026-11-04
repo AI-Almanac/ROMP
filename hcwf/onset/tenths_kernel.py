@@ -35,7 +35,7 @@ if numba is not None:
         keep_negative : bool
             Leave negative values as they are, counting none as bad.
         out_tenths : numpy.ndarray, shape (n,)
-            Output: the tenths (``int32``), or ``float64`` mm when `exact`; 0 where missing.
+            Output: the tenths (``int32``), or ``float64`` mm when ``exact``; 0 where missing.
         out_missing : numpy.ndarray of bool, shape (n,)
             Output: True where the value is missing.
         n_bad : numpy.ndarray of int64, shape (pieces,)

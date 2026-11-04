@@ -5,7 +5,7 @@ from pathlib import Path
 def set_dir(path_str, work_dir=None):
     """Resolve a path string into an absolute, OS-agnostic path.
 
-    ``~`` is expanded. A relative path is resolved against `work_dir` if given, otherwise against the current
+    ``~`` is expanded. A relative path is resolved against ``work_dir`` if given, otherwise against the current
     directory.
 
     Parameters

@@ -115,7 +115,7 @@ def _threshold_text(name: str, spec: ThresholdSpec | None) -> str:
     Returns
     -------
     str
-        The description, or `name` itself when `spec` is None.
+        The description, or ``name`` itself when ``spec`` is None.
     """
     if spec is None:
         return name
@@ -183,7 +183,7 @@ def _days_text(span: Span) -> str:
 
 
 def _window_of(defn: Definition, first: int) -> int | None:
-    """Return W when a span starting at day `first` follows the trigger window of W days (days 1 to W).
+    """Return W when a span starting at day ``first`` follows the trigger window of W days (days 1 to W).
 
     Parameters
     ----------

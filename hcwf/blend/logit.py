@@ -119,7 +119,7 @@ class FittedModel:
             set_(self, "n_samples", int(self.n_samples))
 
     def predict(self, data: Mapping | pd.DataFrame) -> np.ndarray:
-        """Return the class probabilities for the rows of `data`.
+        """Return the class probabilities for the rows of ``data``.
 
         Rows with a non-finite feature get NaN. As ``apply_blend_model.py``: the design is built from the saved formula
         and must have exactly the saved features, at least one of them finite.
@@ -138,7 +138,7 @@ class FittedModel:
         ------
         ValueError
             The design matrix does not have exactly the saved features, or a saved feature has no finite value in
-            `data`.
+            ``data``.
         """
         features = list(self.features)
         names, X = design_matrix(self.formula, data)
@@ -551,7 +551,7 @@ def fit_samples(formula: str, weekly: Weekly, rows: np.ndarray) -> FittedModel:
     weekly : hcwf.blend.samples.Weekly
         The weekly features and outcomes.
     rows : numpy.ndarray of int, shape (sample,)
-        The positions in `weekly` to train on.
+        The positions in ``weekly`` to train on.
 
     Returns
     -------
@@ -589,7 +589,7 @@ def global_cv(plan: Plan, values, rows: np.ndarray, trainable: np.ndarray, year:
     plan : hcwf.blend.design.Plan
         The formula's design plan.
     values : callable
-        ``values(name)`` gives the feature `name` per sample.
+        ``values(name)`` gives the feature ``name`` per sample.
     rows : numpy.ndarray of int, shape (sample,)
         The evaluation's samples (the design's rows).
     trainable : numpy.ndarray of bool, shape (row,)
@@ -619,7 +619,7 @@ def global_cv(plan: Plan, values, rows: np.ndarray, trainable: np.ndarray, year:
         ``(test_year, test_rows, probabilities, model)`` per holdout year: the test row positions, the probabilities
         (``float64``, shape (test row, class), in the model's class order) and the `FittedModel`.
     final : tuple or None
-        ``(classifier, scaler, rows used, rows)`` of the `final_years` fit, or None without `final_years`.
+        ``(classifier, scaler, rows used, rows)`` of the ``final_years`` fit, or None without ``final_years``.
     """
     tasks = [("fold", int(y)) for y in holdout_years]
     if final_years is not None:   # the largest task first, so that it does not start in the last round
@@ -1031,7 +1031,7 @@ def local_cv(formula: str, weekly: Weekly, rows: np.ndarray, holdout_years):
     -------
     list of tuple
         ``(test, probabilities, classes)`` per unit and holdout year, by unit in order of first appearance, then
-        holdout year: the test positions into `rows`, the probabilities (``float64``, shape (test, class)) and the
+        holdout year: the test positions into ``rows``, the probabilities (``float64``, shape (test, class)) and the
         class labels.
     """
     year = weekly.take("year", rows)
@@ -1055,7 +1055,7 @@ def cluster_cv(formula: str, weekly: Weekly, rows: np.ndarray, holdout_years, cl
     """Run leave-one-year-out CV within clusters (``compute_cv_clusters``).
 
     A unit's holdout year is predicted by the fit on the other years' samples of every unit in its cluster (its first
-    sample's `cluster_var`). The fit is the same for every unit of a cluster, so it runs once per cluster and year.
+    sample's ``cluster_var``). The fit is the same for every unit of a cluster, so it runs once per cluster and year.
 
     Parameters
     ----------

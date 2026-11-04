@@ -373,7 +373,7 @@ class Cells:
     """The cells of a (lat, lon) grid that a `DailyRain` holds when it holds only some: those of the dims (cell, time).
 
     A cell the rain lacks is one the region's masks drop: what ingestion gives it (`fill_tenths` mm or tenths,
-    `fill_missing`, the same every day) is what `on_grid` and `spread` put there, so that results on the whole grid
+    `fill_missing`, the same every day) is what ``on_grid`` and `spread` put there, so that results on the whole grid
     are the ones the whole grid gives.
     """
 
@@ -434,7 +434,7 @@ class Cells:
         Returns
         -------
         numpy.ndarray
-            `kept` on the whole grid: the leading dims, then the grid's dims in `dims` order; the dtype of `kept`.
+            ``kept`` on the whole grid: the leading dims, then the grid's dims in `dims` order; the dtype of ``kept``.
         """
         out = np.empty(kept.shape[:-1] + self.shape(), dtype=kept.dtype)
         out[...] = fill.reshape(fill.shape[:-1] + (1,) * len(self.dims))

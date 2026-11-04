@@ -144,7 +144,7 @@ def _locate(year, read: ObsRead):
 
 
 def _read_obs_range(first, last, store, read: ObsRead, cells=False):
-    """Read the region's box of a zarr store's observations from 1 January of `first` to 31 December of `last`, in one pass.
+    """Read the region's box of a zarr store's observations from 1 January of ``first`` to 31 December of ``last``, in one pass.
 
     Equal, year by year, to `_read_obs_year` (the same cells masked, the same unit factor); an archive chunked over
     the whole time axis is decoded once for all the years instead of once per year.
@@ -251,7 +251,7 @@ def read_obs_years(years, obs, area, options, select=NO_SELECTION, *, onset=None
                    parallel=None, hold=True):
     """Return an iterator over each of the years' observations in order, as `load_observations` gives them.
 
-    The years the run holds (`run_years` and the year before each) are taken from, and kept in, the run's
+    The years the run holds (``run_years`` and the year before each) are taken from, and kept in, the run's
     observation cache. A zarr store chunked over many years is read in blocks of about 1.5 GB, each decoded once
     and sliced per year; any other source is read a year at a time, the next few ahead in threads (zarr only;
     NetCDF files are read one at a time, as HDF5 is not thread-safe). Memory stays at one block, or
@@ -291,7 +291,7 @@ def read_obs_years(years, obs, area, options, select=NO_SELECTION, *, onset=None
 def obs_years_of(read: ObsRead, years, hold=True, cells=False) -> Iterator[tuple]:
     """Yield each of the years' observations in order, or the error that stopped a year.
 
-    The generator behind `read_obs_years`. With `cells` a year that is not held and not already in the run's cache is
+    The generator behind `read_obs_years`. With ``cells`` a year that is not held and not already in the run's cache is
     read as only the cells the region's masks keep (dims ``time``, ``cell``, see `_read_obs_year`); the held years stay
     whole, as the run's cache has them.
 
@@ -309,7 +309,7 @@ def obs_years_of(read: ObsRead, years, hold=True, cells=False) -> Iterator[tuple
     Yields
     ------
     tuple
-        ``(rain, None)`` with the year's `xarray.DataArray`, or ``(None, error)`` where `error` is the exception
+        ``(rain, None)`` with the year's `xarray.DataArray`, or ``(None, error)`` where ``error`` is the exception
         that stopped the year (a missing file, for example).
     """
     years = list(years)
@@ -379,7 +379,7 @@ def obs_years_of(read: ObsRead, years, hold=True, cells=False) -> Iterator[tuple
 
 
 def _workers(parallel, tasks) -> int:
-    """Return the workers for `tasks` independent tasks under the run's parallel setting.
+    """Return the workers for ``tasks`` independent tasks under the run's parallel setting.
 
     Parameters
     ----------
@@ -407,7 +407,7 @@ def _open_year(year, store, path, read: ObsRead):
     store : str or None
         The zarr store path (the year's days of it are selected), or None for a file.
     path : str or None
-        The NetCDF file path, when `store` is None.
+        The NetCDF file path, when ``store`` is None.
     read : ObsRead
         The typed inputs of the observation reading.
 
@@ -448,7 +448,7 @@ def _observation_box(year, read: ObsRead, keep=False):
     -------
     tuple of (dict, tuple of str, numpy.ndarray of bool or None)
         The ``lat`` and ``lon`` values of the box, the dims of the variable, and the boolean ``(lat, lon)`` array of
-        the kept cells (None unless `keep`).
+        the kept cells (None unless ``keep``).
     """
     store, path = _locate(year, read)
     ds = _open_year(year, store, path[0] if isinstance(path, tuple) else path, read)
@@ -516,7 +516,7 @@ def reference_cells(year, read: ObsRead):
 def _read_obs_year(year, store, path, read: ObsRead, cells=False):
     """Read one year of one variable: select the year and the region's box on the lazy array, read once, mask in place.
 
-    A tuple of files (a year listed in several files) is read file by file and joined along time. With `cells` (gridded
+    A tuple of files (a year listed in several files) is read file by file and joined along time. With ``cells`` (gridded
     data whose implicit masks drop cells; see `reference_cells`) only the kept cells are read: the dims are then
     ``(time, cell)`` with the cells' lat and lon as coordinates over ``cell`` (see `hcwf.spatial.select.load_blocks`).
 
@@ -527,7 +527,7 @@ def _read_obs_year(year, store, path, read: ObsRead, cells=False):
     store : str or None
         The zarr store path, or None for a file.
     path : str or tuple of str or None
-        The NetCDF file path (or paths), when `store` is None.
+        The NetCDF file path (or paths), when ``store`` is None.
     read : ObsRead
         The typed inputs of the observation reading.
     cells : bool, default False
@@ -590,7 +590,7 @@ def _obs_key(year, store, path, read: ObsRead):
     store : str or None
         The zarr store path, or None.
     path : str or tuple of str or None
-        The file path (or paths), when `store` is None.
+        The file path (or paths), when ``store`` is None.
     read : ObsRead
         The typed inputs of the observation reading.
 
@@ -616,13 +616,13 @@ def load_observations(year, obs, area, options, select=NO_SELECTION, *, onset=No
     """Load observed daily rainfall for a given year (from the year's NetCDF file, or from a zarr store of all years).
 
     The region's box and, for a store, the year are selected before any data is read, and the cell mask and the
-    unit conversion are applied in place. The years the run scores (`run_years`, and the year before each)
+    unit conversion are applied in place. The years the run scores (``run_years``, and the year before each)
     are read once per run: later calls (other windows, cases, the climatology) get the same array back, so treat
     it as read-only. Other years are read afresh when asked for.
 
     With ``obs.paths`` (names or globs; ``select.obs_files_years`` keeps the files of those years) the year's files are
     the listed ones with that year in their name, instead of ``obs.file_pattern.format(year)`` in ``obs.dir``. A region
-    of None, or data on a ``"unit"`` dimension, is read without a box or cell mask; observations on units need `onset`
+    of None, or data on a ``"unit"`` dimension, is read without a box or cell mask; observations on units need ``onset``
     (the day boundary and lead label their dates are moved by). `select` may pick one grid point and keep some units.
 
     Parameters
@@ -742,7 +742,7 @@ def _read_obs_units(da, spec: UnitsSpec, unit_cvt, read: ObsRead):
     Raises
     ------
     ValueError
-        The data holds more than one year, the unit ids repeat, or `read` has no onset setup.
+        The data holds more than one year, the unit ids repeat, or ``read`` has no onset setup.
     """
     da = da.transpose("time", ...)
     stamps = pd.DatetimeIndex(da["time"].values)
@@ -773,7 +773,7 @@ def _read_obs_units(da, spec: UnitsSpec, unit_cvt, read: ObsRead):
 
 
 def observed_history(year, current, onset, obs, area, options, select=NO_SELECTION, *, run_years=(), dir_fig=None):
-    """Return the observed rain to stitch before each forecast of `year`, or None when ``forecast_history`` is not observed.
+    """Return the observed rain to stitch before each forecast of ``year``, or None when ``forecast_history`` is not observed.
 
     The previous year's file is added when a season or the rule's look-back reaches before 1 January; a missing
     previous file is skipped, which makes the earliest searches ``INSUFFICIENT_DATA``.
@@ -802,8 +802,8 @@ def observed_history(year, current, onset, obs, area, options, select=NO_SELECTI
     Returns
     -------
     xarray.DataArray or None
-        None when ``onset.forecast_history`` is not ``"observed"``; `current` when no earlier year is needed or
-        available; else the previous year and `current` joined along ``time``.
+        None when ``onset.forecast_history`` is not ``"observed"``; ``current`` when no earlier year is needed or
+        available; else the previous year and ``current`` joined along ``time``.
     """
     if onset.forecast_history != "observed":
         return None

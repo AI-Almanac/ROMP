@@ -78,7 +78,7 @@ def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION
         The forecast source whose grid gets a mask (and whose forecasts the thresholds may come from).
     select : hcwf.config.model.Selection, default NO_SELECTION
         The run's selection settings.
-    parallel : hcwf.config.model.Parallel, optional
+    parallel : hcwf.config.model.ParallelSpec, optional
         The parallel settings, passed on to the threshold loading.
     cache_dir : str or pathlib.Path, optional
         The cache folder, passed on to the threshold loading.
@@ -127,7 +127,7 @@ def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION
 
 
 def warm_up_of(rc, model, select=NO_SELECTION):
-    """Call `warm_up` with the settings of a run for the source `model`.
+    """Call `warm_up` with the settings of a run for the source ``model``.
 
     Parameters
     ----------

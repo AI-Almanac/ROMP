@@ -149,7 +149,7 @@ def str2bool(v):
     Raises
     ------
     argparse.ArgumentTypeError
-        `v` is not one of those.
+        ``v`` is not one of those.
     """
     if isinstance(v, bool):
         return v
@@ -162,7 +162,7 @@ def str2bool(v):
 
 
 def ensure_config_exists(param_path: str) -> Path:
-    """Return `param_path` expanded and resolved, raising `FileNotFoundError` (with a hint) if it does not exist.
+    """Return ``param_path`` expanded and resolved, raising `FileNotFoundError` (with a hint) if it does not exist.
 
     Parameters
     ----------
@@ -187,7 +187,7 @@ def ensure_config_exists(param_path: str) -> Path:
 
 
 def _get_config_path_pre_parse(cli_args=None):
-    """Return the config path from ``-p``/``--param`` in `cli_args`, else the ``HCWF_CONFIG`` environment variable.
+    """Return the config path from ``-p``/``--param`` in ``cli_args``, else the ``HCWF_CONFIG`` environment variable.
 
     A run must always say which config it uses; with neither set this raises, explaining how to give one (start one with
     ``hcwf-run init``, or see ``examples/config.yaml``).

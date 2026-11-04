@@ -28,9 +28,9 @@ BLOCK_CELLS = 2_000_000
 
 def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[str, np.ndarray],
            jobs: Jobs, *, trace: bool = False, amount_windows=None) -> Detection:
-    """Run every job and return the onset day index (-1 if none) and `Status` per job.
+    """Run every job and return the onset day index (-1 if none) and `~hcwf.onset.model.Status` per job.
 
-    Amounts may be ``(S, W)`` with `amount_windows` the ``W`` window start leads; see
+    Amounts may be ``(S, W)`` with ``amount_windows`` the ``W`` window start leads; see
     `hcwf.onset.backends.windowed` (traces are not available then).
 
     With `trace` true, ``Detection.trace`` holds per-job, per-candidate arrays (padded to the longest window):
@@ -53,7 +53,7 @@ def detect(plan: P.Plan, tenths: np.ndarray, missing: np.ndarray, amounts: dict[
     trace : bool, default False
         Also return the per-candidate trace arrays.
     amount_windows : array_like of int, optional
-        The ``W`` window start leads when `amounts` have ``W`` columns.
+        The ``W`` window start leads when ``amounts`` have ``W`` columns.
 
     Returns
     -------
@@ -150,7 +150,7 @@ def detect_stitched(plan: P.Plan, hist_tenths: np.ndarray, hist_missing: np.ndar
     trace : bool, default False
         Also return the per-candidate trace arrays.
     amount_windows : array_like of int, optional
-        The ``W`` window start leads when `amounts` have ``W`` columns.
+        The ``W`` window start leads when ``amounts`` have ``W`` columns.
 
     Returns
     -------
@@ -374,7 +374,7 @@ def _prefix(values: np.ndarray, dtype) -> np.ndarray:
 
     Returns
     -------
-    numpy.ndarray of `dtype`, shape (series, time + 1)
+    numpy.ndarray of ``dtype``, shape (series, time + 1)
         The prefix sums.
     """
     out = np.zeros((values.shape[0], values.shape[1] + 1), dtype=dtype)
@@ -561,7 +561,7 @@ def _status_from_flags(flags: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of int8
-        The `Status` code, same shape as `flags`.
+        The `~hcwf.onset.model.Status` code, same shape as ``flags``.
     """
     return np.where(flags == HORIZON_FLAG, Status.CENSORED, Status.INSUFFICIENT_DATA).astype(np.int8)
 
@@ -598,7 +598,7 @@ class Evaluation:
     onset: np.ndarray
     """The reported day index per job, shape ``(jobs,)`` (int64, ``-1`` for none)."""
     status: np.ndarray
-    """The `Status` code per job, shape ``(jobs,)`` (int8)."""
+    """The `~hcwf.onset.model.Status` code per job, shape ``(jobs,)`` (int8)."""
 
     def missing_days(self, job: int, first: int, last: int) -> tuple:
         """Return the day indices of the missing days inside the observed part of ``[first, last)`` for one job.

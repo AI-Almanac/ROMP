@@ -1,4 +1,4 @@
-"""Compile an onset definition into a flat, backend-friendly `Plan` and turn thresholds into integer amounts.
+"""Compile an onset definition into a flat, backend-friendly `~hcwf.onset.plan.Plan` and turn thresholds into integer amounts.
 
 A `Plan` holds only ints, strings and tuples, so a numba or GPU backend can read it without touching
 `hcwf.onset.model`. Every amount a backend compares against, fixed or per-cell, is looked up as
@@ -271,7 +271,7 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
         The per-series thresholds in mm by name, each ``float64`` of shape ``(series,)`` or ``(series, window)``.
     n_series : int, optional
         The number of series. Only needed when the plan uses no named threshold; otherwise the largest first
-        dimension of `thresholds` is used.
+        dimension of ``thresholds`` is used.
     exact : bool, default False
         Return unrounded ``float64`` mm instead of integers.
 
@@ -279,19 +279,19 @@ def resolve_amounts(plan: Plan, thresholds: dict[str, np.ndarray], n_series: int
     -------
     amounts : dict of str to numpy.ndarray
         The amount of each key of the plan: ``int64`` (tenths, or thousandths of mm for baselines), or ``float64`` mm
-        with `exact`; shape ``(series,)`` or ``(series, window)``.
+        with ``exact``; shape ``(series,)`` or ``(series, window)``.
     invalid : numpy.ndarray of bool, shape (series,)
         True for a series with a NaN or infinite amount.
 
     Raises
     ------
     ValueError
-        `n_series` is missing and `thresholds` holds no array, or a fixed amount is finer than 0.1 mm and `exact` is
+        ``n_series`` is missing and ``thresholds`` holds no array, or a fixed amount is finer than 0.1 mm and ``exact`` is
         false.
     NotImplementedError
-        `exact` is set for a curve plan.
+        ``exact`` is set for a curve plan.
     KeyError
-        The plan needs a threshold that `thresholds` does not hold.
+        The plan needs a threshold that ``thresholds`` does not hold.
     """
     sizes = {np.asarray(v).shape[0] for v in thresholds.values() if np.ndim(v) in (1, 2)}
     if n_series is None:

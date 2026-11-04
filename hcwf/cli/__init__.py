@@ -531,7 +531,7 @@ def _cache(argv) -> int:
 
 
 def _has_config(argv) -> bool:
-    """Return whether a config is named by ``-p``/``--param`` in `argv` or by ``$HCWF_CONFIG``.
+    """Return whether a config is named by ``-p``/``--param`` in ``argv`` or by ``$HCWF_CONFIG``.
 
     Parameters
     ----------
@@ -552,7 +552,7 @@ COMMANDS = {"init": _init, "datasets": _datasets, "convert": _convert, "export":
 
 
 def main(argv=None) -> None:
-    """Run `hcwf-run`: a subcommand, the top-level help, or (the default) a run of the config(s).
+    """Run ``hcwf-run``: a subcommand, the top-level help, or (the default) a run of the config(s).
 
     Exits with the code of the subcommand or of the run when it is not 0.
 

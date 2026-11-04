@@ -261,7 +261,7 @@ def _years_loop(rc: RunConfig, load) -> Iterator[tuple]:
     Yields
     ------
     tuple of (int, object)
-        The year and what `load` returned for it.
+        The year and what ``load`` returned for it.
     """
     for year in rc.evaluation.years:
         try:
@@ -439,7 +439,7 @@ def _model_year(out: dict, ensemble: bool, threshold: float) -> xr.Dataset:
 
 def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: float, calendar: str,
                         init_days: np.ndarray) -> None:
-    """Add the ensemble summary (the engine's, and the ensemble onset HCWF scores) to `variables`, in place.
+    """Add the ensemble summary (the engine's, and the ensemble onset HCWF scores) to ``variables``, in place.
 
     Parameters
     ----------
@@ -460,7 +460,7 @@ def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: 
     Returns
     -------
     None
-        Nothing is returned; `variables` is changed.
+        Nothing is returned; ``variables`` is changed.
     """
     spatial = out["spatial"]
     dims = ("init_time", "season", *spatial)

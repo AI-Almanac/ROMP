@@ -19,9 +19,9 @@ def label_keys(year, month, day) -> np.ndarray:
     year : array_like of int
         The year of each label.
     month : array_like of int
-        The month of each label, broadcast against `year`.
+        The month of each label, broadcast against ``year``.
     day : array_like of int
-        The day of the month of each label, broadcast against `year`.
+        The day of the month of each label, broadcast against ``year``.
 
     Returns
     -------
@@ -50,7 +50,7 @@ def find_days(keys: np.ndarray, years, month: int, day: int) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of int64, shape (year,)
-        The index in `keys` of that day in each year, -1 where the calendar has no such day (for example 29 February
+        The index in ``keys`` of that day in each year, -1 where the calendar has no such day (for example 29 February
         in a ``noleap`` calendar) or the data does not reach it.
     """
     wanted = np.asarray(years, dtype=np.int64) * 10000 + month * 100 + day

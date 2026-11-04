@@ -255,7 +255,7 @@ class _ConfigMethods:
         return build_config(self.to_mapping(), source=source)
 
     def to_yaml(self, path=None) -> str:
-        """Return the config as YAML text, and write it to `path` if given.
+        """Return the config as YAML text, and write it to ``path`` if given.
 
         Parameters
         ----------
@@ -291,7 +291,7 @@ class _ConfigMethods:
         Raises
         ------
         ConfigSchemaError
-            `raw` is not a mapping, or has an unknown key.
+            ``raw`` is not a mapping, or has an unknown key.
         """
         errors: list[str] = []
         if not isinstance(raw, dict):

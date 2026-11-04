@@ -38,7 +38,7 @@ def _year_windows(spec: ThresholdSpec, rain, years: tuple[int, int], partial_yea
     """Return the inclusive ``(first, last)`` time indices of the ``during`` window in each reference year.
 
     A window crossing the year end belongs to the year of its start. Years whose window is not fully inside the data
-    are skipped, or with `partial_years` used for the days the data has (a year with none of them is still skipped).
+    are skipped, or with ``partial_years`` used for the days the data has (a year with none of them is still skipped).
     Without a ``during`` window the window is the whole of each year that has days.
 
     Parameters
@@ -86,7 +86,7 @@ def _partial_windows(keys: np.ndarray, year_list: np.ndarray, start, end) -> lis
     start : hcwf.onset.model.DayRef
         The start of the window, a month-day with an optional day offset.
     end : hcwf.onset.model.DayRef
-        The end of the window; one that is earlier in the year than `start` wraps into the next year.
+        The end of the window; one that is earlier in the year than ``start`` wraps into the next year.
 
     Returns
     -------
@@ -132,7 +132,7 @@ def _window_sum(block: np.ndarray, sequential: bool) -> np.ndarray:
 
 
 def _add_compensated(total: np.ndarray, compensation: np.ndarray, value: np.ndarray) -> None:
-    """Add `value` to `total` with Kahan compensation, in place, as pandas' groupby sum adds (blending's totals over files).
+    """Add ``value`` to ``total`` with Kahan compensation, in place, as pandas' groupby sum adds (blending's totals over files).
 
     Parameters
     ----------
@@ -240,8 +240,8 @@ def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
     ``mean_total`` is ``days`` x the mean daily rain over the ``during`` days pooled across years; ``mean_daily`` is that
     mean; ``quantile_total`` is the quantile (linear interpolation) of all ``days``-day running totals lying wholly
     inside ``during``, pooled across years. Windows crossing the year end belong to the year of their start. A series
-    (grid cell or unit: the spatial dims are whatever `rain` has, so a unit series gives a unit threshold) is NaN when
-    more than `max_missing_fraction` (default 10 %; 1.0 never) of its reference days are missing.
+    (grid cell or unit: the spatial dims are whatever ``rain`` has, so a unit series gives a unit threshold) is NaN when
+    more than ``max_missing_fraction`` (default 10 %; 1.0 never) of its reference days are missing.
 
     Options reproducing onset_blending's computed threshold: ``max_missing_fraction=1.0``, ``partial_years=True``
     (a year whose window is only partly in the data counts its days, where by default it is skipped) and float rain
@@ -268,13 +268,13 @@ def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
     Returns
     -------
     numpy.ndarray of float64, shape spatial
-        The threshold of each series in mm; the shape is that of the spatial dims of `rain` (the whole grid for a rain
+        The threshold of each series in mm; the shape is that of the spatial dims of ``rain`` (the whole grid for a rain
         of some cells).
 
     Notes
     -----
     A ``ValueError`` comes from the computation when the kind is ``quantile_total`` without a quantile between 0 and 1,
-    or when a window bound is climatological with `partial_years`.
+    or when a window bound is climatological with ``partial_years``.
     """
     cells = _cells_of(rain)
     kept = _threshold_values(spec, rain, years, max_missing_fraction, partial_years)
@@ -285,7 +285,7 @@ def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
 
 def _threshold_values(spec: ThresholdSpec, rain, years: tuple[int, int], max_missing_fraction: float,
                       partial_years: bool) -> np.ndarray:
-    """Compute the threshold of the series `rain` holds, in chunks of series (see `compute_threshold`).
+    """Compute the threshold of the series ``rain`` holds, in chunks of series (see `compute_threshold`).
 
     Parameters
     ----------
@@ -303,7 +303,7 @@ def _threshold_values(spec: ThresholdSpec, rain, years: tuple[int, int], max_mis
     Returns
     -------
     numpy.ndarray of float64, shape spatial
-        The threshold in mm of each series, in the shape of the spatial dims of `rain`.
+        The threshold in mm of each series, in the shape of the spatial dims of ``rain``.
     """
     windows = _year_windows(spec, rain, years, partial_years)
     spatial_shape = rain.tenths.shape[:-1]
@@ -322,7 +322,7 @@ def _threshold_values(spec: ThresholdSpec, rain, years: tuple[int, int], max_mis
 
 
 def _spatial_axes(rain) -> tuple[tuple[str, ...], dict]:
-    """Return the dims and coordinates of a per-series result over `rain`.
+    """Return the dims and coordinates of a per-series result over ``rain``.
 
     Parameters
     ----------
@@ -332,7 +332,7 @@ def _spatial_axes(rain) -> tuple[tuple[str, ...], dict]:
     Returns
     -------
     dims : tuple of str
-        The spatial dims of `rain`, or the whole grid's for a rain of some cells.
+        The spatial dims of ``rain``, or the whole grid's for a rain of some cells.
     coords : dict
         The coordinates of those dims.
     """
@@ -396,8 +396,8 @@ def compute_thresholds(definition: Definition, rain, years: tuple[int, int], **o
 def _during_mask(forecast, spec: ThresholdSpec, years: tuple[int, int], first_lead: int, last_lead: int) -> np.ndarray:
     """Find which ``(init, lead)`` cells of a forecast count towards a threshold.
 
-    A lead counts when its date label lies in the ``during`` window (the whole year when None) of a year in `years`,
-    and its lead number lies in `first_lead` to `last_lead`. A window crossing the year end belongs to the year of its
+    A lead counts when its date label lies in the ``during`` window (the whole year when None) of a year in ``years``,
+    and its lead number lies in ``first_lead`` to ``last_lead``. A window crossing the year end belongs to the year of its
     start.
 
     Parameters
@@ -446,12 +446,12 @@ def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterabl
     """Compute the model's own climatology: every threshold of the definition from forecast days, in mm.
 
     Streams through the forecasts (``ForecastRain`` objects on one grid), summing per cell the valid forecast days whose
-    date label (from ``lead_label``) lies in the threshold's ``during`` window of a year in `years` (inclusive), over the
-    leads of `lead_window`, with members pooled. ``mean_total`` is ``days`` x that mean and ``mean_daily`` the mean;
+    date label (from ``lead_label``) lies in the threshold's ``during`` window of a year in ``years`` (inclusive), over the
+    leads of ``lead_window``, with members pooled. ``mean_total`` is ``days`` x that mean and ``mean_daily`` the mean;
     ``quantile_total`` is not supported. A cell is NaN when more than 10 % of the expected days are missing. The attrs
     record ``source`` (``"model:<source of the first forecast>"``), ``years``, ``lead_window`` and ``spec``.
 
-    With `windows` (inclusive ``(first, last)`` lead pairs, each cut to `lead_window`) every window is pooled separately
+    With ``windows`` (inclusive ``(first, last)`` lead pairs, each cut to ``lead_window``) every window is pooled separately
     and each DataArray gains a leading ``window`` dim with coordinates ``window_first`` and ``window_last`` (spec
     section 13). A window with no forecast days in it is NaN.
 
@@ -466,12 +466,12 @@ def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterabl
     lead_window : tuple of (int, int), default (1, 30)
         The first and last lead counted, inclusive and 1-based.
     windows : sequence of tuple of (int, int), optional
-        Verification windows of leads to pool separately; None pools one window, `lead_window`.
+        Verification windows of leads to pool separately; None pools one window, ``lead_window``.
 
     Returns
     -------
     dict of str to xarray.DataArray
-        The field of each threshold by name, in mm, over the spatial dims (``window`` first with `windows`).
+        The field of each threshold by name, in mm, over the spatial dims (``window`` first with ``windows``).
 
     Raises
     ------
@@ -574,7 +574,7 @@ def _mean_cycle(rain, years: tuple[int, int]) -> np.ndarray:
     Raises
     ------
     ValueError
-        No day of the data falls on some day of the 365-day year in `years`.
+        No day of the data falls on some day of the 365-day year in ``years``.
     """
     n_time = rain.tenths.shape[-1]
     flat = rain.tenths.reshape(-1, n_time)
@@ -599,7 +599,7 @@ def _mean_cycle(rain, years: tuple[int, int]) -> np.ndarray:
 def _anomaly_extrema(cycle: np.ndarray, start: np.ndarray, length: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Find the onset and cessation day of year for one segment of the cycle per cell.
 
-    The segment begins at 0-based day `start` and runs `length` days (both per cell). The cumulative sum of its anomaly
+    The segment begins at 0-based day ``start`` and runs ``length`` days (both per cell). The cumulative sum of its anomaly
     about its own mean is formed; cessation is the day of its maximum and onset the day after its minimum.
 
     Parameters
@@ -634,7 +634,7 @@ def _anomaly_extrema(cycle: np.ndarray, start: np.ndarray, length: np.ndarray) -
 def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.Dataset:
     """Derive seasons per cell from harmonic analysis of the mean annual cycle (draft reading of Dunning et al. 2016).
 
-    The mean daily cycle over `years` (Feb 29 dropped, 365 days) is decomposed with a Fourier transform. When the
+    The mean daily cycle over ``years`` (Feb 29 dropped, 365 days) is decomposed with a Fourier transform. When the
     amplitude of the second harmonic exceeds that of the first, the cell has two seasons, otherwise one. For one season
     the cycle is rotated to start at the minimum of the first harmonic; for two, the year is split at the two minima of
     the second harmonic. Within each segment the anomaly about the segment mean is accumulated; onset is the day after
@@ -661,7 +661,7 @@ def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.D
     Raises
     ------
     ValueError
-        `max_seasons` is not 1 or 2, or the data lacks a day of the 365-day year.
+        ``max_seasons`` is not 1 or 2, or the data lacks a day of the 365-day year.
     """
     if max_seasons not in (1, 2):
         raise ValueError("max_seasons must be 1 or 2")
@@ -685,7 +685,7 @@ def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.D
 
 
 def _harmonic_values(rain, years: tuple[int, int], max_seasons: int):
-    """Compute the seasons of the series `rain` holds, flat (see `harmonic_seasons`).
+    """Compute the seasons of the series ``rain`` holds, flat (see `harmonic_seasons`).
 
     Parameters
     ----------
@@ -847,12 +847,12 @@ def reduce_onset_days(doy: xr.DataArray, how: str = "mean") -> xr.DataArray:
     Returns
     -------
     xarray.DataArray
-        The climatological onset day of year, over the other dims of `doy`.
+        The climatological onset day of year, over the other dims of ``doy``.
 
     Raises
     ------
     ValueError
-        `how` is not one of `ONSET_STATISTICS`.
+        ``how`` is not one of `ONSET_STATISTICS`.
     """
     if how == "mean":
         return np.round(doy.mean(dim="year"))
@@ -904,8 +904,8 @@ class ReferenceOnset:
              base_date: str | None = None, unit_col: str | None = None) -> "ReferenceOnset":
         """Read a table of reference onset dates from a CSV.
 
-        The dates come from a date column, or from a year and a day offset from `base_date`. The table is keyed by the
-        unit-id column `unit_col` and/or the `year_col` (at least one); dates are ``datetime.date``.
+        The dates come from a date column, or from a year and a day offset from ``base_date``. The table is keyed by the
+        unit-id column ``unit_col`` and/or the ``year_col`` (at least one); dates are ``datetime.date``.
 
         Parameters
         ----------
@@ -916,7 +916,7 @@ class ReferenceOnset:
         year_col : str, optional
             The column holding the year; also a key of the table.
         day_col : str, optional
-            The column holding a day offset from `base_date` in that year (with `year_col` and `base_date`).
+            The column holding a day offset from ``base_date`` in that year (with ``year_col`` and ``base_date``).
         base_date : str, optional
             The ``"MM-DD"`` the day offset counts from.
         unit_col : str, optional
@@ -930,7 +930,7 @@ class ReferenceOnset:
         Raises
         ------
         ValueError
-            The file has no usable date columns, `unit_col` is not a column, or neither `year_col` nor `unit_col`
+            The file has no usable date columns, ``unit_col`` is not a column, or neither ``year_col`` nor ``unit_col``
             gives a key.
         """
         table = pd.read_csv(path, dtype={unit_col: str} if unit_col else None, float_precision="round_trip")
@@ -960,7 +960,7 @@ class ReferenceOnset:
     def dates(self, unit_ids, years) -> np.ndarray:
         """Return the reference onset date of each ``(unit, year)`` pair, row by row.
 
-        A computed field needs `unit_ids` to be its unit coordinate (a ``unit`` dim) and gives each year's Jan 1 plus
+        A computed field needs ``unit_ids`` to be its unit coordinate (a ``unit`` dim) and gives each year's Jan 1 plus
         its day of year.
 
         Parameters
@@ -973,7 +973,7 @@ class ReferenceOnset:
         Returns
         -------
         numpy.ndarray of datetime64[ns]
-            The date of each row, ``NaT`` without one; the shape of the broadcast `years` (and `unit_ids` for a table).
+            The date of each row, ``NaT`` without one; the shape of the broadcast ``years`` (and ``unit_ids`` for a table).
 
         Raises
         ------
@@ -1005,9 +1005,9 @@ class ReferenceOnset:
         Parameters
         ----------
         unit_ids : array_like of str
-            The unit ids; broadcast together with `years`.
+            The unit ids; broadcast together with ``years``.
         years : array_like of int
-            The years; broadcast together with `unit_ids`.
+            The years; broadcast together with ``unit_ids``.
 
         Returns
         -------
@@ -1048,7 +1048,7 @@ class ReferenceOnset:
         """Return the ``search_start`` entry of ``detect_observed`` / ``detect_forecast`` for these years.
 
         A month-day is the ``"MM-DD"`` string. Otherwise a DataArray of dates (``NaT`` for none) over ``year`` and, for a
-        table keyed by unit, the `dims` of the units (default one ``unit`` dim holding `unit_ids`); a computed field over
+        table keyed by unit, the ``dims`` of the units (default one ``unit`` dim holding ``unit_ids``); a computed field over
         its own spatial dims gives each year's date.
 
         Parameters
@@ -1058,7 +1058,7 @@ class ReferenceOnset:
         unit_ids : array_like of str, optional
             The unit ids; needed for a table keyed by unit.
         dims : tuple of str, default ``("unit",)``
-            The dims of the units; only the first is used, naming the dim that holds `unit_ids`.
+            The dims of the units; only the first is used, naming the dim that holds ``unit_ids``.
 
         Returns
         -------
@@ -1068,7 +1068,7 @@ class ReferenceOnset:
         Raises
         ------
         ValueError
-            A table keyed by unit is used without `unit_ids`.
+            A table keyed by unit is used without ``unit_ids``.
         """
         years = np.asarray(years, dtype=int)
         if self.month_day is not None:
@@ -1095,7 +1095,7 @@ class ReferenceOnset:
         return xr.DataArray(values, dims=("year", dims[0]), coords={"year": years, dims[0]: unit_ids})
 
     def doy_field(self, like: xr.DataArray) -> xr.DataArray:
-        """Return the day of year of the reference onset on the grid of `like` (the climatology reference forecast's input).
+        """Return the day of year of the reference onset on the grid of ``like`` (the climatology reference forecast's input).
 
         A computed field is returned as it is; a month-day is its day of year in a year of 365 days. A table varies by
         year (and unit), so it has no single day-of-year field.

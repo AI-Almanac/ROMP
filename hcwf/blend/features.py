@@ -92,7 +92,7 @@ def _season_start(setup) -> str:
 
     Parameters
     ----------
-    setup : hcwf.config.model.OnsetSetup
+    setup : hcwf.config.onset.OnsetSetup
         The run's onset setup (``rc.onset``); its definition's first season is read.
 
     Returns
@@ -210,7 +210,7 @@ def member_mean(rain: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float, shape (issue, unit, day)
-        The mean in the dtype of `rain`; ``NaN`` where no member has a value.
+        The mean in the dtype of ``rain``; ``NaN`` where no member has a value.
     """
     shape = (rain.shape[0],) + rain.shape[2:]
     total = np.zeros(shape, rain.dtype)
@@ -261,11 +261,11 @@ That is about 2 s of work, less than starting the workers costs.
 """
 
 SERIES = {"base": "base", "fixed_cutoff": "fixed_cutoff", "ref_onset": "ref"}
-"""The count series a probability variant is binned from (`count_<series>` in a forecast's data)."""
+"""The count series a probability variant is binned from (``count_<series>`` in a forecast's data)."""
 
 
 def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids, series=("fixed_cutoff", "ref")) -> dict:
-    """Return the search starts after the base series, for the `series` asked for.
+    """Return the search starts after the base series, for the ``series`` asked for.
 
     The starts are the fixed cutoff date, and the reference onset (``"MM-DD"``, or dates over ``init_time`` and
     ``unit``).
@@ -303,7 +303,7 @@ def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids,
 def _forecast_needs(recipe: Recipe, model, needed_only: bool) -> tuple[tuple[str, ...], int | None]:
     """Return the count series and lead days of a model's forecast onsets to keep.
 
-    Every series and all days unless `needed_only`; else the base series and those the recipe bins, and the days its
+    Every series and all days unless ``needed_only``; else the base series and those the recipe bins, and the days its
     features read: the probability days and the rain predictors' horizon (every day for the random forest, which reads
     them all; none for a model without rain predictors).
 
@@ -311,7 +311,7 @@ def _forecast_needs(recipe: Recipe, model, needed_only: bool) -> tuple[tuple[str
     ----------
     recipe : hcwf.blend.recipe.Recipe
         The blend recipe.
-    model : hcwf.blend.recipe.ModelSpec
+    model : hcwf.config.model.ModelSpec
         The model's entry in the recipe.
     needed_only : bool
         Keep only what the features read.
@@ -343,7 +343,7 @@ def _forecast_file_info(path, case, select, spec):
         The model and window.
     select : hcwf.config.model.Selection
         The per-call selection (units, issue dates, leads).
-    spec : hcwf.config.UnitsSpec
+    spec : hcwf.spatial.units.UnitsSpec
         The units specification of the model.
 
     Returns
@@ -376,7 +376,7 @@ def _forecast_runs(item, rc, case, select, spec, thresholds, fixed_cutoff, refer
         The model and window.
     select : hcwf.config.model.Selection
         The per-call selection.
-    spec : hcwf.config.UnitsSpec
+    spec : hcwf.spatial.units.UnitsSpec
         The units specification of the model.
     thresholds : dict
         The onset thresholds.
@@ -447,7 +447,7 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
         Limit the units to these (the blendable units under the inner join; their results are unchanged).
     member_ids : iterable of int, optional
         Limit the members read (a forecast reads the trained ones).
-    units : hcwf.config.UnitsSpec, optional
+    units : hcwf.spatial.units.UnitsSpec, optional
         Override the model's units specification (a forecast passes the trained blend's).
     issue_dates : iterable of datetime-like, optional
         Read only the issues on these days (files without any are left out).
@@ -565,7 +565,7 @@ def climatology(recipe: Recipe, setup, observed_onsets: ObservedOnsets, forecast
     ----------
     recipe : hcwf.blend.recipe.Recipe
         The blend recipe.
-    setup : hcwf.config.model.OnsetSetup
+    setup : hcwf.config.onset.OnsetSetup
         The run's onset setup (for the season start).
     observed_onsets : hcwf.blend.samples.ObservedOnsets
         The observed onsets.
@@ -757,7 +757,7 @@ def weekly(recipe: Recipe, definition, climatology: Climatology, observed_onsets
     ----------
     recipe : hcwf.blend.recipe.Recipe
         The blend recipe.
-    definition : hcwf.config.model.Definition
+    definition : hcwf.onset.model.Definition
         The onset definition the rain-predictor windows are read from.
     climatology : hcwf.references.kde.Climatology
         The climatologies.
@@ -810,7 +810,7 @@ def _row_features(recipe, definition, climatology, forecasts, r: Rows, here: sli
     ----------
     recipe : hcwf.blend.recipe.Recipe
         The blend recipe.
-    definition : hcwf.config.model.Definition
+    definition : hcwf.onset.model.Definition
         The onset definition the rain-predictor windows are read from.
     climatology : hcwf.references.kde.Climatology
         The climatologies.
@@ -821,7 +821,7 @@ def _row_features(recipe, definition, climatology, forecasts, r: Rows, here: sli
     here : slice
         The rows to compute.
     threshold : numpy.ndarray of float64, shape (row,)
-        The onset threshold of each row (mm), indexed with `here`.
+        The onset threshold of each row (mm), indexed with ``here``.
     attrs : dict
         Receives the rain horizons and the unavailable rain predictors (see `_rain_predictors`).
 
@@ -901,7 +901,7 @@ def _rain_predictors(recipe: Recipe, definition, forecasts, r: Rows, here: slice
     ----------
     recipe : hcwf.blend.recipe.Recipe
         The blend recipe.
-    definition : hcwf.config.model.Definition
+    definition : hcwf.onset.model.Definition
         The onset definition the rolling windows are read from.
     forecasts : dict of str to hcwf.blend.samples.ForecastOnsets
         Each model's forecast onsets (their mean rainfall).
@@ -986,7 +986,7 @@ def _logit_winsor(p, lo: float = 0.0001, hi: float = 0.9999) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64
-        The logits, of the shape of `p`.
+        The logits, of the shape of ``p``.
     """
     return logit(np.clip(np.asarray(p, dtype=float), lo, hi))
 
@@ -1002,7 +1002,7 @@ def _identity_transform(x) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64
-        `x`, of its own shape.
+        ``x``, of its own shape.
     """
     return np.asarray(x, dtype=float)
 
@@ -1018,7 +1018,7 @@ def _log1p_transform(x) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64
-        The transformed values, of the shape of `x`.
+        The transformed values, of the shape of ``x``.
     """
     x = np.asarray(x, dtype=float)
     return np.where(np.isnan(x), x, np.log1p(np.clip(x, 0.0, None)))
@@ -1065,7 +1065,7 @@ def rain_transform(value):
     Raises
     ------
     ValueError
-        `value` names no transform.
+        ``value`` names no transform.
     """
     if value is None:
         return _identity_transform
@@ -1098,7 +1098,7 @@ def _rolling_sums(mat: np.ndarray, k: int) -> np.ndarray:
     Returns
     -------
     numpy.ndarray of float64, shape (row, day - k + 1)
-        The sums; with no columns when there are fewer than `k` days.
+        The sums; with no columns when there are fewer than ``k`` days.
     """
     n = mat.shape[1]
     if n < k:
