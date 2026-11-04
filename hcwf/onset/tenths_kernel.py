@@ -1,5 +1,8 @@
-"""The numba kernel of ingest._to_tenths, in a module of its own so that numba is imported (and the kernel
-compiled) only when a block of rainfall is converted, not when hcwf.config or hcwf.onset.ingest is imported."""
+"""The numba kernel of ``hcwf.onset.ingest._to_tenths``, in a module of its own.
+
+Numba is imported (and the kernel compiled) only when a block of rainfall is converted, not when `hcwf.config` or
+`hcwf.onset.ingest` is imported. Without numba the module still imports and holds no kernel.
+"""
 try:
     import numba
     from numba import njit
@@ -13,12 +16,32 @@ if numba is not None:
 
     @njit(parallel=True, cache=True)
     def _tenths_kernel(flat, to_tenths, clip_negative, exact, keep_negative, out_tenths, out_missing, n_bad, lowest):
-        """Scale, clean and round the flat values to int32 tenths (float64 mm, unrounded, when exact) and missing flags
-        in one pass, in parallel over pieces.
+        """Scale, clean and round flat rain values to tenths and missing flags, in parallel over pieces.
 
-        Each element goes through exactly the float64 steps of _to_tenths_numpy (multiply in float64, non-finite is
-        missing, values below the limit are missing or, when clipping, zero, beyond int32 is missing, round half to
-        even); n_bad[c] and lowest[c] are the count and the lowest scaled value of the bad elements of piece c.
+        Compiled with numba (``njit``, ``parallel=True``). Each element goes through exactly the ``float64`` steps of
+        ``_to_tenths_numpy``: multiply in ``float64``, non-finite is missing, values below the limit are missing or,
+        when clipping, zero, beyond ``int32`` is missing, round half to even.
+
+        Parameters
+        ----------
+        flat : numpy.ndarray, shape (n,)
+            The raw rain values, any float or integer dtype.
+        to_tenths : float
+            The factor that takes the values to tenths of a mm.
+        clip_negative : bool
+            Count values below zero as bad and set them to 0, instead of making them missing.
+        exact : bool
+            Keep ``float64`` mm, unrounded, instead of ``int32`` tenths.
+        keep_negative : bool
+            Leave negative values as they are, counting none as bad.
+        out_tenths : numpy.ndarray, shape (n,)
+            Output: the tenths (``int32``), or ``float64`` mm when `exact`; 0 where missing.
+        out_missing : numpy.ndarray of bool, shape (n,)
+            Output: True where the value is missing.
+        n_bad : numpy.ndarray of int64, shape (pieces,)
+            Output: the number of bad elements of each piece.
+        lowest : numpy.ndarray of float64, shape (pieces,)
+            Output: the lowest scaled value of the bad elements of each piece (0 if there is none).
         """
         n = flat.shape[0]
         pieces = n_bad.shape[0]

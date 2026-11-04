@@ -1,15 +1,16 @@
 """Onset thresholds read from files: one reader for per-unit tables and for gridded NetCDF fields, and the join to units.
 
-A threshold table is a pandas DataFrame with `onset_thresh` and either an `id` (a unit id) or `lat` and `lon`
-(a grid cell). `read_threshold_table` reads one from a CSV (keyed by a unit id column, adm3_name, id, or lat/lon),
-a NetCDF file (flattened lat, lon and value variables) or a MATLAB `.mat` file (value over the lat x lon product).
-`read_threshold_grid` reads a NetCDF field on the grid, as HCWF's `threshold_files` do. Both apply the optional
-`ThresholdScale` (clip(t * factor + offset, min, max)) through `scale_values`. `unit_thresholds` joins a table (or a
-constant, or nothing) to the ids of the units, normalising ids and refusing a table that does not cover them.
+A threshold table is a `pandas.DataFrame` with ``onset_thresh`` and either an ``id`` (a unit id) or ``lat`` and ``lon``
+(a grid cell). `read_threshold_table` reads one from a CSV (keyed by a unit id column, ``adm3_name``, ``id``, or
+lat/lon), a NetCDF file (flattened lat, lon and value variables) or a MATLAB ``.mat`` file (value over the lat x lon
+product). `read_threshold_grid` reads a NetCDF field on the grid, as HCWF's ``threshold_files`` do. Both apply the
+optional `ThresholdScale` (``clip(t * factor + offset, min, max)``) through `scale_values`. `unit_thresholds` joins a
+table (or a constant, or nothing) to the ids of the units, normalising ids and refusing a table that does not cover
+them.
 
-Thresholds computed from the observations are `hcwf.onset.climatology.compute_threshold`; this module is the
-file side. The readers port onset_blending's `core/reference.py` (`read_thresholds`, `_scaled`, `_threshold_csv`,
-`Reference.unit_thresholds`) operation for operation.
+Thresholds computed from the observations are `hcwf.onset.climatology.compute_threshold`; this module is the file
+side. The readers port onset_blending's ``core/reference.py`` (``read_thresholds``, ``_scaled``, ``_threshold_csv``,
+``Reference.unit_thresholds``) operation for operation.
 """
 from __future__ import annotations
 
@@ -25,22 +26,40 @@ from hcwf.cache import memo
 from hcwf.spatial import ids
 
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")
+"""The file suffixes `read_threshold_table` reads as NetCDF."""
 
 
 @dataclass(frozen=True)
 class ThresholdScale:
-    """clip(threshold * factor + offset, min, max); a bound left None is not applied."""
+    """A linear rescaling of thresholds, ``clip(threshold * factor + offset, min, max)``; a bound left None is not applied."""
 
     factor: float = 1.0
+    """The factor the threshold is multiplied by."""
     offset: float = 0.0
+    """The amount added after the multiplication."""
     min: float | None = None
+    """The lower bound, or None for none."""
     max: float | None = None
+    """The upper bound, or None for none."""
 
 
 def scale_values(values, scale: ThresholdScale | None):
-    """The values as clip(v * factor + offset, min, max) (the values themselves without a scale).
+    """Return the values as ``clip(v * factor + offset, min, max)``, or the values themselves without a scale.
 
-    A DataArray keeps its dims, coords and attrs; NaN stays NaN (np.maximum and np.minimum propagate it).
+    A `xarray.DataArray` keeps its dims, coords and attrs; NaN stays NaN (`numpy.maximum` and `numpy.minimum`
+    propagate it).
+
+    Parameters
+    ----------
+    values : numpy.ndarray or xarray.DataArray
+        The thresholds, converted to ``float64`` when scaled.
+    scale : ThresholdScale or None
+        The scaling; None returns `values` unchanged.
+
+    Returns
+    -------
+    numpy.ndarray of float64 or xarray.DataArray
+        The scaled values, of the shape of `values`; a ``DataArray`` when `values` is one.
     """
     if scale is None:
         return values
@@ -55,17 +74,44 @@ def scale_values(values, scale: ThresholdScale | None):
 
 
 def scale_table(table: pd.DataFrame, scale: ThresholdScale | None) -> pd.DataFrame:
-    """The table with its `onset_thresh` scaled (the table itself without a scale)."""
+    """Return the table with its ``onset_thresh`` scaled, or the table itself without a scale.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        The table, with an ``onset_thresh`` column.
+    scale : ThresholdScale or None
+        The scaling; None returns `table` unchanged.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The table, with ``onset_thresh`` as ``float64`` after scaling.
+    """
     if scale is None:
         return table
     return table.assign(onset_thresh=scale_values(table["onset_thresh"].astype(float).values, scale))
 
 
 def read_threshold_grid(path, var: str, *, select=None, scale: ThresholdScale | None = None) -> xr.DataArray:
-    """The threshold field `var` of a NetCDF file as a loaded DataArray, as HCWF's `threshold_files` read it.
+    """Read the threshold field of a NetCDF file as a loaded array, as HCWF's ``threshold_files`` read it.
 
-    `select`, if given, is called on the DataArray before it is loaded (HCWF passes its region selection, so only the
-    region is read); `scale` is applied to the loaded values.
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The NetCDF file.
+    var : str
+        The name of the threshold variable.
+    select : callable, optional
+        Called on the `xarray.DataArray` before it is loaded and returns the part to read (HCWF passes its region
+        selection, so only the region is read).
+    scale : ThresholdScale, optional
+        Applied to the loaded values.
+
+    Returns
+    -------
+    xarray.DataArray
+        The loaded, scaled field.
     """
     with xr.open_dataset(path) as ds:
         field = ds[var]
@@ -79,13 +125,51 @@ def read_threshold_table(path, *, scale: ThresholdScale | None = None, id_col: s
                          lat_var: str = "lat", lon_var: str = "lon", value_var: str = "MWmean",
                          mat_lat_name: str = "lat", mat_lon_name: str = "lon",
                          mat_value_name: str = "onset.day.thres") -> pd.DataFrame:
-    """A threshold table (id or lat/lon, and onset_thresh) from a CSV, NetCDF or MATLAB file, optionally scaled.
+    """Read a threshold table (id or lat/lon, and ``onset_thresh``) from a CSV, NetCDF or MATLAB file.
 
-    CSV: the unit id is `id_col` when given (it must exist), else an `adm3_name` column, else `id`, else the table is
-    keyed by `lat_col` and `lon_col`; `value_col` holds the threshold. Values stay text until a join reads them.
-    NetCDF (.nc, .nc4, .netcdf): the variables `lat_var`, `lon_var` and `value_var`, each flattened (netCDF4 reading,
-    so masked entries show their stored value); .mat: the vectors `mat_lat_name` and `mat_lon_name` give every
-    (lat, lon) pair and `mat_value_name` the values flattened over them.
+    CSV: the unit id is `id_col` when given (a `ValueError` is raised if the CSV has no such column), else an ``adm3_name`` column, else ``id``, else the table
+    is keyed by `lat_col` and `lon_col`; `value_col` holds the threshold. Values stay text until a join reads them.
+    NetCDF (``.nc``, ``.nc4``, ``.netcdf``): the variables `lat_var`, `lon_var` and `value_var`, each flattened
+    (netCDF4 reading, so masked entries show their stored value). ``.mat``: the vectors `mat_lat_name` and
+    `mat_lon_name` give every (lat, lon) pair and `mat_value_name` the values flattened over them.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The file; its suffix picks the reader.
+    scale : ThresholdScale, optional
+        Applied to ``onset_thresh``.
+    id_col : str, optional
+        The CSV column holding the unit id; None looks for ``adm3_name``, ``id`` or lat/lon.
+    value_col : str, default "onset_thresh"
+        The CSV column holding the threshold.
+    lat_col : str, default "lat"
+        The CSV latitude column, used when the table has no unit id.
+    lon_col : str, default "lon"
+        The CSV longitude column, used when the table has no unit id.
+    lat_var : str, default "lat"
+        The NetCDF latitude variable.
+    lon_var : str, default "lon"
+        The NetCDF longitude variable.
+    value_var : str, default "MWmean"
+        The NetCDF threshold variable.
+    mat_lat_name : str, default "lat"
+        The ``.mat`` latitude vector.
+    mat_lon_name : str, default "lon"
+        The ``.mat`` longitude vector.
+    mat_value_name : str, default "onset.day.thres"
+        The ``.mat`` threshold array.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns ``id`` (or ``lat`` and ``lon``) and ``onset_thresh``, without repeated rows; ``onset_thresh`` is text
+        for a CSV that is not scaled, ``float64`` otherwise.
+
+    Raises
+    ------
+    FileNotFoundError
+        `path` does not exist.
     """
     path = str(path)
     if not os.path.exists(path):
@@ -115,7 +199,31 @@ def read_threshold_table(path, *, scale: ThresholdScale | None = None, id_col: s
 
 
 def _read_csv(path: str, id_col: str | None, value_col: str, lat_col: str, lon_col: str) -> pd.DataFrame:
-    """The CSV's id (or lat, lon) and onset_thresh columns, as text, without repeated rows."""
+    """Read the id (or lat, lon) and ``onset_thresh`` columns of a CSV, as text, without repeated rows.
+
+    Parameters
+    ----------
+    path : str
+        The CSV file.
+    id_col : str or None
+        The column holding the unit id; None looks for ``adm3_name``, ``id`` or lat/lon.
+    value_col : str
+        The column holding the threshold.
+    lat_col : str
+        The latitude column, used when the table has no unit id.
+    lon_col : str
+        The longitude column, used when the table has no unit id.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns ``id`` (or ``lat`` and ``lon``) and ``onset_thresh``, all text.
+
+    Raises
+    ------
+    ValueError
+        `id_col` is not a column of the CSV.
+    """
     table = pd.read_csv(path, dtype=str)
     if id_col:
         if id_col not in table.columns:
@@ -130,12 +238,30 @@ def _read_csv(path: str, id_col: str | None, value_col: str, lat_col: str, lon_c
 
 
 _joined = memo("onset.thresholds.joined", maxsize=16, share=True)
-"""The tables and arrays already joined to units this run: {fingerprint: thresholds}. Joining a table keyed by lat/lon
-formats every cell's grid id, which every year and file of a run would repeat; the workers start with the parent's."""
+"""The tables and arrays already joined to units this run, as ``{fingerprint: thresholds}``.
+
+Joining a table keyed by lat/lon formats every cell's grid id, which every year and file of a run would repeat; the
+workers start with the parent's.
+"""
 
 
 def _fingerprint(thresholds, unit_ids, explicit) -> str:
-    """A digest of what a join depends on: the table or array, the units and the explicit convention."""
+    """Return a digest of what a join depends on: the table or array, the units and the explicit convention.
+
+    Parameters
+    ----------
+    thresholds : pandas.DataFrame or xarray.DataArray
+        The table, or the array over ``"unit"``.
+    unit_ids : numpy.ndarray
+        The unit ids.
+    explicit : hcwf.spatial.ids.GridIdConvention or None
+        The explicit grid-id convention.
+
+    Returns
+    -------
+    str
+        A hexadecimal digest.
+    """
     digest = hashlib.blake2b(digest_size=16)
     if isinstance(thresholds, pd.DataFrame):
         digest.update(repr(list(thresholds.columns)).encode())
@@ -150,11 +276,24 @@ def _fingerprint(thresholds, unit_ids, explicit) -> str:
 
 
 def unit_thresholds(thresholds, unit_ids, explicit: ids.GridIdConvention | None = None) -> np.ndarray:
-    """Each unit's threshold (NaN without one): `thresholds` is None, a constant, a table or an array over "unit",
-    joined by unit id.
+    """Return each unit's threshold (NaN without one), joined by unit id.
 
     A table keyed by lat/lon is read under the units' grid-id convention and must cover them; ids are normalised
     (stripped text); one id with two values, or a unit the table lacks, is an error. A join is made once per run.
+
+    Parameters
+    ----------
+    thresholds : None, float, pandas.DataFrame or xarray.DataArray
+        No threshold, a constant, a table (see `read_threshold_table`) or an array over ``"unit"``.
+    unit_ids : array_like of str, shape (unit,)
+        The ids of the units.
+    explicit : hcwf.spatial.ids.GridIdConvention, optional
+        The grid-id convention to use for a table keyed by lat/lon; None detects it from `unit_ids`.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (unit,)
+        The threshold of each unit, in the order of `unit_ids`; all NaN for None.
     """
     unit_ids = np.asarray(unit_ids)
     if isinstance(thresholds, pd.DataFrame) or (isinstance(thresholds, xr.DataArray) and "unit" in thresholds.dims):
@@ -167,7 +306,28 @@ def unit_thresholds(thresholds, unit_ids, explicit: ids.GridIdConvention | None 
 
 
 def _join_units(thresholds, unit_ids, explicit) -> np.ndarray:
-    """`unit_thresholds` without the memo."""
+    """Join thresholds to units, as `unit_thresholds` does without the memo.
+
+    Parameters
+    ----------
+    thresholds : None, float, pandas.DataFrame or xarray.DataArray
+        No threshold, a constant, a table or an array over ``"unit"``.
+    unit_ids : numpy.ndarray of str, shape (unit,)
+        The ids of the units.
+    explicit : hcwf.spatial.ids.GridIdConvention or None
+        The grid-id convention for a table keyed by lat/lon.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (unit,)
+        The threshold of each unit, in the order of `unit_ids`.
+
+    Raises
+    ------
+    ValueError
+        The table has no ``id``, ``adm3_name`` or lat/lon columns, an id has conflicting values, or the table lacks
+        some of the units.
+    """
     if thresholds is None:
         return np.full(len(unit_ids), np.nan)
     if isinstance(thresholds, xr.DataArray) and "unit" in thresholds.dims:

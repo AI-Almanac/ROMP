@@ -1,8 +1,8 @@
 """Map month-day and day-of-year search bounds onto a dataset's own calendar labels.
 
-Days are located through integer keys year*10000 + month*100 + day, which
-increase with time in every calendar (standard, noleap, 360_day, ...), so no
-datetime arithmetic is needed.
+Days are located through integer keys ``year*10000 + month*100 + day``, which increase with time in every calendar
+(standard, noleap, 360_day, ...), so no datetime arithmetic is needed. The labels come from `hcwf.onset.model.DailyRain`;
+the bounds are used by `hcwf.onset.engine` to turn seasons into day indices.
 """
 from __future__ import annotations
 
@@ -12,14 +12,47 @@ from hcwf.onset.model import DayRef
 
 
 def label_keys(year, month, day) -> np.ndarray:
-    """Return the int64 key year*10000 + month*100 + day for each label."""
+    """Return the ``int64`` key ``year*10000 + month*100 + day`` for each label.
+
+    Parameters
+    ----------
+    year : array_like of int
+        The year of each label.
+    month : array_like of int
+        The month of each label, broadcast against `year`.
+    day : array_like of int
+        The day of the month of each label, broadcast against `year`.
+
+    Returns
+    -------
+    numpy.ndarray of int64
+        The keys, with the broadcast shape of the inputs.
+    """
     return (np.asarray(year, dtype=np.int64) * 10000
             + np.asarray(month, dtype=np.int64) * 100
             + np.asarray(day, dtype=np.int64))
 
 
 def find_days(keys: np.ndarray, years, month: int, day: int) -> np.ndarray:
-    """Index of month-day in each of `years` within the sorted label keys, or -1 where that day is absent."""
+    """Find a month-day in each of several years among the sorted label keys.
+
+    Parameters
+    ----------
+    keys : numpy.ndarray of int64, shape (time,)
+        The sorted label keys (see `label_keys`).
+    years : array_like of int
+        The years to look in.
+    month : int
+        The month of the day to find.
+    day : int
+        The day of the month to find.
+
+    Returns
+    -------
+    numpy.ndarray of int64, shape (year,)
+        The index in `keys` of that day in each year, -1 where the calendar has no such day (for example 29 February
+        in a ``noleap`` calendar) or the data does not reach it.
+    """
     wanted = np.asarray(years, dtype=np.int64) * 10000 + month * 100 + day
     idx = np.searchsorted(keys, wanted)
     found = (idx < len(keys)) & (keys[np.minimum(idx, len(keys) - 1)] == wanted)
@@ -27,9 +60,32 @@ def find_days(keys: np.ndarray, years, month: int, day: int) -> np.ndarray:
 
 
 def fixed_bounds(keys: np.ndarray, years, start: DayRef, end: DayRef) -> tuple[np.ndarray, np.ndarray]:
-    """Inclusive (start, end) day indices of a month-day window in each year, -1 where a bound is outside the data.
+    """Return the inclusive day indices of a month-day window in each year.
 
-    An end month-day earlier than the start month-day falls in the following year.
+    An end month-day earlier than the start month-day falls in the following year. The ``offset_days`` of each
+    bound shifts it by whole days.
+
+    Parameters
+    ----------
+    keys : numpy.ndarray of int64, shape (time,)
+        The sorted label keys (see `label_keys`).
+    years : array_like of int
+        The years of the windows' starts.
+    start : hcwf.onset.model.DayRef
+        The first day of the window, a fixed month-day.
+    end : hcwf.onset.model.DayRef
+        The last day of the window, a fixed month-day.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, numpy.ndarray)
+        The first and last day index of the window in each year, both ``int64`` with shape (year,); -1 where a bound
+        is outside the data.
+
+    Raises
+    ------
+    ValueError
+        A bound is climatological rather than a fixed month-day.
     """
     if start.climatological is not None or end.climatological is not None:
         raise ValueError("fixed_bounds takes month-day bounds; resolve climatological bounds per cell")
@@ -44,11 +100,30 @@ def fixed_bounds(keys: np.ndarray, years, start: DayRef, end: DayRef) -> tuple[n
 
 def doy_bounds(keys: np.ndarray, years, start_doy, end_doy, start_offset: int = 0,
                end_offset: int = 0) -> tuple[np.ndarray, np.ndarray]:
-    """Inclusive day indices from 1-based day-of-year bounds, broadcast over years x cells.
+    """Return the inclusive day indices of windows given by 1-based day-of-year bounds, over years and cells.
 
-    years has shape (Y,); start_doy and end_doy have shape (C,) and may be NaN
-    (no such season), giving -1. An end day-of-year before the start falls in the
-    following year. Offsets shift the bounds by whole days.
+    An end day-of-year before the start falls in the following year. Offsets shift the bounds by whole days.
+
+    Parameters
+    ----------
+    keys : numpy.ndarray of int64, shape (time,)
+        The sorted label keys (see `label_keys`).
+    years : array_like of int, shape (year,)
+        The years of the windows' starts.
+    start_doy : array_like of float, shape (cell,)
+        The first day of the window as a day of the year; NaN where the cell has no such season.
+    end_doy : array_like of float, shape (cell,)
+        The last day of the window as a day of the year; NaN where the cell has no such season.
+    start_offset : int, default 0
+        Days added to the first day.
+    end_offset : int, default 0
+        Days added to the last day.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, numpy.ndarray)
+        The first and last day index, both ``int64`` with shape (year, cell); -1 where the season is missing or a
+        January 1st is outside the data.
     """
     years = np.asarray(years, dtype=np.int64)
     jan1 = find_days(keys, years, 1, 1)

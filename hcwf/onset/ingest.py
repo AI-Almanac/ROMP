@@ -1,10 +1,14 @@
-"""Turn gridded daily rainfall (observed or forecast) into the normalized DailyRain / ForecastRain types.
+"""Turn gridded daily rainfall (observed or forecast) into the normalized hcwf.onset.model.DailyRain / hcwf.onset.model.ForecastRain types.
 
-Ingestion is where units, day boundaries, calendars, gaps and missing values are
-settled once, so every later stage works on integer tenths of a millimetre, or,
-with rain_resolution "exact", on float64 millimetres. The missing-rain policy
-("flag", "zero", "drop" or "keep") is applied here ("zero") or recorded for the
+Ingestion is where units, day boundaries, calendars, gaps and missing values are settled once, so every later stage
+works on integer tenths of a millimetre, or, with ``rain_resolution`` ``"exact"``, on float64 millimetres. The
+missing-rain policy (``"flag"``, ``"zero"``, ``"drop"`` or ``"keep"``) is applied here (``"zero"``) or recorded for the
 engine and backends (the others).
+
+`ingest` handles observations and `ingest_forecast` (with `ingest_forecast_info`) forecasts, including the detection of
+accumulation, sub-daily steps and daily boundaries. The result types are defined in `hcwf.onset.model`, which also
+holds the option names checked here (``MISSING_POLICIES``, ``RESOLUTIONS``); the dimension-name aliases come from
+`hcwf.io.dims`. `hcwf.onset.tenths_kernel` holds the optional numba kernel behind the conversion to tenths.
 """
 from __future__ import annotations
 
@@ -38,9 +42,25 @@ _INT32_MAX = float(np.iinfo(np.int32).max)
 
 
 def parse_day_boundary(text: str) -> tuple[float, str]:
-    """Parse e.g. "03 UTC, labelled by end" or "08:30 IST, labelled by end" into (hour in UTC, "start"|"end").
+    """Parse a day-boundary text into the boundary hour in UTC and its label.
 
-    The hour is in [0, 24). IST is India Standard Time (UTC+5.5). Unknown zones are an error.
+    Accepts for example ``"03 UTC, labelled by end"`` or ``"08:30 IST, labelled by end"``. IST is India Standard Time
+    (UTC+5.5); the supported zones are the keys of the module's zone table. Unknown zones are an error.
+
+    Parameters
+    ----------
+    text : str
+        The boundary text: an hour (``HH`` or ``HH:MM``), a zone name, then ``labelled by start`` or ``labelled by end``.
+
+    Returns
+    -------
+    tuple of (float, str)
+        The hour of the UTC day at which a day starts, in ``[0, 24)``, and the label, ``"start"`` or ``"end"``.
+
+    Raises
+    ------
+    ValueError
+        The text does not match the pattern, the time is out of range, or the zone is not supported.
     """
     match = _BOUNDARY_RE.match(text or "")
     if not match:
@@ -57,13 +77,47 @@ def parse_day_boundary(text: str) -> tuple[float, str]:
 
 
 def observation_shift_days(obs_boundary: str, lead_label: str) -> int:
-    """Days that move the observations' dates onto the forecasts' labels: 1 for observations labelled by their start
-    against forecast leads labelled by their end (as onset_blending reads them), else 0."""
+    """Return the days that move the observations' dates onto the forecasts' labels.
+
+    The shift is 1 for observations labelled by their start against forecast leads labelled by their end (as
+    onset_blending reads them), else 0.
+
+    Parameters
+    ----------
+    obs_boundary : str
+        The observations' day-boundary text, as for `parse_day_boundary`.
+    lead_label : {"start", "end"}
+        Whether the forecast leads are labelled by the start or the end of their 24 h.
+
+    Returns
+    -------
+    int
+        The number of days to shift the observations by: 1 or 0. `ValueError` is raised when `obs_boundary` cannot be
+        parsed.
+    """
     return 1 if parse_day_boundary(obs_boundary)[1] == "start" and lead_label == "end" else 0
 
 
 def unit_scale(units: str | None) -> float:
-    """Return the factor taking the given rainfall units to mm (see MM_PER_UNIT), or raise for missing/unknown units."""
+    """Return the factor taking the given rainfall units to mm.
+
+    The factors are those of ``MM_PER_UNIT``; the name is compared in lower case with single spaces.
+
+    Parameters
+    ----------
+    units : str, optional
+        The declared units, for example ``"mm/day"``, ``"kg m-2"`` or ``"m"``. ``None`` means missing.
+
+    Returns
+    -------
+    float
+        Millimetres per unit: 1.0 or 1000.0.
+
+    Raises
+    ------
+    ValueError
+        `units` is ``None`` or not a supported name.
+    """
     if units is None:
         raise ValueError("No rainfall units: pass units=... or set the 'units' attribute on the data")
     key = " ".join(str(units).lower().split())
@@ -74,7 +128,33 @@ def unit_scale(units: str | None) -> float:
 
 def _find_dim(da: xr.DataArray, role: str, override: str | None, label: str | None = None,
               required: bool = True, exclude: tuple = ()) -> str | None:
-    """Pick the dim playing `role` (a key of ROLE_ALIASES): the override if given, else the first alias present."""
+    """Pick the dim of `da` that plays a role.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data whose dims are searched.
+    role : str
+        The role, a key of ``ROLE_ALIASES`` (for example ``"time"``, ``"step"``, ``"init_time"``, ``"member"``).
+    override : str, optional
+        The dim to use when the caller named it; it must be in `da`. ``None`` searches the aliases of the role.
+    label : str, optional
+        The name of the role in error messages; defaults to `role`.
+    required : bool, default True
+        Raise when no dim is found instead of returning ``None``.
+    exclude : tuple, default ()
+        Dims that may not be picked (already taken by another role).
+
+    Returns
+    -------
+    str or None
+        The dim name: `override` if given, else the first alias present, else ``None`` (when not `required`).
+
+    Raises
+    ------
+    ValueError
+        `override` is not a dim of `da`, or no dim is found and `required` is true.
+    """
     label = label or role
     if override is not None:
         if override not in da.dims:
@@ -87,7 +167,18 @@ def _find_dim(da: xr.DataArray, role: str, override: str | None, label: str | No
 
 
 def _rename_spatial(da: xr.DataArray) -> xr.DataArray:
-    """Rename latitude/longitude style dims to lat and lon."""
+    """Rename latitude/longitude style dims to ``lat`` and ``lon``.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data; a dim already called ``lat`` or ``lon`` is kept.
+
+    Returns
+    -------
+    xarray.DataArray
+        `da` with the spatial dims renamed (`da` itself when there is nothing to rename).
+    """
     renames = {}
     for target in ("lat", "lon"):
         if target in da.dims:
@@ -99,7 +190,27 @@ def _rename_spatial(da: xr.DataArray) -> xr.DataArray:
 
 
 def _read_time(values: np.ndarray, constant_time_of_day: bool) -> tuple[str, np.ndarray]:
-    """Return (calendar, whole-day ordinals) for datetime64 or cftime time values."""
+    """Return the calendar and the whole-day ordinals of datetime64 or cftime time values.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        The time axis: ``datetime64`` values or cftime objects.
+    constant_time_of_day : bool
+        Require every stamp to have the same time of day (a daily axis).
+
+    Returns
+    -------
+    calendar : str
+        ``"standard"`` for ``datetime64``, else the calendar name of the cftime objects.
+    ordinals : numpy.ndarray of int64, shape (time,)
+        Whole days since the epoch (``datetime64[D]``) or since ``0001-01-01`` (cftime).
+
+    Raises
+    ------
+    ValueError
+        The axis is empty, the time of day is not constant when required, or the dtype is not supported.
+    """
     values = np.asarray(values)
     if values.size == 0:
         raise ValueError("The time axis is empty")
@@ -120,7 +231,26 @@ def _read_time(values: np.ndarray, constant_time_of_day: bool) -> tuple[str, np.
 
 
 def _labels(ordinals: np.ndarray, calendar: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return (time values, year, month, day) for day ordinals in the calendar."""
+    """Return the time values and the year, month and day numbers of day ordinals.
+
+    Parameters
+    ----------
+    ordinals : numpy.ndarray of int64, shape (time,)
+        Day ordinals as returned by `_read_time`.
+    calendar : str
+        ``"standard"`` or a cftime calendar name.
+
+    Returns
+    -------
+    times : numpy.ndarray, shape (time,)
+        ``datetime64[ns]`` values for the standard calendar, else cftime objects (dtype object).
+    year : numpy.ndarray of int64, shape (time,)
+        The year of each day.
+    month : numpy.ndarray of int64, shape (time,)
+        The month of each day, 1 to 12.
+    day : numpy.ndarray of int64, shape (time,)
+        The day of the month of each day, starting at 1.
+    """
     if calendar == "standard":
         days = ordinals.astype("datetime64[D]")
         months = days.astype("datetime64[M]")
@@ -139,7 +269,20 @@ def _labels(ordinals: np.ndarray, calendar: str) -> tuple[np.ndarray, np.ndarray
 
 
 def _coords(da: xr.DataArray, dims: tuple[str, ...]) -> dict[str, np.ndarray]:
-    """Coordinate values for each dim, using an index range for dims without coordinates."""
+    """Return the coordinate values of each dim.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data.
+    dims : tuple of str
+        The dims to report.
+
+    Returns
+    -------
+    dict of str to numpy.ndarray
+        The coordinate values of each dim; an index range ``0 .. n-1`` for a dim without coordinates.
+    """
     out = {}
     for dim in dims:
         out[dim] = np.asarray(da[dim].values) if dim in da.coords else np.arange(da.sizes[dim])
@@ -155,7 +298,22 @@ calendar year is an error, as onset_blending refuses it)."""
 
 
 def _check_options(rain_resolution: str, missing: str, negatives: str = "default") -> None:
-    """Raise unless the resolution, missing-rain policy and negative-value handling are known."""
+    """Check that the resolution, missing-rain policy and negative-value handling are known.
+
+    Parameters
+    ----------
+    rain_resolution : str
+        One of ``RESOLUTIONS``.
+    missing : str
+        One of ``MISSING_POLICIES``.
+    negatives : str, default "default"
+        One of `NEGATIVES`.
+
+    Raises
+    ------
+    ValueError
+        Any of the three is not one of its allowed values.
+    """
     if negatives not in NEGATIVES:
         raise ValueError(f"negatives must be one of {NEGATIVES}, got {negatives!r}")
     if rain_resolution not in RESOLUTIONS:
@@ -166,7 +324,35 @@ def _check_options(rain_resolution: str, missing: str, negatives: str = "default
 
 def _to_tenths_numpy(values: np.ndarray, to_tenths: float, clip_negative: bool,
                      exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray, int, float]:
-    """The numpy reference of _to_tenths (several passes, float64 temporaries); used without numba and by the tests."""
+    """Convert a block of rainfall to tenths with numpy: the reference of `_to_tenths`.
+
+    Several passes with float64 temporaries; used without numba and by the tests. `_to_tenths` gives the same result
+    in one parallel pass.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Rainfall of any shape and float dtype.
+    to_tenths : float
+        The factor to the output unit (tenths of mm, or mm with `exact`).
+    clip_negative : bool
+        Set negative values to 0 (forecasts) instead of flagging those below the floor as missing (observations).
+    exact : bool, default False
+        Keep float64 millimetres unrounded; the floor for observations is then -0.05 mm.
+    keep_negative : bool, default False
+        Neither clip nor flag negative values.
+
+    Returns
+    -------
+    tenths : numpy.ndarray of int32 or float64, shape of `values`
+        The converted rain (float64 when `exact`), 0 where missing.
+    missing : numpy.ndarray of bool, shape of `values`
+        True for non-finite values, values too large for int32 (not in `exact`) and flagged negatives.
+    n_bad : int
+        How many negative values were handled (clipped or flagged).
+    lowest : float
+        The lowest of those values in the output unit, 0.0 if none.
+    """
     x = np.asarray(values, dtype=np.float64) * to_tenths
     floor = -0.05 if exact else -0.5
     finite = np.isfinite(x)
@@ -188,7 +374,15 @@ _CHUNKS = 256
 
 
 def _kernel():
-    """The numba kernel module (hcwf.onset.tenths_kernel) when numba is installed, else None; imported on first use."""
+    """Return the numba kernel module when numba is installed, else ``None``.
+
+    The module is `hcwf.onset.tenths_kernel`, imported on first use.
+
+    Returns
+    -------
+    module or None
+        `hcwf.onset.tenths_kernel`, or ``None`` when numba is not available.
+    """
     from hcwf.onset import tenths_kernel
 
     return tenths_kernel if tenths_kernel.numba is not None else None
@@ -197,14 +391,38 @@ def _kernel():
 def _to_tenths(values: np.ndarray, to_tenths: float, clip_negative: bool,
                out: tuple[np.ndarray, np.ndarray] | None = None,
                exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray, int, float]:
-    """Convert one block of rainfall to (int32 tenths, missing flags, count of negatives handled, lowest value in tenths).
+    """Convert one block of rainfall to int32 tenths, missing flags and the negatives handled.
 
-    Observations: values below -0.05 mm become missing (they signal bad data).
-    Forecasts (clip_negative): every negative value becomes 0, as model rain can dip below zero numerically.
-    One parallel numba pass gives exactly what _to_tenths_numpy gives. `out` is an optional pair of C-contiguous
-    arrays (int32, bool) of the block's shape to fill instead of allocating new ones. With exact, `to_tenths` is
-    the factor to mm, the first array is float64 mm (unrounded) and the lowest value is in mm. With keep_negative
-    negative values are neither clipped nor flagged (onset_blending keeps them).
+    Observations: values below -0.05 mm become missing (they signal bad data). Forecasts (`clip_negative`): every
+    negative value becomes 0, as model rain can dip below zero numerically. One parallel numba pass gives exactly what
+    `_to_tenths_numpy` gives (which is used when numba is missing).
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Rainfall of any shape; non-float32/float64 dtypes are converted to float64.
+    to_tenths : float
+        The factor to tenths of mm; with `exact` the factor to mm.
+    clip_negative : bool
+        Set every negative value to 0 (forecasts) instead of flagging values below -0.05 mm (observations).
+    out : tuple of (numpy.ndarray, numpy.ndarray), optional
+        A pair of C-contiguous arrays (int32 or float64 tenths, bool missing) of the block's shape to fill instead of
+        allocating new ones.
+    exact : bool, default False
+        The first array is float64 millimetres (unrounded) and the lowest value is in mm.
+    keep_negative : bool, default False
+        Negative values are neither clipped nor flagged (onset_blending keeps them).
+
+    Returns
+    -------
+    tenths : numpy.ndarray of int32 or float64
+        The converted rain (float64 mm when `exact`), 0 where missing; the first array of `out` when it is given.
+    missing : numpy.ndarray of bool
+        The missing flags; the second array of `out` when it is given.
+    n_bad : int
+        How many negative values were handled.
+    lowest : float
+        The lowest of them in tenths (mm when `exact`), 0.0 if none.
     """
     kernel = _kernel()
     if kernel is None:
@@ -229,10 +447,34 @@ def _to_tenths(values: np.ndarray, to_tenths: float, clip_negative: bool,
 def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
              positions: np.ndarray | None, clip_negative: bool = False,
              exact: bool = False, keep_negative: bool = False) -> tuple[np.ndarray, np.ndarray]:
-    """Convert da to (tenths, missing) of shape out_shape, reading blocks along its first axis.
+    """Convert `da` to tenths and missing flags of shape `out_shape`, reading blocks along its first axis.
 
-    With `positions`, the last axis of da lands at those indices of the output's
-    last axis and every other output day stays missing. With exact, tenths is float64 mm.
+    With `positions`, the last axis of `da` lands at those indices of the output's last axis and every other output day
+    stays missing. Warns (`UserWarning`) when negative values were clipped or flagged.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The rain; its last axis is time (observations) or lead (forecasts).
+    scale : float
+        The factor from the data's units to mm.
+    out_shape : tuple of int
+        The output shape; it equals ``da.shape`` except that the last axis may be longer (filled time gaps).
+    positions : numpy.ndarray of int64, optional
+        Indices in the output's last axis of the entries of `da`'s last axis; ``None`` for a one-to-one mapping.
+    clip_negative : bool, default False
+        Clip negative values to 0 (forecasts) instead of flagging them (observations).
+    exact : bool, default False
+        Return float64 millimetres, unrounded, instead of int32 tenths.
+    keep_negative : bool, default False
+        Neither clip nor flag negative values.
+
+    Returns
+    -------
+    tenths : numpy.ndarray of int32 or float64, shape `out_shape`
+        The rain in tenths of mm (float64 mm when `exact`).
+    missing : numpy.ndarray of bool, shape `out_shape`
+        True where the value is missing, including every day not in `positions`.
     """
     tenths = np.zeros(out_shape, dtype=np.float64 if exact else np.int32)
     per_mm = 1.0 if exact else 10.0
@@ -270,7 +512,20 @@ def _convert(da: xr.DataArray, scale: float, out_shape: tuple[int, ...],
 
 
 def _refuse_gaps(ordinals: np.ndarray, calendar: str) -> None:
-    """Raise for the first day missing between two days of one calendar year."""
+    """Raise for the first day missing between two days of one calendar year.
+
+    Parameters
+    ----------
+    ordinals : numpy.ndarray of int64, shape (time,)
+        The day ordinals of the time axis, increasing.
+    calendar : str
+        ``"standard"`` or a cftime calendar name.
+
+    Raises
+    ------
+    ValueError
+        Two consecutive stamps of one year are more than one day apart; the message names the first gap.
+    """
     _, year, _, _ = _labels(ordinals, calendar)
     jump = (np.diff(ordinals) != 1) & (year[1:] == year[:-1])
     if jump.any():
@@ -283,23 +538,52 @@ def _refuse_gaps(ordinals: np.ndarray, calendar: str) -> None:
 def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, source: str = "",
            rain_resolution: str = "tenths", missing: str = "flag", negatives: str = "default",
            gaps: str = "fill") -> DailyRain:
-    """Normalize observed daily rainfall to DailyRain (spec section 5).
+    """Normalize observed daily rainfall to `hcwf.onset.model.DailyRain` (spec section 5).
 
-    Renames the time dim to "time" and the spatial dims to lat/lon, moves time
-    last, converts to int32 tenths of mm (half-even), flags NaN and values below
-    -0.05 mm as missing, fills time gaps with missing days (with a warning) and
-    labels every day in the data's own calendar. Duplicate times are an error.
-    The data are read block by block, so subset da before calling for large inputs.
+    Renames the time dim to ``"time"`` and the spatial dims to ``lat``/``lon``, moves time last, converts to int32
+    tenths of mm (half-even), flags NaN and values below -0.05 mm as missing, fills time gaps with missing days (with a
+    warning, `UserWarning`) and labels every day in the data's own calendar. Duplicate times are an error. The data are read block by
+    block, so subset `da` before calling for large inputs.
 
-    rain_resolution "exact" keeps float64 millimetres, unrounded, instead of tenths.
-    missing is the policy for missing days: "flag" (they make a span unknown),
-    "zero" (they become 0 mm, not missing), "drop" (the engine removes every
-    cell-year with a missing day) or "keep" (they count 0 in totals, are neither
-    wet nor dry, and a missing candidate day is rejected); the last two are
-    recorded on the result for the engine.
+    `rain_resolution` ``"exact"`` keeps float64 millimetres, unrounded, instead of tenths. `missing` is the policy for
+    missing days: ``"flag"`` (they make a span unknown), ``"zero"`` (they become 0 mm, not missing), ``"drop"`` (the
+    engine removes every cell-year with a missing day) or ``"keep"`` (they count 0 in totals, are neither wet nor dry,
+    and a missing candidate day is rejected); the last two are recorded on the result for the engine.
 
-    negatives "keep" leaves negative values as they are instead of flagging those below -0.05 mm; gaps "refuse"
-    raises for days missing inside a calendar year instead of filling them (see NEGATIVES and GAPS).
+    `negatives` ``"keep"`` leaves negative values as they are instead of flagging those below -0.05 mm; `gaps`
+    ``"refuse"`` raises for days missing inside a calendar year instead of filling them (see `NEGATIVES` and `GAPS`).
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        Daily rain with a time dim and any other dims (typically ``lat``, ``lon``); the time coordinate is datetime64 or
+        cftime, one stamp per day at a constant time of day.
+    day_boundary : str
+        How the days are cut and labelled, as for `parse_day_boundary`; recorded on the result.
+    units : str, optional
+        The units of `da`; ``None`` reads the ``units`` attribute of `da`.
+    source : str, default ""
+        A free-text label of where the data came from, recorded on the result.
+    rain_resolution : {"tenths", "exact"}, default "tenths"
+        int32 tenths of mm or float64 mm.
+    missing : {"flag", "zero", "drop", "keep"}, default "flag"
+        The missing-rain policy.
+    negatives : {"default", "keep"}, default "default"
+        Handling of negative values.
+    gaps : {"fill", "refuse"}, default "fill"
+        Handling of days missing from the time axis.
+
+    Returns
+    -------
+    hcwf.onset.model.DailyRain
+        The rain with dims ``(..., time)`` in tenths of mm (or mm), the missing flags and the labels of every day.
+
+    Raises
+    ------
+    ValueError
+        An option or the day boundary or units are invalid, the time dim is missing or has no coordinate values, the
+        time axis has duplicates, is not increasing, or (`gaps` ``"refuse"``) has a gap inside a year.
+
     """
     _check_options(rain_resolution, missing, negatives)
     if gaps not in GAPS:
@@ -340,7 +624,23 @@ def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, sou
 
 
 def _lead_days(da: xr.DataArray) -> np.ndarray:
-    """Whole-day lead values, checked to be exactly 1, 2, ... n."""
+    """Return the whole-day lead values, checked to be exactly 1, 2, ... n.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data with a ``lead`` dim whose coordinate holds timedeltas or numbers of days.
+
+    Returns
+    -------
+    numpy.ndarray of int64, shape (lead,)
+        The integers ``1 .. n``.
+
+    Raises
+    ------
+    ValueError
+        The lead dim has no coordinate values, the dtype is not supported, or the leads are not 1, 2, ..., n.
+    """
     if "lead" not in da.coords:
         raise ValueError("The lead dim has no coordinate values; cannot check that lead k is the k-th 24 h")
     values = np.asarray(da["lead"].values)
@@ -363,38 +663,54 @@ def _lead_days(da: xr.DataArray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 class IngestInfo(UserWarning):
-    """Informational message from ingest_forecast (detected accumulation, step resolution, snapping notes).
+    """Informational message from `ingest_forecast`: detected accumulation, step resolution, snapping notes.
 
-    Emitted through `warnings.warn` so it is visible by default and tests can capture or filter it
-    with `warnings.simplefilter("ignore", IngestInfo)`.
+    Emitted through `warnings.warn` so it is visible by default and tests can capture or filter it with
+    ``warnings.simplefilter("ignore", IngestInfo)``.
     """
 
 
 @dataclass(frozen=True)
 class ForecastIngestInfo:
-    """How a forecast was turned into daily totals.
-
-    accumulation is "daily" or "since_init"; accumulation_evidence says why (or "given" when the
-    caller chose it); step_hours is the detected step length in hours; resolution is "daily" or
-    "N-hourly"; daily_boundary is the requested boundary text or None; offsets_hours are the distinct
-    hours from the init to the first day boundary (0 = days run from the init); notes lists things
-    dropped, such as incomplete final days.
-    """
+    """How a forecast was turned into daily totals."""
 
     accumulation: str
+    """``"daily"`` or ``"since_init"``."""
     accumulation_evidence: str
+    """Why that accumulation was chosen, or ``"given"`` when the caller chose it."""
     step_hours: float
+    """The detected step length in hours."""
     resolution: str
+    """``"daily"`` or ``"N-hourly"``."""
     daily_boundary: str | None
+    """The requested boundary text, or ``None``."""
     offsets_hours: tuple[float, ...]
+    """The distinct hours from the init to the first day boundary (0 = days run from the init)."""
     notes: tuple[str, ...]
+    """Things dropped, such as incomplete final days."""
 
 
 _CLOCK_RE = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\s*([A-Za-z]+)\s*$")
 
 
 def _parse_clock(text: str) -> float:
-    """Parse "03 UTC" / "08:30 IST" (or a full day-boundary string) into an hour of the UTC day in [0, 24)."""
+    """Parse a clock time such as ``"03 UTC"`` into an hour of the UTC day.
+
+    Parameters
+    ----------
+    text : str
+        ``"03 UTC"`` or ``"08:30 IST"``, or a full day-boundary string (``"... labelled by end"``), whose hour is used.
+
+    Returns
+    -------
+    float
+        The hour of the UTC day, in ``[0, 24)``.
+
+    Raises
+    ------
+    ValueError
+        The time is out of range or the zone is not supported (or, for a full boundary string, as `parse_day_boundary`).
+    """
     match = _CLOCK_RE.match(text or "")
     if not match:
         return parse_day_boundary(text)[0]
@@ -407,10 +723,27 @@ def _parse_clock(text: str) -> float:
 
 
 def lead_hours(da: xr.DataArray, lead_dim: str) -> np.ndarray:
-    """Step lengths since the init in hours (float), from timedeltas or numbers.
+    """Return the step lengths since the init in hours.
 
-    Numbers use the coordinate's units attribute ("hours"/"days") when present; without it,
-    integers are whole days if they are 1..n or stay below 24 (the daily contract), else hours.
+    Taken from timedeltas or numbers. Numbers use the coordinate's ``units`` attribute (``"hours"``/``"days"``) when
+    present; without it, integers are whole days if they are 1..n or stay below 24 (the daily contract), else hours.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data with the lead coordinate.
+    lead_dim : str
+        The name of the lead dim.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (lead,)
+        The hours after the init of every step.
+
+    Raises
+    ------
+    ValueError
+        The lead dim has no coordinate values or its dtype is not numeric or timedelta.
     """
     if lead_dim not in da.coords:
         raise ValueError("The lead dim has no coordinate values; cannot check that lead k is the k-th 24 h")
@@ -432,13 +765,43 @@ def lead_hours(da: xr.DataArray, lead_dim: str) -> np.ndarray:
 
 
 def _resolution(hours: np.ndarray) -> tuple[float, str]:
-    """Return (step length in hours, "daily" or "N-hourly") as the smallest gap of the positive steps from 0."""
+    """Return the step length and its name.
+
+    The step length is the smallest gap of the positive steps counted from 0.
+
+    Parameters
+    ----------
+    hours : numpy.ndarray of float64, shape (lead,)
+        The positive steps in hours after the init, increasing.
+
+    Returns
+    -------
+    dt : float
+        The step length in hours.
+    name : str
+        ``"daily"`` for 24 h, else ``"N-hourly"`` (for example ``"6-hourly"``).
+    """
     dt = float(np.min(np.diff(np.concatenate([[0.0], hours]))))
     return dt, ("daily" if abs(dt - 24.0) < 1e-6 else f"{dt:g}-hourly")
 
 
 def _sample(da: xr.DataArray, lead_dim: str, max_series: int = 20000) -> xr.DataArray:
-    """Subsample every non-lead dim with a regular stride so that at most about max_series series remain."""
+    """Subsample every non-lead dim with a regular stride so that at most about `max_series` series remain.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data.
+    lead_dim : str
+        The dim that is kept whole.
+    max_series : int, default 20000
+        The target number of series (the product of the other dims' sizes).
+
+    Returns
+    -------
+    xarray.DataArray
+        `da` itself when it has no more than `max_series` series, else a strided view of it.
+    """
     others = [d for d in da.dims if d != lead_dim]
     total = int(np.prod([da.sizes[d] for d in others], dtype=np.int64)) if others else 1
     if total <= max_series:
@@ -448,20 +811,52 @@ def _sample(da: xr.DataArray, lead_dim: str, max_series: int = 20000) -> xr.Data
 
 
 def _series(da: xr.DataArray, lead_dim: str) -> np.ndarray:
-    """Return the data as float64 of shape (series, lead)."""
+    """Return the data as a 2-D array of series.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data.
+    lead_dim : str
+        The dim that becomes the last axis.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (series, lead)
+        One row per combination of the other dims.
+    """
     others = [d for d in da.dims if d != lead_dim]
     return np.asarray(da.transpose(*others, lead_dim).values, dtype=np.float64).reshape(-1, da.sizes[lead_dim])
 
 
 def detect_accumulation(da: xr.DataArray, lead_dim: str | None = None) -> tuple[str, str]:
-    """Decide whether forecast rainfall is "daily" (per-interval) or "since_init" (accumulated), with the evidence.
+    """Decide whether forecast rainfall is per-interval or accumulated since the init, with the evidence.
 
-    Looks at a regular subsample (at most about 20000 series) along the lead dim, ignoring step 0.
-    Since-init needs values non-decreasing along lead (within 0.1 % of the series maximum) in at
-    least 99 % of the non-constant series that are fully finite, and the last lead's mean more than
-    3x the first lead's. Daily is anything clearly else. Cumulative-looking data without that growth,
-    or mostly-cumulative data with growth are ambiguous and raise ValueError asking for an explicit
-    accumulation. A single lead, no finite series or all-constant series cannot show accumulation: daily.
+    Looks at a regular subsample (at most about 20000 series) along the lead dim, ignoring step 0. Since-init needs
+    values non-decreasing along lead (within 0.1 % of the series maximum) in at least 99 % of the non-constant series
+    that are fully finite, and the last lead's mean more than 3x the first lead's. Daily is anything clearly else.
+    Cumulative-looking data without that growth, or mostly-cumulative data with growth, are ambiguous and raise
+    `ValueError` asking for an explicit accumulation. A single lead, no finite series or all-constant series cannot show
+    accumulation: daily.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The forecast rain with a lead (step) dim.
+    lead_dim : str, optional
+        The lead dim; ``None`` finds it among the aliases of ``"step"``.
+
+    Returns
+    -------
+    kind : {"daily", "since_init"}
+        The accumulation of the data.
+    evidence : str
+        A sentence saying why.
+
+    Raises
+    ------
+    ValueError
+        The lead dim cannot be found or the data are ambiguous.
     """
     lead_dim = _find_dim(da, "step", lead_dim, "lead")
     hours = lead_hours(da, lead_dim)
@@ -492,12 +887,38 @@ def detect_accumulation(da: xr.DataArray, lead_dim: str | None = None) -> tuple[
 
 def _to_daily(da: xr.DataArray, lead_dim: str, kind: str,
               offset: float = 0.0) -> tuple[xr.DataArray, float, list[str]]:
-    """Turn raw steps into daily totals whose lead dim holds the days 1..n; return (data, step hours, notes).
+    """Turn raw steps into daily totals whose lead dim holds the days 1..n.
 
-    Day j covers (offset + 24 (j-1), offset + 24 j] hours after the init; time before the first
-    boundary (offset > 0) is dropped, as is an incomplete final day (noted). since_init takes
-    acc(day end) - acc(previous day end) with acc(0) = 0; daily sums the per-interval steps of each
-    day. Plain daily data with 24 h steps and offset 0 is returned unchanged for the day checks later.
+    Day j covers ``(offset + 24 (j-1), offset + 24 j]`` hours after the init; time before the first boundary
+    (``offset > 0``) is dropped, as is an incomplete final day (noted). ``since_init`` takes
+    ``acc(day end) - acc(previous day end)`` with ``acc(0) = 0``; ``daily`` sums the per-interval steps of each day.
+    Plain daily data with 24 h steps and offset 0 is returned unchanged for the day checks later.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The raw forecast rain with the lead dim `lead_dim`.
+    lead_dim : str
+        The name of the lead dim.
+    kind : {"daily", "since_init"}
+        The accumulation of the steps.
+    offset : float, default 0.0
+        Hours from the init to the first day boundary, on the step grid.
+
+    Returns
+    -------
+    daily : xarray.DataArray
+        Daily totals; the lead coordinate is the integers ``1 .. n`` and the attributes of `da` are kept.
+    step_hours : float
+        The step length of the raw data in hours.
+    notes : list of str
+        What was dropped, such as an incomplete final day.
+
+    Raises
+    ------
+    ValueError
+        The lead axis has no step after the init, steps are not increasing or do not divide 24 h, there is no complete
+        day, or a needed accumulation step or per-interval step is missing.
     """
     h_all = lead_hours(da, lead_dim)
     pos = np.flatnonzero(h_all > 0)
@@ -552,7 +973,20 @@ def _to_daily(da: xr.DataArray, lead_dim: str, kind: str,
 
 
 def _units_stats(daily: xr.DataArray, lead_dim: str) -> float | None:
-    """99.9th percentile of the finite daily totals in a sample, or None if there is no positive value."""
+    """Return the 99.9th percentile of the finite daily totals in a sample.
+
+    Parameters
+    ----------
+    daily : xarray.DataArray
+        Daily totals with the lead dim `lead_dim`.
+    lead_dim : str
+        The name of the lead dim.
+
+    Returns
+    -------
+    float or None
+        The percentile in the units of `daily`, or ``None`` if there is no positive value.
+    """
     values = _series(_sample(daily, lead_dim), lead_dim).ravel()
     values = values[np.isfinite(values)]
     if values.size == 0 or not (values > 0).any():
@@ -561,11 +995,27 @@ def _units_stats(daily: xr.DataArray, lead_dim: str) -> float | None:
 
 
 def detect_units(da: xr.DataArray, accumulation_kind: str, lead_dim: str | None = None) -> tuple[str, str]:
-    """Guess "m" or "mm" from the magnitude of daily totals; return (units, evidence).
+    """Guess ``"m"`` or ``"mm"`` from the magnitude of daily totals.
 
-    The daily totals follow the given accumulation kind ("daily" or "since_init"). A 99.9th
-    percentile below 0.5 means metres (mm totals are typically 1-50 on wet days and < 500 always);
-    otherwise mm. With no positive values the answer is "mm" and the evidence says it is a guess.
+    The daily totals follow the given accumulation kind. A 99.9th percentile below 0.5 means metres (mm totals are
+    typically 1-50 on wet days and < 500 always); otherwise mm. With no positive values the answer is ``"mm"`` and the
+    evidence says it is a guess.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The forecast rain with a lead (step) dim.
+    accumulation_kind : {"daily", "since_init"}
+        How the steps accumulate, as returned by `detect_accumulation`.
+    lead_dim : str, optional
+        The lead dim; ``None`` finds it among the aliases of ``"step"``.
+
+    Returns
+    -------
+    units : {"m", "mm"}
+        The guessed units.
+    evidence : str
+        A sentence saying why.
     """
     lead_dim = _find_dim(da, "step", lead_dim, "lead")
     sample = _sample(da, lead_dim)
@@ -579,7 +1029,24 @@ def detect_units(da: xr.DataArray, accumulation_kind: str, lead_dim: str | None 
 
 
 def _check_units(daily: xr.DataArray, lead_dim: str, scale: float, declared: object) -> None:
-    """Raise if the declared units contradict the magnitudes of the daily totals."""
+    """Check that the declared units agree with the magnitudes of the daily totals.
+
+    Parameters
+    ----------
+    daily : xarray.DataArray
+        Daily totals with the lead dim `lead_dim`, in the declared units.
+    lead_dim : str
+        The name of the lead dim.
+    scale : float
+        Millimetres per declared unit (1.0 or 1000.0).
+    declared : object
+        The declared units, used in the message.
+
+    Raises
+    ------
+    ValueError
+        Units in mm with totals typical of metres (99.9th percentile below 0.5), or units in m with totals above 1.
+    """
     q = _units_stats(daily, lead_dim)
     if q is None:
         return
@@ -596,7 +1063,18 @@ def _check_units(daily: xr.DataArray, lead_dim: str, scale: float, declared: obj
 
 
 def _init_hours(values: np.ndarray) -> np.ndarray:
-    """Hour of the day (float) of each init time, for datetime64 or cftime values."""
+    """Return the hour of the day of each init time.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        The init times: ``datetime64`` values or cftime objects.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (init,)
+        Hours since midnight, fractional.
+    """
     values = np.asarray(values)
     if np.issubdtype(values.dtype, np.datetime64):
         return np.round((values - values.astype("datetime64[D]")) / np.timedelta64(1, "h"), 6)
@@ -604,10 +1082,32 @@ def _init_hours(values: np.ndarray) -> np.ndarray:
 
 
 def _boundary_offsets(init_hours: np.ndarray, boundary: str, dt: float, tolerance: float) -> np.ndarray:
-    """Hours from each init to its first day boundary (0 <= offset <= 24), snapped to the step grid.
+    """Return the hours from each init to its first day boundary, snapped to the step grid.
 
-    A boundary off the grid is an error naming the nearest reachable UTC hours unless the miss is
-    within `tolerance` hours, in which case it snaps (with a warning saying how far).
+    A boundary off the grid is an error naming the nearest reachable UTC hours unless the miss is within `tolerance`
+    hours, in which case it snaps (with a `UserWarning` saying how far).
+
+    Parameters
+    ----------
+    init_hours : numpy.ndarray of float64, shape (init,)
+        The UTC hour of the day of each init.
+    boundary : str
+        The daily boundary, as for `_parse_clock` (for example ``"03 UTC"``).
+    dt : float
+        The step length in hours.
+    tolerance : float
+        The largest miss, in hours, that is snapped instead of raising.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (init,)
+        The offsets in hours, ``0 <= offset <= 24``.
+
+    Raises
+    ------
+    ValueError
+        The boundary cannot be hit on the step grid of some init and the miss exceeds `tolerance`.
+
     """
     hour = _parse_clock(boundary)
     raw = np.round((hour - init_hours) % 24.0, 6)
@@ -635,7 +1135,58 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
                          daily_boundary: str | None = None, boundary_tolerance_hours: float = 0.0,
                          check_units: bool = True, rain_resolution: str = "tenths",
                          missing: str = "flag", negatives: str = "default") -> tuple[ForecastRain, ForecastIngestInfo]:
-    """Like `ingest_forecast`, but also return a ForecastIngestInfo saying how the days were made."""
+    """Normalize forecast rainfall like `ingest_forecast` and also return how the days were made.
+
+    An `IngestInfo` warning reports the detected accumulation, step resolution, boundary cut and dropped days when any
+    of them is not the plain daily case.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        Forecast rain with init, lead, optional member and spatial dims.
+    day_boundary : str
+        The day boundary text of the forecast data, as for `parse_day_boundary`; recorded on the result.
+    lead_label : {"start", "end"}
+        Whether lead k is labelled by the start or the end of its 24 h.
+    units : str, optional
+        The units of `da`; ``None`` reads the ``units`` attribute of `da`.
+    source : str, default ""
+        A free-text label of where the data came from, recorded on the result.
+    init_dim : str, optional
+        The init dim; ``None`` finds it by alias.
+    lead_dim : str, optional
+        The lead dim; ``None`` finds it by alias.
+    member_dim : str, optional
+        The member dim; ``None`` finds it by alias (a forecast without members is allowed).
+    accumulation : {"auto", "daily", "since_init"}, default "auto"
+        The accumulation of the steps; ``"auto"`` uses `detect_accumulation`.
+    daily_boundary : str, optional
+        Cut days at this UTC hour (for example ``"03 UTC"``) instead of 24 h from the init.
+    boundary_tolerance_hours : float, default 0.0
+        The largest miss of `daily_boundary` against the step grid that is snapped instead of raising.
+    check_units : bool, default True
+        Check the magnitude of the totals against the declared units.
+    rain_resolution : {"tenths", "exact"}, default "tenths"
+        int32 tenths of mm or float64 mm.
+    missing : {"flag", "zero", "drop", "keep"}, default "flag"
+        The missing-rain policy.
+    negatives : {"default", "keep"}, default "default"
+        Handling of negative values.
+
+    Returns
+    -------
+    forecast : hcwf.onset.model.ForecastRain
+        The daily forecast rain with dims ``(init_time, [member,] ..., lead)``.
+    info : ForecastIngestInfo
+        How the days were made.
+
+    Raises
+    ------
+    ValueError
+        An option is invalid, dims are not distinct or missing, the init dim has no coordinates or has duplicates, the
+        leads are not usable, or any of the checks of `_to_daily`, `_boundary_offsets` and `_check_units` fails.
+
+    """
     _check_options(rain_resolution, missing, negatives)
     parse_day_boundary(day_boundary)
     if lead_label not in ("start", "end"):
@@ -730,27 +1281,63 @@ def ingest_forecast(da: xr.DataArray, *, day_boundary: str, lead_label: str, uni
                     daily_boundary: str | None = None, boundary_tolerance_hours: float = 0.0,
                     check_units: bool = True, rain_resolution: str = "tenths",
                     missing: str = "flag", negatives: str = "default") -> ForecastRain:
-    """Normalize forecast rainfall to ForecastRain (spec section 5).
+    """Normalize forecast rainfall to `hcwf.onset.model.ForecastRain` (spec section 5).
 
-    Dims become init_time, optional member, the remaining (spatial) dims, then lead. Inits are
-    sorted if needed and may not repeat (labelled by date). lead_label says whether lead k is
-    labelled by the start ("start": init + k - 1) or end ("end": init + k) of its 24 h. Values
-    convert as in `ingest`.
+    Dims become ``init_time``, optional ``member``, the remaining (spatial) dims, then ``lead``. Inits are sorted if
+    needed and may not repeat (labelled by date). `lead_label` says whether lead k is labelled by the start
+    (``"start"``: init + k - 1) or end (``"end"``: init + k) of its 24 h. Values convert as in `ingest`.
 
-    accumulation: "daily" (each step is a per-interval amount; 24 h steps are daily totals, shorter
-    steps are summed per day), "since_init" (running total since the init; daily total =
-    difference of the totals at 24 h boundaries) or "auto" (see `detect_accumulation`; emits an
-    `IngestInfo` warning with the choice and evidence). Steps are timedeltas or numbers (see
-    `lead_hours`). daily_boundary (e.g. "03 UTC") cuts days at that UTC hour instead of 24 h from
-    the init; the first partial day is dropped and the init labels move to the date the first
-    complete day starts, so lead_label keeps its meaning. A boundary off the step grid is an error
-    unless within boundary_tolerance_hours (then snapped, with a warning). check_units=False turns
-    off the magnitude check of the units. rain_resolution and missing are as for `ingest`
-    ("drop" applies to observed rain only). negatives "keep" leaves negative values as they are (the default sets
-    them to 0).
+    `accumulation`: ``"daily"`` (each step is a per-interval amount; 24 h steps are daily totals, shorter steps are
+    summed per day), ``"since_init"`` (running total since the init; daily total = difference of the totals at 24 h
+    boundaries) or ``"auto"`` (see `detect_accumulation`; emits an `IngestInfo` warning with the choice and evidence).
+    Steps are timedeltas or numbers (see `lead_hours`). `daily_boundary` (for example ``"03 UTC"``) cuts days at that
+    UTC hour instead of 24 h from the init; the first partial day is dropped and the init labels move to the date the
+    first complete day starts, so `lead_label` keeps its meaning. A boundary off the step grid is an error unless
+    within `boundary_tolerance_hours` (then snapped, with a warning). ``check_units=False`` turns off the magnitude
+    check of the units. `rain_resolution` and `missing` are as for `ingest` (``"drop"`` applies to observed rain only).
+    `negatives` ``"keep"`` leaves negative values as they are (the default sets them to 0).
 
-    The returned object carries a `ForecastIngestInfo` as the plain attribute `ingest_info`
-    (ForecastRain is not changed); `ingest_forecast_info` returns the same pair explicitly.
+    The returned object carries a `ForecastIngestInfo` as the plain attribute ``ingest_info`` (`hcwf.onset.model.ForecastRain` is not
+    changed); `ingest_forecast_info` returns the same pair explicitly. It raises `ValueError` as that function does.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        Forecast rain with init, lead, optional member and spatial dims.
+    day_boundary : str
+        The day boundary text of the forecast data, as for `parse_day_boundary`; recorded on the result.
+    lead_label : {"start", "end"}
+        Whether lead k is labelled by the start or the end of its 24 h.
+    units : str, optional
+        The units of `da`; ``None`` reads the ``units`` attribute of `da`.
+    source : str, default ""
+        A free-text label of where the data came from, recorded on the result.
+    init_dim : str, optional
+        The init dim; ``None`` finds it by alias.
+    lead_dim : str, optional
+        The lead dim; ``None`` finds it by alias.
+    member_dim : str, optional
+        The member dim; ``None`` finds it by alias (a forecast without members is allowed).
+    accumulation : {"auto", "daily", "since_init"}, default "auto"
+        The accumulation of the steps.
+    daily_boundary : str, optional
+        Cut days at this UTC hour instead of 24 h from the init.
+    boundary_tolerance_hours : float, default 0.0
+        The largest miss of `daily_boundary` against the step grid that is snapped instead of raising.
+    check_units : bool, default True
+        Check the magnitude of the totals against the declared units.
+    rain_resolution : {"tenths", "exact"}, default "tenths"
+        int32 tenths of mm or float64 mm.
+    missing : {"flag", "zero", "drop", "keep"}, default "flag"
+        The missing-rain policy.
+    negatives : {"default", "keep"}, default "default"
+        Handling of negative values.
+
+    Returns
+    -------
+    hcwf.onset.model.ForecastRain
+        The daily forecast rain, with the `ForecastIngestInfo` as ``ingest_info``.
+
     """
     forecast, info = ingest_forecast_info(
         da, day_boundary=day_boundary, lead_label=lead_label, units=units, source=source, init_dim=init_dim,

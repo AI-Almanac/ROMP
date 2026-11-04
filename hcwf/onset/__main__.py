@@ -1,4 +1,4 @@
-"""`python -m hcwf.onset ...` is `hcwf-run onset ...`."""
+"""Run the onset command line: ``python -m hcwf.onset ...`` is ``hcwf-run onset ...``."""
 import sys
 
 from hcwf.cli import main

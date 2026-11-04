@@ -1,9 +1,15 @@
 """Detect day-boundary and lead-label misalignment between rainfall datasets.
 
-Two datasets that disagree about what a date means are usually shifted against
-each other by exactly one day. These checks correlate sqrt-rain anomalies at
-small lags and report which lag fits best. Lag L pairs day t of `other` (or
-the forecast's date label t) with day t + L of the reference (observations).
+Two datasets that disagree about what a date means are usually shifted against each other by exactly one day. These
+checks correlate sqrt-rain anomalies at small lags and report which lag fits best. Lag ``L`` pairs day ``t`` of
+`other` (or the forecast's date label ``t``) with day ``t + L`` of the reference (observations).
+
+The module holds the two report dataclasses (`AlignmentReport`, `ForecastAlignmentReport`), the checks that fill them
+(`check_alignment` for two observation-like datasets, `check_forecast_alignment` for a forecast against
+observations) and the pooled-correlation helpers. `hcwf.onset.sample_alignment` computes the same forecast verdict
+from sampled arrays through `forecast_alignment_from_samples`; `hcwf.onset.detect` runs the check once per model
+and run. The inputs are `hcwf.onset.model.DailyRain` and `hcwf.onset.model.ForecastRain`, ingested by
+`hcwf.onset.ingest`.
 """
 from __future__ import annotations
 
@@ -24,23 +30,39 @@ _MIN_MARGIN = 0.02
 class AlignmentReport:
     """Lagged correlations between two datasets and the verdict drawn from them.
 
-    correlations maps lag (days) to the pooled sqrt-rain anomaly correlation, with
-    n_pairs the number of cell-day pairs behind each. verdict is "aligned",
-    "likely shifted by N day(s)" (N is the best lag) or "inconclusive".
+    `correlations` maps lag (days) to the pooled sqrt-rain anomaly correlation, with `n_pairs` the number of cell-day
+    pairs behind each. `verdict` is ``"aligned"``, ``"likely shifted by N day(s)"`` (``N`` is the best lag) or
+    ``"inconclusive"``.
     """
 
     reference: str
+    """The source name of the reference dataset (observations)."""
     other: str
+    """The source name of the dataset that was checked."""
     correlations: dict[int, float] = field(default_factory=dict)
+    """The pooled correlation by lag in days."""
     n_pairs: dict[int, int] = field(default_factory=dict)
+    """The number of cell-day pairs behind each correlation, by lag."""
     best_lag: int | None = None
+    """The lag with the highest finite correlation, or None when there is none."""
     verdict: str = "inconclusive"
+    """``"aligned"``, ``"likely shifted by N day(s)"`` or ``"inconclusive"``."""
     n_cells: int = 0
+    """The number of cells the two datasets share."""
     n_overlap_days: int = 0
+    """The number of days (or inits, for a forecast) the comparison covers."""
     notes: list[str] = field(default_factory=list)
+    """Remarks on the data and on the declared day boundaries."""
 
     def summary(self) -> str:
-        """A short multi-line description of the result."""
+        """Describe the result in a few lines.
+
+        Returns
+        -------
+        str
+            The verdict, the shared cell and overlap-day counts, the correlation per lag, the best lag and the notes, one
+            per line.
+        """
         lines = [f"{self.other or 'other'} vs {self.reference or 'reference'}: {self.verdict}"]
         lines.append(f"  shared cells: {self.n_cells}, overlapping days: {self.n_overlap_days}")
         if self.correlations:
@@ -52,15 +74,25 @@ class AlignmentReport:
 
 @dataclass
 class ForecastAlignmentReport:
-    """Per-lead alignment reports and an overall reading of the lead_label."""
+    """Per-lead alignment reports and an overall reading of the ``lead_label``."""
 
     lead_label: str
+    """How the forecast's leads are dated, ``"start"`` or ``"end"``."""
     per_lead: dict[int, AlignmentReport]
+    """The report of each lead day."""
     verdict: str
+    """The overall verdict across leads."""
     notes: list[str] = field(default_factory=list)
+    """Remarks on the data and on the declared day boundaries."""
 
     def summary(self) -> str:
-        """A short multi-line description of the result."""
+        """Describe the result in a few lines.
+
+        Returns
+        -------
+        str
+            The overall verdict, the notes, then the summary of each lead's `AlignmentReport` indented, one per line.
+        """
         lines = [f"forecast (lead_label={self.lead_label!r}): {self.verdict}"]
         lines.extend(f"  note: {note}" for note in self.notes)
         for lead, report in self.per_lead.items():
@@ -70,7 +102,24 @@ class ForecastAlignmentReport:
 
 
 def _match_axis(ref: np.ndarray, other: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Indices (into ref, into other) of coordinate values equal within the tolerance."""
+    """Match the values of two coordinate axes within the tolerance.
+
+    Each value of `ref` is paired with the nearest value of `other`; the pair is kept when they differ by at most
+    ``1e-6`` (the tolerance ``_COORD_TOL``).
+
+    Parameters
+    ----------
+    ref : numpy.ndarray
+        The reference coordinate values, converted to ``float64``.
+    other : numpy.ndarray
+        The coordinate values to match, converted to ``float64``.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray of int64, numpy.ndarray of int64)
+        The indices into `ref` and into `other` of the matched values, in the order of `ref`; both empty when either
+        axis is empty.
+    """
     ref = np.asarray(ref, dtype=float)
     other = np.asarray(other, dtype=float)
     if ref.size == 0 or other.size == 0:
@@ -87,32 +136,104 @@ def _match_axis(ref: np.ndarray, other: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 
 def _grid_match(ref_coords: dict, other_coords: dict) -> tuple[tuple, tuple]:
-    """Matched (lat, lon) index pairs between two grids."""
+    """Match the latitudes and longitudes of two grids.
+
+    Parameters
+    ----------
+    ref_coords : dict
+        The reference grid's coordinates; the keys ``"lat"`` and ``"lon"`` are read.
+    other_coords : dict
+        The other grid's coordinates, with the same keys.
+
+    Returns
+    -------
+    tuple of (tuple, tuple)
+        ``(lat, lon)``, each the ``(index into ref, index into other)`` pair of `_match_axis`.
+    """
     lat = _match_axis(ref_coords["lat"], other_coords["lat"])
     lon = _match_axis(ref_coords["lon"], other_coords["lon"])
     return lat, lon
 
 
 def _sqrt_field(tenths: np.ndarray, missing: np.ndarray) -> np.ndarray:
-    """sqrt of rain in mm, NaN where missing."""
+    """Return the square root of rain in mm, NaN where missing.
+
+    Parameters
+    ----------
+    tenths : numpy.ndarray of int, any shape
+        Rain in tenths of a mm; negative values are treated as 0.
+    missing : numpy.ndarray of bool, same shape as `tenths`
+        True where there is no observation.
+
+    Returns
+    -------
+    numpy.ndarray of float64, same shape as `tenths`
+        ``sqrt(mm)``, ``NaN`` where `missing`.
+    """
     return np.where(missing, np.nan, np.sqrt(np.maximum(tenths, 0) / 10.0))
 
 
 def _cells(arr: np.ndarray, lat_idx: np.ndarray, lon_idx: np.ndarray) -> np.ndarray:
-    """Select matched cells of an array with dims (lat, lon, n) and flatten them to (cells, n)."""
+    """Select the matched cells of an array and flatten them to one row per cell.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray, shape (lat, lon, n)
+        The field to select from.
+    lat_idx : numpy.ndarray of int64
+        The latitude indices of the matched cells.
+    lon_idx : numpy.ndarray of int64
+        The longitude indices of the matched cells.
+
+    Returns
+    -------
+    numpy.ndarray, shape (cell, n)
+        The ``len(lat_idx) * len(lon_idx)`` selected cells, the latitude varying slowest.
+    """
     sub = arr[np.ix_(lat_idx, lon_idx)]
     return sub.reshape(-1, arr.shape[-1])
 
 
 def _rain_cells(rain: DailyRain, lat_idx: np.ndarray, lon_idx: np.ndarray) -> np.ndarray:
-    """sqrt-rain of the selected cells as (cells, time), NaN where missing."""
+    """Return the sqrt-rain of the selected cells, NaN where missing.
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The rainfall, with dims ``lat``, ``lon`` and ``time`` in any order.
+    lat_idx : numpy.ndarray of int64
+        The latitude indices of the matched cells.
+    lon_idx : numpy.ndarray of int64
+        The longitude indices of the matched cells.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (cell, time)
+        ``sqrt(mm)`` per selected cell and day.
+    """
     order = tuple(rain.dims.index(d) for d in ("lat", "lon", "time"))
     field_ = _sqrt_field(np.transpose(rain.tenths, order), np.transpose(rain.missing, order))
     return _cells(field_, lat_idx, lon_idx)
 
 
 def _pooled_corr(x: np.ndarray, y: np.ndarray) -> tuple[float, int]:
-    """Correlation of cell-mean-removed x and y (cells, n), pooled over cells and valid pairs."""
+    """Correlate two series after removing each cell's mean, pooled over cells and valid pairs.
+
+    A pair is valid where both values are finite; each cell's mean is taken over its valid pairs.
+
+    Parameters
+    ----------
+    x : numpy.ndarray of float64, shape (cell, n)
+        The first series, NaN where missing.
+    y : numpy.ndarray of float64, shape (cell, n)
+        The second series, NaN where missing.
+
+    Returns
+    -------
+    tuple of (float, int)
+        The pooled correlation and the number of valid pairs; the correlation is ``NaN`` below three pairs or when
+        either series has no variance.
+    """
     valid = np.isfinite(x) & np.isfinite(y)
     n_pairs = int(valid.sum())
     if n_pairs < 3:
@@ -130,7 +251,22 @@ def _pooled_corr(x: np.ndarray, y: np.ndarray) -> tuple[float, int]:
 
 
 def _verdict(correlations: dict[int, float]) -> tuple[int | None, str]:
-    """Best lag and verdict string from lagged correlations (spec section 8)."""
+    """Derive the best lag and the verdict from the lagged correlations (spec section 8).
+
+    The verdict is ``"likely shifted by N day(s)"`` when the best lag ``N != 0`` beats lag 0 by more than 0.02 and its
+    correlation exceeds 0.1, ``"aligned"`` when lag 0 exceeds 0.1 and beats every other lag by more than 0.02, else
+    ``"inconclusive"``.
+
+    Parameters
+    ----------
+    correlations : dict of int to float
+        The pooled correlation by lag in days; ``NaN`` entries are ignored.
+
+    Returns
+    -------
+    tuple of (int or None, str)
+        The best lag (None when no correlation is finite) and the verdict.
+    """
     finite = {lag: r for lag, r in correlations.items() if np.isfinite(r)}
     if not finite or max(finite.values()) <= _MIN_R:
         return (max(finite, key=finite.get) if finite else None), "inconclusive"
@@ -145,11 +281,24 @@ def _verdict(correlations: dict[int, float]) -> tuple[int | None, str]:
 
 
 def _boundary_shift(ref_boundary: str, other_boundary: str, other_label: str | None = None) -> float | None:
-    """Expected lag implied by two declared day boundaries, or None if either cannot be parsed.
+    """Return the lag implied by two declared day boundaries.
 
-    A day labelled D by start covers [D + h/24, D + 1 + h/24); by end it covers
-    [D - 1 + h/24, D + h/24). The lag that lines two labellings up is the
-    difference of those start offsets.
+    A day labelled ``D`` by start covers ``[D + h/24, D + 1 + h/24)``; by end it covers ``[D - 1 + h/24, D + h/24)``. The
+    lag that lines two labellings up is the difference of those start offsets.
+
+    Parameters
+    ----------
+    ref_boundary : str
+        The reference day boundary, as parsed by `hcwf.onset.ingest.parse_day_boundary`.
+    other_boundary : str
+        The day boundary of the other dataset.
+    other_label : str, optional
+        Replaces the labelling (``"start"`` or ``"end"``) of `other_boundary`, for a forecast's ``lead_label``.
+
+    Returns
+    -------
+    float or None
+        The expected lag in days, or None if either boundary cannot be parsed.
     """
     try:
         h_ref, label_ref = parse_day_boundary(ref_boundary)
@@ -164,7 +313,25 @@ def _boundary_shift(ref_boundary: str, other_boundary: str, other_label: str | N
 
 
 def _boundary_notes(shift: float | None, ref_boundary: str, other_boundary: str, best_lag: int | None) -> list[str]:
-    """Human-readable remarks on the declared day-boundary mismatch."""
+    """Write the remarks on a declared day-boundary mismatch.
+
+    Parameters
+    ----------
+    shift : float or None
+        The lag implied by the boundaries (`_boundary_shift`).
+    ref_boundary : str
+        The reference day boundary.
+    other_boundary : str
+        The other dataset's day boundary.
+    best_lag : int or None
+        The best lag found from the data.
+
+    Returns
+    -------
+    list of str
+        One note when the boundaries differ (saying whether the implied lag matches `best_lag`), a note that they could
+        not be parsed when `shift` is None, else an empty list.
+    """
     if shift is None:
         return ["could not parse the declared day boundaries"]
     expected = int(np.rint(shift))
@@ -178,7 +345,20 @@ def _boundary_notes(shift: float | None, ref_boundary: str, other_boundary: str,
 
 
 def _time_notes(label: str, keys: np.ndarray) -> list[str]:
-    """Time-axis diagnostics for one series: duplicated, unsorted or gappy day labels."""
+    """Check one series' day labels for duplicates or a non-increasing order.
+
+    Parameters
+    ----------
+    label : str
+        The series name used in the note.
+    keys : numpy.ndarray of int64
+        The day-label keys of the series, in time order (see `hcwf.onset.calendar.label_keys`).
+
+    Returns
+    -------
+    list of str
+        One note when the labels are duplicated or not increasing, else an empty list.
+    """
     steps = np.diff(keys)
     if np.any(steps <= 0):
         return [f"{label}: time labels are duplicated or not increasing"]
@@ -186,25 +366,70 @@ def _time_notes(label: str, keys: np.ndarray) -> list[str]:
 
 
 def _empty_report(reference: str, other: str, note: str, notes: list[str]) -> AlignmentReport:
-    """An inconclusive report with a reason."""
+    """Build an inconclusive report with a reason.
+
+    Parameters
+    ----------
+    reference : str
+        The source name of the reference dataset.
+    other : str
+        The source name of the other dataset.
+    note : str
+        The reason, appended to `notes`.
+    notes : list of str
+        The notes collected so far.
+
+    Returns
+    -------
+    AlignmentReport
+        A report with no correlations and the verdict ``"inconclusive"``.
+    """
     return AlignmentReport(reference=reference, other=other, notes=notes + [note])
 
 
 def _check_dims(rain: DailyRain, who: str) -> None:
-    """Alignment works on (lat, lon, time) data."""
+    """Check that the rainfall has the dims alignment works on.
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The rainfall to check.
+    who : str
+        The name used in the error message.
+
+    Raises
+    ------
+    ValueError
+        The dims of `rain` are not exactly ``lat``, ``lon`` and ``time``.
+    """
     if set(rain.dims) != {"lat", "lon", "time"}:
         raise ValueError(f"{who} must have dims lat, lon and time; got {rain.dims}")
 
 
 def check_alignment(reference: DailyRain, other: DailyRain, max_lag: int = 3) -> AlignmentReport:
-    """Correlate sqrt-rain anomalies of `other` with `reference` at lags -max_lag..max_lag.
+    """Correlate the sqrt-rain anomalies of `other` with `reference` at lags ``-max_lag`` to ``max_lag``.
 
-    Lag L compares day t of `other` with day t + L of `reference`. Cells are
-    matched by coordinates (tolerance 1e-6, nothing is regridded); anomalies
-    remove each cell's mean over the compared days and correlations are pooled
-    over cells and days. The verdict is "likely shifted by N day(s)" when the
-    best lag N != 0 beats lag 0 by more than 0.02 with r > 0.1, "aligned" when
-    lag 0 has r > 0.1 and no such shift exists, else "inconclusive".
+    Lag ``L`` compares day ``t`` of `other` with day ``t + L`` of `reference`. Cells are matched by coordinates
+    (tolerance ``1e-6``, nothing is regridded); anomalies remove each cell's mean over the compared days and
+    correlations are pooled over cells and days. The verdict is ``"likely shifted by N day(s)"`` when the best lag
+    ``N != 0`` beats lag 0 by more than 0.02 with ``r > 0.1``, ``"aligned"`` when lag 0 has ``r > 0.1`` and no such shift
+    exists, else ``"inconclusive"``. Datasets with different calendars, no overlapping dates or no shared cells give
+    an inconclusive report with a note instead of raising. A dataset whose dims are not exactly ``lat``, ``lon`` and
+    ``time`` raises `ValueError` (from `_check_dims`).
+
+    Parameters
+    ----------
+    reference : hcwf.onset.model.DailyRain
+        The reference rainfall (observations), dims ``lat``, ``lon``, ``time``.
+    other : hcwf.onset.model.DailyRain
+        The rainfall to check, with the same dims.
+    max_lag : int, default 3
+        The largest lag in days, in both directions.
+
+    Returns
+    -------
+    AlignmentReport
+        The correlation and pair count per lag, the best lag, the verdict and notes.
     """
     _check_dims(reference, "reference")
     _check_dims(other, "other")
@@ -244,12 +469,33 @@ def check_alignment(reference: DailyRain, other: DailyRain, max_lag: int = 3) ->
 
 def check_forecast_alignment(obs: DailyRain, forecast: ForecastRain, leads=(1, 2, 3),
                              max_lag: int = 3) -> ForecastAlignmentReport:
-    """Compare forecast leads with observations at lags -max_lag..max_lag, lead by lead.
+    """Compare forecast leads with observations at lags ``-max_lag`` to ``max_lag``, lead by lead.
 
-    Lead k of init i is dated init + k - 1 (lead_label "start") or init + k
-    ("end"); lag L pairs it with the observed day L days after that date.
-    Members are averaged (after the square root). A best lag that is the same
-    non-zero value at every lead suggests the other lead_label.
+    Lead ``k`` of init ``i`` is dated ``init + k - 1`` (``lead_label`` ``"start"``) or ``init + k`` (``"end"``); lag ``L``
+    pairs it with the observed day ``L`` days after that date. Members are averaged (after the square root). A best
+    lag that is the same non-zero value at every lead suggests the other ``lead_label``.
+
+    Parameters
+    ----------
+    obs : hcwf.onset.model.DailyRain
+        The observations, dims ``lat``, ``lon``, ``time``.
+    forecast : hcwf.onset.model.ForecastRain
+        The forecast, with at least the dims ``lat``, ``lon``, ``init_time`` and ``lead`` (and optionally ``member``).
+    leads : iterable of int, default (1, 2, 3)
+        The lead days to check.
+    max_lag : int, default 3
+        The largest lag in days, in both directions.
+
+    Returns
+    -------
+    ForecastAlignmentReport
+        One `AlignmentReport` per lead and the overall verdict; inconclusive with a note when the calendars differ.
+
+    Raises
+    ------
+    ValueError
+        `obs` does not have exactly the dims ``lat``, ``lon`` and ``time``, `forecast` lacks ``lat`` or ``lon``, or a
+        lead is not among the forecast leads.
     """
     _check_dims(obs, "obs")
     if not {"lat", "lon"} <= set(forecast.dims):
@@ -315,14 +561,26 @@ def check_forecast_alignment(obs: DailyRain, forecast: ForecastRain, leads=(1, 2
 
 def lagged_correlations(obs_days: np.ndarray, forecast: np.ndarray, base: np.ndarray, lags: np.ndarray,
                         ) -> tuple[np.ndarray, np.ndarray]:
-    """Pooled correlation at every lag and lead in one vectorised step.
+    """Compute the pooled correlation at every lag and lead in one vectorised step.
 
-    obs_days (init, day, cell) holds sqrt-rain on consecutive days after each init; forecast (init, lead, cell)
-    holds the member-mean sqrt-rain of each lead; both are NaN where missing. base (lead,) is the index in the
-    day axis of the day each lead's date label names, and lag L pairs lead j with day base[j] + L (NaN outside
-    the day axis). The observations are gathered once into a (init, lag, lead, cell) view and every
-    (lag, lead) correlation is taken with cell means removed over the valid inits, pooled over cells and inits
-    exactly as `_pooled_corr` does. Returns (r, n_pairs), both (lag, lead); r is NaN below three pairs.
+    The observations are gathered once into an ``(init, lag, lead, cell)`` view and every ``(lag, lead)`` correlation is
+    taken with cell means removed over the valid inits, pooled over cells and inits exactly as `_pooled_corr` does.
+
+    Parameters
+    ----------
+    obs_days : numpy.ndarray, shape (init, day, cell)
+        Sqrt-rain on consecutive days after each init, NaN where missing.
+    forecast : numpy.ndarray, shape (init, lead, cell)
+        The member-mean sqrt-rain of each lead, NaN where missing.
+    base : numpy.ndarray of int, shape (lead,)
+        The index in the day axis of the day each lead's date label names.
+    lags : numpy.ndarray of int, shape (lag,)
+        The lags in days; lag ``L`` pairs lead ``j`` with day ``base[j] + L`` (NaN outside the day axis).
+
+    Returns
+    -------
+    tuple of (numpy.ndarray of float64, numpy.ndarray of int64)
+        ``(r, n_pairs)``, both of shape ``(lag, lead)``; ``r`` is ``NaN`` below three pairs or without variance.
     """
     lags = np.asarray(lags, dtype=np.int64)
     day = np.asarray(base, dtype=np.int64)[None, :] + lags[:, None]
@@ -348,12 +606,41 @@ def lagged_correlations(obs_days: np.ndarray, forecast: np.ndarray, base: np.nda
 def forecast_alignment_from_samples(obs_days: np.ndarray, forecast: np.ndarray, *, leads, pad: int,
                                     lead_label: str, obs: str, source: str, n_inits: int, obs_boundary: str = "",
                                     forecast_boundary: str = "", max_lag: int = 3) -> ForecastAlignmentReport:
-    """The per-lead report and overall verdict of `check_forecast_alignment`, from prepared sample arrays.
+    """Build the per-lead report and overall verdict of `check_forecast_alignment` from prepared sample arrays.
 
-    obs_days (init, day, cell) holds sqrt-rain for day index j = (days after the init) + pad, so it must reach
-    from -pad to the largest lead offset + max_lag; forecast (init, lead, cell) is the member-mean sqrt-rain
-    of `leads`. Lead k is dated init + k - 1 ("start") or init + k ("end"). Verdicts are those of
+    Lead ``k`` is dated ``init + k - 1`` (``"start"``) or ``init + k`` (``"end"``). Verdicts are those of
     `check_forecast_alignment` (spec section 8).
+
+    Parameters
+    ----------
+    obs_days : numpy.ndarray, shape (init, day, cell)
+        Sqrt-rain for day index ``j = (days after the init) + pad``, so it must reach from ``-pad`` to the largest lead
+        offset plus `max_lag`.
+    forecast : numpy.ndarray, shape (init, lead, cell)
+        The member-mean sqrt-rain of `leads`.
+    leads : iterable of int
+        The lead days, in the order of the ``lead`` axis of `forecast`.
+    pad : int
+        The offset of day 0 in the day axis of `obs_days`.
+    lead_label : {"start", "end"}
+        How a lead is dated.
+    obs : str
+        The source name of the observations.
+    source : str
+        The source name of the forecast.
+    n_inits : int
+        The number of inits, reported as the overlap days of each lead.
+    obs_boundary : str, default ""
+        The observation day boundary; with `forecast_boundary` it adds the implied-lag note.
+    forecast_boundary : str, default ""
+        The forecast day boundary.
+    max_lag : int, default 3
+        The largest lag in days, in both directions.
+
+    Returns
+    -------
+    ForecastAlignmentReport
+        One `AlignmentReport` per lead and the overall verdict.
     """
     leads = tuple(int(k) for k in leads)
     lags = np.arange(-max_lag, max_lag + 1)
@@ -377,7 +664,22 @@ def forecast_alignment_from_samples(obs_days: np.ndarray, forecast: np.ndarray, 
 
 
 def _forecast_verdict(per_lead: dict[int, AlignmentReport], lead_label: str) -> tuple[str, list[str]]:
-    """Overall verdict across leads, with a lead_label suggestion when the shift is consistent."""
+    """Combine the per-lead verdicts into one, suggesting a ``lead_label`` when the shift is consistent.
+
+    Parameters
+    ----------
+    per_lead : dict of int to AlignmentReport
+        The report of each lead.
+    lead_label : {"start", "end"}
+        The lead label in use.
+
+    Returns
+    -------
+    tuple of (str, list of str)
+        The overall verdict (``"aligned"``, ``"inconclusive"`` or ``"likely shifted by N day(s) at every lead"``,
+        with a hint at the other label for a lag of +1 with ``"start"`` or -1 with ``"end"``) and notes (that the leads
+        disagree, when they do).
+    """
     verdicts = {r.verdict for r in per_lead.values()}
     if not per_lead or verdicts == {"inconclusive"}:
         return "inconclusive", []

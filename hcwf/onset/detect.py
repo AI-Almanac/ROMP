@@ -1,11 +1,12 @@
-"""Onset detection on observed rainfall and on deterministic or ensemble model forecasts.
+"""Detect onsets on observed rainfall and on deterministic or ensemble model forecasts.
 
-A thin adapter between HCWF's pipeline and hcwf.onset: it settles units, day
-boundaries and thresholds, runs hcwf.onset.engine, and shapes the results into
-the arrays and DataFrames the metrics code expects.
+A thin adapter between HCWF's pipeline and `hcwf.onset`: it settles units, day boundaries and thresholds, runs
+`hcwf.onset.engine`, and shapes the results into the arrays and DataFrames the metrics code expects.
 
-The functions take the typed inputs of hcwf.config.model: the run (`rc`: RunConfig), the case (source and window) and the
-per-call `select` (Selection).
+The functions take the typed inputs of `hcwf.config.model`: the run (``rc``, a `hcwf.config.model.RunConfig`), the
+case (source and window) and the per-call ``select`` (a `hcwf.config.model.Selection`). The module reads and writes
+the observed-onset cache of `hcwf.onset.observed_cache`, and runs the day-boundary check of
+`hcwf.onset.alignment` once per model and run.
 """
 
 import warnings
@@ -37,20 +38,68 @@ _alignment_done = memo("onset.detect.alignment_done")
 
 
 def engine_options(rc, forecast=False) -> dict:
-    """The run options of the engine a run holds (horizon and missing-rain policy); none given is HCWF's own."""
+    """Return the run options of the engine (horizon and missing-rain policy).
+
+    A value the run does not give is HCWF's own default.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run; its ``onset_options`` and ``observations.units`` are read.
+    forecast : bool, default False
+        Whether the options are for forecast detection rather than observed detection.
+
+    Returns
+    -------
+    dict
+        The keyword arguments for `hcwf.onset.engine.detect_observed` or `hcwf.onset.engine.detect_forecast`.
+    """
     return rc.onset_options.engine(rc.observations.units, forecast)
 
 
 def _on_grid(da, lat, lon):
-    """Put a per-cell DataArray (or dataset) on the lat/lon grid of the rainfall; cells it lacks become NaN."""
+    """Put a per-cell array on the lat/lon grid of the rainfall.
+
+    Cells the array lacks become NaN; cells are matched to the nearest grid value within ``1e-3`` degrees.
+
+    Parameters
+    ----------
+    da : xarray.DataArray or xarray.Dataset
+        The per-cell values; returned unchanged when it has no ``lat`` and ``lon`` dims.
+    lat : array_like of float64
+        The latitudes of the rainfall grid.
+    lon : array_like of float64
+        The longitudes of the rainfall grid.
+
+    Returns
+    -------
+    xarray.DataArray or xarray.Dataset
+        `da` reindexed to ``lat`` and ``lon``.
+    """
     if "lat" not in da.dims or "lon" not in da.dims:
         return da
     return da.reindex(lat=lat, lon=lon, method="nearest", tolerance=_GRID_TOLERANCE)
 
 
 def _at_cells(da, lat, lon):
-    """A per-cell DataArray (or dataset) on the listed cells (their `lat` and `lon`, one "cell" dimension) instead of the
-    lat/lon grid: each cell takes the grid cell within tolerance, NaN where there is none (as `_on_grid`)."""
+    """Put a per-cell array on a list of cells instead of the lat/lon grid.
+
+    Each listed cell takes the grid cell within ``1e-3`` degrees, NaN where there is none (as `_on_grid`).
+
+    Parameters
+    ----------
+    da : xarray.DataArray or xarray.Dataset
+        The values on a lat/lon grid; returned unchanged when it has no ``lat`` and ``lon`` dims.
+    lat : array_like of float64, shape (cell,)
+        The latitudes of the listed cells.
+    lon : array_like of float64, shape (cell,)
+        The longitudes of the listed cells.
+
+    Returns
+    -------
+    xarray.DataArray or xarray.Dataset
+        The values with one ``cell`` dimension in place of ``lat`` and ``lon``, which are dropped as coordinates.
+    """
     if "lat" not in da.dims or "lon" not in da.dims:
         return da
     rows = da.indexes["lat"].get_indexer(np.asarray(lat), method="nearest", tolerance=_GRID_TOLERANCE)
@@ -62,7 +111,23 @@ def _at_cells(da, lat, lon):
 
 
 def _like(da, coords):
-    """A per-cell or per-unit DataArray on the spatial axes `coords` (cells within tolerance, or units by id); the rest NaN."""
+    """Put a per-cell or per-unit array on the spatial axes `coords`.
+
+    Cells are matched within tolerance and units by id; whatever is missing is NaN.
+
+    Parameters
+    ----------
+    da : xarray.DataArray or xarray.Dataset
+        The values to move.
+    coords : dict
+        The spatial coordinates of the rainfall: ``unit``, or ``cell`` with ``lat`` and ``lon`` over it, or ``lat`` and
+        ``lon`` of a grid.
+
+    Returns
+    -------
+    xarray.DataArray or xarray.Dataset
+        `da` on those axes.
+    """
     if "unit" in coords:
         return da.reindex(unit=np.asarray(coords["unit"]).astype(str))
     if "cell" in coords:
@@ -71,14 +136,44 @@ def _like(da, coords):
 
 
 def _on_units(value, ids, convention=None):
-    """A threshold over the units of the rainfall, joined by unit id: a number of mm, a table of (id, onset_thresh)
-    or an array over "unit"; a table must cover the units (see hcwf.onset.thresholds.unit_thresholds)."""
+    """Build a threshold over the units of the rainfall, joined by unit id.
+
+    Parameters
+    ----------
+    value : float or pandas.DataFrame or numpy.ndarray
+        A number of mm, a table of ``(id, onset_thresh)``, or an array over ``unit``; a table must cover the units (see
+        `hcwf.onset.thresholds.unit_thresholds`).
+    ids : array_like
+        The unit ids of the rainfall.
+    convention : str, optional
+        The grid-id convention of the units, or None when it is established or inferred.
+
+    Returns
+    -------
+    xarray.DataArray
+        The threshold with dim ``unit`` and the ids (as ``str``) as coordinate.
+    """
     return xr.DataArray(unit_thresholds(value, np.asarray(ids).astype(str), convention), dims=("unit",),
                         coords={"unit": np.asarray(ids).astype(str)})
 
 
 def _field(value, coords, convention=None):
-    """One threshold on the rainfall's own spatial axes (cells of the grid, or units)."""
+    """Put one threshold on the rainfall's own spatial axes (cells of the grid, or units).
+
+    Parameters
+    ----------
+    value : float or xarray.DataArray or pandas.DataFrame
+        The threshold; a number is returned as it is (unless the rainfall is over units).
+    coords : dict
+        The spatial coordinates of the rainfall (see `_like`).
+    convention : str, optional
+        The grid-id convention of the units.
+
+    Returns
+    -------
+    float or xarray.DataArray
+        The threshold on the axes of `coords`.
+    """
     if "unit" in coords:
         return _on_units(value, coords["unit"], convention)
     if not isinstance(value, xr.DataArray):
@@ -87,11 +182,26 @@ def _field(value, coords, convention=None):
 
 
 def _thresholds(thresh_slice, coords, per_window=True, convention=None):
-    """The thresholds for the engine: named arrays on the rainfall's cells or units, or None for a fixed amount.
+    """Build the thresholds for the engine.
 
-    coords are the rainfall's spatial coordinates (lat and lon, or unit). Model-climatology thresholds carry a "window"
-    dim (one per verification window). Forecast detection keeps it; per_window=False (observed onsets, which have no
-    lead) keeps the first window.
+    Model-climatology thresholds carry a ``window`` dim (one per verification window). Forecast detection keeps it;
+    ``per_window=False`` (observed onsets, which have no lead) keeps the first window.
+
+    Parameters
+    ----------
+    thresh_slice : mapping or None
+        The named thresholds from `hcwf.io.input.load_thresholds`; None or empty gives no thresholds.
+    coords : dict
+        The rainfall's spatial coordinates (``lat`` and ``lon``, or ``unit``).
+    per_window : bool, default True
+        Keep the ``window`` dim; False takes its first window.
+    convention : str, optional
+        The grid-id convention of the units.
+
+    Returns
+    -------
+    dict
+        The named thresholds on the rainfall's cells or units, or a fixed amount.
     """
     out = {name: _field(value, coords, convention) for name, value in dict(thresh_slice or {}).items()}
     if not per_window:
@@ -101,7 +211,27 @@ def _thresholds(thresh_slice, coords, per_window=True, convention=None):
 
 
 def _season_climatology(setup, thresh_slice, coords):
-    """The harmonic season analysis on the rainfall grid, for derived seasons only."""
+    """Return the harmonic season analysis on the rainfall grid, for derived seasons only.
+
+    Parameters
+    ----------
+    setup : hcwf.config.onset.OnsetSetup
+        The onset setup; its ``derived_seasons`` flag decides whether the analysis is needed.
+    thresh_slice : object
+        The thresholds from `hcwf.io.input.load_thresholds`; its ``season_climatology`` attribute is read.
+    coords : dict
+        The rainfall's spatial coordinates (see `_like`).
+
+    Returns
+    -------
+    xarray.Dataset or xarray.DataArray or None
+        The season climatology on the rainfall grid, or None when the definition has no derived seasons.
+
+    Raises
+    ------
+    ValueError
+        The definition has derived seasons but no season climatology was loaded, or the rainfall is over units.
+    """
     if not setup.derived_seasons:
         return None
     climatology = getattr(thresh_slice, "season_climatology", None)
@@ -114,19 +244,48 @@ def _season_climatology(setup, thresh_slice, coords):
 
 
 def unit_convention(rc):
-    """The grid-id convention of the run's units (None: established or inferred)."""
+    """Return the grid-id convention of the run's units.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run; ``observations.units`` is read.
+
+    Returns
+    -------
+    str or None
+        The convention, or None when it is established or inferred.
+    """
     spec = rc.observations.units
     return None if spec is None else spec.convention
 
 
 def detect_observed_dataset(rain_slice, thresh_slice, year, rc, select=Selection()):
-    """Run the engine on one year of observed rainfall; return (engine Dataset, OnsetSetup).
+    """Run the engine on one year of observed rainfall.
 
-    The Dataset has dims (year, season, *spatial) (lat and lon, or unit) with one year and the selected season (both kept
-    as length-1 dims) and the variables onset_date, onset_index and status of hcwf.onset.engine.detect_observed; its
-    "calendar" attribute is the calendar of the dates. detect_observed and the NetCDF export (hcwf.runs.export) both
-    read their values from here, so they cannot disagree. A `select.reference_onset` (a ReferenceOnset, for
-    evaluation units) starts each search no earlier than that date.
+    The Dataset has dims ``(year, season, *spatial)`` (``lat`` and ``lon``, or ``unit``) with one year and the selected
+    season (both kept as length-1 dims) and the variables ``onset_date``, ``onset_index`` and ``status`` of
+    `hcwf.onset.engine.detect_observed`; its ``calendar`` attribute is the calendar of the dates. `detect_observed`
+    and the NetCDF export (`hcwf.runs.export`) both read their values from here, so they cannot disagree.
+
+    Parameters
+    ----------
+    rain_slice : xarray.DataArray or hcwf.onset.model.DailyRain
+        Daily rainfall in mm with dims ``(time, lat, lon)`` or ``(time, unit)``, or that rainfall already ingested.
+    thresh_slice : object
+        The thresholds from `hcwf.io.input.load_thresholds`.
+    year : int
+        The year to detect.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    select : hcwf.config.model.Selection, default Selection()
+        The per-call selection; a ``reference_onset`` (a ``ReferenceOnset``, for evaluation units) starts each search no
+        earlier than that date.
+
+    Returns
+    -------
+    tuple of (xarray.Dataset, hcwf.config.onset.OnsetSetup)
+        The engine Dataset and the onset setup of the run.
     """
     setup = rc.onset
     rain = rain_slice if isinstance(rain_slice, DailyRain) else ingest(
@@ -148,18 +307,36 @@ def detect_observed_dataset(rain_slice, thresh_slice, year, rc, select=Selection
 
 
 def detect_observed(rain_slice, thresh_slice, year, rc, select=Selection()):
-    """Detect observed onset dates for a given year.
+    """Detect the observed onset dates for one year.
 
-    rain_slice is daily rainfall in mm with dims (time, lat, lon), or (time, unit) for evaluation units (the reader's
-    `present` coordinate says which units have a series), or that rainfall already ingested as a DailyRain (the
-    climatology years the thresholds were computed from), or a function that reads it, called only when the onsets are
-    not cached (for cells the function needs a `probe` attribute whose `coords` hold the lat and lon: the cache's
-    fingerprint reads the grid from it instead of from the rain). thresh_slice is the threshold from hcwf.io.input.load_thresholds (the definition's
-    named thresholds).
-    Returns a (lat, lon) or (unit) DataArray of datetime64 onset dates, NaT where there is no onset. For units it carries
-    the coordinates `present` and `onset_index` (the 1-based day of the onset in the year's series, NaN without one).
-    While a run has the observed-onset cache active (hcwf.onset.observed_cache) the dates of a year already detected
+    `rain_slice` is daily rainfall in mm with dims ``(time, lat, lon)``, or ``(time, unit)`` for evaluation units (the
+    reader's ``present`` coordinate says which units have a series), or that rainfall already ingested as a
+    `hcwf.onset.model.DailyRain` (the climatology years the thresholds were computed from), or a function that reads
+    it, called only when the onsets are not cached (for cells the function needs a ``probe`` attribute whose ``coords``
+    hold the lat and lon: the cache's fingerprint reads the grid from it instead of from the rain).
+
+    While a run has the observed-onset cache active (`hcwf.onset.observed_cache`) the dates of a year already detected
     under the same fingerprint are returned without detecting again.
+
+    Parameters
+    ----------
+    rain_slice : xarray.DataArray or hcwf.onset.model.DailyRain or callable
+        The rainfall, as described above; a callable takes no arguments.
+    thresh_slice : object
+        The thresholds from `hcwf.io.input.load_thresholds` (the definition's named thresholds).
+    year : int
+        The year to detect.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    select : hcwf.config.model.Selection, default Selection()
+        The per-call selection (see `detect_observed_dataset`).
+
+    Returns
+    -------
+    xarray.DataArray of datetime64[ns]
+        The onset dates over ``(lat, lon)`` or ``(unit)``, ``NaT`` where there is no onset. For units it carries the
+        coordinates ``present`` and ``onset_index`` (the 1-based day of the onset in the year's series, NaN without
+        one).
     """
     reader = rain_slice if callable(rain_slice) else None
     cached = observed_cache.lookup(getattr(reader, "probe", None) if reader else rain_slice, thresh_slice, year, rc, select)
@@ -189,22 +366,59 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
                     search_start=None, restrict_to_season=True, onset_count=False):
     """Run the engine on a forecast cube and line it up with the observed onsets.
 
-    Returns a dict of numpy arrays shaped (init_time, [member], lat, lon): lead day
-    after init of the onset (NaN none; 0 or below for an onset back-dated by the observed history), date, status; plus the valid-case mask
-    (init before the observed onset) and the observed onset dates (init_time, lat, lon). "result" is the engine
-    Dataset these arrays come from (season kept as a length-1 dim, with the ensemble summary for members) and
-    "calendar" the calendar of its dates; the NetCDF export (hcwf.runs.export) reads them.
+    The result is a dict of numpy arrays shaped ``(init_time, [member], lat, lon)``: the lead day after init of the
+    onset (``"day"``: NaN for none; 0 or below for an onset back-dated by the observed history), the date and the
+    status; plus the valid-case mask (init before the observed onset) and the observed onset dates ``(init_time, lat,
+    lon)``. ``"result"`` is the engine Dataset these arrays come from (season kept as a length-1 dim, with the ensemble
+    summary for members) and ``"calendar"`` the calendar of its dates; the NetCDF export (`hcwf.runs.export`) reads
+    them.
 
-    The cube may hold only some cells of the grid (the loader's `cells`: (init_time, [member], step, cell), with lat and lon as
-    coordinates over "cell"): only those are ingested and detected, and the arrays and the "place" function that names a
-    point's columns (lat and lon) are over them. `p_model` may also be a function that reads the cube; it is called here, and
-    the cube is dropped once ingested (peak memory: the cube and its tenths, not the cube through the detection).
+    The cube may hold only some cells of the grid (the loader's ``cells``: ``(init_time, [member], step, cell)``, with
+    ``lat`` and ``lon`` as coordinates over ``cell``): only those are ingested and detected, and the arrays and the
+    ``"place"`` function that names a point's columns (``lat`` and ``lon``) are over them. `p_model` may also be a
+    function that reads the cube; it is called here, and the cube is dropped once ingested (peak memory: the cube and
+    its tenths, not the cube through the detection).
 
-    The cube may be over evaluation units instead of lat and lon ((init_time, member, unit, step)). `search_start`
-    (variants that start the search later, see hcwf.onset.engine.detect_forecast), `restrict_to_season` (False: one
-    season covering every lead) and `onset_count` (the member onset counts of `count_members`) may then be given; with
-    onset_count there is no observed onset to line up with (onset_da is None) and the dict holds "counts" (init_time,
-    start, unit, lead) instead of the day, date and status arrays.
+    The cube may be over evaluation units instead of ``lat`` and ``lon`` (``(init_time, member, unit, step)``).
+    `search_start` (variants that start the search later, see `hcwf.onset.engine.detect_forecast`),
+    `restrict_to_season` (False: one season covering every lead) and `onset_count` (the member onset counts of
+    `count_members`) may then be given; with `onset_count` there is no observed onset to line up with (`onset_da` is
+    None) and the dict holds ``"counts"`` ``(init_time, start, unit, lead)`` instead of the day, date and status
+    arrays.
+
+    Parameters
+    ----------
+    p_model : xarray.DataArray or callable
+        The forecast cube in mm, or a function with no arguments that reads it.
+    thresh_slice : object
+        The thresholds from `hcwf.io.input.load_thresholds`.
+    onset_da : xarray.DataArray or None
+        The observed onset dates (`detect_observed`); None with `onset_count`.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    case : object
+        The case (``case.model`` is the forecast model's settings).
+    select : hcwf.config.model.Selection, default Selection()
+        The per-call selection.
+    members : sequence, optional
+        The members to keep; None keeps the cube's.
+    history : xarray.DataArray, optional
+        Observed rainfall before the init, used when the run's ``forecast_history`` is ``"observed"``.
+    search_start : dict, optional
+        Variants that start the search later, passed to the engine.
+    restrict_to_season : bool, default True
+        False gives one season covering every lead.
+    onset_count : bool, default False
+        Return the member onset counts instead of the onset arrays.
+
+    Returns
+    -------
+    dict
+        ``"setup"``, ``"result"``, ``"calendar"`` and ``"init"`` always. With `onset_count`: ``"counts"`` and
+        ``"start"`` (the names of the search starts). Otherwise ``"spatial"`` (the spatial dims), ``"axes"``,
+        ``"place"`` (a function from an index tuple to the point's columns), ``"member"`` (or None), ``"day"``,
+        ``"date"``, ``"status"``, ``"valid"``, ``"obs"`` (observed dates, ``datetime64[ns]``) and ``"totals"`` (potential
+        initializations, cases with an observed onset).
     """
     setup = rc.onset
     max_forecast_day = rc.evaluation.max_forecast_day
@@ -268,12 +482,32 @@ def detect_forecast(p_model, thresh_slice, onset_da, rc, case, select=Selection(
 
 
 def count_members(cube, thresh_slice, rc, case, select=Selection(), *, search_start=None):
-    """For an ensemble forecast on evaluation units: (counts, start names, init times).
+    """Count the members whose onset falls on each lead day, for an ensemble forecast on evaluation units.
 
-    cube has dims (init_time, member, unit, step) in mm, its steps 1..n, with n the run's max_forecast_day. counts is an
-    (init_time, start, unit, lead) DataArray: the number of members whose onset falls on each lead day 0..n, from the
-    search that starts at lead 1 ("base" first) and from each variant of `search_start` (the fixed cutoff date, the
-    reference onset); "start" names them in that order.
+    `cube` has dims ``(init_time, member, unit, step)`` in mm, its steps 1..n, with n the run's ``max_forecast_day``. The
+    counts are the number of members whose onset falls on each lead day 0..n, from the search that starts at lead 1
+    (``"base"`` first) and from each variant of `search_start` (the fixed cutoff date, the reference onset); the start
+    names list them in that order.
+
+    Parameters
+    ----------
+    cube : xarray.DataArray
+        The forecast cube in mm.
+    thresh_slice : object
+        The thresholds from `hcwf.io.input.load_thresholds`.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    case : object
+        The case (see `detect_forecast`).
+    select : hcwf.config.model.Selection, default Selection()
+        The per-call selection.
+    search_start : dict, optional
+        Variants that start the search later, passed to the engine.
+
+    Returns
+    -------
+    tuple of (xarray.DataArray, list of str, numpy.ndarray)
+        The counts with dims ``(init_time, start, unit, lead)``, the names of the starts, and the init times.
     """
     out = detect_forecast(cube, thresh_slice, None, rc, case, select, search_start=search_start, onset_count=True,
                           restrict_to_season=False)
@@ -281,12 +515,31 @@ def count_members(cube, thresh_slice, rc, case, select=Selection(), *, search_st
 
 
 def _days(values):
-    """datetime64[ns] values cut to whole days (NaT stays NaT): the dates of the onset tables."""
+    """Cut dates to whole days, the dates of the onset tables.
+
+    Parameters
+    ----------
+    values : array_like of datetime64
+        The dates; ``NaT`` stays ``NaT``.
+
+    Returns
+    -------
+    numpy.ndarray of datetime64[ns]
+        The dates at midnight.
+    """
     return np.asarray(values).astype("datetime64[D]").astype("datetime64[ns]")
 
 
 def _print_back_dated(day, valid):
-    """Print how many scored forecast onsets lie on or before the init (back-dated by the observed history)."""
+    """Log how many scored forecast onsets lie on or before the init (back-dated by the observed history).
+
+    Parameters
+    ----------
+    day : numpy.ndarray of float64
+        The onset lead day, shaped ``(init_time, [member], ...)``, NaN for none.
+    valid : numpy.ndarray of bool
+        The valid-case mask, shaped ``(init_time, ...)``.
+    """
     mask = np.broadcast_to(valid[:, None] if day.ndim == valid.ndim + 1 else valid, day.shape)
     count = int((day[mask] <= 0).sum())
     if count:
@@ -294,7 +547,15 @@ def _print_back_dated(day, valid):
 
 
 def _print_status_counts(status, valid):
-    """Log how many forecast searches ended in each status."""
+    """Log how many forecast searches ended in each status, and warn about PRIOR ones.
+
+    Parameters
+    ----------
+    status : numpy.ndarray of int
+        The `hcwf.onset.model.Status` codes, shaped ``(init_time, [member], ...)``.
+    valid : numpy.ndarray of bool
+        The valid-case mask, shaped ``(init_time, ...)``; only valid cases are counted.
+    """
     mask = np.broadcast_to(valid[:, None] if status.ndim == valid.ndim + 1 else valid, status.shape)
     counts = np.bincount(status[mask].astype(np.int64), minlength=len(Status))
     log.debug("Forecast onset searches by status: "
@@ -306,19 +567,50 @@ def _print_status_counts(status, valid):
 
 
 def _names(status):
-    """Status names for an array of codes."""
+    """Convert an array of status codes to status names.
+
+    Parameters
+    ----------
+    status : array_like of int
+        The `hcwf.onset.model.Status` codes.
+
+    Returns
+    -------
+    numpy.ndarray of str
+        The names, in the shape of `status`.
+    """
     labels = np.array([s.name for s in Status])
     return labels[np.asarray(status, dtype=np.int64)]
 
 
 def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selection(), history=None):
-    """Compute onset dates for deterministic model forecast.
+    """Compute the onset dates of a deterministic model forecast.
 
-    p_model has dims (init_time, lat, lon, step), or (init_time, unit, step) on evaluation units (or the cells of the loader's
-    `cells`, or a function that reads the cube: see detect_forecast). Returns one row per
-    (init, cell or unit) in that order for those with an observed onset and an init before it, with
-    columns init_time, lat and lon (or unit), onset_day (lead day, None if no onset), onset_date
-    (datetime64[ns] days, NaT if none) and obs_onset_date, plus onset_status for definitions.
+    Parameters
+    ----------
+    p_model : xarray.DataArray or callable
+        The forecast in mm with dims ``(init_time, lat, lon, step)``, or ``(init_time, unit, step)`` on evaluation units
+        (or the cells of the loader's ``cells``, or a function that reads the cube: see `detect_forecast`).
+    thresh_slice : object
+        The thresholds from `hcwf.io.input.load_thresholds`.
+    onset_da : xarray.DataArray
+        The observed onset dates (`detect_observed`).
+    rc : hcwf.config.model.RunConfig
+        The run.
+    case : object
+        The case (see `detect_forecast`).
+    select : hcwf.config.model.Selection, default Selection()
+        The per-call selection.
+    history : xarray.DataArray, optional
+        Observed rainfall before the init (see `detect_forecast`).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per ``(init, cell or unit)`` in that order, for those with an observed onset and an init before it, with
+        columns ``init_time``, ``lat`` and ``lon`` (or ``unit``), ``onset_day`` (lead day, None if no onset),
+        ``onset_date`` (``datetime64[ns]`` days, ``NaT`` if none), ``obs_onset_date`` and ``onset_status``. Empty when
+        there is no valid case.
     """
     out = detect_forecast(p_model, thresh_slice, onset_da, rc, case, select, history=history)
     valid = out["valid"]
@@ -351,7 +643,26 @@ def detect_deterministic(p_model, thresh_slice, onset_da, rc, case, select=Selec
 
 
 def _ensemble_status(status, threshold, has_onset):
-    """Status of an ensemble onset: ONSET if it has one, else the most informative way the members fell short."""
+    """Give the status of an ensemble onset.
+
+    The status is ``ONSET`` if the ensemble has an onset, else the most informative way the members fell short: the
+    code (``INSUFFICIENT_DATA`` or ``CENSORED``) that together with the onsets reaches the member fraction, else
+    ``NOT_FOUND``.
+
+    Parameters
+    ----------
+    status : numpy.ndarray of int, shape (init_time, member, ...)
+        The `hcwf.onset.model.Status` codes of the members.
+    threshold : float
+        The fraction of members needed.
+    has_onset : numpy.ndarray of bool, shape (init_time, ...)
+        Whether the ensemble has an onset.
+
+    Returns
+    -------
+    numpy.ndarray of object, shape of `has_onset`
+        The status names.
+    """
     names = np.full(has_onset.shape, Status.NOT_FOUND.name, dtype=object)
     total = status.shape[1]
     for code in (Status.INSUFFICIENT_DATA, Status.CENSORED):
@@ -362,11 +673,26 @@ def _ensemble_status(status, threshold, has_onset):
 
 
 def ensemble_onset(day, init, threshold):
-    """The ensemble onset HCWF scores from member onset days (init_time, member, lat, lon or unit), NaN for none.
+    """Compute the ensemble onset HCWF scores from the member onset days.
 
-    Returns (count of members with an onset, their fraction, ensemble onset day, ensemble onset date), each
-    shaped (init_time, lat, lon) or (init_time, unit). The ensemble has an onset when the fraction is at least threshold; its day
-    (days after the init) is the mean member day rounded half to even. init is the array of init dates.
+    The ensemble has an onset when the fraction of members with one is at least `threshold`; its day (days after the
+    init) is the mean member day rounded half to even.
+
+    Parameters
+    ----------
+    day : numpy.ndarray of float64, shape (init_time, member, lat, lon) or (init_time, member, unit)
+        The member onset day, NaN for none.
+    init : array_like of datetime64
+        The init dates.
+    threshold : float
+        The least fraction of members with an onset for the ensemble to have one.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray)
+        The count of members with an onset, their fraction, the ensemble onset day (NaN for none) and the ensemble onset
+        date, each shaped ``(init_time, lat, lon)`` or ``(init_time, unit)``. The date is only meaningful where the day
+        is not NaN.
     """
     n_member = day.shape[1]
     count = (~np.isnan(day)).sum(axis=1)
@@ -380,13 +706,35 @@ def ensemble_onset(day, init, threshold):
 
 
 def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(), history=None):
-    """Compute per-member and ensemble onsets.
+    """Compute the per-member and the ensemble onsets.
 
-    p_model has dims (init_time, member, lat, lon, step), or (init_time, member, unit, step) on evaluation units (or the
-    cells of the loader's `cells`, or a function that reads the cube: see detect_forecast). The ensemble has an onset
-    when the fraction of members with one is at least onset_percentage_threshold;
-    its day is the mean member onset day rounded half to even.
-    Returns (member onset DataFrame, ensemble onset DataFrame); their date columns are datetime64[ns] days (NaT: none).
+    The ensemble has an onset when the fraction of members with one is at least ``onset_percentage_threshold``; its day
+    is the mean member onset day rounded half to even.
+
+    Parameters
+    ----------
+    p_model : xarray.DataArray or callable
+        The forecast in mm with dims ``(init_time, member, lat, lon, step)``, or ``(init_time, member, unit, step)`` on
+        evaluation units (or the cells of the loader's ``cells``, or a function that reads the cube: see
+        `detect_forecast`).
+    thresh_slice : object
+        The thresholds from `hcwf.io.input.load_thresholds`.
+    onset_da : xarray.DataArray
+        The observed onset dates (`detect_observed`).
+    rc : hcwf.config.model.RunConfig
+        The run.
+    case : object
+        The case (see `detect_forecast`).
+    select : hcwf.config.model.Selection, default Selection()
+        The per-call selection.
+    history : xarray.DataArray, optional
+        Observed rainfall before the init (see `detect_forecast`).
+
+    Returns
+    -------
+    tuple of (pandas.DataFrame, pandas.DataFrame)
+        The member onset table and the ensemble onset table; their date columns are ``datetime64[ns]`` days (``NaT``:
+        none).
     """
     members = rc.evaluation.members
     threshold = rc.onset_options.percentage_threshold
@@ -440,7 +788,23 @@ def detect_ensemble(p_model, thresh_slice, onset_da, rc, case, select=Selection(
 
 
 def _cells_on_grid(cube, lat, lon):
-    """A cube of cells (dims others and "cell", lat and lon over the cells) on the lat/lon grid given: NaN where it has no cell."""
+    """Put a cube of cells on a lat/lon grid.
+
+    Parameters
+    ----------
+    cube : xarray.DataArray
+        The values, with other dims and ``cell``, and ``lat`` and ``lon`` as coordinates over the cells.
+    lat : array_like of float64
+        The latitudes of the grid.
+    lon : array_like of float64
+        The longitudes of the grid.
+
+    Returns
+    -------
+    xarray.DataArray
+        The cube with dims ``(*others, lat, lon)``, NaN where the grid cell has no cell of the cube; cells are matched
+        within ``1e-3`` degrees.
+    """
     rows = pd.Index(lat).get_indexer(np.asarray(cube["lat"].values), method="nearest", tolerance=_GRID_TOLERANCE)
     cols = pd.Index(lon).get_indexer(np.asarray(cube["lon"].values), method="nearest", tolerance=_GRID_TOLERANCE)
     found = (rows >= 0) & (cols >= 0)
@@ -452,10 +816,26 @@ def _cells_on_grid(cube, lat, lon):
 
 
 def alignment_report(rain_slice, p_model, rc, case):
-    """Compare observations with forecast leads 1-3; return (report, note).
+    """Compare observations with forecast leads 1-3.
 
-    report is the AlignmentReport (None when the check could not run) and note says why it did not.
-    Subsamples the inits and members (hcwf.onset.alignment is expensive on whole years).
+    Subsamples the inits and members, because `hcwf.onset.alignment` is expensive on whole years. Never raises: a
+    failure is returned as a note.
+
+    Parameters
+    ----------
+    rain_slice : xarray.DataArray
+        The observed daily rainfall in mm with dims ``(time, lat, lon)``.
+    p_model : xarray.DataArray
+        The forecast cube in mm.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    case : object
+        The case (``case.model`` is the forecast model's settings).
+
+    Returns
+    -------
+    tuple of (hcwf.onset.alignment.ForecastAlignmentReport or None, str)
+        The report (None when the check could not run) and a note that says why it did not (empty when it ran).
     """
     setup = rc.onset
     try:
@@ -477,8 +857,24 @@ def alignment_report(rain_slice, p_model, rc, case):
 def check_alignment(rain_slice, p_model, rc, case):
     """Compare observations with forecast leads 1-3 once per model and run, and warn if they look shifted.
 
-    Skipped (with a note) when check_alignment is off or the observation day boundary is unknown.
-    Never raises: a failed check is reported and the run goes on.
+    Skipped (with a note in the log) when ``check_alignment`` is off or the observation day boundary is unknown. Never
+    raises: a failed check is reported and the run goes on.
+
+    Parameters
+    ----------
+    rain_slice : xarray.DataArray
+        The observed daily rainfall in mm with dims ``(time, lat, lon)``.
+    p_model : xarray.DataArray
+        The forecast cube in mm.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    case : object
+        The case (``case.model`` is the forecast model's settings).
+
+    Returns
+    -------
+    None
+        A `UserWarning` is issued when the forecasts look shifted against the observations.
     """
     setup = rc.onset
     key = (case.model.name, rc.observations.dir, setup.lead_label)

@@ -1,9 +1,9 @@
-"""Parsers for the small text grammar of onset definitions (docs/onset_spec.md, section 3.7).
+"""Parsers for the small text grammar of onset definitions (``docs/onset_spec.md``, section 3.7).
 
-Each parser turns one YAML string into a model type: amounts and comparisons
-(fixed amounts become integer tenths of a mm), counts, durations, spans, day
-references and dry spells. Failures raise UnitsError; its message says how to
-fix the text, and hcwf.onset.definition prefixes it with the YAML path.
+Each parser turns one YAML string into a type of `hcwf.onset.model`: amounts and comparisons (fixed amounts become
+integer tenths of a mm), counts, durations, spans, day references and dry spells. Failures raise
+`hcwf.errors.UnitsError`; its message says how to fix the text, and `hcwf.onset.definition` prefixes it with the YAML
+path.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
+from typing import Iterator
 
 from hcwf.errors import UnitsError
 from hcwf.onset.model import Amount, Comparison, DayRef, DryRun, DryWindow, Op, Span
@@ -34,10 +35,21 @@ _FINE_AMOUNTS: ContextVar[bool] = ContextVar("fine_amounts", default=False)
 
 
 @contextmanager
-def fine_amounts(allowed: bool = True):
-    """Within the block, fixed amounts finer than 0.1 mm parse into Amount(mm=...) instead of failing.
+def fine_amounts(allowed: bool = True) -> Iterator[None]:
+    """Allow fixed amounts finer than 0.1 mm to parse, within the block.
 
-    They only run at rain_resolution "exact"; resolve_amounts rejects them otherwise.
+    Inside the block `parse_comparison` returns ``Amount(mm=...)`` for such an amount instead of raising. These
+    amounts only run at ``rain_resolution: exact``; `hcwf.onset.definition.resolve_amounts` rejects them otherwise.
+
+    Parameters
+    ----------
+    allowed : bool, default True
+        Whether fine amounts are allowed inside the block.
+
+    Yields
+    ------
+    None
+        Nothing; the setting is restored when the block ends, also on an exception.
     """
     token = _FINE_AMOUNTS.set(allowed)
     try:
@@ -47,14 +59,50 @@ def fine_amounts(allowed: bool = True):
 
 
 def _normalize(text: object, example: str) -> str:
-    """Return the text with collapsed whitespace, or raise if it is not a string."""
+    """Return the text with runs of whitespace collapsed to single spaces.
+
+    Parameters
+    ----------
+    text : object
+        The value read from YAML; it must be a string.
+    example : str
+        A valid text, quoted in the error message.
+
+    Returns
+    -------
+    str
+        `text` stripped, with every run of whitespace replaced by one space.
+
+    Raises
+    ------
+    UnitsError
+        `text` is not a string.
+    """
     if not isinstance(text, str):
         raise UnitsError(f"expected text but found {text!r}. Fix: write it as text, e.g. '{example}'")
     return " ".join(text.split())
 
 
 def split_comparator(text: object, example: str = "at least 20 mm") -> tuple[Op, str]:
-    """Split a leading comparator off the text, returning (op, rest)."""
+    """Split a leading comparator off the text.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value, for example ``"at least 20 mm"``.
+    example : str, default "at least 20 mm"
+        A valid text, quoted in error messages.
+
+    Returns
+    -------
+    tuple of (str, str)
+        The operator, one of ``"ge"``, ``"gt"``, ``"lt"``, ``"le"``, and the text after the comparator.
+
+    Raises
+    ------
+    UnitsError
+        `text` is not a string, has no leading comparator, or nothing after it.
+    """
     text = _normalize(text, example)
     match = _COMPARATOR_RE.match(text)
     if match is None:
@@ -67,7 +115,27 @@ def split_comparator(text: object, example: str = "at least 20 mm") -> tuple[Op,
 
 
 def parse_comparison(text: object) -> Comparison:
-    """Parse '<comparator> <number> mm' or '<comparator> <threshold name>' into a Comparison."""
+    """Parse ``<comparator> <number> mm`` or ``<comparator> <threshold name>`` into a comparison.
+
+    A fixed amount becomes integer tenths of a mm. One finer than 0.1 mm becomes ``Amount(mm=...)`` inside a
+    `fine_amounts` block and is an error outside it.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value, for example ``"at least 20 mm"`` or ``"more than wet_spell_amount"``.
+
+    Returns
+    -------
+    hcwf.onset.model.Comparison
+        The operator and the amount (tenths, a threshold name, or fine mm).
+
+    Raises
+    ------
+    UnitsError
+        `text` is not text, has no comparator or no unit, is finer than 0.1 mm outside `fine_amounts`, or
+        the amount is neither a number with ``mm`` nor a threshold name.
+    """
     op, rest = split_comparator(text)
     match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*mm", rest, re.IGNORECASE)
     if match is not None:
@@ -88,7 +156,23 @@ def parse_comparison(text: object) -> Comparison:
 
 
 def parse_count(text: object) -> tuple[Op, int]:
-    """Parse '<comparator> <integer>' (e.g. 'at least 3') into (op, count)."""
+    """Parse ``<comparator> <integer>`` (for example ``"at least 3"``) into an operator and a count.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value.
+
+    Returns
+    -------
+    tuple of (str, int)
+        The operator (``"ge"``, ``"gt"``, ``"lt"`` or ``"le"``) and the count.
+
+    Raises
+    ------
+    UnitsError
+        `text` has no comparator or what follows it is not a whole number.
+    """
     op, rest = split_comparator(text, "at least 3")
     if not re.fullmatch(r"\d+", rest):
         raise UnitsError(f"'{rest}' is not a whole number. Fix: write a count such as 'at least 3'")
@@ -96,7 +180,23 @@ def parse_count(text: object) -> tuple[Op, int]:
 
 
 def parse_duration(text: object) -> int:
-    """Parse '<integer> day(s)' into a number of days (at least 1)."""
+    """Parse ``<integer> day(s)`` into a number of days.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value, for example ``"5 days"``.
+
+    Returns
+    -------
+    int
+        The number of days, at least 1.
+
+    Raises
+    ------
+    UnitsError
+        `text` is not a whole number of days, or is below 1.
+    """
     text = _normalize(text, "5 days")
     match = re.fullmatch(r"(\d+)\s+days?", text, re.IGNORECASE)
     if match is None:
@@ -108,9 +208,26 @@ def parse_duration(text: object) -> int:
 
 
 def parse_span(text: object, window: int | None = None) -> Span:
-    """Parse a span: 'days A to B', 'day A', 'N days after onset|window' or 'season to date'.
+    """Parse a span: ``days A to B``, ``day A``, ``N days after onset|window`` or ``season to date``.
 
-    window is the trigger window length W, needed for 'N days after window'.
+    Parameters
+    ----------
+    text : object
+        The YAML value.
+    window : int, optional
+        The trigger window length W in days; needed for ``N days after window``.
+
+    Returns
+    -------
+    hcwf.onset.model.Span
+        The first and last day of the span, relative to the day being tested (``season to date`` sets
+        ``since_search_start``).
+
+    Raises
+    ------
+    UnitsError
+        `text` cannot be read, ends before it starts, is not positive, says nothing about what it counts from, or
+        needs `window` and none is given.
     """
     text = _normalize(text, "days 11 to 20")
     lowered = text.lower()
@@ -144,14 +261,50 @@ def parse_span(text: object, window: int | None = None) -> Span:
 
 
 def _make_span(first: int, last: int, text: str) -> Span:
-    """Build a Span, turning an empty range into a UnitsError."""
+    """Build a span, turning an empty range into an error.
+
+    Parameters
+    ----------
+    first : int
+        The first day.
+    last : int
+        The last day.
+    text : str
+        The original text, quoted in the error message.
+
+    Returns
+    -------
+    hcwf.onset.model.Span
+        The span from `first` to `last`.
+
+    Raises
+    ------
+    UnitsError
+        `last` is before `first`.
+    """
     if last < first:
         raise UnitsError(f"'{text}' ends before it starts. Fix: write the earlier day first, e.g. 'days {last} to {first}'")
     return Span(first, last)
 
 
 def parse_dayref(text: object) -> DayRef:
-    """Parse 'MM-DD' or 'climatological onset|cessation [+|- N days]' into a DayRef."""
+    """Parse ``MM-DD`` or ``climatological onset|cessation [+|- N days]`` into a day reference.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value, for example ``"06-02"`` or ``"climatological onset - 50 days"``.
+
+    Returns
+    -------
+    hcwf.onset.model.DayRef
+        A fixed month and day, or the climatological onset or cessation with a signed offset in days.
+
+    Raises
+    ------
+    UnitsError
+        `text` is ``02-29``, not a valid month-day, or cannot be read.
+    """
     text = _normalize(text, "06-02")
     match = re.fullmatch(r"(\d{2})-(\d{2})", text)
     if match is not None:
@@ -171,7 +324,23 @@ def parse_dayref(text: object) -> DayRef:
 
 
 def parse_during(text: object) -> tuple[DayRef, DayRef] | None:
-    """Parse 'MM-DD to MM-DD' into two DayRefs, or 'whole year' into None."""
+    """Parse ``MM-DD to MM-DD`` into two day references, or ``whole year`` into None.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value.
+
+    Returns
+    -------
+    tuple of (hcwf.onset.model.DayRef, hcwf.onset.model.DayRef) or None
+        The start and end of the period, or None for ``whole year``.
+
+    Raises
+    ------
+    UnitsError
+        `text` cannot be read, or a month-day in it is invalid.
+    """
     text = _normalize(text, "04-01 to 10-31")
     if text.lower() == "whole year":
         return None
@@ -182,7 +351,23 @@ def parse_during(text: object) -> tuple[DayRef, DayRef] | None:
 
 
 def parse_dry_run(text: object) -> DryRun:
-    """Parse 'at least N days' or 'more than N days' into a DryRun of at least N (or N + 1) days."""
+    """Parse ``at least N days`` or ``more than N days`` into a dry run of at least N (or N + 1) days.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value.
+
+    Returns
+    -------
+    hcwf.onset.model.DryRun
+        The run length in days (at least 1) and the phrase (``"at least"`` or ``"more than"``) it was written with.
+
+    Raises
+    ------
+    UnitsError
+        `text` cannot be read or the run is shorter than one day.
+    """
     text = _normalize(text, "at least 7 days")
     match = re.fullmatch(r"(at least|more than) (\d+) days?", text.lower())
     if match is None:
@@ -194,7 +379,23 @@ def parse_dry_run(text: object) -> DryRun:
 
 
 def parse_dry_window(text: object) -> DryWindow:
-    """Parse 'N days with <comparison>' (e.g. '10 days with less than 5 mm') into a DryWindow."""
+    """Parse ``N days with <comparison>`` (for example ``"10 days with less than 5 mm"``) into a dry window.
+
+    Parameters
+    ----------
+    text : object
+        The YAML value.
+
+    Returns
+    -------
+    hcwf.onset.model.DryWindow
+        The window length in days and the comparison of the window total.
+
+    Raises
+    ------
+    UnitsError
+        `text` cannot be read, the length is below 1, or the comparison is invalid (see `parse_comparison`).
+    """
     text = _normalize(text, "10 days with less than 5 mm")
     match = re.fullmatch(r"(\d+) days? with (.+)", text, re.IGNORECASE)
     if match is None or int(match.group(1)) < 1:

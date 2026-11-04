@@ -1,4 +1,12 @@
-"""Reference-climatology products: per-cell thresholds, harmonic season analysis and a threshold cache."""
+"""Reference-climatology products: per-cell thresholds, harmonic season analysis and a threshold cache.
+
+The module computes what a reference climatology gives an onset definition. `compute_threshold` and
+`compute_thresholds` turn the `hcwf.onset.model.ThresholdSpec` entries of a definition into per-series thresholds in mm
+from ingested rain (`hcwf.onset.model.DailyRain`); `compute_thresholds_from_forecasts` does the same from forecast days
+(the model's own climatology); `ThresholdCache` keeps computed fields in a `hcwf.cache.Store`. `harmonic_seasons`
+derives seasons from the mean annual cycle. `ReferenceOnset` is the reference (climatological) onset date, with
+`reduce_onset_days` for its computed form. `hcwf.onset.engine` and `hcwf.onset.detect` consume these products.
+"""
 from __future__ import annotations
 
 import warnings
@@ -15,18 +23,39 @@ from hcwf.onset.model import Definition, ThresholdSpec, resolution_of
 from hcwf.spatial import ids
 
 MAX_MISSING_FRACTION = 0.10
+"""The largest fraction of reference days that may be missing before a threshold is NaN."""
 _CHUNK_VALUES = 1 << 24
+"""The most values of rain held as float64 at once when thresholds are computed in chunks of series."""
 _DAYS_IN_MONTH = np.array([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31])
+"""The days of each month of a 365-day year."""
 _CUMULATIVE_DAYS = np.concatenate([[0], np.cumsum(_DAYS_IN_MONTH)])
+"""The days of the year before each month (13 entries, the last is 365)."""
 _YEAR_LENGTH = 365
+"""The days of the year the harmonic analysis uses (Feb 29 is dropped)."""
 
 
 def _year_windows(spec: ThresholdSpec, rain, years: tuple[int, int], partial_years: bool = False) -> list[tuple[int, int]]:
-    """Inclusive (first, last) time indices of the `during` window in each reference year.
+    """Return the inclusive ``(first, last)`` time indices of the ``during`` window in each reference year.
 
-    A window crossing the year end belongs to the year of its start. Years whose
-    window is not fully inside the data are skipped, or with partial_years used for
-    the days the data has (a year with none of them is still skipped).
+    A window crossing the year end belongs to the year of its start. Years whose window is not fully inside the data
+    are skipped, or with `partial_years` used for the days the data has (a year with none of them is still skipped).
+    Without a ``during`` window the window is the whole of each year that has days.
+
+    Parameters
+    ----------
+    spec : hcwf.onset.model.ThresholdSpec
+        The threshold, whose ``during`` bounds give the window (None: the whole year).
+    rain : hcwf.onset.model.DailyRain
+        The rain, whose ``year``, ``month`` and ``day`` label each day.
+    years : tuple of (int, int)
+        The first and last reference year, inclusive.
+    partial_years : bool, default False
+        Use the days a window has in the data instead of skipping a year whose window is only partly there.
+
+    Returns
+    -------
+    list of tuple of (int, int)
+        One ``(first, last)`` pair of time indices, both inclusive, for each year that has a window.
     """
     year_list = np.arange(years[0], years[1] + 1)
     if spec.during is None:
@@ -44,7 +73,31 @@ def _year_windows(spec: ThresholdSpec, rain, years: tuple[int, int], partial_yea
 
 
 def _partial_windows(keys: np.ndarray, year_list: np.ndarray, start, end) -> list[tuple[int, int]]:
-    """The window of each year cut to the days the data holds (first day on or after the start, last on or before the end)."""
+    """Return the window of each year cut to the days the data holds.
+
+    The first day is the first on or after the start, the last the last on or before the end.
+
+    Parameters
+    ----------
+    keys : numpy.ndarray of int64, shape (time,)
+        The sorted date key (``year * 10000 + month * 100 + day``) of each day of the data.
+    year_list : numpy.ndarray of int64, shape (year,)
+        The reference years.
+    start : hcwf.onset.model.DayRef
+        The start of the window, a month-day with an optional day offset.
+    end : hcwf.onset.model.DayRef
+        The end of the window; one that is earlier in the year than `start` wraps into the next year.
+
+    Returns
+    -------
+    list of tuple of (int, int)
+        The ``(first, last)`` time indices, both inclusive, of each year that has at least one day.
+
+    Raises
+    ------
+    ValueError
+        A bound is climatological (a per-cell day), which has to be resolved per cell first.
+    """
     if start.climatological is not None or end.climatological is not None:
         raise ValueError("thresholds take month-day bounds; resolve climatological bounds per cell")
     wraps = (end.month, end.day) < (start.month, start.day)
@@ -57,9 +110,21 @@ def _partial_windows(keys: np.ndarray, year_list: np.ndarray, start, end) -> lis
 
 
 def _window_sum(block: np.ndarray, sequential: bool) -> np.ndarray:
-    """Sum over time of a (series, time) block: numpy's own order, or day by day as a (time, series) array reduces.
+    """Sum a block over time: numpy's own order, or day by day as a ``(time, series)`` array reduces.
 
     The day-by-day order is the one blending's per-file totals take; it differs from the pairwise sum in the last bits.
+
+    Parameters
+    ----------
+    block : numpy.ndarray of float64, shape (series, time)
+        The values to sum.
+    sequential : bool
+        Add day by day instead of with numpy's pairwise sum.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (series,)
+        The sum of each series.
     """
     if not sequential:
         return block.sum(axis=1)
@@ -67,7 +132,17 @@ def _window_sum(block: np.ndarray, sequential: bool) -> np.ndarray:
 
 
 def _add_compensated(total: np.ndarray, compensation: np.ndarray, value: np.ndarray) -> None:
-    """total += value with Kahan compensation, in place, as pandas' groupby sum adds (blending's totals over files)."""
+    """Add `value` to `total` with Kahan compensation, in place, as pandas' groupby sum adds (blending's totals over files).
+
+    Parameters
+    ----------
+    total : numpy.ndarray of float64, shape (series,)
+        The running sum; updated in place.
+    compensation : numpy.ndarray of float64, shape (series,)
+        The running compensation; updated in place.
+    value : numpy.ndarray of float64, shape (series,)
+        The value to add.
+    """
     y = value - compensation
     t = total + y
     compensation[:] = (t - total) - y
@@ -76,7 +151,34 @@ def _add_compensated(total: np.ndarray, compensation: np.ndarray, value: np.ndar
 
 def _threshold_rows(spec: ThresholdSpec, x: np.ndarray, valid: np.ndarray, windows: list[tuple[int, int]],
                     max_missing_fraction: float = MAX_MISSING_FRACTION, sequential: bool = False) -> np.ndarray:
-    """Threshold in mm for each row of x (series, time), with NaN where too many reference days are missing."""
+    """Compute the threshold in mm of each series, NaN where too many reference days are missing.
+
+    Parameters
+    ----------
+    spec : hcwf.onset.model.ThresholdSpec
+        The threshold: its ``kind``, ``days`` and ``quantile``.
+    x : numpy.ndarray of float64, shape (series, time)
+        Daily rain in mm (tenths already divided by 10 unless the rain is exact).
+    valid : numpy.ndarray of bool, shape (series, time)
+        False for a missing day.
+    windows : list of tuple of (int, int)
+        The inclusive ``(first, last)`` time indices of each reference year's window.
+    max_missing_fraction : float, default MAX_MISSING_FRACTION
+        A series with a larger fraction of its window days missing is NaN.
+    sequential : bool, default False
+        Sum day by day per year and add the years with Kahan compensation, the order of blending's totals (used for
+        exact rain).
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (series,)
+        The threshold of each series in mm.
+
+    Raises
+    ------
+    ValueError
+        The kind is ``quantile_total`` and the quantile is None or outside 0..1.
+    """
     n_days = sum(b - a + 1 for a, b in windows)
     if n_days == 0:
         return np.full(x.shape[0], np.nan)
@@ -116,29 +218,63 @@ def _threshold_rows(spec: ThresholdSpec, x: np.ndarray, valid: np.ndarray, windo
 
 
 def _cells_of(rain):
-    """The cells a rain holds only some of (hcwf.onset.model.Cells), or None for a rain over its whole grid."""
+    """Return the cells a rain holds only some of.
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The rain.
+
+    Returns
+    -------
+    hcwf.onset.model.Cells or None
+        The cells, or None for a rain over its whole grid.
+    """
     return getattr(rain, "cells", None)
 
 
 def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
                       max_missing_fraction: float = MAX_MISSING_FRACTION, partial_years: bool = False) -> np.ndarray:
-    """Per-series threshold in mm (spatial shape) from the reference years y0..y1 inclusive.
+    """Compute the per-series threshold in mm (spatial shape) from the reference years, both inclusive.
 
-    mean_total is days x the mean daily rain over the `during` days pooled across
-    years; mean_daily is that mean; quantile_total is the quantile (linear
-    interpolation) of all `days`-day running totals lying wholly inside `during`,
-    pooled across years. Windows crossing the year end belong to the year of
-    their start. A series (grid cell or unit: the spatial dims are whatever `rain` has,
-    so a unit series gives a unit threshold) is NaN when more than max_missing_fraction
-    (default 10 %; 1.0 never) of its reference days are missing.
+    ``mean_total`` is ``days`` x the mean daily rain over the ``during`` days pooled across years; ``mean_daily`` is that
+    mean; ``quantile_total`` is the quantile (linear interpolation) of all ``days``-day running totals lying wholly
+    inside ``during``, pooled across years. Windows crossing the year end belong to the year of their start. A series
+    (grid cell or unit: the spatial dims are whatever `rain` has, so a unit series gives a unit threshold) is NaN when
+    more than `max_missing_fraction` (default 10 %; 1.0 never) of its reference days are missing.
 
-    Options reproducing onset_blending's computed threshold: max_missing_fraction=1.0, partial_years=True
-    (a year whose window is only partly in the data counts its days, where by default it is skipped) and
-    float rain (rain_resolution "exact": millimetres are used as they are, summed day by day per year and the
-    years added with Kahan compensation, the order of blending's per-file totals and groupby sum). The caller sets `days` (blending defaults it to the trigger window).
+    Options reproducing onset_blending's computed threshold: ``max_missing_fraction=1.0``, ``partial_years=True``
+    (a year whose window is only partly in the data counts its days, where by default it is skipped) and float rain
+    (``rain_resolution "exact"``: millimetres are used as they are, summed day by day per year and the years added with
+    Kahan compensation, the order of blending's per-file totals and groupby sum). The caller sets ``days`` (blending
+    defaults it to the trigger window).
 
-    A rain that holds only some cells of its grid (`rain.cells`) gives the threshold on the whole grid: the cells it lacks
-    have what a series of masked days gives.
+    A rain that holds only some cells of its grid (``rain.cells``) gives the threshold on the whole grid: the cells it
+    lacks have what a series of masked days gives.
+
+    Parameters
+    ----------
+    spec : hcwf.onset.model.ThresholdSpec
+        The threshold to compute.
+    rain : hcwf.onset.model.DailyRain
+        The reference rain, ``int32`` tenths or ``float64`` mm, with dims of the spatial dims and ``time`` last.
+    years : tuple of (int, int)
+        The first and last reference year, inclusive.
+    max_missing_fraction : float, default MAX_MISSING_FRACTION
+        A series with a larger fraction of its reference days missing is NaN.
+    partial_years : bool, default False
+        Count the days of a year whose window is only partly in the data instead of skipping that year.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape spatial
+        The threshold of each series in mm; the shape is that of the spatial dims of `rain` (the whole grid for a rain
+        of some cells).
+
+    Notes
+    -----
+    A ``ValueError`` comes from the computation when the kind is ``quantile_total`` without a quantile between 0 and 1,
+    or when a window bound is climatological with `partial_years`.
     """
     cells = _cells_of(rain)
     kept = _threshold_values(spec, rain, years, max_missing_fraction, partial_years)
@@ -149,7 +285,26 @@ def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
 
 def _threshold_values(spec: ThresholdSpec, rain, years: tuple[int, int], max_missing_fraction: float,
                       partial_years: bool) -> np.ndarray:
-    """compute_threshold of the series `rain` holds (their shape)."""
+    """Compute the threshold of the series `rain` holds, in chunks of series (see `compute_threshold`).
+
+    Parameters
+    ----------
+    spec : hcwf.onset.model.ThresholdSpec
+        The threshold to compute.
+    rain : hcwf.onset.model.DailyRain
+        The reference rain.
+    years : tuple of (int, int)
+        The first and last reference year, inclusive.
+    max_missing_fraction : float
+        A series with a larger fraction of its reference days missing is NaN.
+    partial_years : bool
+        Count the days of a year whose window is only partly in the data.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape spatial
+        The threshold in mm of each series, in the shape of the spatial dims of `rain`.
+    """
     windows = _year_windows(spec, rain, years, partial_years)
     spatial_shape = rain.tenths.shape[:-1]
     n_time = rain.tenths.shape[-1]
@@ -167,7 +322,20 @@ def _threshold_values(spec: ThresholdSpec, rain, years: tuple[int, int], max_mis
 
 
 def _spatial_axes(rain) -> tuple[tuple[str, ...], dict]:
-    """(dims, coordinates) of a per-series result over `rain`: its spatial dims, or the whole grid's for a rain of some cells."""
+    """Return the dims and coordinates of a per-series result over `rain`.
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The rain.
+
+    Returns
+    -------
+    dims : tuple of str
+        The spatial dims of `rain`, or the whole grid's for a rain of some cells.
+    coords : dict
+        The coordinates of those dims.
+    """
     cells = _cells_of(rain)
     if cells is not None:
         return cells.dims, cells.coords()
@@ -176,7 +344,26 @@ def _spatial_axes(rain) -> tuple[tuple[str, ...], dict]:
 
 
 def _threshold_array(name: str, values: np.ndarray, spec: ThresholdSpec, rain, years: tuple[int, int]) -> xr.DataArray:
-    """Wrap a threshold field as a DataArray whose attrs record its provenance."""
+    """Wrap a threshold field as a DataArray whose attrs record its provenance.
+
+    Parameters
+    ----------
+    name : str
+        The name of the threshold.
+    values : numpy.ndarray of float64, shape spatial
+        The threshold in mm.
+    spec : hcwf.onset.model.ThresholdSpec
+        The threshold specification, recorded as ``spec`` (its ``repr``).
+    rain : hcwf.onset.model.DailyRain
+        The reference rain, which gives the dims, coordinates and ``source``.
+    years : tuple of (int, int)
+        The reference years, recorded as ``years``.
+
+    Returns
+    -------
+    xarray.DataArray
+        The field, with attrs ``units`` (``"mm"``), ``source``, ``years`` and ``spec``.
+    """
     dims, coords = _spatial_axes(rain)
     return xr.DataArray(values, dims=dims, coords=coords, name=name,
                         attrs={"units": "mm", "source": rain.source, "years": [int(years[0]), int(years[1])],
@@ -184,20 +371,52 @@ def _threshold_array(name: str, values: np.ndarray, spec: ThresholdSpec, rain, y
 
 
 def compute_thresholds(definition: Definition, rain, years: tuple[int, int], **options) -> dict[str, xr.DataArray]:
-    """Every threshold the definition names, as DataArrays in mm (attrs: source, years, spec).
+    """Compute every threshold the definition names, as DataArrays in mm.
 
-    `options` are those of compute_threshold (max_missing_fraction, partial_years)."""
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The onset definition, whose ``thresholds`` are computed.
+    rain : hcwf.onset.model.DailyRain
+        The reference rain.
+    years : tuple of (int, int)
+        The first and last reference year, inclusive.
+    **options : dict
+        Passed on to `compute_threshold` (``max_missing_fraction``, ``partial_years``).
+
+    Returns
+    -------
+    dict of str to xarray.DataArray
+        The field of each threshold by name, in mm, with attrs ``source``, ``years`` and ``spec``.
+    """
     return {name: _threshold_array(name, compute_threshold(spec, rain, years, **options), spec, rain, years)
             for name, spec in definition.thresholds}
 
 
 def _during_mask(forecast, spec: ThresholdSpec, years: tuple[int, int], first_lead: int, last_lead: int) -> np.ndarray:
-    """Which (init, lead) cells of a forecast count towards a threshold: shape (n_init, n_leads).
+    """Find which ``(init, lead)`` cells of a forecast count towards a threshold.
 
-    A lead counts when its date label lies in the `during` window (the whole
-    year when None) of a year in `years`, and its lead number lies in
-    first_lead..last_lead. A window crossing the year end belongs to the year of
-    its start.
+    A lead counts when its date label lies in the ``during`` window (the whole year when None) of a year in `years`,
+    and its lead number lies in `first_lead` to `last_lead`. A window crossing the year end belongs to the year of its
+    start.
+
+    Parameters
+    ----------
+    forecast : hcwf.onset.model.ForecastRain
+        The forecast, which gives the date label of each lead.
+    spec : hcwf.onset.model.ThresholdSpec
+        The threshold, whose ``during`` bounds give the window.
+    years : tuple of (int, int)
+        The first and last year, inclusive, of the window.
+    first_lead : int
+        The first lead counted (1-based).
+    last_lead : int
+        The last lead counted, inclusive.
+
+    Returns
+    -------
+    numpy.ndarray of bool, shape (init, lead)
+        True for a cell that counts.
     """
     from hcwf.onset.engine import _bound_key, _label_table
 
@@ -224,20 +443,42 @@ def _during_mask(forecast, spec: ThresholdSpec, years: tuple[int, int], first_le
 def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterable, years: tuple[int, int],
                                       lead_window: tuple[int, int] = (1, 30),
                                       windows: Sequence[tuple[int, int]] | None = None) -> dict[str, xr.DataArray]:
-    """The model's own climatology: every threshold of the definition from forecast days, as DataArrays in mm.
+    """Compute the model's own climatology: every threshold of the definition from forecast days, in mm.
 
-    Streams through the forecasts (ForecastRain objects on one grid), summing per
-    cell the valid forecast days whose date label (from lead_label) lies in the
-    threshold's `during` window of a year in `years` (inclusive), over the leads
-    of lead_window, with members pooled. mean_total is days x that mean and
-    mean_daily the mean; quantile_total is not supported. A cell is NaN when more
-    than 10 % of the expected days are missing. attrs record source
-    "model:<source of the first forecast>", years, lead_window and the spec.
+    Streams through the forecasts (``ForecastRain`` objects on one grid), summing per cell the valid forecast days whose
+    date label (from ``lead_label``) lies in the threshold's ``during`` window of a year in `years` (inclusive), over the
+    leads of `lead_window`, with members pooled. ``mean_total`` is ``days`` x that mean and ``mean_daily`` the mean;
+    ``quantile_total`` is not supported. A cell is NaN when more than 10 % of the expected days are missing. The attrs
+    record ``source`` (``"model:<source of the first forecast>"``), ``years``, ``lead_window`` and ``spec``.
 
-    With `windows` (inclusive (first, last) lead pairs, each cut to lead_window)
-    every window is pooled separately and each DataArray gains a leading
-    "window" dim with coordinates window_first and window_last (spec section 13).
-    A window with no forecast days in it is NaN.
+    With `windows` (inclusive ``(first, last)`` lead pairs, each cut to `lead_window`) every window is pooled separately
+    and each DataArray gains a leading ``window`` dim with coordinates ``window_first`` and ``window_last`` (spec
+    section 13). A window with no forecast days in it is NaN.
+
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The onset definition, whose ``thresholds`` are computed.
+    forecasts : iterable of hcwf.onset.model.ForecastRain
+        The forecasts, all on one grid with the same dims and the same member and spatial shape.
+    years : tuple of (int, int)
+        The first and last year of the ``during`` windows, inclusive.
+    lead_window : tuple of (int, int), default (1, 30)
+        The first and last lead counted, inclusive and 1-based.
+    windows : sequence of tuple of (int, int), optional
+        Verification windows of leads to pool separately; None pools one window, `lead_window`.
+
+    Returns
+    -------
+    dict of str to xarray.DataArray
+        The field of each threshold by name, in mm, over the spatial dims (``window`` first with `windows`).
+
+    Raises
+    ------
+    NotImplementedError
+        A threshold is of the kind ``quantile_total``.
+    ValueError
+        The forecasts differ in dims or in member or spatial shape, or none was given.
     """
     spans = [(max(a, lead_window[0]), min(b, lead_window[1])) for a, b in (windows or [lead_window])]
     n_win = len(spans)
@@ -295,7 +536,20 @@ def compute_thresholds_from_forecasts(definition: Definition, forecasts: Iterabl
 
 
 def _doy_index(month: np.ndarray, day: np.ndarray) -> np.ndarray:
-    """0-based day of a 365-day year for each label; -1 for Feb 29 and for days outside the 365-day year."""
+    """Return the 0-based day of a 365-day year for each label.
+
+    Parameters
+    ----------
+    month : numpy.ndarray of int, shape (time,)
+        The month label of each day.
+    day : numpy.ndarray of int, shape (time,)
+        The day-of-month label of each day.
+
+    Returns
+    -------
+    numpy.ndarray of int64, shape (time,)
+        The index, or -1 for Feb 29 and for a label outside the 365-day year.
+    """
     month = np.asarray(month, dtype=np.int64)
     day = np.asarray(day, dtype=np.int64)
     valid = (month >= 1) & (month <= 12) & (day >= 1) & (day <= _DAYS_IN_MONTH[np.clip(month - 1, 0, 11)])
@@ -303,7 +557,25 @@ def _doy_index(month: np.ndarray, day: np.ndarray) -> np.ndarray:
 
 
 def _mean_cycle(rain, years: tuple[int, int]) -> np.ndarray:
-    """Mean annual cycle (cells, 365) of the reference years, NaN for days with no valid data."""
+    """Compute the mean annual cycle of the reference years.
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The rain, in tenths (``int32``) or mm.
+    years : tuple of (int, int)
+        The first and last reference year, inclusive.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (series, 365)
+        The mean daily rain in mm of each day of the 365-day year, NaN for a day with no valid data.
+
+    Raises
+    ------
+    ValueError
+        No day of the data falls on some day of the 365-day year in `years`.
+    """
     n_time = rain.tenths.shape[-1]
     flat = rain.tenths.reshape(-1, n_time)
     flat_missing = rain.missing.reshape(-1, n_time)
@@ -325,11 +597,26 @@ def _mean_cycle(rain, years: tuple[int, int]) -> np.ndarray:
 
 
 def _anomaly_extrema(cycle: np.ndarray, start: np.ndarray, length: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Onset and cessation day of year for one segment of the cycle per cell.
+    """Find the onset and cessation day of year for one segment of the cycle per cell.
 
-    The segment begins at 0-based day `start` and runs `length` days (both per
-    cell). The cumulative sum of its anomaly about its own mean is formed;
-    cessation is the day of its maximum and onset the day after its minimum.
+    The segment begins at 0-based day `start` and runs `length` days (both per cell). The cumulative sum of its anomaly
+    about its own mean is formed; cessation is the day of its maximum and onset the day after its minimum.
+
+    Parameters
+    ----------
+    cycle : numpy.ndarray of float64, shape (cell, 365)
+        The mean annual cycle.
+    start : numpy.ndarray of int64, shape (cell,)
+        The 0-based first day of the segment.
+    length : numpy.ndarray of int64, shape (cell,)
+        The length of the segment in days.
+
+    Returns
+    -------
+    onset : numpy.ndarray of float64, shape (cell,)
+        The 1-based onset day of the 365-day year.
+    cessation : numpy.ndarray of float64, shape (cell,)
+        The 1-based cessation day of the 365-day year.
     """
     n = cycle.shape[1]
     j = np.arange(n)
@@ -345,20 +632,36 @@ def _anomaly_extrema(cycle: np.ndarray, start: np.ndarray, length: np.ndarray) -
 
 
 def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.Dataset:
-    """Seasons per cell from harmonic analysis of the mean annual cycle (draft reading of Dunning et al. 2016).
+    """Derive seasons per cell from harmonic analysis of the mean annual cycle (draft reading of Dunning et al. 2016).
 
-    The mean daily cycle over `years` (Feb 29 dropped, 365 days) is decomposed
-    with a Fourier transform. When the amplitude of the second harmonic exceeds
-    that of the first, the cell has two seasons, otherwise one. For one season
-    the cycle is rotated to start at the minimum of the first harmonic; for two,
-    the year is split at the two minima of the second harmonic. Within each
-    segment the anomaly about the segment mean is accumulated; onset is the day
-    after the minimum of that sum and cessation the day of its maximum. This is
-    a working interpretation, to be checked against the paper.
+    The mean daily cycle over `years` (Feb 29 dropped, 365 days) is decomposed with a Fourier transform. When the
+    amplitude of the second harmonic exceeds that of the first, the cell has two seasons, otherwise one. For one season
+    the cycle is rotated to start at the minimum of the first harmonic; for two, the year is split at the two minima of
+    the second harmonic. Within each segment the anomaly about the segment mean is accumulated; onset is the day after
+    the minimum of that sum and cessation the day of its maximum. This is a working interpretation, to be checked
+    against the paper.
 
-    Returns n_seasons (spatial) and onset_doy / cessation_doy (season, spatial)
-    as 1-based days of the 365-day year, NaN where a cell has fewer seasons
-    (or no valid data, when n_seasons is 0). Seasons are ordered by onset day of year.
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The reference rain.
+    years : tuple of (int, int)
+        The first and last reference year, inclusive.
+    max_seasons : {1, 2}, default 2
+        The most seasons a cell can have; 1 gives a single season everywhere.
+
+    Returns
+    -------
+    xarray.Dataset
+        ``n_seasons`` (``int8``, over the spatial dims) and ``onset_doy`` / ``cessation_doy`` (``float64``, over
+        ``season`` and the spatial dims) as 1-based days of the 365-day year, NaN where a cell has fewer seasons (or no
+        valid data, when ``n_seasons`` is 0). Seasons are ordered by onset day of year. The attrs record ``source``,
+        ``years`` and ``method``.
+
+    Raises
+    ------
+    ValueError
+        `max_seasons` is not 1 or 2, or the data lacks a day of the 365-day year.
     """
     if max_seasons not in (1, 2):
         raise ValueError("max_seasons must be 1 or 2")
@@ -382,8 +685,26 @@ def harmonic_seasons(rain, years: tuple[int, int], max_seasons: int = 2) -> xr.D
 
 
 def _harmonic_values(rain, years: tuple[int, int], max_seasons: int):
-    """(n_seasons, onset_doy, cessation_doy) of harmonic_seasons over the series `rain` holds, flat: (series) and
-    (season, series) twice."""
+    """Compute the seasons of the series `rain` holds, flat (see `harmonic_seasons`).
+
+    Parameters
+    ----------
+    rain : hcwf.onset.model.DailyRain
+        The reference rain.
+    years : tuple of (int, int)
+        The first and last reference year, inclusive.
+    max_seasons : int
+        The most seasons a cell can have, 1 or 2.
+
+    Returns
+    -------
+    n_seasons : numpy.ndarray of int8, shape (series,)
+        The number of seasons of each series; 0 without valid data.
+    onset : numpy.ndarray of float64, shape (season, series)
+        The 1-based onset day of year of each season, NaN where there is none.
+    cessation : numpy.ndarray of float64, shape (season, series)
+        The 1-based cessation day of year of each season, NaN where there is none.
+    """
     cycle = _mean_cycle(rain, years)
     ok = np.isfinite(cycle).all(axis=1)
     n_cells = cycle.shape[0]
@@ -420,20 +741,54 @@ def _harmonic_values(rain, years: tuple[int, int], max_seasons: int):
 
 
 class ThresholdCache:
-    """Stores computed threshold fields (a hcwf.cache.Store of kind "thresholds") so each is computed once.
+    """A cache of computed threshold fields, so each is computed once.
 
-    A field is keyed by its name, the spec, the reference years, the data source label, the grid coordinates
-    (unit ids by value) and `files`, the identities (hcwf.cache.file_identity) of the files the reference is read
-    from, so changed data under the same `source` is recomputed. Give ingested data a source.
+    The fields are kept in a `hcwf.cache.Store` of kind ``"thresholds"``. A field is keyed by its name, the spec, the
+    reference years, the data source label, the grid coordinates (unit ids by value) and `files`, the identities
+    (`hcwf.cache.file_identity`) of the files the reference is read from, so changed data under the same ``source`` is
+    recomputed. Give ingested data a source.
+
+    Parameters
+    ----------
+    directory : str or pathlib.Path or None
+        The folder of the entries, created on first write; None keeps them in memory.
+    files : iterable, default ()
+        The identities of the files the reference data is read from.
+
+    Attributes
+    ----------
+    store : hcwf.cache.Store
+        The store of the threshold fields.
+    files : list
+        The identities of the files the reference data is read from.
     """
 
     def __init__(self, directory, files=()):
-        """Use `directory` for the entries (created on first write); `files` identify the data read."""
         self.store = Store("thresholds", directory, codec=NETCDF, label="Thresholds")
         self.files = list(files)
 
     def parts(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str = "", **options) -> dict:
-        """The parts that identify one threshold computation (options of compute_threshold only when given)."""
+        """Return the parts that identify one threshold computation.
+
+        Parameters
+        ----------
+        spec : hcwf.onset.model.ThresholdSpec
+            The threshold.
+        rain : hcwf.onset.model.DailyRain
+            The reference rain, which gives the source, grid and resolution.
+        years : tuple of (int, int)
+            The reference years.
+        name : str, default ""
+            The name of the threshold.
+        **options : dict
+            The options of `compute_threshold`; they are part of the key only when given.
+
+        Returns
+        -------
+        dict
+            The parts: ``name``, ``source``, ``years``, ``spec``, ``grid``, ``files``, and ``options`` and ``resolution``
+            when they apply.
+        """
         parts = {"name": name, "source": rain.source, "years": [int(years[0]), int(years[1])], "spec": repr(spec),
                  "grid": {dim: rain.coords[dim] for dim in rain.dims[:-1]}, "files": self.files}
         if options:
@@ -443,7 +798,26 @@ class ThresholdCache:
         return parts
 
     def get_or_compute(self, spec: ThresholdSpec, rain, years: tuple[int, int], name: str, **options) -> xr.DataArray:
-        """Return the stored threshold if present, else compute (with compute_threshold's `options`) and store it."""
+        """Return the stored threshold if present, else compute it and store it.
+
+        Parameters
+        ----------
+        spec : hcwf.onset.model.ThresholdSpec
+            The threshold.
+        rain : hcwf.onset.model.DailyRain
+            The reference rain.
+        years : tuple of (int, int)
+            The reference years.
+        name : str
+            The name of the threshold.
+        **options : dict
+            Passed on to `compute_threshold`.
+
+        Returns
+        -------
+        xarray.DataArray
+            The threshold field in mm.
+        """
         return self.store.get_or_compute(
             self.parts(spec, rain, years, name, **options),
             lambda: _threshold_array(name, compute_threshold(spec, rain, years, **options), spec, rain, years))
@@ -454,13 +828,31 @@ class ThresholdCache:
 # ---------------------------------------------------------------------------
 
 ONSET_STATISTICS = ("mean", "median")
+"""The statistics `reduce_onset_days` can take over the years."""
 
 
 def reduce_onset_days(doy: xr.DataArray, how: str = "mean") -> xr.DataArray:
-    """The climatological onset day of year over the "year" dim of `doy` (NaN for a year without an onset).
+    """Reduce onset days of year over the ``year`` dim to the climatological onset day of year.
 
-    "mean" is the mean over the years that have an onset, rounded half to even (HCWF's climatological onset);
-    "median" is the median of those years, NaN where fewer than half of the years have an onset.
+    ``"mean"`` is the mean over the years that have an onset, rounded half to even (HCWF's climatological onset);
+    ``"median"`` is the median of those years, NaN where fewer than half of the years have an onset.
+
+    Parameters
+    ----------
+    doy : xarray.DataArray
+        The onset day of year, NaN for a year without an onset, with a ``year`` dim.
+    how : {"mean", "median"}, default "mean"
+        The statistic.
+
+    Returns
+    -------
+    xarray.DataArray
+        The climatological onset day of year, over the other dims of `doy`.
+
+    Raises
+    ------
+    ValueError
+        `how` is not one of `ONSET_STATISTICS`.
     """
     if how == "mean":
         return np.round(doy.mean(dim="year"))
@@ -480,28 +872,66 @@ def reduce_onset_days(doy: xr.DataArray, how: str = "mean") -> xr.DataArray:
 class ReferenceOnset:
     """The reference (climatological) onset date: one provider for every source.
 
-    Sources: a fixed month-day ("06-02") in every year and unit, a table of dates keyed by unit id and/or year
-    (onset_blending's reference_onset), or a computed field: the mean or median onset day of year over many years
-    (`reduce_onset_days`), as the climatology reference forecast and the derived seasons use.
-    Consumers: `dates` (a date per (year, unit)), `search_start` (the entry for hcwf.onset.engine's detect_*
-    search_start, so an onset search never begins before the reference onset) and `doy_field` (day of year per cell).
+    Sources: a fixed month-day (``"06-02"``) in every year and unit, a table of dates keyed by unit id and/or year
+    (onset_blending's ``reference_onset``), or a computed field: the mean or median onset day of year over many years
+    (`reduce_onset_days`), as the climatology reference forecast and the derived seasons use. Exactly one is set.
+
+    Consumers: `ReferenceOnset.dates` (a date per ``(year, unit)``), `ReferenceOnset.search_start` (the entry for
+    the ``search_start`` of the ``detect_*`` functions of `hcwf.onset.engine`, so an onset search never begins before the
+    reference onset) and `ReferenceOnset.doy_field` (day of year per cell).
     """
 
     month_day: str | None = None
+    """A month-day ``"MM-DD"`` used in every year and unit."""
     table: pd.DataFrame | None = field(default=None, compare=False)
+    """A table with the key columns ``id`` and/or ``year`` and ``ref_onset_date`` (a ``datetime.date``)."""
     computed: xr.DataArray | None = field(default=None, compare=False)
+    """A field of the onset day of year over the spatial dims (or ``unit``)."""
 
     def __post_init__(self):
-        """Exactly one source."""
+        """Check that exactly one source is set.
+
+        Raises
+        ------
+        ValueError
+            Not exactly one of `month_day`, `table` and `computed` is set.
+        """
         if sum(x is not None for x in (self.month_day, self.table, self.computed)) != 1:
             raise ValueError("a reference onset is exactly one of a month-day, a table or a computed day of year")
 
     @classmethod
     def read(cls, path, *, date_col: str | None = None, year_col: str | None = None, day_col: str | None = None,
              base_date: str | None = None, unit_col: str | None = None) -> "ReferenceOnset":
-        """A table of reference onset dates from a CSV: a date column, or a year and a day offset from `base_date`.
+        """Read a table of reference onset dates from a CSV.
 
-        Keyed by the unit-id column `unit_col` and/or the `year_col` (at least one); dates are datetime.date.
+        The dates come from a date column, or from a year and a day offset from `base_date`. The table is keyed by the
+        unit-id column `unit_col` and/or the `year_col` (at least one); dates are ``datetime.date``.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The CSV file.
+        date_col : str, optional
+            The column holding a parseable date.
+        year_col : str, optional
+            The column holding the year; also a key of the table.
+        day_col : str, optional
+            The column holding a day offset from `base_date` in that year (with `year_col` and `base_date`).
+        base_date : str, optional
+            The ``"MM-DD"`` the day offset counts from.
+        unit_col : str, optional
+            The column holding the unit id; also a key of the table.
+
+        Returns
+        -------
+        ReferenceOnset
+            A reference onset with the table as its source.
+
+        Raises
+        ------
+        ValueError
+            The file has no usable date columns, `unit_col` is not a column, or neither `year_col` nor `unit_col`
+            gives a key.
         """
         table = pd.read_csv(path, dtype={unit_col: str} if unit_col else None, float_precision="round_trip")
         if date_col and date_col in table.columns:
@@ -528,10 +958,28 @@ class ReferenceOnset:
         return cls(table=table[keys + ["ref_onset_date"]].drop_duplicates())
 
     def dates(self, unit_ids, years) -> np.ndarray:
-        """The reference onset date (datetime64[ns], NaT without one) of each (unit, year) pair, row by row.
+        """Return the reference onset date of each ``(unit, year)`` pair, row by row.
 
-        A computed field needs `unit_ids` to be its unit coordinate (a `unit` dim) and gives each year's Jan 1 plus
+        A computed field needs `unit_ids` to be its unit coordinate (a ``unit`` dim) and gives each year's Jan 1 plus
         its day of year.
+
+        Parameters
+        ----------
+        unit_ids : array_like of str
+            The unit id of each row.
+        years : array_like of int
+            The year of each row.
+
+        Returns
+        -------
+        numpy.ndarray of datetime64[ns]
+            The date of each row, ``NaT`` without one; the shape of the broadcast `years` (and `unit_ids` for a table).
+
+        Raises
+        ------
+        ValueError
+            The source is a computed field that is not 1-D over a ``unit`` dim, or the table gives a unit and year more
+            than one date.
         """
         years = np.asarray(years, dtype=int)
         none = np.full(len(years), np.datetime64("NaT"), dtype="datetime64[ns]")
@@ -552,8 +1000,25 @@ class ReferenceOnset:
         return self._table_dates(unit_ids, years)
 
     def _table_dates(self, unit_ids, years):
-        """The table's date for each unit and year (NaT where it has none): arrays
-        of ids and years that broadcast together, the dates in their shape."""
+        """Look up the table's date for each unit and year.
+
+        Parameters
+        ----------
+        unit_ids : array_like of str
+            The unit ids; broadcast together with `years`.
+        years : array_like of int
+            The years; broadcast together with `unit_ids`.
+
+        Returns
+        -------
+        numpy.ndarray of datetime64[ns]
+            The dates in the broadcast shape, ``NaT`` where the table has none.
+
+        Raises
+        ------
+        ValueError
+            The table gives a unit and year more than one date.
+        """
         keys = [k for k in ("id", "year") if k in self.table.columns]
         queries = {"id": np.asarray(unit_ids, dtype=str), "year": np.asarray(years, dtype=int)}
         shape = np.broadcast_shapes(queries["id"].shape, queries["year"].shape)
@@ -580,11 +1045,30 @@ class ReferenceOnset:
         return np.where(hit, onsets[at], np.datetime64("NaT")).astype("datetime64[ns]")
 
     def search_start(self, years, unit_ids=None, *, dims: tuple[str, ...] = ("unit",)):
-        """The `search_start` entry of detect_observed / detect_forecast for these years.
+        """Return the ``search_start`` entry of ``detect_observed`` / ``detect_forecast`` for these years.
 
-        A month-day is the "MM-DD" string. Otherwise a DataArray of dates (NaT for none) over "year" and, for a table
-        keyed by unit, the `dims` of the units (default one "unit" dim holding `unit_ids`); a computed field
-        over its own spatial dims gives each year's date.
+        A month-day is the ``"MM-DD"`` string. Otherwise a DataArray of dates (``NaT`` for none) over ``year`` and, for a
+        table keyed by unit, the `dims` of the units (default one ``unit`` dim holding `unit_ids`); a computed field over
+        its own spatial dims gives each year's date.
+
+        Parameters
+        ----------
+        years : array_like of int
+            The years to give dates for.
+        unit_ids : array_like of str, optional
+            The unit ids; needed for a table keyed by unit.
+        dims : tuple of str, default ``("unit",)``
+            The dims of the units; only the first is used, naming the dim that holds `unit_ids`.
+
+        Returns
+        -------
+        str or xarray.DataArray
+            The ``"MM-DD"`` string, or the dates as ``datetime64[ns]`` over ``year`` and the unit (or spatial) dims.
+
+        Raises
+        ------
+        ValueError
+            A table keyed by unit is used without `unit_ids`.
         """
         years = np.asarray(years, dtype=int)
         if self.month_day is not None:
@@ -611,10 +1095,25 @@ class ReferenceOnset:
         return xr.DataArray(values, dims=("year", dims[0]), coords={"year": years, dims[0]: unit_ids})
 
     def doy_field(self, like: xr.DataArray) -> xr.DataArray:
-        """The day of year of the reference onset on the grid of `like` (the climatology reference forecast's input).
+        """Return the day of year of the reference onset on the grid of `like` (the climatology reference forecast's input).
 
         A computed field is returned as it is; a month-day is its day of year in a year of 365 days. A table varies by
         year (and unit), so it has no single day-of-year field.
+
+        Parameters
+        ----------
+        like : xarray.DataArray
+            The grid a month-day is spread over.
+
+        Returns
+        -------
+        xarray.DataArray
+            The day of year of the reference onset.
+
+        Raises
+        ------
+        ValueError
+            The source is a table.
         """
         if self.computed is not None:
             return self.computed

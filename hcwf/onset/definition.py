@@ -1,9 +1,12 @@
-"""Load, validate and normalize onset definition YAML into hcwf.onset.model.Definition.
+"""Load, validate and normalize onset definition YAML into `hcwf.onset.model.Definition`.
 
-Validation is strict: unknown keys and every ambiguity listed in
-docs/onset_spec.md section 3.7 are errors, and each message names the YAML path
-and says how to fix it. `extends` resolution, the registry and the semantic
-definition hash also live here.
+Validation is strict: unknown keys and every ambiguity listed in ``docs/onset_spec.md`` section 3.7 are errors, and
+each message names the YAML path and says how to fix it. ``extends`` resolution, the registry of bundled definitions
+(``hcwf/onset/registry/*.yaml``) and the semantic definition hash also live here.
+
+The text parsers for amounts, spans and counts are in `hcwf.onset.units`; the typed result classes are in
+`hcwf.onset.model`; region ids are checked against `hcwf.onset.regions`. The entry points are `load` (a registry id
+or a file), `loads` (YAML text), `override` (a change to a loaded definition) and `definition_hash`.
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ from hcwf.onset.model import (
 from hcwf.errors import UnitsError
 
 REGISTRY_DIR = Path(__file__).parent / "registry"
+"""The folder of the bundled definitions, ``hcwf/onset/registry``."""
 
 _TOP_KEYS = ("id", "version", "title", "citation", "wording", "status", "notes", "extends", "wet_day",
              "dry_day", "season", "seasons", "thresholds", "onset", "curve", "regions")
@@ -35,17 +39,63 @@ _REQUIRE_KEYS = ("first day", "all days", "wet days", "total")
 
 
 def _fail(path: str, message: str):
-    """Raise a DefinitionError for the YAML path."""
+    """Raise a `DefinitionError` for a YAML path.
+
+    Parameters
+    ----------
+    path : str
+        The dotted YAML path of the problem; empty for the whole document.
+    message : str
+        What is wrong and how to fix it.
+
+    Raises
+    ------
+    DefinitionError
+        Always, with the message prefixed by `path` when it is not empty.
+    """
     raise DefinitionError(f"{path}: {message}" if path else message)
 
 
 def _join(path: str, key: str) -> str:
-    """Return the YAML path of a child key."""
+    """Return the YAML path of a child key.
+
+    Parameters
+    ----------
+    path : str
+        The parent path; empty for the top level.
+    key : str
+        The child key.
+
+    Returns
+    -------
+    str
+        ``"path.key"``, or `key` alone at the top level.
+    """
     return f"{path}.{key}" if path else key
 
 
 def _units(path: str, func, *args):
-    """Call a units parser, re-raising its UnitsError as a DefinitionError at the YAML path."""
+    """Call a units parser, turning its `UnitsError` into a `DefinitionError` at the YAML path.
+
+    Parameters
+    ----------
+    path : str
+        The YAML path of the value being parsed.
+    func : callable
+        The parser from `hcwf.onset.units`.
+    *args : tuple
+        Passed on to `func`.
+
+    Returns
+    -------
+    object
+        Whatever `func` returns.
+
+    Raises
+    ------
+    DefinitionError
+        `func` raised `UnitsError`; the message starts with `path`.
+    """
     try:
         return func(*args)
     except UnitsError as exc:
@@ -53,7 +103,26 @@ def _units(path: str, func, *args):
 
 
 def _mapping(value, path: str, allowed: tuple[str, ...], required: tuple[str, ...] = ()) -> dict:
-    """Check value is a mapping with only allowed keys and all required ones."""
+    """Check that a value is a mapping with only the allowed keys and all the required ones.
+
+    Raises `DefinitionError` (through `_fail`) when `value` is not a mapping, has an unknown key or lacks a required key.
+
+    Parameters
+    ----------
+    value : object
+        The parsed YAML value.
+    path : str
+        Its YAML path.
+    allowed : tuple of str
+        The permitted keys.
+    required : tuple of str, default ()
+        The keys that must be present.
+
+    Returns
+    -------
+    dict
+        `value`, unchanged.
+    """
     if not isinstance(value, dict):
         _fail(path, f"expected a mapping with keys {', '.join(allowed)} but found {value!r}. "
                     "Fix: write 'key: value' lines")
@@ -68,11 +137,33 @@ def _mapping(value, path: str, allowed: tuple[str, ...], required: tuple[str, ..
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
-    """A safe YAML loader that rejects repeated keys in one mapping instead of keeping the last."""
+    """A safe YAML loader that rejects a repeated key in one mapping instead of keeping the last."""
 
 
 def _construct_unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False):
-    """Build a mapping, raising on a duplicated key."""
+    """Build a mapping from a YAML node, rejecting a duplicated key.
+
+    Registered as the mapping constructor of `_UniqueKeyLoader`.
+
+    Parameters
+    ----------
+    loader : yaml.SafeLoader
+        The loader that is constructing the document.
+    node : yaml.MappingNode
+        The mapping node.
+    deep : bool, default False
+        Whether to construct nested objects at once.
+
+    Returns
+    -------
+    dict
+        The mapping, with merge keys (``<<``) flattened.
+
+    Raises
+    ------
+    yaml.constructor.ConstructorError
+        A key occurs twice in the mapping.
+    """
     loader.flatten_mapping(node)
     seen = set()
     for key_node, _ in node.value:
@@ -88,7 +179,25 @@ _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
 
 
 def _read_mapping(text: str, origin: str) -> dict:
-    """Parse YAML text into a mapping."""
+    """Parse YAML text into a mapping.
+
+    Parameters
+    ----------
+    text : str
+        The YAML text.
+    origin : str
+        The file name or label used in error messages.
+
+    Returns
+    -------
+    dict
+        The top-level mapping, with repeated keys rejected.
+
+    Raises
+    ------
+    DefinitionError
+        The text is not valid YAML, repeats a key, or is not a mapping at the top level.
+    """
     try:
         data = yaml.load(text, Loader=_UniqueKeyLoader)
     except yaml.YAMLError as exc:
@@ -100,12 +209,33 @@ def _read_mapping(text: str, origin: str) -> dict:
 
 
 def registry_ids() -> list[str]:
-    """Return the ids of the bundled definitions, sorted."""
+    """Return the ids of the bundled definitions.
+
+    Returns
+    -------
+    list of str
+        The file stems of ``hcwf/onset/registry/*.yaml``, sorted.
+    """
     return sorted(p.stem for p in REGISTRY_DIR.glob("*.yaml"))
 
 
 def _locate(ref: str, base_dir: Path | None) -> tuple[Path, str]:
-    """Find a registry id or a relative file path, returning (resolved file, text)."""
+    """Find a registry id or a relative file path and read it.
+
+    Raises `DefinitionError` (through `_fail`) when `ref` is neither a registry id nor an existing file.
+
+    Parameters
+    ----------
+    ref : str
+        A registry id, or a file path (relative paths are taken from `base_dir`).
+    base_dir : pathlib.Path or None
+        The folder of the extending file; None means the current working directory.
+
+    Returns
+    -------
+    tuple of (pathlib.Path, str)
+        The resolved file and its text.
+    """
     if ref in registry_ids():
         file = REGISTRY_DIR / f"{ref}.yaml"
     else:
@@ -120,7 +250,22 @@ def _locate(ref: str, base_dir: Path | None) -> tuple[Path, str]:
 
 
 def _merge(parent: dict, child: dict) -> dict:
-    """Deep-merge two mappings: nested mappings merge key by key, everything else is replaced."""
+    """Deep-merge two mappings.
+
+    Nested mappings merge key by key; everything else (lists, scalars) is replaced by the child's value.
+
+    Parameters
+    ----------
+    parent : dict
+        The base mapping; not changed.
+    child : dict
+        The mapping whose values win.
+
+    Returns
+    -------
+    dict
+        A new merged mapping.
+    """
     merged = dict(parent)
     for key, value in child.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -131,7 +276,29 @@ def _merge(parent: dict, child: dict) -> dict:
 
 
 def _resolve_extends(mapping: dict, base_dir: Path | None, stack: tuple[Path, ...]) -> dict:
-    """Return the mapping with its `extends` chain merged in and the `extends` key removed."""
+    """Merge the ``extends`` chain of a mapping into it.
+
+    The parent is loaded from a registry id or a file, resolved in turn, and merged under the child. When the child
+    defines one of an exclusive pair (``season``/``seasons``, ``onset``/``curve``) and not the other, the parent's
+    other key is dropped first. ``id``, ``version``, ``title`` and ``status`` must be restated in the extending
+    definition.
+
+    Raises `DefinitionError` (through `_fail`) when ``extends`` is not a string, a key is not restated, the parent is not found or invalid, or the chain is a cycle.
+
+    Parameters
+    ----------
+    mapping : dict
+        The parsed definition.
+    base_dir : pathlib.Path or None
+        Where a relative ``extends`` path is taken from; None means the current working directory.
+    stack : tuple of pathlib.Path
+        The files already being resolved, to detect a cycle.
+
+    Returns
+    -------
+    dict
+        The mapping with its chain merged in and the ``extends`` key removed; `mapping` itself when it has none.
+    """
     if "extends" not in mapping:
         return mapping
     ref = mapping["extends"]
@@ -154,9 +321,23 @@ def _resolve_extends(mapping: dict, base_dir: Path | None, stack: tuple[Path, ..
 
 
 def loads(text: str, *, base_dir: Path | str | None = None, fine_amounts: bool = False) -> Definition:
-    """Parse and validate definition YAML text; a relative `extends` path is taken from base_dir.
+    """Parse and validate definition YAML text.
 
-    fine_amounts allows fixed amounts finer than 0.1 mm (they need rain_resolution "exact").
+    Raises `DefinitionError` (through `_fail`) when the text is invalid (the message names the YAML path and the fix).
+
+    Parameters
+    ----------
+    text : str
+        The YAML text of one definition.
+    base_dir : pathlib.Path or str, optional
+        Where a relative ``extends`` path is taken from; None means the current working directory.
+    fine_amounts : bool, default False
+        Allow fixed amounts finer than 0.1 mm (they need ``rain_resolution`` ``"exact"``).
+
+    Returns
+    -------
+    hcwf.onset.model.Definition
+        The validated definition.
     """
     base = Path(base_dir) if base_dir is not None else None
     merged = _resolve_extends(_read_mapping(text, "definition"), base, ())
@@ -164,7 +345,26 @@ def loads(text: str, *, base_dir: Path | str | None = None, fine_amounts: bool =
 
 
 def load(id_or_path: str | Path, *, fine_amounts: bool = False) -> Definition:
-    """Load a registry definition by id, or a definition from the path of a .yaml file."""
+    """Load a registry definition by id, or a definition from the path of a ``.yaml`` file.
+
+    Parameters
+    ----------
+    id_or_path : str or pathlib.Path
+        A registry id (see `registry_ids`) or the path of a definition file; a relative ``extends`` path is taken from
+        the file's folder.
+    fine_amounts : bool, default False
+        Allow fixed amounts finer than 0.1 mm (they need ``rain_resolution`` ``"exact"``).
+
+    Returns
+    -------
+    hcwf.onset.model.Definition
+        The validated definition.
+
+    Raises
+    ------
+    DefinitionError
+        `id_or_path` is neither a registry id nor a file, or the definition is invalid.
+    """
     if isinstance(id_or_path, str) and id_or_path in registry_ids():
         file = REGISTRY_DIR / f"{id_or_path}.yaml"
     else:
@@ -179,10 +379,27 @@ def load(id_or_path: str | Path, *, fine_amounts: bool = False) -> Definition:
 
 
 def override(defn: Definition, changes: dict, *, fine_amounts: bool = False) -> Definition:
-    """Return the definition with `changes` merged into its stored YAML mapping and validated again.
+    """Return a definition with changes merged into its stored YAML mapping and validated again.
 
-    The merge follows `extends`: mappings merge key by key, lists and scalars replace.
-    source_yaml of the result reflects the change, and the hash changes with the rule.
+    The merge follows ``extends``: mappings merge key by key, lists and scalars replace. ``source_yaml`` of the result
+    reflects the change, and the hash changes with the rule.
+
+    Raises `DefinitionError` (through `_fail`) when the changed definition is invalid.
+
+    Parameters
+    ----------
+    defn : hcwf.onset.model.Definition
+        The definition to change.
+    changes : dict
+        The YAML keys to merge in; changing one of an exclusive pair (``season``/``seasons``, ``onset``/``curve``)
+        removes the other.
+    fine_amounts : bool, default False
+        Allow fixed amounts finer than 0.1 mm.
+
+    Returns
+    -------
+    hcwf.onset.model.Definition
+        The new definition.
     """
     merged = _merge(yaml.safe_load(defn.source_yaml), changes)
     for first, second in _EXCLUSIVE_PAIRS:
@@ -193,7 +410,21 @@ def override(defn: Definition, changes: dict, *, fine_amounts: bool = False) -> 
 
 
 def without_dry_spell_check(defn: Definition) -> Definition:
-    """The definition without its `reject if` vetoes; unchanged for curve rules and rules without vetoes."""
+    """Return the definition without its ``reject if`` vetoes.
+
+    Curve rules and rules without vetoes are returned unchanged. Otherwise the title and notes say that the check is
+    off, and the semantic hash changes.
+
+    Parameters
+    ----------
+    defn : hcwf.onset.model.Definition
+        The definition.
+
+    Returns
+    -------
+    hcwf.onset.model.Definition
+        `defn` itself, or a copy with ``reject if: []``.
+    """
     if not isinstance(defn.rule, FirstPassage) or not defn.rule.reject_if:
         return defn
     return override(defn, {
@@ -208,7 +439,20 @@ _OMITTED_WHEN_NONE = ("mm",)
 
 
 def _canonical(obj):
-    """Turn model objects into plain JSON values, tagging each dataclass with its class name."""
+    """Turn model objects into plain JSON values, tagging each dataclass with its class name.
+
+    Fields with ``compare=False`` are left out, and so are the fields of ``_OMITTED_WHEN_NONE`` when unset.
+
+    Parameters
+    ----------
+    obj : object
+        A dataclass, a tuple or list of them, or a plain value.
+
+    Returns
+    -------
+    object
+        A dict (with a ``_type`` key) for a dataclass, a list for a tuple or list, else `obj`.
+    """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         fields = {f.name: _canonical(getattr(obj, f.name)) for f in dataclasses.fields(obj)
                   if f.compare and not (f.name in _OMITTED_WHEN_NONE and getattr(obj, f.name) is None)}
@@ -219,7 +463,21 @@ def _canonical(obj):
 
 
 def definition_hash(defn: Definition) -> str:
-    """sha256 of the canonical JSON of wet_day, dry_day (if set), seasons, rule and thresholds; provenance does not count."""
+    """Return the sha256 of the semantic content of a definition.
+
+    The hash is taken over the canonical JSON of ``wet_day``, ``dry_day`` (if set), seasons, rule and thresholds;
+    provenance (title, citation, wording, notes) does not count.
+
+    Parameters
+    ----------
+    defn : hcwf.onset.model.Definition
+        The definition.
+
+    Returns
+    -------
+    str
+        The 64-character hexadecimal digest.
+    """
     semantic = {
         "wet_day": _canonical(defn.wet_day),
         "seasons": _canonical(defn.seasons),
@@ -232,13 +490,41 @@ def definition_hash(defn: Definition) -> str:
 
 
 def _build(m: dict, fine_amounts: bool = False) -> Definition:
-    """Validate a fully merged mapping and normalize it into a Definition."""
+    """Validate a fully merged mapping and normalize it into a `Definition`.
+
+    Raises `DefinitionError` (through `_fail`) when the mapping is invalid.
+
+    Parameters
+    ----------
+    m : dict
+        The merged mapping (``extends`` already resolved).
+    fine_amounts : bool, default False
+        Allow fixed amounts finer than 0.1 mm while parsing.
+
+    Returns
+    -------
+    hcwf.onset.model.Definition
+        The validated definition.
+    """
     with units.fine_amounts(fine_amounts):
         return _build_checked(m)
 
 
 def _build_checked(m: dict) -> Definition:
-    """_build inside the amount-precision context."""
+    """Validate and normalize a mapping, inside the amount-precision context of `_build`.
+
+    Raises `DefinitionError` (through `_fail`) when a key, id, version, status or text is invalid, or not exactly one of ``onset`` and ``curve`` is given.
+
+    Parameters
+    ----------
+    m : dict
+        The merged mapping.
+
+    Returns
+    -------
+    hcwf.onset.model.Definition
+        The validated definition, with ``source_yaml`` the dumped mapping.
+    """
     _mapping(m, "", _TOP_KEYS, _REQUIRED_KEYS)
     ident = m["id"]
     if not isinstance(ident, str) or not _ID_RE.match(ident):
@@ -274,7 +560,20 @@ def _build_checked(m: dict) -> Definition:
 
 
 def _regions(value) -> tuple[str, ...]:
-    """Parse the optional list of region ids, checking each exists in the region registry."""
+    """Parse the optional list of region ids, checking that each exists in the region registry.
+
+    Raises `DefinitionError` (through `_fail`) when `value` is not a list of strings, or an id is not a known region.
+
+    Parameters
+    ----------
+    value : object
+        The ``regions`` value.
+
+    Returns
+    -------
+    tuple of str
+        The region ids.
+    """
     from hcwf.onset.regions import region_ids
 
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
@@ -288,7 +587,24 @@ def _regions(value) -> tuple[str, ...]:
 
 
 def _comparison(value, path: str, names: frozenset[str]) -> Comparison:
-    """Parse a comparison and check any threshold name it uses is defined."""
+    """Parse a comparison and check that any threshold name it uses is defined.
+
+    Raises `DefinitionError` (through `_fail`) when the text cannot be parsed, or uses a threshold that is not in `names`.
+
+    Parameters
+    ----------
+    value : str
+        The comparison text, such as ``"at least 1 mm"``.
+    path : str
+        Its YAML path.
+    names : frozenset of str
+        The defined threshold names.
+
+    Returns
+    -------
+    hcwf.onset.model.Comparison
+        The parsed comparison.
+    """
     comparison = _units(path, units.parse_comparison, value)
     name = comparison.amount.threshold
     if name is not None and name not in names:
@@ -299,7 +615,20 @@ def _comparison(value, path: str, names: frozenset[str]) -> Comparison:
 
 
 def _wet_day(value) -> Comparison:
-    """Parse wet_day, which must be 'at least X mm' or 'more than X mm'."""
+    """Parse ``wet_day``, which must be ``"at least X mm"`` or ``"more than X mm"``.
+
+    Raises `DefinitionError` (through `_fail`) when the text is not of that form.
+
+    Parameters
+    ----------
+    value : str
+        The ``wet_day`` text.
+
+    Returns
+    -------
+    hcwf.onset.model.Comparison
+        The comparison, with a fixed amount and operator ``ge`` or ``gt``.
+    """
     comparison = _comparison(value, "wet_day", frozenset())
     if comparison.op not in ("ge", "gt") or comparison.amount.threshold is not None:
         _fail("wet_day", f"{value!r} is not allowed. Fix: write 'at least X mm' or 'more than X mm' "
@@ -308,7 +637,20 @@ def _wet_day(value) -> Comparison:
 
 
 def _dry_day(value) -> Comparison:
-    """Parse dry_day, which must be 'less than X mm' or 'at most X mm'."""
+    """Parse ``dry_day``, which must be ``"less than X mm"`` or ``"at most X mm"``.
+
+    Raises `DefinitionError` (through `_fail`) when the text is not of that form.
+
+    Parameters
+    ----------
+    value : str
+        The ``dry_day`` text.
+
+    Returns
+    -------
+    hcwf.onset.model.Comparison
+        The comparison, with a fixed amount and operator ``lt`` or ``le``.
+    """
     comparison = _comparison(value, "dry_day", frozenset())
     if comparison.op not in ("lt", "le") or comparison.amount.threshold is not None:
         _fail("dry_day", f"{value!r} is not allowed. Fix: write 'less than X mm' or 'at most X mm' "
@@ -317,7 +659,26 @@ def _dry_day(value) -> Comparison:
 
 
 def _dayref(value, path: str, *, climatological: bool) -> DayRef:
-    """Parse a day reference; climatological references are only valid in derived seasons."""
+    """Parse a day reference.
+
+    Climatological references are only valid in derived seasons, and fixed dates only in fixed seasons.
+
+    Raises `DefinitionError` (through `_fail`) when the text cannot be parsed, or its kind does not match `climatological`.
+
+    Parameters
+    ----------
+    value : str
+        The text, such as ``"02-01"`` or ``"climatological onset - 50 days"``.
+    path : str
+        Its YAML path.
+    climatological : bool
+        Whether a climatological reference is required (True) or forbidden (False).
+
+    Returns
+    -------
+    hcwf.onset.model.DayRef
+        The parsed reference.
+    """
     ref = _units(path, units.parse_dayref, value)
     if climatological and ref.climatological is None:
         _fail(path, f"{value!r} is a fixed date but derived seasons need climatological bounds. "
@@ -329,7 +690,21 @@ def _dayref(value, path: str, *, climatological: bool) -> DayRef:
 
 
 def _seasons(m: dict):
-    """Parse season / seasons into a tuple of Season or a DerivedSeasons."""
+    """Parse ``season`` / ``seasons`` into fixed seasons or a derived-seasons rule.
+
+    Raises `DefinitionError` (through `_fail`) when both or neither key is given, or the block, a season name, a window or the ``derive`` method is invalid.
+
+    Parameters
+    ----------
+    m : dict
+        The merged definition mapping; exactly one of ``season`` and ``seasons`` is read.
+
+    Returns
+    -------
+    tuple of hcwf.onset.model.Season or hcwf.onset.model.DerivedSeasons
+        A tuple of seasons (a single ``"main"`` season for ``season``), or the derived-seasons rule for
+        ``derive: harmonic regime``.
+    """
     if ("season" in m) == ("seasons" in m):
         _fail("season", "exactly one of 'season' (one window) or 'seasons' (several or derived) is needed. "
                         "Fix: keep one of them")
@@ -359,14 +734,44 @@ def _seasons(m: dict):
 
 
 def _season(name: str, window: dict, path: str) -> Season:
-    """Build a fixed Season from a from/to mapping."""
+    """Build a fixed `Season` from a ``from``/``to`` mapping.
+
+    Raises `DefinitionError` (through `_fail`) when a date is invalid or climatological.
+
+    Parameters
+    ----------
+    name : str
+        The season name.
+    window : dict
+        The mapping with ``from`` and ``to`` dates (``MM-DD``).
+    path : str
+        The YAML path of the season.
+
+    Returns
+    -------
+    hcwf.onset.model.Season
+        The season.
+    """
     return Season(name,
                   _dayref(window["from"], f"{path}.from", climatological=False),
                   _dayref(window["to"], f"{path}.to", climatological=False))
 
 
 def _thresholds(block) -> tuple[tuple[str, ThresholdSpec], ...]:
-    """Parse the thresholds mapping."""
+    """Parse the ``thresholds`` mapping.
+
+    Raises `DefinitionError` (through `_fail`) when `block` is not a mapping, a name is not valid, or a specification is invalid.
+
+    Parameters
+    ----------
+    block : dict
+        The mapping of threshold names to their specifications.
+
+    Returns
+    -------
+    tuple of tuple of (str, hcwf.onset.model.ThresholdSpec)
+        The ``(name, spec)`` pairs in the order written.
+    """
     if not isinstance(block, dict):
         _fail("thresholds", "expected a mapping of threshold names. Fix: write e.g. "
                             "'wet_spell_amount: {mean total over: 5 days}'")
@@ -381,7 +786,23 @@ def _thresholds(block) -> tuple[tuple[str, ThresholdSpec], ...]:
 
 
 def _threshold(body, path: str) -> ThresholdSpec:
-    """Parse one threshold specification."""
+    """Parse one threshold specification.
+
+    Raises `DefinitionError` (through `_fail`) when a key is unknown or misplaced, a duration or quantile is invalid, or not exactly one kind is given.
+
+    Parameters
+    ----------
+    body : dict
+        The specification: exactly one of ``mean total over``, ``mean daily rain`` and ``quantile of totals over``,
+        plus ``quantile`` for the last and an optional ``during``.
+    path : str
+        Its YAML path.
+
+    Returns
+    -------
+    hcwf.onset.model.ThresholdSpec
+        The parsed specification.
+    """
     kinds = ("mean total over", "mean daily rain", "quantile of totals over")
     _mapping(body, path, (*kinds, "quantile", "during"))
     present = [k for k in kinds if k in body]
@@ -408,7 +829,23 @@ def _threshold(body, path: str) -> ThresholdSpec:
 
 
 def _curve(body, names: frozenset[str]) -> Curve:
-    """Parse the curve rule."""
+    """Parse the ``curve`` rule.
+
+    Raises `DefinitionError` (through `_fail`) when a key is missing or unknown, the text is not understood, or the threshold is not defined.
+
+    Parameters
+    ----------
+    body : dict
+        The mapping with ``accumulate`` (``"rain minus <threshold name>"``) and ``onset`` (``"day after minimum"`` or
+        ``"day of minimum"``).
+    names : frozenset of str
+        The defined threshold names.
+
+    Returns
+    -------
+    hcwf.onset.model.Curve
+        The cumulative-anomaly rule.
+    """
     _mapping(body, "curve", ("accumulate", "onset"), ("accumulate", "onset"))
     text = body["accumulate"]
     match = re.fullmatch(r"rain minus ([a-z][a-z0-9_]*)", text) if isinstance(text, str) else None
@@ -427,7 +864,26 @@ def _curve(body, names: frozenset[str]) -> Curve:
 
 
 def _span(value, path: str, window: int | None, *, allow_season_to_date: bool = False) -> Span:
-    """Parse a span, optionally allowing 'season to date'."""
+    """Parse a span, optionally allowing ``"season to date"``.
+
+    Raises `DefinitionError` (through `_fail`) when the text cannot be parsed, or is ``"season to date"`` where that is not allowed.
+
+    Parameters
+    ----------
+    value : str
+        The span text, such as ``"days 1 to 5"`` or ``"5 days after onset"``.
+    path : str
+        Its YAML path.
+    window : int or None
+        The trigger window in days, for spans given relative to it.
+    allow_season_to_date : bool, default False
+        Whether ``"season to date"`` is accepted.
+
+    Returns
+    -------
+    hcwf.onset.model.Span
+        The parsed span.
+    """
     span = _units(path, units.parse_span, value, window)
     if span.since_search_start and not allow_season_to_date:
         _fail(path, f"{value!r} is not allowed here. Fix: use 'days A to B' or 'N days after onset'")
@@ -435,7 +891,22 @@ def _span(value, path: str, window: int | None, *, allow_season_to_date: bool = 
 
 
 def _onset(body, names: frozenset[str]) -> FirstPassage:
-    """Parse the first-passage rule."""
+    """Parse the first-passage rule.
+
+    Raises `DefinitionError` (through `_fail`) when a key is unknown or missing, a list is invalid, or ``report`` is not understood or needs a window that is not set.
+
+    Parameters
+    ----------
+    body : dict
+        The ``onset`` mapping: ``require`` (a non-empty list), and optionally ``window``, ``reject if`` and ``report``.
+    names : frozenset of str
+        The defined threshold names.
+
+    Returns
+    -------
+    hcwf.onset.model.FirstPassage
+        The rule.
+    """
     _mapping(body, "onset", ("window", "require", "reject if", "report"), ("require",))
     window = _units("onset.window", units.parse_duration, body["window"]) if "window" in body else None
     items = body["require"]
@@ -463,7 +934,27 @@ def _onset(body, names: frozenset[str]) -> FirstPassage:
 
 
 def _requirement(item, path: str, window: int | None, names: frozenset[str]) -> Condition:
-    """Parse one `require` item into a Total or WetDays condition."""
+    """Parse one ``require`` item into a `Total` or `WetDays` condition.
+
+    Raises `DefinitionError` (through `_fail`) when the keys are invalid, the span is missing or invalid, or the value is not allowed.
+
+    Parameters
+    ----------
+    item : dict
+        The mapping with exactly one of ``first day``, ``all days``, ``wet days`` and ``total``, plus an optional
+        ``over``.
+    path : str
+        Its YAML path.
+    window : int or None
+        The trigger window in days; the span of an item without ``over``.
+    names : frozenset of str
+        The defined threshold names.
+
+    Returns
+    -------
+    hcwf.onset.model.Condition
+        A `WetDays` or `Total` condition.
+    """
     _mapping(item, path, (*_REQUIRE_KEYS, "over"))
     present = [k for k in _REQUIRE_KEYS if k in item]
     if len(present) != 1:
@@ -496,7 +987,27 @@ def _requirement(item, path: str, window: int | None, names: frozenset[str]) -> 
 
 
 def _veto(item, path: str, window: int | None, names: frozenset[str]) -> Veto:
-    """Parse one `reject if` item into a Veto."""
+    """Parse one ``reject if`` item into a `Veto`.
+
+    Raises `DefinitionError` (through `_fail`) when the keys are invalid, a spell or span cannot be parsed, a threshold is not defined, or the spell cannot fit inside the span.
+
+    Parameters
+    ----------
+    item : dict
+        The mapping with exactly one of ``dry run`` and ``dry window`` and exactly one of ``within``,
+        ``starting within`` and ``beginning within``.
+    path : str
+        Its YAML path.
+    window : int or None
+        The trigger window in days, for a span given relative to it.
+    names : frozenset of str
+        The defined threshold names.
+
+    Returns
+    -------
+    hcwf.onset.model.Veto
+        The veto.
+    """
     _mapping(item, path, ("dry run", "dry window", "within", "starting within", "beginning within"))
     spells = [k for k in ("dry run", "dry window") if k in item]
     if len(spells) != 1:

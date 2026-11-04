@@ -8,19 +8,22 @@ whole year. It reads a small, deterministic sample once and gets every lag from 
   region box, without the cells the observations do not cover (the sea);
 * the forecast leads 1-3 (members averaged on sqrt rain) and, for each init, the observed days from three days
   before the init to the last lead plus three days, all read in one selection per file or store;
-* ``hcwf.onset.alignment.lagged_correlations`` pairs the forecast with a stacked (lag, ...) view of the
+* `hcwf.onset.alignment.lagged_correlations` pairs the forecast with a stacked (lag, ...) view of the
   observations and gives the pooled correlation of every lag and lead at once.
 
-The verdicts are those of ``hcwf.onset.alignment.check_forecast_alignment`` (spec section 8). The result is
-cached next to the detection cache (a ``hcwf.cache.Store`` of kind "alignment") under the parts of both datasets (their
-files), the lead label, the day boundaries and the sample specification; ``check_models`` runs several models in
-parallel threads. Files are found as the run finds them (``hcwf.io.input``), so datasets given by ``paths`` are read.
+The verdicts are those of `hcwf.onset.alignment.check_forecast_alignment` (spec section 8); the report type and the
+comparison itself live in `hcwf.onset.alignment`, and the reading uses `hcwf.onset.ingest` for the forecast days and
+`hcwf.onset.calendar` for date keys. The result is cached next to the detection cache (a `hcwf.cache.Store` of kind
+``"alignment"``) under the parts of both datasets (their files), the lead label, the day boundaries and the sample
+specification; `check_models` runs several models in parallel threads. Files are found as the run finds them
+(`hcwf.io.stores`), so datasets given by ``paths`` are read.
 
-The keyword arguments (obs_dir, obs_file_pattern, obs_var, obs_unit_cvt, model_dir, model_var, unit_cvt,
-file_pattern, model_dims, probabilistic, members, accumulation, daily_boundary, region, start_date, end_date,
-init_days, years) and, for datasets given as lists of files, obs_paths, obs_files_years, model_paths and
-model_files_years, are those of ``sample_spec`` (a run's model, from its typed specs); the lead-label detection of
-zarr datasets (``hcwf.config.detect``) writes them before a run exists.
+The keyword arguments (``obs_dir``, ``obs_file_pattern``, ``obs_var``, ``obs_unit_cvt``, ``model_dir``,
+``model_var``, ``unit_cvt``, ``file_pattern``, ``model_dims``, ``probabilistic``, ``members``, ``accumulation``,
+``daily_boundary``, ``region``, ``start_date``, ``end_date``, ``init_days``, ``years``) and, for datasets given as
+lists of files, ``obs_paths``, ``obs_files_years``, ``model_paths`` and ``model_files_years``, are those of
+`sample_spec` (a run's model, from its typed specs); the lead-label detection of zarr datasets
+(`hcwf.config.detect`) writes them before a run exists.
 """
 from __future__ import annotations
 
@@ -66,23 +69,54 @@ class Sample:
     """The arrays of one sampled read: observations (init, day, cell), forecast (init, lead, cell), in sqrt(mm)."""
 
     obs_days: np.ndarray
+    """Observed sqrt-rain, ``float32`` with shape (init, day, cell); day ``j`` is ``j - pad`` days after the init."""
     forecast: np.ndarray
+    """Member-mean forecast sqrt-rain, ``float64`` with shape (init, lead, cell)."""
     leads: tuple
+    """The forecast leads of the second axis of `forecast`."""
     pad: int
+    """The number of days before the init date at the start of the day axis of `obs_days`."""
     n_inits: int
+    """The number of inits in the sample."""
     n_cells: int
+    """The number of cells in the sample."""
     notes: list = field(default_factory=list)
+    """Notes for the report, as strings."""
 
 
 def _patterns(value) -> tuple:
-    """A file pattern or a sequence of them as a tuple."""
+    """Return a file pattern or a sequence of them as a tuple.
+
+    Parameters
+    ----------
+    value : str or sequence of str, optional
+        The pattern(s), ``{}`` standing for the year; ``None`` gives the default ``"{}.nc"``.
+
+    Returns
+    -------
+    tuple of str
+        The patterns.
+    """
     if value is None:
         return ("{}.nc",)
     return (value,) if isinstance(value, str) else tuple(value)
 
 
 def _years_in(folder, pattern: str) -> tuple:
-    """The years of the files in a folder that match a file pattern ({} is the year), sorted."""
+    """Return the years of the files in a folder that match a file pattern, sorted.
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        The folder to look in.
+    pattern : str
+        The file pattern, ``{}`` standing for the year.
+
+    Returns
+    -------
+    tuple of int
+        The years found, increasing.
+    """
     import glob
 
     return tuple(sorted({y for y in (file_year(f, whole_number=True)
@@ -91,7 +125,27 @@ def _years_in(folder, pattern: str) -> tuple:
 
 
 def _listed_years(paths, base, years_filter) -> tuple:
-    """The years of the files a dataset lists in `paths`, sorted."""
+    """Return the years of the files a dataset lists in `paths`, sorted.
+
+    Parameters
+    ----------
+    paths : sequence of str
+        The listed files or globs, as in the dataset specification.
+    base : str, optional
+        The folder relative paths are resolved against.
+    years_filter : sequence of int, optional
+        Keep only the files of these years.
+
+    Returns
+    -------
+    tuple of int
+        The years found, increasing.
+
+    Raises
+    ------
+    ValueError
+        The files cannot be resolved (the message of the `hcwf.errors.DatasetError`).
+    """
     try:
         files = resolve_paths(paths, base, years_filter)
     except DatasetError as exc:
@@ -105,7 +159,20 @@ _SIDES = {"obs": ("obs_dir", "obs_paths", "obs_files_years", "obs_file_pattern")
 
 
 def sample_spec(rc, model: str) -> dict:
-    """The keyword arguments of the sampled check for one model of a run (RunConfig), from its typed specs."""
+    """Return the keyword arguments of the sampled check for one model of a run, from its typed specs.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run configuration: its ``observations``, ``evaluation`` and ``area`` specs and the model specs are read.
+    model : str
+        The name of the model in the run.
+
+    Returns
+    -------
+    dict
+        The keyword arguments described in the module text (``obs_dir``, ``model_dir``, ``region``, ``years``, ...).
+    """
     obs, ev, source = rc.observations, rc.evaluation, rc.model(model)
     return {"obs_dir": obs.dir, "obs_file_pattern": obs.file_pattern, "obs_var": obs.var, "obs_unit_cvt": obs.unit_cvt,
             "obs_paths": obs.paths, "model_dir": source.dir, "file_pattern": source.file_pattern,
@@ -116,13 +183,41 @@ def sample_spec(rc, model: str) -> dict:
 
 
 def _is_store(kw: dict, side: str) -> bool:
-    """True when the side's dataset is a zarr store (a dataset given by paths is files)."""
+    """Return whether the side's dataset is a zarr store.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+    side : {"obs", "model"}
+        The dataset to test.
+
+    Returns
+    -------
+    bool
+        True for a zarr folder; a dataset given by paths is files.
+    """
     folder, paths, _, _ = _SIDES[side]
     return not kw.get(paths) and is_zarr(kw.get(folder))
 
 
 def _dataset_years(kw: dict, side: str) -> tuple:
-    """The years of a side's files: those of its listed files, or those found in its folder by the file pattern."""
+    """Return the years of a side's files.
+
+    These are the years of its listed files, or those found in its folder by the file pattern.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+    side : {"obs", "model"}
+        The dataset.
+
+    Returns
+    -------
+    tuple of int
+        The years, increasing.
+    """
     folder, paths, years_filter, pattern = _SIDES[side]
     if kw.get(paths):
         return _listed_years(kw[paths], kw.get(folder) or None, kw.get(years_filter))
@@ -130,7 +225,24 @@ def _dataset_years(kw: dict, side: str) -> tuple:
 
 
 def _box_indices(values: np.ndarray, lo: float, hi: float, wrap: bool = False) -> np.ndarray:
-    """Indices of coordinate values inside [lo, hi]; longitudes are compared modulo 360 when wrap is set."""
+    """Return the indices of the coordinate values inside a closed interval.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        The coordinate values (latitudes or longitudes), converted to ``float64``.
+    lo : float
+        The lower end of the interval.
+    hi : float
+        The upper end of the interval.
+    wrap : bool, default False
+        Compare longitudes modulo 360, so an interval may cross the antimeridian (``lo > hi`` after the modulo).
+
+    Returns
+    -------
+    numpy.ndarray of int64
+        The indices of the values with ``lo <= value <= hi``.
+    """
     values = np.asarray(values, dtype=float)
     if not wrap:
         return np.nonzero((values >= lo) & (values <= hi))[0]
@@ -140,7 +252,18 @@ def _box_indices(values: np.ndarray, lo: float, hi: float, wrap: bool = False) -
 
 
 def _region_box(region):
-    """(lats, latn, lonw, lone) of the region, or None when it is unknown."""
+    """Return the bounding box of a region, or ``None`` when the region is unknown.
+
+    Parameters
+    ----------
+    region : str
+        The region name, as for `hcwf.onset.regions.box`.
+
+    Returns
+    -------
+    tuple of (float, float, float, float) or None
+        ``(lats, latn, lonw, lone)`` in degrees; ``None`` when the box cannot be obtained.
+    """
     from hcwf.onset.regions import box
 
     try:
@@ -150,14 +273,43 @@ def _region_box(region):
 
 
 def _scale(da: xr.DataArray, factor) -> xr.DataArray:
-    """The loaded array multiplied by a unit factor (as the run's loaders do, in the array's own dtype)."""
+    """Return the loaded array multiplied by a unit factor, as the run's loaders do.
+
+    The factor is cast to the array's own dtype, so the dtype is kept.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The loaded data.
+    factor : float, optional
+        The unit conversion factor; ``None`` or 0 leaves the data unchanged.
+
+    Returns
+    -------
+    xarray.DataArray
+        The scaled data.
+    """
     if factor:
         da = da * np.asarray(factor, dtype=da.dtype)
     return da
 
 
 def _standardise(ds: xr.Dataset, kw: dict) -> xr.Dataset:
-    """A forecast Dataset with HCWF's names (init_time, step, member, lat, lon), as the run reads it."""
+    """Return a forecast dataset with HCWF's names (``init_time``, ``step``, ``member``, ``lat``, ``lon``).
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        The forecast as opened.
+    kw : dict
+        The keyword arguments of the sampled check: ``probabilistic`` (keep the member dim) and ``model_dims`` (the
+        dimension-name mapping of the model).
+
+    Returns
+    -------
+    xarray.Dataset
+        The dataset with the standard dimension names, as the run reads it.
+    """
     from hcwf.io.dims import dim_fmt_model, dim_fmt_model_ensemble
 
     fix = dim_fmt_model_ensemble if kw.get("probabilistic") else dim_fmt_model
@@ -165,7 +317,21 @@ def _standardise(ds: xr.Dataset, kw: dict) -> xr.Dataset:
 
 
 def forecast_sources(kw: dict) -> list:
-    """The standardised forecast Datasets to read: the zarr store, or the files of the run's years (any number a year)."""
+    """Return the standardised forecast datasets to read.
+
+    These are the zarr store, or the files of the run's years (any number a year); a year without files is skipped.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+
+    Returns
+    -------
+    list of tuple
+        One ``(year, dataset, close)`` per store or file: the year (``None`` for a store), the standardised
+        `xarray.Dataset`, and a callable that closes it.
+    """
     folder = kw.get("model_dir")
     if _is_store(kw, "model"):
         return [(None, _standardise(open_store(folder), kw), lambda: None)]
@@ -183,7 +349,23 @@ def forecast_sources(kw: dict) -> list:
 
 
 def _candidate_inits(times, kw: dict) -> np.ndarray:
-    """Indices of the init times inside the run's years, month-day window and init weekdays (else all of them)."""
+    """Return the indices of the init times inside the run's years, month-day window and init weekdays.
+
+    When no init qualifies, or the times cannot be converted to dates, all of them are returned.
+
+    Parameters
+    ----------
+    times : numpy.ndarray
+        The init times (``datetime64`` or convertible by `pandas.to_datetime`).
+    kw : dict
+        The keyword arguments of the sampled check: ``years``, ``start_date`` and ``end_date`` (``(year, month, day)``
+        tuples, of which month and day are used) and ``init_days`` (weekdays, Monday is 0).
+
+    Returns
+    -------
+    numpy.ndarray of int64
+        The indices into `times`, increasing.
+    """
     try:
         stamps = pd.to_datetime(np.asarray(times))
     except (TypeError, ValueError):
@@ -202,22 +384,74 @@ def _candidate_inits(times, kw: dict) -> np.ndarray:
 
 
 def _spread(n_available: int, n_wanted: int) -> np.ndarray:
-    """n_wanted indices spread evenly over range(n_available) (all of them when fewer are available)."""
+    """Return `n_wanted` indices spread evenly over ``range(n_available)``.
+
+    Parameters
+    ----------
+    n_available : int
+        The number of items to choose from.
+    n_wanted : int
+        The number of items wanted.
+
+    Returns
+    -------
+    numpy.ndarray of int64
+        All of ``range(n_available)`` when `n_available` is not above `n_wanted`, else the distinct rounded points of an
+        even spacing from the first to the last index.
+    """
     if n_available <= n_wanted:
         return np.arange(n_available)
     return np.unique(np.round(np.linspace(0, n_available - 1, n_wanted)).astype(int))
 
 
 def _stride(n: int, step: int) -> np.ndarray:
-    """Every step-th index of range(n), starting half a step in so the subgrid is centred."""
+    """Return every `step`-th index of ``range(n)``, starting half a step in so the subgrid is centred.
+
+    Parameters
+    ----------
+    n : int
+        The length of the axis.
+    step : int
+        The stride; 1 gives all indices.
+
+    Returns
+    -------
+    numpy.ndarray of int64
+        The chosen indices.
+    """
     return np.arange(step // 2 if step > 1 else 0, n, step)
 
 
 def _shared_grid(obs_ds: xr.Dataset, fc_ds: xr.Dataset, kw: dict) -> tuple:
-    """Matched, subsampled grid indices (obs_lat, fc_lat, obs_lon, fc_lon) inside the region box.
+    """Return the matched, subsampled grid indices inside the region box.
 
-    The subgrid takes every s-th shared latitude and longitude, s the smallest stride that leaves about
-    SAMPLE_CELLS cells (a little more, as the sea is dropped after reading).
+    The subgrid takes every s-th shared latitude and longitude, s the smallest stride that leaves about ``SAMPLE_CELLS``
+    cells (a little more, as the sea is dropped after reading).
+
+    Parameters
+    ----------
+    obs_ds : xarray.Dataset
+        The observations, with ``lat`` and ``lon`` coordinates.
+    fc_ds : xarray.Dataset
+        The forecasts, with ``lat`` and ``lon`` coordinates.
+    kw : dict
+        The keyword arguments of the sampled check; ``region`` selects the box (no box when it is unknown or absent).
+
+    Returns
+    -------
+    obs_lat : numpy.ndarray of int64
+        Indices into the observations' latitudes.
+    fc_lat : numpy.ndarray of int64
+        The matching indices into the forecasts' latitudes.
+    obs_lon : numpy.ndarray of int64
+        Indices into the observations' longitudes.
+    fc_lon : numpy.ndarray of int64
+        The matching indices into the forecasts' longitudes.
+
+    Raises
+    ------
+    ValueError
+        The two grids share no cell inside the region box.
     """
     obs_lat, obs_lon = (np.asarray(obs_ds[c].values, float) for c in ("lat", "lon"))
     fc_lat, fc_lon = (np.asarray(fc_ds[c].values, float) for c in ("lat", "lon"))
@@ -235,10 +469,20 @@ def _shared_grid(obs_ds: xr.Dataset, fc_ds: xr.Dataset, kw: dict) -> tuple:
 
 
 def _member_count(da: xr.DataArray) -> int:
-    """How many members to average: up to SAMPLE_MEMBERS, but no more than one file chunk along the member dim.
+    """Return how many members to average: up to ``SAMPLE_MEMBERS``, but no more than one file chunk along the member dim.
 
-    Reading a second chunk of members multiplies the decoding of compressed NetCDF files several times over, and
-    a few members already give most of the benefit of averaging; at least 4 are kept.
+    Reading a second chunk of members multiplies the decoding of compressed NetCDF files several times over, and a few
+    members already give most of the benefit of averaging; at least 4 are kept.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The forecast variable; its ``encoding`` holds the file chunk sizes.
+
+    Returns
+    -------
+    int
+        The number of members to read; ``SAMPLE_MEMBERS`` when `da` has no member dim or no chunk information.
     """
     chunks = da.encoding.get("chunksizes") or da.encoding.get("chunks")
     if "member" not in da.dims or not chunks or len(chunks) != da.ndim:
@@ -247,7 +491,31 @@ def _member_count(da: xr.DataArray) -> int:
 
 
 def _read_forecast(kw: dict, grid: tuple, sources: list):
-    """The sampled forecast as (ForecastRain, init index list): spread-out inits, leads 1-3, subgrid, members cut."""
+    """Return the sampled forecast: spread-out inits, leads 1-3, the subgrid, the members cut.
+
+    The inits are chosen over all the sources, the data are read for the bounding box of the subgrid and cut to it, units
+    are converted, and the days are made with `hcwf.onset.ingest.ingest_forecast_info` (``"00 UTC, labelled by start"``,
+    mm; the ingest warnings are silenced).
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+    grid : tuple of numpy.ndarray
+        The indices of `_shared_grid`; the forecast's latitude and longitude indices (items 1 and 3) are used.
+    sources : list of tuple
+        The ``(year, dataset, close)`` items of `forecast_sources`.
+
+    Returns
+    -------
+    hcwf.onset.model.ForecastRain
+        The sampled forecast, with the leads 1 to ``max(LEADS)``.
+
+    Raises
+    ------
+    ValueError
+        No source has an init in the run's period.
+    """
     fl, flon = grid[1], grid[3]
     chosen = []
     for k, (_, ds, _) in enumerate(sources):
@@ -290,7 +558,25 @@ def _read_forecast(kw: dict, grid: tuple, sources: list):
 
 
 def _forecast_field(forecast, leads) -> np.ndarray:
-    """Member-mean sqrt-rain of the given leads as (init, lead, cell), cells in (lat, lon) row-major order."""
+    """Return the member-mean sqrt-rain of the given leads.
+
+    Parameters
+    ----------
+    forecast : hcwf.onset.model.ForecastRain
+        The sampled forecast.
+    leads : sequence of int
+        The leads to take, each in the forecast's lead coordinate.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (init, lead, cell)
+        Sqrt of the rain in mm, ``NaN`` where missing, with the cells in ``(lat, lon)`` row-major order.
+
+    Raises
+    ------
+    ValueError
+        A lead is not in the forecast's leads.
+    """
     lead_axis = forecast.dims.index("lead")
     values = np.asarray(forecast.coords["lead"]).tolist()
     for k in leads:
@@ -309,7 +595,22 @@ def _forecast_field(forecast, leads) -> np.ndarray:
 
 
 def _obs_segments(kw: dict, years) -> list:
-    """The standardised observation Datasets to read: the zarr store, or the files with data for the years."""
+    """Return the standardised observation datasets to read.
+
+    These are the zarr store, or the files with data for the years; a year without a file is skipped.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+    years : sequence of int
+        The years to find files for; empty means the first year found in the dataset.
+
+    Returns
+    -------
+    list of tuple
+        One ``(dataset, close)`` per store or file: the standardised `xarray.Dataset` and a callable that closes it.
+    """
     from hcwf.io.dims import dim_fmt
 
     folder = kw.get("obs_dir")
@@ -331,7 +632,37 @@ def _obs_segments(kw: dict, years) -> list:
 
 
 def _read_obs(kw: dict, grid: tuple, forecast, pad: int, n_days: int):
-    """Observed sqrt-rain for each init's days -pad..: (init, day, cell) and the notes; one read per file or store."""
+    """Return the observed sqrt-rain for each init's days, read once per file or store.
+
+    For every init of `forecast` found in the observations, the days ``-pad .. n_days - pad - 1`` around its init date
+    are read (rain rounded to tenths of mm; values below -0.05 mm are missing).
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+    grid : tuple of numpy.ndarray
+        The indices of `_shared_grid`; the observations' latitude and longitude indices (items 0 and 2) are used.
+    forecast : hcwf.onset.model.ForecastRain
+        The sampled forecast whose init dates are looked up.
+    pad : int
+        The number of days before the init date that are read.
+    n_days : int
+        The number of days read for each init.
+
+    Returns
+    -------
+    obs : numpy.ndarray of float32, shape (init, day, cell)
+        Sqrt-rain in sqrt(mm), ``NaN`` where missing and for every init not in the observations.
+    found : numpy.ndarray of bool, shape (init,)
+        Whether each init date is in the observations.
+
+    Raises
+    ------
+    ValueError
+        No observation file is found, the files use different calendars or a calendar other than the forecast's, or no
+        init date is in the observations.
+    """
     ol, _, olon, _ = grid
     init_keys = label_keys(forecast.init_year, forecast.init_month, forecast.init_day)
     year_span = sorted({int(y) for y in forecast.init_year} | {int(y) - 1 for y in forecast.init_year}
@@ -386,9 +717,20 @@ def _read_obs(kw: dict, grid: tuple, forecast, pad: int, n_days: int):
 
 
 def read_sample(kw: dict) -> Sample:
-    """Read the sample of one model against the observations (see the module text); raises ValueError on trouble.
+    """Read the sample of one model against the observations (see the module text).
 
-    Reading NetCDF files is serialised across threads (zarr stores are read concurrently).
+    Reading NetCDF files is serialised across threads (zarr stores are read concurrently). `ValueError` is raised on
+    trouble, as in `_read_sample`.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check (see `sample_spec`).
+
+    Returns
+    -------
+    Sample
+        The sampled observations and forecast.
     """
     both_zarr = _is_store(kw, "obs") and _is_store(kw, "model")
     with nullcontext() if both_zarr else _NETCDF_LOCK:
@@ -396,7 +738,24 @@ def read_sample(kw: dict) -> Sample:
 
 
 def _read_sample(kw: dict) -> Sample:
-    """The body of read_sample, run under the NetCDF lock when files are read."""
+    """Read the sample: the body of `read_sample`, run under the NetCDF lock when files are read.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+
+    Returns
+    -------
+    Sample
+        The sampled arrays, restricted to the inits found in the observations and to the cells with at least
+        ``_MIN_COVER`` of their values present in both datasets (at most ``SAMPLE_CELLS``, spread evenly).
+
+    Raises
+    ------
+    ValueError
+        No forecast or observation is found, no init is in the observations, or no sampled cell has data in both.
+    """
     sources = forecast_sources(kw)
     if not sources:
         raise ValueError("no forecast file or store found")
@@ -431,7 +790,26 @@ def _read_sample(kw: dict) -> Sample:
 
 def sample_report(sample: Sample, lead_label: str, *, obs_boundary: str = "", forecast_boundary: str = "",
                   source: str = "forecast") -> ForecastAlignmentReport:
-    """The alignment report of a sample under one lead label (cheap: no reading)."""
+    """Return the alignment report of a sample under one lead label (cheap: no reading).
+
+    Parameters
+    ----------
+    sample : Sample
+        The sampled arrays.
+    lead_label : {"start", "end"}
+        The lead label to test.
+    obs_boundary : str, default ""
+        The observations' declared day boundary text, for the notes of the report.
+    forecast_boundary : str, default ""
+        The forecast's declared day boundary text, for the notes of the report.
+    source : str, default "forecast"
+        The name the report gives the forecast.
+
+    Returns
+    -------
+    hcwf.onset.alignment.ForecastAlignmentReport
+        The per-lead report and verdict, with the notes of the sample first.
+    """
     report = forecast_alignment_from_samples(
         sample.obs_days, sample.forecast, leads=sample.leads, pad=sample.pad, lead_label=lead_label,
         obs="observations", source=source, n_inits=sample.n_inits, obs_boundary=obs_boundary,
@@ -451,14 +829,37 @@ _KEYS = ("obs_dir", "obs_var", "obs_unit_cvt", "obs_paths", "obs_files_years", "
 
 
 def _store() -> Store:
-    """The verdict cache: a hcwf.cache.Store of kind "alignment" next to the detection cache (fresh copies)."""
+    """Return the verdict cache.
+
+    It is a `hcwf.cache.Store` of kind ``"alignment"`` next to the detection cache (fresh copies, no memory layer).
+
+    Returns
+    -------
+    hcwf.cache.Store
+        The cache store.
+    """
     from hcwf.config.detect import cache_dir as detect_dir
 
     return Store("alignment", detect_dir().parent, label="Alignment", memory=False)
 
 
 def _files(kw: dict, side: str) -> list:
-    """What identifies a side's content: the identity of its listed files, its zarr store, or its NetCDF files."""
+    """Return what identifies a side's content.
+
+    This is the identity of its listed files, its zarr store, or its NetCDF files.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+    side : {"obs", "model"}
+        The dataset.
+
+    Returns
+    -------
+    list
+        One `hcwf.cache.file_identity` entry per file or store; ``[folder, None, None]`` when the folder cannot be read.
+    """
     folder, paths, _, _ = _SIDES[side]
     if kw.get(paths):
         return [file_identity(f) for f in kw[paths]]
@@ -471,7 +872,24 @@ def _files(kw: dict, side: str) -> list:
 
 
 def cache_parts(kw: dict, lead_label: str, obs_boundary: str, forecast_boundary: str) -> dict:
-    """What a cached verdict depends on: both datasets (their files), the lead label, the day boundaries, the sample."""
+    """Return what a cached verdict depends on: both datasets (their files), the lead label, the day boundaries, the sample.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check.
+    lead_label : str
+        The lead label tested.
+    obs_boundary : str
+        The observations' declared day boundary text.
+    forecast_boundary : str
+        The forecast's declared day boundary text.
+
+    Returns
+    -------
+    dict
+        The key parts for `hcwf.cache.Store`.
+    """
     return {"lead_label": lead_label, "boundaries": [obs_boundary, forecast_boundary],
             "keys": {k: kw.get(k) for k in _KEYS},
             "patterns": [_patterns(kw.get("obs_file_pattern")), _patterns(kw.get("file_pattern"))],
@@ -481,11 +899,31 @@ def cache_parts(kw: dict, lead_label: str, obs_boundary: str, forecast_boundary:
 
 def check_labels(kw: dict, labels=("start",), *, obs_boundary: str = "", forecast_boundary_format: str = "{label}",
                  source: str = "forecast", use_cache: bool = True) -> dict:
-    """Sampled alignment reports of one model under each lead label: {label: (report, from_cache)}.
+    """Return the sampled alignment reports of one model under each lead label.
 
-    The sample is read once, and not at all when every label is cached. forecast_boundary_format turns a label
-    into the forecast's declared day boundary text (used only for the note on declared boundaries). Raises
-    ValueError (or the reader's error) when the sample cannot be made.
+    The sample is read once, and not at all when every label is cached. `ValueError` (or the reader's error) is raised
+    when the sample cannot be made.
+
+    Parameters
+    ----------
+    kw : dict
+        The keyword arguments of the sampled check (see `sample_spec`).
+    labels : sequence of str, default ``("start",)``
+        The lead labels to test.
+    obs_boundary : str, default ""
+        The observations' declared day boundary text.
+    forecast_boundary_format : str, default "{label}"
+        A format string turning a label into the forecast's declared day boundary text (used only for the note on
+        declared boundaries); it is formatted with ``label=``.
+    source : str, default "forecast"
+        The name the reports give the forecast.
+    use_cache : bool, default True
+        Read cached reports and store new ones.
+
+    Returns
+    -------
+    dict of str to tuple of (hcwf.onset.alignment.ForecastAlignmentReport, bool)
+        For each label the report and whether it came from the cache.
     """
     out, todo = {}, []
     store = _store()
@@ -509,13 +947,24 @@ def check_labels(kw: dict, labels=("start",), *, obs_boundary: str = "", forecas
 
 
 def check_models(jobs: dict, *, workers: int = 8, use_cache: bool = True) -> dict:
-    """Run check_labels for several models in parallel threads.
+    """Run `check_labels` for several models in parallel threads.
 
-    jobs maps a name to (kw, labels, options) where options are check_labels' keyword arguments. Returns
-    {name: {label: (report, cached)}} or {name: exception} for a model whose sample could not be made.
+    Parameters
+    ----------
+    jobs : dict
+        Maps a name to ``(kw, labels, options)`` where `options` are the keyword arguments of `check_labels`.
+    workers : int, default 8
+        The most threads; fewer when there are fewer jobs (one job runs in the calling thread).
+    use_cache : bool, default True
+        Passed on to `check_labels`.
+
+    Returns
+    -------
+    dict
+        ``{name: {label: (report, cached)}}``, or ``{name: exception}`` for a model whose sample could not be made.
     """
     def run(item):
-        """One model's check; a failure is returned, not raised."""
+        """Run one model's check; a failure is returned, not raised."""
         name, (kw, labels, options) = item
         try:
             return name, check_labels(kw, labels, use_cache=use_cache, **options)

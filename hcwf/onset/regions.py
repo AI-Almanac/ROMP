@@ -1,9 +1,9 @@
 """Regions and countries: where each onset definition applies, and each area's reference datasets.
 
-Entries live in hcwf/onset/regions/*.yaml (schema in docs/onset_spec.md,
-"Regions and countries"). Areas nest through `part_of`, so a country inherits
-the definitions of the regions that contain it. `box` is the one lookup of a region's lat/lon box, and `polygon_boundary` the
-India CMZ outline for the grids that have one.
+Entries live in ``hcwf/onset/regions/*.yaml`` (schema in ``docs/onset_spec.md``, "Regions and countries"). Areas nest
+through ``part_of``, so a country inherits the definitions of the regions that contain it. `box` is the one lookup of a
+region's lat/lon box, and `polygon_boundary` the India CMZ outline for the grids that have one. Definitions are named
+by the ids of `hcwf.onset.definition`'s registry; the units of an area are `hcwf.spatial.units.UnitsSpec`.
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from hcwf.errors import UnitsSpecError
 log = logging.getLogger(__name__)
 
 REGIONS_DIR = Path(__file__).parent / "regions"
+"""The folder of the bundled region YAML files."""
 
 _KEYS = ("id", "title", "kind", "iso", "aliases", "part_of", "domain", "units", "observations",
          "climatology", "definitions", "notes")
@@ -39,29 +40,78 @@ class Region:
     """A country or region with its reference datasets and recommended onset definitions."""
 
     id: str
+    """The identifier, also the name of its YAML file."""
     title: str
+    """The area's name."""
     kind: str
+    """``"country"`` or ``"region"``."""
     iso: str | None = None
+    """The ISO 3166-1 alpha-3 code of a country."""
     aliases: tuple[str, ...] = ()
+    """Other names the area is found by."""
     part_of: tuple[str, ...] = ()
+    """The ids of the regions that contain this one."""
     lat: tuple[float, float] | None = None
+    """The latitude range ``(low, high)`` of the domain box, in degrees."""
     lon: tuple[float, float] | None = None
+    """The longitude range ``(low, high)`` of the domain box, in degrees."""
     units: UnitsSpec | None = None
+    """The spatial units of the area (see `hcwf.spatial.units.UnitsSpec`)."""
     observations_dataset: str | None = None
+    """The name of the reference observation dataset."""
     day_boundary: str | None = None
+    """The day boundary of that dataset, for example ``"00 UTC, labelled by start"``."""
     climatology_years: tuple[int, int] | None = None
+    """The first and last year of the reference climatology."""
     default_definition: str | None = None
+    """The id of the definition recommended for the area."""
     also_definitions: tuple[str, ...] = ()
+    """The ids of other recommended definitions."""
     notes: str = ""
+    """Free-text notes."""
 
 
 def _fail(origin: str, path: str, message: str):
-    """Raise a RegionError naming the file and YAML path."""
+    """Raise a `RegionError` naming the file and YAML path.
+
+    Parameters
+    ----------
+    origin : str
+        The file name or other source of the YAML.
+    path : str
+        The dotted YAML path of the fault; empty for the whole entry.
+    message : str
+        What is wrong and how to fix it.
+
+    Raises
+    ------
+    RegionError
+        Always.
+    """
     raise RegionError(f"{origin}: {path}: {message}" if path else f"{origin}: {message}")
 
 
 def _mapping(value, origin: str, path: str, allowed: tuple[str, ...]) -> dict:
-    """Check value is a mapping with only allowed keys."""
+    """Check that a value is a mapping with only allowed keys.
+
+    A `RegionError` is raised (by `_fail`) when `value` is not a mapping or has a key that is not allowed.
+
+    Parameters
+    ----------
+    value : object
+        The YAML value.
+    origin : str
+        The file name, for error messages.
+    path : str
+        The YAML path of `value`, for error messages.
+    allowed : tuple of str
+        The keys the mapping may have.
+
+    Returns
+    -------
+    dict
+        `value` itself.
+    """
     if not isinstance(value, dict):
         _fail(origin, path, f"expected a mapping but found {value!r}. Fix: write 'key: value' lines")
     for key in value:
@@ -72,14 +122,48 @@ def _mapping(value, origin: str, path: str, allowed: tuple[str, ...]) -> dict:
 
 
 def _strings(value, origin: str, path: str) -> tuple[str, ...]:
-    """Check value is a list of strings."""
+    """Check that a value is a list of strings.
+
+    A `RegionError` is raised (by `_fail`) when it is not.
+
+    Parameters
+    ----------
+    value : object
+        The YAML value.
+    origin : str
+        The file name, for error messages.
+    path : str
+        The YAML path of `value`, for error messages.
+
+    Returns
+    -------
+    tuple of str
+        The strings.
+    """
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         _fail(origin, path, f"expected a list of text but found {value!r}. Fix: write e.g. '[a, b]'")
     return tuple(value)
 
 
 def _span(value, origin: str, path: str) -> tuple[float, float]:
-    """Check value is a [low, high] pair of numbers."""
+    """Check that a value is a ``[low, high]`` pair of numbers with ``low < high``.
+
+    A `RegionError` is raised (by `_fail`) when it is not.
+
+    Parameters
+    ----------
+    value : object
+        The YAML value.
+    origin : str
+        The file name, for error messages.
+    path : str
+        The YAML path of `value`, for error messages.
+
+    Returns
+    -------
+    tuple of (float, float)
+        The range.
+    """
     ok = (isinstance(value, list) and len(value) == 2
           and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value) and value[0] < value[1])
     if not ok:
@@ -88,7 +172,27 @@ def _span(value, origin: str, path: str) -> tuple[float, float]:
 
 
 def _parse(text: str, origin: str, base: Path | None = None) -> Region:
-    """Validate one region entry; `base` is the folder of its file, where relative units paths start."""
+    """Validate one region entry.
+
+    Parameters
+    ----------
+    text : str
+        The YAML text of the entry.
+    origin : str
+        The file name, for error messages.
+    base : pathlib.Path, optional
+        The folder of the entry's file, where relative ``units`` paths start.
+
+    Returns
+    -------
+    Region
+        The validated region.
+
+    Raises
+    ------
+    RegionError
+        The YAML is invalid, a key is unknown, missing or malformed, or a name it refers to does not exist.
+    """
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -163,7 +267,25 @@ def _parse(text: str, origin: str, base: Path | None = None) -> Region:
 
 
 def _parse_units(value, origin: str, base: Path | None) -> UnitsSpec:
-    """Validate a `units:` block: a shapefile (with its id column) or a weights table, and an optional list."""
+    """Validate a ``units:`` block: a shapefile (with its id column) or a weights table, and optional extras.
+
+    A `RegionError` is raised (by `_fail`) when the block has an unknown key, a value that is not text, a wrong
+    combination of keys, or is rejected by `hcwf.spatial.units.UnitsSpec`.
+
+    Parameters
+    ----------
+    value : object
+        The YAML value of the block.
+    origin : str
+        The file name, for error messages.
+    base : pathlib.Path or None
+        The folder where relative paths start; None means `REGIONS_DIR`.
+
+    Returns
+    -------
+    hcwf.spatial.units.UnitsSpec
+        The units specification.
+    """
     block = _mapping(value, origin, "units", _UNITS_KEYS)
     for key, text in block.items():
         if not isinstance(text, str) or not text.strip():
@@ -185,13 +307,28 @@ def _parse_units(value, origin: str, base: Path | None) -> UnitsSpec:
 
 
 def region_ids() -> list[str]:
-    """Return the ids of the bundled regions, sorted."""
+    """Return the ids of the bundled regions, sorted.
+
+    Returns
+    -------
+    list of str
+        The stems of the YAML files of `REGIONS_DIR`.
+    """
     return sorted(p.stem for p in REGIONS_DIR.glob("*.yaml"))
 
 
 @functools.lru_cache(maxsize=None)
 def _index() -> dict[str, Region]:
-    """Load every region, keyed by lower-cased id and alias."""
+    """Load every region, keyed by lower-cased id and alias.
+
+    The result is cached for the process. A `RegionError` is raised (by `_fail`) when a file is invalid, its id differs
+    from its file name, or an alias is used twice.
+
+    Returns
+    -------
+    dict of str to Region
+        The regions by lower-cased id and alias.
+    """
     index: dict[str, Region] = {}
     for file in sorted(REGIONS_DIR.glob("*.yaml")):
         region = _parse(file.read_text(), file.name, file.parent)
@@ -206,7 +343,23 @@ def _index() -> dict[str, Region]:
 
 
 def load_region(name: str) -> Region:
-    """Find a region by id or alias, ignoring case."""
+    """Find a region by id or alias, ignoring case.
+
+    Parameters
+    ----------
+    name : str
+        The id or an alias of the region.
+
+    Returns
+    -------
+    Region
+        The region.
+
+    Raises
+    ------
+    RegionError
+        No region has that id or alias.
+    """
     try:
         return _index()[name.strip().lower()]
     except KeyError:
@@ -216,7 +369,18 @@ def load_region(name: str) -> Region:
 
 
 def ancestors(region: Region) -> list[Region]:
-    """Return the regions containing this one through part_of, nearest first; cycles are cut."""
+    """Return the regions containing this one through ``part_of``, nearest first; cycles are cut.
+
+    Parameters
+    ----------
+    region : Region
+        The region whose containers are wanted.
+
+    Returns
+    -------
+    list of Region
+        The ancestors, breadth first, each once.
+    """
     seen = {region.id}
     out: list[Region] = []
     queue = list(region.part_of)
@@ -231,10 +395,20 @@ def ancestors(region: Region) -> list[Region]:
 
 
 def definitions_for(name: str) -> tuple[str | None, list[str]]:
-    """Return (default definition id or None, other recommended ids) for a region or country.
+    """Return the default and the other recommended definition ids of a region or country.
 
-    The nearest area in the part_of chain that names a default wins; the others
-    are the union of every `also` along the chain, without the default.
+    The nearest area in the ``part_of`` chain that names a default wins; the others are the union of every ``also``
+    along the chain, without the default.
+
+    Parameters
+    ----------
+    name : str
+        The id or alias of the region.
+
+    Returns
+    -------
+    tuple of (str or None, list of str)
+        The default definition id (None if no area names one) and the other recommended ids.
     """
     region = load_region(name)
     chain = [region, *ancestors(region)]
@@ -250,8 +424,19 @@ def definitions_for(name: str) -> tuple[str | None, list[str]]:
 def check_definition_region(defn: Definition, name: str) -> str | None:
     """Return a warning when the definition is not meant for the region, else None.
 
-    There is no warning if the definition lists no regions, or if the region or
-    any region containing it is listed.
+    There is no warning if the definition lists no regions, or if the region or any region containing it is listed.
+
+    Parameters
+    ----------
+    defn : hcwf.onset.model.Definition
+        The definition.
+    name : str
+        The id or alias of the region.
+
+    Returns
+    -------
+    str or None
+        The warning text, or None.
     """
     if not defn.regions:
         return None
@@ -264,7 +449,20 @@ def check_definition_region(defn: Definition, name: str) -> str | None:
 
 
 def box(name: str) -> tuple[float, float, float, float]:
-    """Return (lats, latn, lonw, lone) of a region's `domain` box; the name matches by id or alias, ignoring case."""
+    """Return the ``domain`` box of a region; the name matches by id or alias, ignoring case.
+
+    A `RegionError` is raised (by `_fail`) when the region has no domain box.
+
+    Parameters
+    ----------
+    name : str
+        The id or alias of the region.
+
+    Returns
+    -------
+    tuple of (float, float, float, float)
+        The south and north latitude and the west and east longitude, in degrees.
+    """
     region = load_region(str(name).strip())
     if region.lat is None or region.lon is None:
         _fail(f"{region.id}.yaml", "domain", "the region has no domain (lat/lon box). Fix: add "
@@ -273,7 +471,18 @@ def box(name: str) -> tuple[float, float, float, float]:
 
 
 def polygon_boundary(da):
-    """Return (lat, lon) arrays of the India CMZ polygon matching the grid spacing of da (1, 2 or 4 degrees), else (None, None)."""
+    """Return the India CMZ polygon that matches the grid spacing of an array (1, 2 or 4 degrees).
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        An array with a ``lat`` coordinate of at least two values; the spacing is read from the first two.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray or None, numpy.ndarray or None)
+        The latitudes and longitudes of the polygon vertices in degrees, or ``(None, None)`` for another spacing.
+    """
     polygon_lat, polygon_lon = None, None
     lat = da.lat.values
     lat_diff = abs(lat[1] - lat[0])
@@ -297,6 +506,17 @@ def polygon_boundary(da):
 
 
 def units_spec(name: str) -> UnitsSpec | None:
-    """The `units:` block of the nearest area in the part_of chain that declares one, else None."""
+    """Return the ``units`` block of the nearest area in the ``part_of`` chain that declares one.
+
+    Parameters
+    ----------
+    name : str
+        The id or alias of the region.
+
+    Returns
+    -------
+    hcwf.spatial.units.UnitsSpec or None
+        The specification, or None if no area in the chain declares one.
+    """
     region = load_region(name)
     return next((r.units for r in (region, *ancestors(region)) if r.units), None)
