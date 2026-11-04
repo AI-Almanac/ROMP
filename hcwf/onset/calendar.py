@@ -98,6 +98,40 @@ def fixed_bounds(keys: np.ndarray, years, start: DayRef, end: DayRef) -> tuple[n
     return first, last
 
 
+def doy_offsets(start_doy, end_doy, start_offset: int = 0, end_offset: int = 0):
+    """Return the day offsets from January 1 of a window given by 1-based day-of-year bounds.
+
+    This is the one place that rounds the day-of-year bounds, applies the offsets and decides which windows end in
+    the following year (an end day-of-year before the start). `doy_bounds` maps the offsets onto day indices of a data
+    axis; `hcwf.onset.engine` maps them onto calendar labels for forecasts.
+
+    Parameters
+    ----------
+    start_doy : array_like of float, shape (cell,)
+        The first day of the window as a day of the year; NaN where the cell has no such season.
+    end_doy : array_like of float, shape (cell,)
+        The last day of the window as a day of the year; NaN where the cell has no such season.
+    start_offset : int, default 0
+        Days added to the first day.
+    end_offset : int, default 0
+        Days added to the last day.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray)
+        The offset of the first day from January 1 of the start year and the offset of the last day from January 1
+        of the start year, or of the following year where the window wraps (both ``int64``, shape (cell,)); the wrap
+        mask (bool); and the validity mask (bool), False where either bound is NaN. NaN bounds count as day 1, so
+        the offsets of invalid cells are not meaningful.
+    """
+    start_doy = np.asarray(start_doy, dtype=float)
+    end_doy = np.asarray(end_doy, dtype=float)
+    valid = np.isfinite(start_doy) & np.isfinite(end_doy)
+    s = np.rint(np.nan_to_num(start_doy, nan=1.0)).astype(np.int64)
+    e = np.rint(np.nan_to_num(end_doy, nan=1.0)).astype(np.int64)
+    return s - 1 + start_offset, e - 1 + end_offset, e < s, valid
+
+
 def doy_bounds(keys: np.ndarray, years, start_doy, end_doy, start_offset: int = 0,
                end_offset: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """Return the inclusive day indices of windows given by 1-based day-of-year bounds, over years and cells.
@@ -128,14 +162,9 @@ def doy_bounds(keys: np.ndarray, years, start_doy, end_doy, start_offset: int = 
     years = np.asarray(years, dtype=np.int64)
     jan1 = find_days(keys, years, 1, 1)
     jan1_next = find_days(keys, years + 1, 1, 1)
-    start_doy = np.asarray(start_doy, dtype=float)
-    end_doy = np.asarray(end_doy, dtype=float)
-    valid = np.isfinite(start_doy) & np.isfinite(end_doy)
-    s = np.where(valid, np.rint(np.nan_to_num(start_doy)), 1).astype(np.int64)
-    e = np.where(valid, np.rint(np.nan_to_num(end_doy)), 1).astype(np.int64)
-    wraps = e < s
-    first = jan1[:, None] + s[None, :] - 1 + start_offset
+    start_off, end_off, wraps, valid = doy_offsets(start_doy, end_doy, start_offset, end_offset)
+    first = jan1[:, None] + start_off[None, :]
     end_base = np.where(wraps[None, :], jan1_next[:, None], jan1[:, None])
-    last = end_base + e[None, :] - 1 + end_offset
+    last = end_base + end_off[None, :]
     ok = valid[None, :] & (jan1[:, None] >= 0) & (end_base >= 0)
     return np.where(ok, first, -1), np.where(ok, last, -1)

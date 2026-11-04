@@ -297,6 +297,24 @@ class SparseTransform:
             return self._source_ids
         return tuple((float(a), float(b)) for a in self.grid[0] for b in self.grid[1])
 
+    def select_targets(self, positions) -> "SparseTransform":
+        """Return the transform restricted to some of the units.
+
+        Parameters
+        ----------
+        positions : array_like of int
+            The positions of the units to keep, in the order they are wanted.
+
+        Returns
+        -------
+        hcwf.spatial.regrid.SparseTransform
+            A transform with the same sources, keys, convention and grid and only those unit rows.
+        """
+        positions = np.asarray(positions, dtype=np.int64)
+        return SparseTransform(self.weighted_matrix[positions], self._source_ids,
+                               tuple(np.asarray(self.target_ids)[positions]), keys=self.keys,
+                               convention=self.convention, grid=self.grid)
+
     @cached_property
     def source_index(self) -> dict:
         """The position of each source id in `source_ids`.

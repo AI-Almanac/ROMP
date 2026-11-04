@@ -343,11 +343,12 @@ def _derived_bounds(definition: Definition, keys: np.ndarray, years: np.ndarray,
         s_doy = onset[k]
         e_doy = cessation[k]
         first, last = cal.doy_bounds(keys, years, s_doy, e_doy, seasons.start.offset_days, seasons.end.offset_days)
-        absent = ~(np.isfinite(s_doy) & np.isfinite(e_doy))
+        start_off, _, _, valid = cal.doy_offsets(s_doy, e_doy, seasons.start.offset_days, seasons.end.offset_days)
+        absent = ~valid
         if n_seasons is not None:
             absent |= n_seasons <= k
         rescue = (first < 0) & ~absent[None, :] & (jan1[:, None] >= 0)
-        start_rescued = jan1[:, None] + np.rint(np.nan_to_num(s_doy))[None, :].astype(np.int64) - 1 + seasons.start.offset_days
+        start_rescued = jan1[:, None] + start_off[None, :]
         first = np.where(rescue, start_rescued, first)
         last = np.where(rescue & (last < 0), np.iinfo(np.int64).max // 4, last)
         firsts.append(first)
@@ -968,11 +969,9 @@ def _derived_windows(definition: Definition, calendar: str, init_year: np.ndarra
         return cal.label_keys(y, m, d)[:, inverse.reshape(-1)]
 
     for k in range(n_k):
-        s_doy = np.rint(np.nan_to_num(onset[k], nan=1.0)).astype(np.int64)
-        e_doy = np.rint(np.nan_to_num(cessation[k], nan=1.0)).astype(np.int64)
-        wraps = (e_doy < s_doy)[None, :]
-        start_off = s_doy - 1 + seasons.start.offset_days
-        end_off = e_doy - 1 + seasons.end.offset_days
+        start_off, end_off, wraps, _ = cal.doy_offsets(onset[k], cessation[k], seasons.start.offset_days,
+                                                       seasons.end.offset_days)
+        wraps = wraps[None, :]
         for i, shift in enumerate((-1, 0, 1)):
             year = init_year + shift
             low[i, k] = shifted_keys(year, start_off)
@@ -1149,6 +1148,35 @@ def _derived_forecast_jobs(definition: Definition, forecast: ForecastRain, allow
     return jobs, JobLayout((k,), _expand_rows(preset, n_member, n_cell), names, n_series)
 
 
+def _lead_window_bounds(lead_window: tuple[int, int], n_leads: int, from_first: bool = False) -> tuple[int, int]:
+    """Return the first and last candidate lead (1-based, inclusive) of a lead window, the last cut to the data.
+
+    Parameters
+    ----------
+    lead_window : tuple of (int, int)
+        The first and last candidate lead.
+    n_leads : int
+        The number of leads of the forecast.
+    from_first : bool, default False
+        Require the window to start at lead 1 (stitched detection).
+
+    Returns
+    -------
+    tuple of (int, int)
+        The first lead and the last lead, cut to `n_leads`.
+
+    Raises
+    ------
+    ValueError
+        The window starts before lead 1, or after it when `from_first`.
+    """
+    first, last = int(lead_window[0]), int(lead_window[1])
+    if first < 1 or (from_first and first != 1):
+        need = "start at 1" if from_first else "start at 1 or later"
+        raise ValueError(f"lead_window must {need}, got {tuple(lead_window)}")
+    return first, min(last, n_leads)
+
+
 def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_window: tuple[int, int] = (1, 30),
                         restrict_to_season: bool = True, season_climatology: xr.Dataset | None = None
                         ) -> tuple[Jobs, JobLayout]:
@@ -1169,7 +1197,7 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
     forecast : hcwf.onset.model.ForecastRain
         The forecast, dims ``(init_time, [member], *spatial, lead)``.
     lead_window : tuple of (int, int), default (1, 30)
-        The first and last candidate lead, 1-based and inclusive.
+        The first and last candidate lead, 1-based and inclusive; the first must be at least 1 (a ``ValueError`` otherwise).
     restrict_to_season : bool, default True
         Limit the candidates to the seasons of the definition.
     season_climatology : xarray.Dataset, optional
@@ -1184,7 +1212,7 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
     n_init = forecast.tenths.shape[0]
     n_series = int(np.prod(forecast.tenths.shape[:-1], dtype=np.int64))
     rest = n_series // max(n_init, 1)
-    lo, hi = max(lead_window[0], 1), min(lead_window[1], n_leads)
+    lo, hi = _lead_window_bounds(lead_window, n_leads)
     allowed = np.zeros(n_leads, dtype=bool)
     allowed[lo - 1:hi] = True
     if not restrict_to_season:
@@ -1303,12 +1331,11 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
     Raises
     ------
     ValueError
-        `lead_window` does not start at 1, the history and forecast grids differ, the history dates are not strictly
+        `lead_window` does not start at 1 (see `build_forecast_jobs`), the history and forecast grids differ, the history dates are not strictly
         increasing, or the history does not reach the date of lead 1 of some init.
     """
-    if lead_window[0] != 1:
-        raise ValueError(f"stitched detection needs lead_window to start at 1, got {lead_window}")
     n_leads = forecast.tenths.shape[-1]
+    _, hi = _lead_window_bounds(lead_window, n_leads, from_first=True)
     n_init = forecast.tenths.shape[0]
     series_dims = forecast.dims[:-1]
     n_lead_dims = 2 if "member" in series_dims else 1
@@ -1328,7 +1355,6 @@ def build_stitched_jobs(definition: Definition, history: DailyRain, forecast: Fo
         bad = int(np.argmax(~reached))
         raise ValueError(f"history does not reach {int(keys[bad, 0])}, the date label of lead 1 of init {bad}")
     split = pos.astype(np.int64)
-    hi = min(lead_window[1], n_leads)
     allowed = np.zeros(n_leads, dtype=bool)
     allowed[:hi] = True
     if not restrict_to_season:

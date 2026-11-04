@@ -58,15 +58,10 @@ def unit_transform(units, lat, lon, positions=None, *, tolerance=None, wrap_long
     hcwf.spatial.regrid.SparseTransform
         The transform from the grid's cells to the (kept) units.
     """
-    from hcwf.spatial import SparseTransform
-
     full = units.transform(lat, lon, tolerance=tolerance, convention=convention, wrap_longitude=wrap_longitude)
     if positions is None:
         return full
-    positions = np.asarray(positions, dtype=np.int64)
-    out = SparseTransform(full.weighted_matrix[positions], full._source_ids, tuple(np.asarray(full.target_ids)[positions]),
-                          keys=full.keys, convention=full.convention, grid=full.grid)
-    return out
+    return full.select_targets(positions)
 
 
 def _cell_positions(transform, lat, lon, flat=None):

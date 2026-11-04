@@ -87,7 +87,7 @@ def _empty() -> dict:
     return {"years": {}, "dims": None, "coords": None, "lat": None, "lon": None, "extras": {}}
 
 
-def _read(path: Path) -> dict | None:
+def _read(path: Path) -> dict:
     """Read a cached entry into its in-memory table.
 
     Parameters
@@ -97,7 +97,7 @@ def _read(path: Path) -> dict | None:
 
     Returns
     -------
-    dict or None
+    dict
         The table: ``years`` (``{year: datetime64[ns] values}``), ``dims`` (the spatial dimension names, a tuple),
         ``coords`` (``{dim: values}``), ``lat`` and ``lon`` (the coordinates of a grid, else None) and ``extras``
         (``{year: {name: values}}`` of the per-unit arrays the onsets carry).

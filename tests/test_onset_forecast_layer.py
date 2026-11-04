@@ -379,3 +379,15 @@ def test_model_climatology_rejects_quantiles_and_empty_input():
     with pytest.raises(ValueError, match="no forecasts"):
         climatology.compute_thresholds_from_forecasts(_thresholds_definition(), [], (2000, 2001))
 
+
+
+def test_lead_window_start_rule_is_shared():
+    """A lead window starting before lead 1 is an error in both paths; only stitched detection also needs exactly 1."""
+    fc_values = np.zeros((1, 1, 1, 10), dtype=np.int32)
+    hist, fc = case(hist_with([]), fc_values, ["2000-06-10"])
+    for bad in ((0, 9), (-3, 9)):
+        with pytest.raises(ValueError, match="start at 1"):
+            engine.build_forecast_jobs(definition(ANY_WET, JJAS), fc, bad)
+        with pytest.raises(ValueError, match="start at 1"):
+            engine.build_stitched_jobs(definition(ANY_WET, JJAS), hist, fc, bad)
+    engine.build_forecast_jobs(definition(ANY_WET, JJAS), fc, (2, 9))

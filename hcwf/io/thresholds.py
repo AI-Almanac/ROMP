@@ -363,7 +363,7 @@ def _thresholds_key(onset, obs, options, select, model) -> str:
                  ("model_units", None if model is None else model.units)])
 
 
-def load_thresholds(onset=None, obs=None, area=None, options=None, ev=None, output=None, *, model=None,
+def load_thresholds(onset, obs, area, options, ev, output, *, model=None,
                     select=NO_SELECTION, parallel=None, cache_dir=None):
     """Return the definition's named thresholds (what the onset detection takes as ``thresh_slice``).
 
@@ -373,18 +373,18 @@ def load_thresholds(onset=None, obs=None, area=None, options=None, ev=None, outp
 
     Parameters
     ----------
-    onset : hcwf.config.onset.OnsetSetup, optional
-        The onset setup (required in practice).
-    obs : hcwf.config.model.ObsSpec, optional
-        The observation dataset settings (required in practice).
-    area : hcwf.config.model.AreaSpec, optional
-        The region and mask settings (required in practice).
-    options : hcwf.config.model.OnsetOptions, optional
-        The onset options (required in practice).
-    ev : hcwf.config.model.EvaluationSpec, optional
-        The evaluation settings (required in practice).
-    output : hcwf.config.model.OutputSpec, optional
-        The output settings (required in practice).
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup.
+    obs : hcwf.config.model.ObsSpec
+        The observation dataset settings.
+    area : hcwf.config.model.AreaSpec
+        The region and mask settings.
+    options : hcwf.config.model.OnsetOptions
+        The onset options.
+    ev : hcwf.config.model.EvaluationSpec
+        The evaluation settings.
+    output : hcwf.config.model.OutputSpec
+        The output settings.
     model : hcwf.config.model.ModelSpec, optional
         The forecast model the thresholds may come from.
     select : hcwf.config.model.Selection, default NO_SELECTION

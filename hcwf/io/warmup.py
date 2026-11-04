@@ -51,7 +51,7 @@ def _warm_masks(lazy, var, dataset_name, area, select, dir_fig):
     mask_region_loaded(xr.Dataset({var: field}), area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)
 
 
-def warm_up(onset, obs, area, options, ev, output, *, model=None, select=NO_SELECTION, parallel=None,
+def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION, parallel=None,
             cache_dir=None):
     """Read or build in this process what every year of a run shares: the thresholds and the cell masks of both grids.
 
@@ -74,8 +74,8 @@ def warm_up(onset, obs, area, options, ev, output, *, model=None, select=NO_SELE
         The evaluation settings (years, probabilistic or not).
     output : hcwf.config.model.OutputSpec
         The output settings (``figure_dir``).
-    model : hcwf.config.model.Model, optional
-        The forecast source whose grid gets a mask; None leaves the model masks to the workers (that step fails quietly).
+    model : hcwf.config.model.ModelSpec
+        The forecast source whose grid gets a mask (and whose forecasts the thresholds may come from).
     select : hcwf.config.model.Selection, default NO_SELECTION
         The run's selection settings.
     parallel : hcwf.config.model.Parallel, optional

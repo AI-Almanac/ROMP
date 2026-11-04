@@ -167,13 +167,14 @@ def climatological_onset(rc, case, select=Selection()):
 
     for year, reader in zip(years_clim, _year_readers(years_clim, rc, select, shared=not grid_point)):
         try:
-            rainfall_ds = reader   # read only when the year's onsets are not cached
             if grid_point:
                 if np.ndim(thresh_da) > 0:
                     raise ValueError("thresh_da must be scalar.")
 
                 rainfall_ds = reader()
                 rainfall_all_years.append(rainfall_ds)
+            else:
+                rainfall_ds = reader   # read only when the year's onsets are not cached
 
             # Detect onset for this year
             onset_da = detect_observed(rainfall_ds, thresh_da, year, rc, select)

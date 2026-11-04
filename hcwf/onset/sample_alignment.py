@@ -32,7 +32,7 @@ import threading
 import warnings
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -80,8 +80,6 @@ class Sample:
     """The number of inits in the sample."""
     n_cells: int
     """The number of cells in the sample."""
-    notes: list = field(default_factory=list)
-    """Notes for the report, as strings."""
 
 
 def _patterns(value) -> tuple:
@@ -774,7 +772,6 @@ def _read_sample(kw: dict) -> Sample:
     n_days = pad + max(LEADS) + MAX_LAG + 1
     obs_days, found = _read_obs(kw, grid, forecast, pad, n_days)
     fc = _forecast_field(forecast, LEADS)
-    notes = []
     obs_days, fc = obs_days[found], fc[found]
     if not len(fc):
         raise ValueError("no forecast init date is in the observations")
@@ -785,7 +782,7 @@ def _read_sample(kw: dict) -> Sample:
         raise ValueError("no sampled cell has data in both the observations and the forecasts")
     if len(keep) > SAMPLE_CELLS:
         keep = keep[_spread(len(keep), SAMPLE_CELLS)]
-    return Sample(obs_days[:, :, keep], fc[:, :, keep], LEADS, pad, int(len(fc)), int(len(keep)), notes)
+    return Sample(obs_days[:, :, keep], fc[:, :, keep], LEADS, pad, int(len(fc)), int(len(keep)))
 
 
 def sample_report(sample: Sample, lead_label: str, *, obs_boundary: str = "", forecast_boundary: str = "",
@@ -808,13 +805,12 @@ def sample_report(sample: Sample, lead_label: str, *, obs_boundary: str = "", fo
     Returns
     -------
     hcwf.onset.alignment.ForecastAlignmentReport
-        The per-lead report and verdict, with the notes of the sample first.
+        The per-lead report and verdict.
     """
     report = forecast_alignment_from_samples(
         sample.obs_days, sample.forecast, leads=sample.leads, pad=sample.pad, lead_label=lead_label,
         obs="observations", source=source, n_inits=sample.n_inits, obs_boundary=obs_boundary,
         forecast_boundary=forecast_boundary, max_lag=MAX_LAG)
-    report.notes = sample.notes + report.notes
     for lead_report in report.per_lead.values():
         lead_report.other = source
     return report
