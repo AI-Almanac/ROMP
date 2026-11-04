@@ -225,7 +225,7 @@ def _init_time_coord(ds, coord_list):
     -------
     str
         The first datetime coordinate whose name contains ``time``, else the first name containing it (an
-        ``IndexError`` follows if no name contains ``time``).
+        `IndexError` follows if no name contains ``time``).
     """
     time_coords = [variable for variable in coord_list if "time" in variable.lower()]
     datetime_coords = [

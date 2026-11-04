@@ -31,7 +31,7 @@ def create_heatmap(score_results, case, spec):
     case : object
         The case drawn; ``case.window.span`` and ``case.model.name`` are part of the output file name.
     spec : object
-        The run's ``FigureSpec``: ``dir_fig`` and ``show_plot``.
+        The run's `~hcwf.config.model.FigureSpec`: ``dir_fig`` and ``show_plot``.
     """
     auc_forecast =score_results['AUC']
     auc_climatology = score_results['AUC_ref']

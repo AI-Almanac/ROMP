@@ -27,7 +27,7 @@ def plot_reliability_diagram(pairs, case, spec):
     case : object
         The case drawn; ``case.model.name`` and ``case.window.span`` are named in the file.
     spec : object
-        The run's ``FigureSpec``: ``save_fig``, ``dir_fig`` and ``show_plot``.
+        The run's `~hcwf.config.model.FigureSpec`: ``save_fig``, ``dir_fig`` and ``show_plot``.
 
     Returns
     -------

@@ -971,7 +971,7 @@ def _fit(X: np.ndarray, y: np.ndarray):
 
     Notes
     -----
-    Only the solver's ``ValueError`` and ``numpy.linalg.LinAlgError`` count as a fold that cannot be fitted; any other
+    Only the solver's `ValueError` and ``numpy.linalg.LinAlgError`` count as a fold that cannot be fitted; any other
     failure is a bug and propagates.
     """
     if len(X) == 0 or len(np.unique(y)) < 2:

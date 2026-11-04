@@ -739,7 +739,7 @@ class CRPSForest:
         Returns
         -------
         CRPSForest
-            The forest itself; ``ValueError`` is raised for invalid inputs or parameters (see
+            The forest itself; `ValueError` is raised for invalid inputs or parameters (see
             `CRPSForest._check_fit_inputs`).
         """
         X = np.asarray(X, dtype=np.float64)
@@ -1009,7 +1009,7 @@ class CRPSForest:
             -1 for a leaf), ``value_start`` and ``value_count`` (int64, the leaf's slice of ``values``), ``values``
             (float64, all leaf members), ``roots`` (int64, each tree's first node) and ``feature_importances``
             (float64), all over the nodes except ``values``, ``roots`` and ``feature_importances``.
-            ``RuntimeError`` is raised if the forest is not fitted.
+            `RuntimeError` is raised if the forest is not fitted.
         """
         self._check_is_fitted()
         feature, threshold, left, right, start, count, values, roots = [], [], [], [], [], [], [], []

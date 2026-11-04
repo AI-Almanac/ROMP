@@ -58,7 +58,7 @@ def units_of(da, spec):
     da : xarray.DataArray
         The field; it has a ``unit`` dimension (units) or ``lat`` and ``lon`` (grid).
     spec : object
-        The run's ``FigureSpec``, or the observations' ``UnitsSpec`` or ``ObsSpec``: anything with a ``units``
+        The run's `~hcwf.config.model.FigureSpec`, or the observations' ``UnitsSpec`` or ``ObsSpec``: anything with a ``units``
         attribute, or a units spec itself.
 
     Returns

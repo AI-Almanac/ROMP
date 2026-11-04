@@ -414,7 +414,7 @@ def conditional_probabilities(onset_days_by_cell: Mapping, issue_days: Sequence[
     KDE is fitted without that year's onset. A cell with fewer than
     `MIN_ONSETS` onsets (after any leave-out) is NaN.
 
-    ``ValueError`` is raised by a called function when ``horizon`` is less than 1, or ``cv_years`` is given and a cell's onsets are not a Series indexed by year.
+    `ValueError` is raised by a called function when ``horizon`` is less than 1, or ``cv_years`` is given and a cell's onsets are not a Series indexed by year.
 
     Parameters
     ----------
@@ -441,7 +441,7 @@ def unconditional_probabilities(onset_days_by_cell: Mapping, issue_days: Sequenc
 
     Arguments and dims as `conditional_probabilities`, with ``lead`` running 0 to ``horizon``.
 
-    ``ValueError`` is raised by a called function when ``horizon`` is less than 1, or ``cv_years`` is given and a cell's onsets are not a Series indexed by year.
+    `ValueError` is raised by a called function when ``horizon`` is less than 1, or ``cv_years`` is given and a cell's onsets are not a Series indexed by year.
 
     Parameters
     ----------
@@ -647,7 +647,7 @@ def plan_issues(test: tuple[int, int], season_start: str, issue_end: str, foreca
     They vary by year when the KDE is refitted without each test year, or when a season day has different horizons in
     different years. ``horizons`` as for `issue_grid`; without it ``forecast_window`` is every date's horizon.
 
-    ``ValueError`` is raised by a called function when the season dates are bad (see `issue_grid`).
+    `ValueError` is raised by a called function when the season dates are bad (see `issue_grid`).
 
     Parameters
     ----------
@@ -828,7 +828,7 @@ def build_climatology(onsets: pd.DataFrame, grid: pd.DataFrame, by_year: bool, m
     ``onsets`` are all the observed onsets (``id``, ``year``, ``onset_day``); each window keeps the units with at least
     ``min_onset_years`` onsets in its years (`eligible_onsets`). The grid, ``by_year`` and ``max_h`` come from `plan_issues`.
 
-    ``ValueError`` is raised by a called function when no unit has enough onset years in a window (see `eligible_onsets`).
+    `ValueError` is raised by a called function when no unit has enough onset years in a window (see `eligible_onsets`).
 
     Parameters
     ----------

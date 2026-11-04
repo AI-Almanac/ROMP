@@ -33,7 +33,7 @@ def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=
     onset_da_dict : dict of str to xarray.DataArray
         The climatological onset day of year, over ``(lat, lon)`` or ``(unit,)``; only the first entry is drawn.
     spec : object
-        The run's ``FigureSpec``: ``polygon``, ``dir_fig``, ``region``, ``show_plot`` and what `~hcwf.figures.visual.set_basemap` reads.
+        The run's `~hcwf.config.model.FigureSpec`: ``polygon``, ``dir_fig``, ``region``, ``show_plot`` and what `~hcwf.figures.visual.set_basemap` reads.
     years_clim : tuple of (int, int)
         The climatology years, named in the output file.
     cbar_ssn : bool, default False

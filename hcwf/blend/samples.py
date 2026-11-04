@@ -282,7 +282,7 @@ class Weekly:
         Returns
         -------
         numpy.ndarray
-            The column's values for every sample; `Weekly.take` raises ``KeyError`` for an unknown column.
+            The column's values for every sample; `Weekly.take` raises `KeyError` for an unknown column.
         """
         return self.take(name)
 

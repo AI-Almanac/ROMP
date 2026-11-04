@@ -191,7 +191,7 @@ def conditional_lead_probabilities(clim_onset, year, init_dates, like, horizon, 
     ``year`` when ``climatology_cv`` is ``"leave_one_year_out"``); NaN for cells without a KDE. ``like`` is a DataArray over
     the spatial axes of the observed onsets (``clim_onset`` is aligned to them as the scoring does).
 
-    ``ValueError`` is raised by a called function when ``climatology_cv`` is not a valid mode.
+    `ValueError` is raised by a called function when ``climatology_cv`` is not a valid mode.
 
     Parameters
     ----------
@@ -235,7 +235,7 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
     has no KDE (too few onset years) are left out. Cases are ordered by init,
     lat and lon; their member counts are infinite.
 
-    ``ValueError`` is raised by a called function when ``climatology_cv`` is not a valid mode.
+    `ValueError` is raised by a called function when ``climatology_cv`` is not a valid mode.
 
     Parameters
     ----------
@@ -387,7 +387,7 @@ def compute_conditional_climatology_as_forecast(clim_onset, year, init_dates, ob
     onset (NaN day, no date) when it does not within ``max_forecast_day``, or when the
     cell has no KDE.
 
-    ``ValueError`` is raised by a called function when ``climatology_cv`` is not a valid mode.
+    `ValueError` is raised by a called function when ``climatology_cv`` is not a valid mode.
 
     Parameters
     ----------

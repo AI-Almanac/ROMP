@@ -42,7 +42,7 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
     model_name : str
         The model (or title) written at the top right and part of the file name.
     spec : object
-        The run's ``FigureSpec``: ``polygon``, ``region``, ``dir_fig`` and what `~hcwf.figures.visual.set_basemap` reads.
+        The run's `~hcwf.config.model.FigureSpec`: ``polygon``, ``region``, ``dir_fig`` and what `~hcwf.figures.visual.set_basemap` reads.
     window : tuple of (int, int), optional
         The verification window, named in the would-be file.
     fig : matplotlib.figure.Figure, optional

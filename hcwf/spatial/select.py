@@ -120,7 +120,7 @@ def lat_swap(ds_tag):
 def coords_fmt(ds_tag, *, region):
     """Standardize lon/lat orientation and return the region's bounds and the data.
 
-    A longitude box that crosses the longitude seam of the data is not supported (`lon_swap` raises ``ValueError``).
+    A longitude box that crosses the longitude seam of the data is not supported (`lon_swap` raises `ValueError`).
 
     Parameters
     ----------
@@ -173,7 +173,7 @@ def region_box(ds, *, region):
 
     Longitude and latitude are put in HCWF's orientation first (see `coords_fmt`). Without a region, or for data on a
     string ``"unit"`` dimension (admin units), there is no box: ``ds`` is returned as it is, in the file's own order.
-    A longitude box that crosses the longitude seam of the data is not supported (`lon_swap` raises ``ValueError``).
+    A longitude box that crosses the longitude seam of the data is not supported (`lon_swap` raises `ValueError`).
 
     Parameters
     ----------
@@ -583,7 +583,7 @@ def load_blocks(da, block_dim, keep=None, keep_dims=None, *, compact=False, read
     cells' ``lat`` and ``lon`` as coordinates over ``"cell"`` and ``"cell"`` itself the cell's position in the whole
     grid.
 
-    A ``ValueError`` is raised when ``keep`` is given and the array is not floating point, when ``keep`` does not match
+    A `ValueError` is raised when ``keep`` is given and the array is not floating point, when ``keep`` does not match
     ``keep_dims``, when ``block_dim`` is one of ``keep_dims``, or when ``compact`` is asked with a ``keep`` that is not 2-D.
 
     Parameters
@@ -981,7 +981,7 @@ def region_select(ds, *, area: AreaSpec, select: Selection | None = None, datase
     ``lat`` and ``lon``, then ``"cell"``, see `load_blocks`), nothing allocated for the others.
 
     With no region, or on a ``"unit"`` dimension, there is no box and no cell mask: the data is read as it is. It
-    raises ``MaskError`` when both ``mask`` and ``nc_mask`` are set, and ``ValueError`` when the longitude box crosses
+    raises ``MaskError`` when both ``mask`` and ``nc_mask`` are set, and `ValueError` when the longitude box crosses
     the longitude seam of the data (see `lon_swap`).
 
     Parameters

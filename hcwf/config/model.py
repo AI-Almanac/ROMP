@@ -658,7 +658,7 @@ def _get(values: Mapping, key: str):
     -------
     object
         The value; None when the key is absent and its schema field has ``fill=False`` (or it is not in the schema).
-        A key that the schema always fills (``fill=True``) and that is missing in ``values`` raises ``KeyError``.
+        A key that the schema always fills (``fill=True``) and that is missing in ``values`` raises `KeyError`.
     """
     return values[key] if _FILLED.get(key, False) else values.get(key)
 
@@ -753,7 +753,7 @@ def _project_units(v) -> dict:
     -------
     dict of str to UnitsSpec
         The spec by source name (``"observations"``, each model, the reference). An invalid ``units:`` section
-        raises ``ValueError``.
+        raises `ValueError`.
     """
     from hcwf.spatial.units import UnitsSpec
 
@@ -799,7 +799,7 @@ def _project_blend(v, onset, lenient: bool = False):
     Raises
     ------
     ValueError
-        The recipe is invalid and ``lenient`` is false (``RecipeError`` is a ``ValueError``).
+        The recipe is invalid and ``lenient`` is false (`~hcwf.errors.RecipeError` is a `ValueError`).
     """
     if not schema.has_blend(v):
         return None
@@ -1216,7 +1216,7 @@ class RunConfig:
         Returns
         -------
         Case
-            The case. A `model` that is not in the config (with ``reference_as`` None) raises ``StopIteration``.
+            The case. A `model` that is not in the config (with ``reference_as`` None) raises `StopIteration`.
         """
         if reference_as is None:
             return next(c for c in self.cases() if c.model.name == model)

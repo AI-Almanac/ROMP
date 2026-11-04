@@ -938,7 +938,7 @@ def grid_weights(source_lat, source_lon, lat, lon, *, cell_area: str = "planar")
     Source longitudes are first shifted by whole turns to the target's convention. ``cell_area="cos_lat"``
     multiplies by the cosine of the source cell's latitude.
 
-    A ``ValueError`` is raised (by `_check_options`) when ``cell_area`` is not one of `CELL_AREAS`.
+    A `ValueError` is raised (by `_check_options`) when ``cell_area`` is not one of `CELL_AREAS`.
 
     Parameters
     ----------

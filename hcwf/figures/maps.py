@@ -156,7 +156,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
     case : object
         The case drawn; its ``name`` is part of the output file name.
     spec : object
-        The run's ``FigureSpec``: ``polygon``, ``dir_fig``, ``region``, ``shpfile_dir`` and ``show_plot``.
+        The run's `~hcwf.config.model.FigureSpec`: ``polygon``, ``dir_fig``, ``region``, ``shpfile_dir`` and ``show_plot``.
     figsize : tuple of (float, float), default (18, 6)
         The figure size in inches.
     rect_box : bool, default True

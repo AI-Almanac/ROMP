@@ -19,7 +19,7 @@ This is a dependency-free leaf: any module may import it, so there are no import
     FileExistsError
       RunExistsError                   the run folder already holds a run (`hcwf.runs.folder`)
 
-`IncompatibleForecast` and `RunExistsError` keep their own bases (a ``ValueError`` of the data, a ``FileExistsError`` of
+`IncompatibleForecast` and `RunExistsError` keep their own bases (a `ValueError` of the data, a `FileExistsError` of
 the folder): they are not configuration errors, so the CLI handles them on their own.
 """
 

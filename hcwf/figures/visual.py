@@ -78,7 +78,7 @@ def set_basemap(ax, spec):
     ax : cartopy.mpl.geoaxes.GeoAxes
         The axes to draw on.
     spec : object
-        The run's ``FigureSpec``: its ``region`` gives the extent (and the outline), and ``shpfile_dir`` (a
+        The run's `~hcwf.config.model.FigureSpec`: its ``region`` gives the extent (and the outline), and ``shpfile_dir`` (a
         shapefile path) the outline when set.
 
     Returns

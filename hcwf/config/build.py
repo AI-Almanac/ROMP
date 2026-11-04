@@ -36,12 +36,12 @@ def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool =
             override_source: str = "override", check: bool = False):
     """Return the validated `~hcwf.config.model.RunConfig` of a run, finished (paths, lead window, run folder plan).
 
-    A config with a problem raises ``HCWFConfigError``, unless ``check`` is true.
+    A config with a problem raises `~hcwf.errors.HCWFConfigError`, unless ``check`` is true.
 
     Parameters
     ----------
     source : hcwf.config.model.RunConfig or str or pathlib.Path or hcwf.config.Config or dict or types.SimpleNamespace
-        A `~hcwf.config.model.RunConfig` (returned as it is; overrides then raise ``TypeError``), the path of a run YAML, a
+        A `~hcwf.config.model.RunConfig` (returned as it is; overrides then raise `TypeError`), the path of a run YAML, a
         `hcwf.config.Config`, a nested mapping, a namespace or a flat dict.
     overrides : collections.abc.Mapping, optional
         Flat config keys to override, see `_resolve_values`.
@@ -116,7 +116,7 @@ def _resolve_values(source, overrides, *, write, tmp, override_source, check):
     off and, with ``tmp``, puts the outputs in that folder and keeps the observed-onset cache in memory.
 
     Validation is `hcwf.config.validate.problems`: any problem (the units' and the blend's too) raises one
-    ``HCWFConfigError`` before a run folder exists.
+    `~hcwf.errors.HCWFConfigError` before a run folder exists.
 
     Parameters
     ----------

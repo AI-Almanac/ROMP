@@ -70,7 +70,7 @@ def panel_portrait_mae_far_mr(results, spec):
         ``results[model][window]`` holds ``mean_mae``, ``false_alarm_rate`` and ``miss_rate``; the last model is
         the climatology.
     spec : object
-        The run's ``FigureSpec``: ``show_panel``, ``models``, ``max_forecast_day`` and ``dir_fig``.
+        The run's `~hcwf.config.model.FigureSpec`: ``show_panel``, ``models``, ``max_forecast_day`` and ``dir_fig``.
 
     Returns
     -------

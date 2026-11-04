@@ -65,7 +65,7 @@ def panel_portrait_bss_auc(result_binned, verification_window, spec):
     verification_window : tuple of (int, int)
         The verification window, in days; named in the file.
     spec : object
-        The run's ``FigureSpec``: ``show_panel`` and ``dir_fig``.
+        The run's `~hcwf.config.model.FigureSpec`: ``show_panel`` and ``dir_fig``.
 
     Returns
     -------

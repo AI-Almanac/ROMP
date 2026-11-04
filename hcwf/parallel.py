@@ -54,7 +54,7 @@ from hcwf import log as logs
 log = logging.getLogger(__name__)
 
 NO_DATA = "No data was successfully processed"
-"""Start of the ``ValueError`` message the multi-year functions raise when no year yielded data (a skipped year in a chunk)."""
+"""Start of the `ValueError` message the multi-year functions raise when no year yielded data (a skipped year in a chunk)."""
 _tokens = itertools.count(1)
 _installed = {"token": None}
 
@@ -170,7 +170,7 @@ def _run_item(func, item, args, kwargs, state, token, label):
 
 
 def _years_call(year, func, args, skip):
-    """Call ``func([year], *args)``, giving None where it raises the "no data" ``ValueError`` of a skipped year.
+    """Call ``func([year], *args)``, giving None where it raises the "no data" `ValueError` of a skipped year.
 
     Parameters
     ----------
@@ -181,7 +181,7 @@ def _years_call(year, func, args, skip):
     args : tuple
         Extra positional arguments of ``func``.
     skip : str or None
-        Start of the ``ValueError`` message that means the year has no data; None re-raises every error.
+        Start of the `ValueError` message that means the year has no data; None re-raises every error.
 
     Returns
     -------
@@ -191,7 +191,7 @@ def _years_call(year, func, args, skip):
     Raises
     ------
     ValueError
-        Any ``ValueError`` of ``func`` that does not start with ``skip``.
+        Any `ValueError` of ``func`` that does not start with ``skip``.
     """
     try:
         return func([year], *args)
@@ -316,7 +316,7 @@ def _pool_for(size: int, threads: int) -> ProcessPoolExecutor:
     Raises
     ------
     BaseException
-        Whatever stopped the pool from starting (including ``KeyboardInterrupt``), after its log forwarding is closed.
+        Whatever stopped the pool from starting (including `KeyboardInterrupt`), after its log forwarding is closed.
     """
     key = (size, threads, tuple(id(h) for h in logging.getLogger(logs.ROOT).handlers))
     if _pool["executor"] is not None and _pool["key"] == key:
@@ -547,7 +547,7 @@ def start_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DA
     parallel : hcwf.config.model.ParallelSpec
         The ``parallel:`` settings.
     skip : str or None, default `NO_DATA`
-        Start of the ``ValueError`` message that means "this year had no data" (a missing file): that year's result is
+        Start of the `ValueError` message that means "this year had no data" (a missing file): that year's result is
         None.
     prewarm : callable, optional
         Called here once before the jobs are sent.
@@ -579,7 +579,7 @@ def map_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA
     parallel : hcwf.config.model.ParallelSpec
         The ``parallel:`` settings.
     skip : str or None, default `NO_DATA`
-        Start of the ``ValueError`` message that marks a year without data.
+        Start of the `ValueError` message that marks a year without data.
     prewarm : callable, optional
         Called once before the jobs are sent.
     item_bytes : int, optional
@@ -598,7 +598,7 @@ def start_concat_args(func, years, args: tuple, parallel, prewarm: Callable[[], 
     """Start the pair tables of ``func(years, *args)``; the Pending gives them concatenated.
 
     With one worker ``func`` runs once on all the years before this returns. Otherwise each year is computed by
-    `start_year_args` and the tables joined in year order; a year without data is left out, and a ``ValueError`` is raised
+    `start_year_args` and the tables joined in year order; a year without data is left out, and a `ValueError` is raised
     (when the result is asked for) if none has any.
 
     Parameters
@@ -883,7 +883,7 @@ class SharedArrays:
     Raises
     ------
     BaseException
-        Whatever stopped a copy (including ``KeyboardInterrupt``), after the blocks made so far are released.
+        Whatever stopped a copy (including `KeyboardInterrupt`), after the blocks made so far are released.
     """
 
     def __init__(self, **arrays):

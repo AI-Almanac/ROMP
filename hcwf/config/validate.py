@@ -65,7 +65,7 @@ class Problems:
         return (*self.fatal, *self.units, *self.blend)
 
     def message(self) -> str:
-        """Return the text of the ``HCWFConfigError`` a run raises.
+        """Return the text of the `~hcwf.errors.HCWFConfigError` a run raises.
 
         Returns
         -------
@@ -75,7 +75,7 @@ class Problems:
         return "HCWF Configuration is invalid:\n" + "\n".join(f"  • {text}" for text in self.all())
 
     def raise_if_any(self) -> None:
-        """Raise one ``HCWFConfigError`` holding every problem.
+        """Raise one `~hcwf.errors.HCWFConfigError` holding every problem.
 
         Raises
         ------

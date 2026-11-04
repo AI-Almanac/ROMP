@@ -553,7 +553,7 @@ def atomic_write(path, write: Callable[[Path], None]) -> None:
     Raises
     ------
     BaseException
-        Whatever ``write`` or the rename raised (including ``KeyboardInterrupt``), after the temporary path is removed.
+        Whatever ``write`` or the rename raised (including `KeyboardInterrupt`), after the temporary path is removed.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -273,7 +273,7 @@ def compute_threshold(spec: ThresholdSpec, rain, years: tuple[int, int], *,
 
     Notes
     -----
-    A ``ValueError`` comes from the computation when the kind is ``quantile_total`` without a quantile between 0 and 1,
+    A `ValueError` comes from the computation when the kind is ``quantile_total`` without a quantile between 0 and 1,
     or when a window bound is climatological with ``partial_years``.
     """
     cells = _cells_of(rain)

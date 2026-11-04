@@ -138,7 +138,7 @@ def _locate(year, read: ObsRead):
     -------
     tuple of (str or None, str or tuple of str or None)
         The zarr store path or None, and the file path (or paths) or None; see `hcwf.io.stores.observation_source`,
-        which raises ``FileNotFoundError`` when no file holds the year.
+        which raises `FileNotFoundError` when no file holds the year.
     """
     return observation_source(year, read.obs.dir, read.obs.file_pattern, read.obs.paths, read.select.obs_files_years)
 

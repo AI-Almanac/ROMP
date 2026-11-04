@@ -53,7 +53,7 @@ def panel_bar_bss_rpss_auc(result_overall, verification_window, spec, *, legend=
     verification_window : tuple of (int, int)
         The verification window, in days; named in the title and the file.
     spec : object
-        The run's ``FigureSpec``: ``show_panel`` and ``dir_fig``.
+        The run's `~hcwf.config.model.FigureSpec`: ``show_panel`` and ``dir_fig``.
     legend : bool, default True
         Draw the legend.
 

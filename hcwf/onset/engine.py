@@ -36,7 +36,7 @@ _BACKEND_MODULES = {"reference": "reference", "numba": "numba_cpu", "gpu": "gpu"
 
 @dataclass
 class JobLayout:
-    """How a flat ``Jobs`` array maps back to output dims.
+    """How a flat `~hcwf.onset.model.Jobs` array maps back to output dims.
 
     The job array reshapes to ``shape + (n_series,)``.
     """
@@ -1197,7 +1197,7 @@ def build_forecast_jobs(definition: Definition, forecast: ForecastRain, lead_win
     forecast : hcwf.onset.model.ForecastRain
         The forecast, dims ``(init_time, [member], *spatial, lead)``.
     lead_window : tuple of (int, int), default (1, 30)
-        The first and last candidate lead, 1-based and inclusive; the first must be at least 1 (a ``ValueError`` otherwise).
+        The first and last candidate lead, 1-based and inclusive; the first must be at least 1 (a `ValueError` otherwise).
     restrict_to_season : bool, default True
         Limit the candidates to the seasons of the definition.
     season_climatology : xarray.Dataset, optional

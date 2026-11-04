@@ -544,7 +544,7 @@ def dataset_files(entry: dict) -> list[Path]:
 
     Notes
     -----
-    A missing ``path`` without ``paths`` surfaces as the ``TypeError`` of ``Path(None)``; callers check it first.
+    A missing ``path`` without ``paths`` surfaces as the `TypeError` of ``Path(None)``; callers check it first.
     """
     base = expand_path(entry["path"]) if entry.get("path") else None
     if entry.get("paths"):
