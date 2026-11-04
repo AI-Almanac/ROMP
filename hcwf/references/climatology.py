@@ -13,6 +13,7 @@ from hcwf.io.observations import observation_grid_of, observation_years_of
 from hcwf.cache import memo
 from hcwf.io.reference import reference_held, reference_rain_year, release_reference
 from hcwf.io.thresholds import thresholds_of
+from hcwf.metrics.bins import season_relative_days
 from hcwf.onset.detect import detect_observed
 from hcwf.onset.climatology import ReferenceOnset, _doy_index, reduce_onset_days
 from hcwf.spatial import axes
@@ -129,8 +130,10 @@ def _year_readers(years, rc, select, shared=True):
 def climatological_onset(rc, case, select=Selection()):
     """Compute climatological onset dates from all available IMD files.
 
-    The onset of each climatology year is detected, converted to a day of year and the years are averaged
-    (`hcwf.onset.climatology.reduce_onset_days`, rounded to a whole day). In grid-point mode the mean daily rainfall by
+    The onset of each climatology year is detected, converted to a day of the season's 365-day year
+    (`hcwf.metrics.bins.season_relative_days`: 29 February shares 1 March, an onset in the year after the season's
+    year counts past 365) and the years are averaged (`hcwf.onset.climatology.reduce_onset_days`, rounded to a whole
+    day), so a season crossing the year boundary has a mean beyond 365. In grid-point mode the mean daily rainfall by
     day of year (leap day left out) is returned as well.
 
     Parameters
@@ -146,7 +149,7 @@ def climatological_onset(rc, case, select=Selection()):
     Returns
     -------
     xarray.DataArray or tuple of (xarray.DataArray, xarray.DataArray)
-        The climatological onset day of year (``float64``, over ``lat``, ``lon`` or ``unit``). In grid-point mode a
+        The climatological onset day of the 365-day year (``float64``, 366 and over for the next year; over ``lat``, ``lon`` or ``unit``). In grid-point mode a
         tuple of that and the climatological mean rainfall by ``doy`` (1-365).
 
     Raises
@@ -179,9 +182,10 @@ def climatological_onset(rc, case, select=Selection()):
             # Detect onset for this year
             onset_da = detect_observed(rainfall_ds, thresh_da, year, rc, select)
 
-            # Convert onset dates to day of year
-            onset_doy = onset_da.dt.dayofyear.astype(float)
-            onset_doy = onset_doy.where(~onset_da.isnull()).reset_coords(drop=True)   # units carry per-year flags
+            # Convert onset dates to the day of the season's 365-day year (past 365 for an onset in the next year)
+            onset_doy = xr.DataArray(season_relative_days(onset_da.values, year) + 1.0, dims=onset_da.dims,
+                                     coords={d: onset_da.coords[d] for d in onset_da.dims if d in onset_da.coords},
+                                     name="dayofyear")
 
             all_onset_days.append(onset_doy)
 
@@ -243,7 +247,7 @@ def compute_climatology_as_forecast(climatological_onset_doy, init_dates, observ
     -------
     pandas.DataFrame
         The climatology forecast results, one row per (init, lat, lon) (or (init, unit)) in that order for cells with an
-        observed onset and an init before it; the climatological onset falls in the year of its init. Empty when no
+        observed onset and an init before it; the climatological onset falls in the year of its init (the next year past day 365). Empty when no
         cell qualifies.
     """
     if isinstance(climatological_onset_doy, ReferenceOnset):
@@ -273,8 +277,11 @@ def compute_climatology_as_forecast(climatological_onset_doy, init_dates, observ
     doy = climatological_onset_doy.transpose(*spatial).values.astype(float)[where]
     no_clim = np.isnan(doy)
     init_year = inits.year.to_numpy()[i] - 1970
+    day_index = np.where(no_clim, 1, doy).astype(np.int64) - 1
+    # the day of a 365-day year counts 1 March as day 60: in a leap year the dates from then on are one day later
+    leap = pd.DatetimeIndex(init_year.astype("datetime64[Y]")).is_leap_year & (day_index >= 59)
     clim_date = (init_year.astype("datetime64[Y]").astype("datetime64[D]")
-                 + (np.where(no_clim, 1, doy).astype(np.int64) - 1).astype("timedelta64[D]"))
+                 + (day_index + leap).astype("timedelta64[D]"))
     init_at = init_ns[i]
     clim_at = clim_date.astype("datetime64[ns]")
     in_window = (~no_clim & (init_at + np.timedelta64(1, "D") <= clim_at)
