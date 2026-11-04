@@ -1,0 +1,13 @@
+{
+  "python.analysis.exclude": ["**/.claude/worktrees/**", "**/.venv/**", "**/docs/_build/**", "**/docs/_api/**"],
+  "files.watcherExclude": {
+    "**/.claude/worktrees/**": true,
+    "**/.venv/**": true,
+    "**/docs/_build/**": true
+  },
+  "search.exclude": {
+    "**/.claude/worktrees/**": true,
+    "**/docs/_build/**": true,
+    "**/docs/_api/**": true
+  }
+}
