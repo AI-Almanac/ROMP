@@ -19,7 +19,7 @@ from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import Thresholds
 from hcwf.io.forecasts import ForecastRead, ingest_forecast, load_forecast
 from hcwf.io.observations import ObsRead
-from hcwf.io.reference import LazyRain, reference_rain
+from hcwf.io.reference import LazyRain, reference_probe, reference_rain
 from hcwf.io.stores import forecast_sources
 from hcwf.onset import definition as definition_mod
 from hcwf.onset import observed_cache
@@ -297,8 +297,8 @@ def load_onset_thresholds(onset, obs, area, options, ev, output, *, model=None, 
         if not onset.derived_seasons:
             return thresholds
     read = ObsRead(obs, area, options, select, onset, tuple(ev.years), output.figure_dir, parallel)
-    probe = reference_rain(onset, (years[0], years[0]), read)
-    full = LazyRain(probe, lambda: reference_rain(onset, years, read))
+    probe = reference_probe(onset, years[0], read)
+    full = LazyRain(probe, lambda: reference_rain(onset, years, read, probe=probe))
     files = observed_cache.observation_files(obs, select.obs_files_years, range(years[0], years[1] + 1))
     threshold_options = {key: value for key, value in (("max_missing_fraction", options.threshold_max_missing),
                                                        ("partial_years", options.threshold_partial_years))

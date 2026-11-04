@@ -292,7 +292,7 @@ def _cells_of_reference(one, grid, dims, flat, source, options, onset):
                  fill_missing=bool(masked.missing[0, 0]))
 
 
-def _stream_reference(onset, years, read, source):
+def _stream_reference(onset, years, read, source, probe=None):
     """Ingest the reference years one at a time into one preallocated DailyRain (peak memory: the result plus one year).
 
     Gives what ingest of the concatenated years gives, for standard-calendar years that follow each other
@@ -310,6 +310,9 @@ def _stream_reference(onset, years, read, source):
         The typed inputs of the observation reading.
     source : str
         The label of the data source.
+    probe : hcwf.onset.model.DailyRain, optional
+        The first year already ingested (see `reference_probe`); it is used instead of reading that year again, unless
+        only the kept cells are held.
 
     Returns
     -------
@@ -335,14 +338,20 @@ def _stream_reference(onset, years, read, source):
         flat = np.flatnonzero(keep.reshape(-1))
         rows, cols = np.divmod(flat, keep.shape[1])
     cells = None
-    for year, (rain, error) in zip(range(years[0], years[1] + 1),
-                                   obs_years_of(read, range(years[0], years[1] + 1), cells=kept is not None)):
-        if error is not None:
-            raise error
-        if kept is not None:
-            rain = _on_kept_cells(rain, rows, cols, flat)
-        one = ingest(rain, day_boundary=onset.obs_day_boundary, units="mm", source=source, **options)
-        del rain
+    reuse = probe if kept is None else None
+    later = range(years[0] + (reuse is not None), years[1] + 1)
+    stream = iter(obs_years_of(read, later, cells=kept is not None)) if len(later) else iter(())
+    for year in range(years[0], years[1] + 1):
+        if reuse is not None and year == years[0]:
+            one = reuse
+        else:
+            rain, error = next(stream)
+            if error is not None:
+                raise error
+            if kept is not None:
+                rain = _on_kept_cells(rain, rows, cols, flat)
+            one = ingest(rain, day_boundary=onset.obs_day_boundary, units="mm", source=source, **options)
+            del rain
         if kept is not None:
             if "cell" not in one.dims or not np.array_equal(one.coords["cell"], flat):
                 raise _NotContiguous
@@ -391,7 +400,38 @@ def _reference_year(year, read, keep=None):
     return rain.drop_vars("present") if "present" in rain.coords else rain  # which units have a series, not rain
 
 
-def reference_rain(onset, years, read):
+_probes = memo("io.reference.probe", maxsize=4)
+"""The first reference year of each observation source, ingested once: ``(settings, year)`` to its DailyRain."""
+
+
+def reference_probe(onset, year, read):
+    """Return one reference year ingested, read once for the run however many threshold sets ask for it.
+
+    The thresholds take their grid, source and resolution from this year and the stream of the reference years uses it
+    as its first year; it is kept per observation source and year (until the run's state is reset).
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup (the observation day boundary).
+    year : int
+        The year to read.
+    read : hcwf.io.observations.ObsRead
+        The typed inputs of the observation reading.
+
+    Returns
+    -------
+    hcwf.onset.model.DailyRain
+        The year as `reference_rain` gives it for ``(year, year)``.
+    """
+    obs = read.obs
+    key = (_reference_key(obs, read.area, read.select, onset.obs_day_boundary),
+           repr((obs.paths, read.select.obs_files_years, obs.dims_map(), obs.units, read.options.ingest(False, obs.units))),
+           int(year))
+    return _probes.get_or_make(key, lambda: reference_rain(onset, (year, year), read))
+
+
+def reference_rain(onset, years, read, probe=None):
     """Return the observations of ``years[0]`` to ``years[1]`` as an ingested DailyRain, labelled with their source.
 
     Years are read and ingested one at a time into one array rather than concatenated as rainfall first, and the
@@ -405,6 +445,8 @@ def reference_rain(onset, years, read):
         The first and last reference year, inclusive.
     read : hcwf.io.observations.ObsRead
         The typed inputs of the observation reading.
+    probe : hcwf.onset.model.DailyRain, optional
+        ``years[0]`` already ingested (see `reference_probe`), not read again.
 
     Returns
     -------
@@ -412,9 +454,11 @@ def reference_rain(onset, years, read):
         The ingested rainfall in tenths of mm.
     """
     source = _obs_source_label(read, onset)
+    if probe is not None and years[0] == years[1]:
+        return probe
     if years[0] != years[1]:
         try:
-            rain = _stream_reference(onset, years, read, source)
+            rain = _stream_reference(onset, years, read, source, probe)
         except _NotContiguous:
             pass
         else:

@@ -138,6 +138,28 @@ def test_observation_years_read_together_decode_each_chunk_once(tmp_path):
     assert only(found, "rain").worst() == 1
 
 
+def test_the_threshold_years_decode_each_chunk_once_however_often_thresholds_are_asked_for(tmp_path):
+    """The first threshold year is read once for the probe and the stream together, and not again for another key."""
+    from types import SimpleNamespace
+
+    from hcwf.io import thresholds as thresholds_io
+
+    for year in (2018, 2019):
+        write_obs(tmp_path / "obs", year)
+    onset = onset_setup({"onset_definition": "moron_robertson", "obs_day_boundary": BOUNDARY,
+                         "model_lead_label": "start", "max_forecast_day": 10, "threshold_years": (2018, 2019)})
+    ev = evaluation_spec()
+    output = SimpleNamespace(data_dir=str(tmp_path / "out"), figure_dir=None)
+    with count_decodes() as found:
+        first = thresholds_io.load_thresholds(onset, obs_spec(tmp_path / "obs"), BOX, options_spec(), ev, output,
+                                              select=NO_MASKS, cache_dir=tmp_path / "cache")
+        again = thresholds_io.load_thresholds(onset, obs_spec(tmp_path / "obs"), BOX, options_spec(),
+                                              dataclasses.replace(ev, max_forecast_day=9), output, select=NO_MASKS,
+                                              cache_dir=tmp_path / "cache")
+    assert first is not again
+    assert only(found, "rain").worst() == 1
+
+
 # --------------------------------------------------------------------------------------------------- forecasts
 
 def test_a_forecast_year_decodes_each_chunk_once(tmp_path):
