@@ -44,6 +44,7 @@ from typing import Any, Callable
 
 from hcwf.errors import ConfigSchemaError, HCWFConfigError, UnitsError
 from hcwf.onset import units
+from hcwf.onset.model import DEFAULT_HORIZON, HORIZON_POLICIES, MISSING_POLICIES, RESOLUTIONS
 from hcwf.config.datasets import ALL_DIMS, expand_env, parse_year_list, suggest
 from hcwf.errors import DatasetError
 
@@ -920,6 +921,12 @@ _TOGGLES = (
 """The yes/no keys of the ``output`` section: ``(key, help, default)``."""
 
 
+CV_MODES = ("none", "leave_one_year_out")
+"""The values of ``climatology_cv`` (both climatology references: the conditional and the unconditional)."""
+DEFAULT_CV = "leave_one_year_out"
+"""The ``climatology_cv`` used when none is given."""
+
+
 def _fields() -> tuple[Field, ...]:
     """Build the table of every config key.
 
@@ -982,8 +989,8 @@ def _fields() -> tuple[Field, ...]:
         Field("climatology_cv", "str", "cross-validation of the climatology references ('climatology' and "
               "'conditional_climatology'): 'leave_one_year_out' leaves the evaluated year out of its own climatology "
               "(members or KDE fit; a year outside the climatology years has nothing to leave out), 'none' keeps all "
-              "climatology years; not used by a model reference", "leave_one_year_out",
-              "reference", choices=("none", "leave_one_year_out")),
+              "climatology years; not used by a model reference", DEFAULT_CV,
+              "reference", choices=CV_MODES),
         Field("ref_model_dir", "path", "reference data folder (default: the observations')", None, "reference",
               "path", nullable=True),
         Field("ref_model_file_pattern", "str", "reference file pattern (default: the observations')", None,
@@ -1025,17 +1032,17 @@ def _fields() -> tuple[Field, ...]:
         Field("threshold_source", "str", "thresholds from 'observations' or the 'model' climatology "
               "(null: observations)", None, "onset", choices=("observations", "model"), nullable=True, fill=False),
         Field("rain_resolution", "str", "'tenths' (HCWF: rain rounded to 0.1 mm) or 'exact' (float millimetres, as "
-              "onset_blending reads them; null: tenths)", None, "onset", choices=("tenths", "exact"), nullable=True,
+              "onset_blending reads them; null: tenths)", None, "onset", choices=RESOLUTIONS, nullable=True,
               fill=False),
         Field("missing", "str", "missing-rain policy: flag, keep, zero or drop (null: flag)", None, "onset",
-              choices=("flag", "keep", "zero", "drop"), nullable=True, fill=False),
+              choices=MISSING_POLICIES, nullable=True, fill=False),
         Field("negatives", "str", "'default' flags negative observations and zeroes negative forecasts, 'keep' leaves "
               "them (null: default)", None, "onset", choices=("default", "keep"), nullable=True, fill=False),
         Field("gaps", "str", "days missing inside a year of observations: 'fill' them or 'refuse' (null: fill)", None,
               "onset", choices=("fill", "refuse"), nullable=True, fill=False),
         Field("onset_horizon", "str", "a follow-up past the end of the data: 'censor' the search, 'truncate' the "
-              "follow-up or 'reject' the onset (null: censor)", None, "onset", "horizon",
-              choices=("censor", "truncate", "reject"), nullable=True, fill=False),
+              f"follow-up or 'reject' the onset (null: {DEFAULT_HORIZON})", None, "onset", "horizon",
+              choices=HORIZON_POLICIES, nullable=True, fill=False),
         Field("threshold_scale", "any", "clip(t * factor + offset, min, max) applied to tables, grids and computed "
               "thresholds: a mapping of factor, offset, min, max (null: none)", None, "onset", nullable=True,
               fill=False),

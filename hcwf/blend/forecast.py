@@ -25,6 +25,7 @@ import xarray as xr
 
 from hcwf.blend import features, training
 from hcwf.blend.design import formula_columns
+from hcwf.metrics.probabilistic import later_probability
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, blend_season_start
 from hcwf.config import detect as dataset_detect
 from hcwf.errors import IncompatibleForecast
@@ -486,7 +487,7 @@ def _probabilities(blend, rows: pd.DataFrame) -> pd.DataFrame:
     clim = 1.0 / (1.0 + np.exp(-rows[[f"{CLIMATOLOGY_FEATURE}_{w}" for w in weeks]].to_numpy()))
     for index, week in enumerate(weeks):
         out[f"clim_{week}"] = clim[:, index]
-    out["clim_later"] = np.maximum(0.0, 1.0 - clim.sum(axis=1))
+    out["clim_later"] = later_probability(clim.sum(axis=1))
     return out
 
 

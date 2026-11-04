@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 
 from hcwf.config.model import CONDITIONAL_CLIMATOLOGY, Selection
+from hcwf.config.schema import CV_MODES, DEFAULT_CV
+from hcwf.metrics.probabilistic import later_probability
 from hcwf.metrics.bins import LeadBins, PairArrays, bin_fields, onset_cases
 from hcwf.references.kde import conditional_probabilities, season_days
 from hcwf.spatial import axes
@@ -27,10 +29,6 @@ import logging
 
 log = logging.getLogger(__name__)
 
-CV_MODES = ("none", "leave_one_year_out")
-"""The values of ``climatology_cv`` (both climatology references: the conditional and the unconditional)."""
-DEFAULT_CV = "leave_one_year_out"
-"""The ``climatology_cv`` used when none is given."""
 _GRID_TOLERANCE = 1e-3
 """How far (in degrees) a climatology cell may be from a target cell and still be matched to it."""
 
@@ -52,7 +50,7 @@ def is_conditional_climatology(name) -> bool:
 
 
 def cv_mode(climatology_cv) -> str:
-    """Return the ``climatology_cv`` setting (default ``"leave_one_year_out"``), checked against `CV_MODES`.
+    """Return the ``climatology_cv`` setting (default ``"leave_one_year_out"``), checked against `~hcwf.config.schema.CV_MODES`.
 
     Parameters
     ----------
@@ -62,12 +60,12 @@ def cv_mode(climatology_cv) -> str:
     Returns
     -------
     str
-        The mode, one of `CV_MODES`.
+        The mode, one of `~hcwf.config.schema.CV_MODES`.
 
     Raises
     ------
     ValueError
-        The mode is not one of `CV_MODES`.
+        The mode is not one of `~hcwf.config.schema.CV_MODES`.
     """
     mode = climatology_cv or DEFAULT_CV
     if mode not in CV_MODES:
@@ -264,7 +262,7 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
             bin_prob.append(prob[:, :min_day - 1].sum(axis=1))
             observed.append(obs_days <= min_day - 1)
         elif k == bins.n_inner + 1:
-            bin_prob.append(np.maximum(1.0 - prob.sum(axis=1), 0.0))
+            bin_prob.append(later_probability(prob.sum(axis=1)))
             observed.append(obs_days > max_day)
         else:
             bin_prob.append(prob[:, start - 1:end].sum(axis=1))
@@ -275,6 +273,30 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
                       init=inits.values.astype("datetime64[D]")[init_case],
                       place=axes.columns_of(spatial, coords, where),
                       members_with_onset=np.full(len(init_case), np.inf))
+
+
+def concat_year_pairs(per_year) -> PairArrays:
+    """Concatenate the pairs of the target years, leaving out a year without cases.
+
+    Parameters
+    ----------
+    per_year : iterable of hcwf.metrics.bins.PairArrays
+        The pairs of each target year, in year order; the iterable is consumed once, so a generator may log as it goes.
+
+    Returns
+    -------
+    hcwf.metrics.bins.PairArrays
+        The pairs of the years that gave cases, concatenated.
+
+    Raises
+    ------
+    ValueError
+        No year gave a case.
+    """
+    tables = [table for table in per_year if table.n_cases > 0]
+    if not tables:
+        raise ValueError("No data was successfully processed for any target year")
+    return PairArrays.concat(tables)
 
 
 def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bins, observed=None):
@@ -305,26 +327,22 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
     Returns
     -------
     hcwf.metrics.bins.PairArrays
-        The pairs of all years, in the order of ``years``.
-
-    Raises
-    ------
-    ValueError
-        No year gave a case, or the ``climatology_cv`` setting is not a valid mode.
+        The pairs of all years, in the order of ``years``; a `ValueError` is raised when no year gave a case or the
+        ``climatology_cv`` setting is not a valid mode.
     """
     from hcwf.io.forecasts import initialization_dates
     cv = cv_mode(rc.reference.climatology_cv)
-    tables = []
-    for year in years:
-        log.debug(f"Conditional climatology pairs for target year {year}")
-        table = create_conditional_climatological_forecast_obs_pairs(
-            clim_onset, year, initialization_dates(year, rc.evaluation),
-            observed_of_year(year, clim_onset, rc, case.model, select, observed), day_bins=day_bins, climatology_cv=cv)
-        if table.n_cases:
-            tables.append(table)
-    if not tables:
-        raise ValueError("No data was successfully processed for any target year")
-    return PairArrays.concat(tables)
+
+    def of_years():
+        """Yield the pairs of each year."""
+        for year in years:
+            log.debug(f"Conditional climatology pairs for target year {year}")
+            yield create_conditional_climatological_forecast_obs_pairs(
+                clim_onset, year, initialization_dates(year, rc.evaluation),
+                observed_of_year(year, clim_onset, rc, case.model, select, observed), day_bins=day_bins,
+                climatology_cv=cv)
+
+    return concat_year_pairs(of_years())
 
 
 def observed_of_year(year, clim_onset, rc, model, select, observed=None):

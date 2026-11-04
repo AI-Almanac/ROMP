@@ -43,7 +43,7 @@ from typing import Any
 
 import yaml
 
-from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, years_of, year_windows
+from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, DEFAULT_FIXED_CUTOFF, years_of, year_windows
 from hcwf.errors import ConvertError
 from hcwf.config.datasets import suggest
 
@@ -1227,7 +1227,6 @@ def convert_blend_file(path, *, region: str | None = None) -> Conversion:
 
 # Old defaults that differ from the new config's, written out explicitly.
 _OLD_TRAINING_YEARS = list(range(2000, 2025))
-_OLD_FIXED_CUTOFF = "06-02"
 _OLD_FORECAST_VARIANTS = {"base": "", "ref_onset": "_ref", "fixed_cutoff": "_fixed_cutoff"}
 _CONNECT_VARIANTS = {"fixed_cutoff": "fixed_cutoff", "ref": "ref_onset"}
 # Combine daily columns the connect stage reads, by raw output column.
@@ -1798,7 +1797,7 @@ class _Converter:
             spec.drop("options.cutoff_month_day", "only ground-truth processing reads it")
         fixed = self.agree(
             "options.fixed_cutoff_month_day",
-            {s.label: str(s.get("options.fixed_cutoff_month_day", _OLD_FIXED_CUTOFF)) for s in self.forecasts.values()},
+            {s.label: str(s.get("options.fixed_cutoff_month_day", DEFAULT_FIXED_CUTOFF)) for s in self.forecasts.values()},
         )
         gt_fixed = self.gt.get("options.fixed_cutoff_month_day")
         if gt_fixed is not None:

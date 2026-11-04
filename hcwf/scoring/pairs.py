@@ -22,7 +22,7 @@ from hcwf.metrics.bins import PairArrays, create_climatological_forecast_obs_pai
 from hcwf.onset.detect import check_alignment, detect_ensemble, detect_observed
 from hcwf.parallel import NO_DATA, Pending, concat_year_args, spec_workers, start_year_args
 from hcwf.references.climatology import climatological_onset_dataset
-from hcwf.references.conditional import (conditional_pairs, cv_mode, is_conditional_climatology,
+from hcwf.references.conditional import (concat_year_pairs, conditional_pairs, cv_mode, is_conditional_climatology,
                                          observed_of_year)
 from hcwf.scoring.onset_tables import reports_back_dated, share_ensemble_tables
 
@@ -242,41 +242,24 @@ def climatological_pairs(clim_onset, rc, case, select=Selection(), *, years, day
     Returns
     -------
     hcwf.metrics.bins.PairArrays
-        The pairs of the years that gave cases, concatenated.
-
-    Raises
-    ------
-    ValueError
-        No year gives pairs.
+        The pairs of the years that gave cases, concatenated; a `ValueError` is raised when no year gives pairs.
     """
     leave_one_out = cv_mode(rc.reference.climatology_cv) == "leave_one_year_out"
 
-    all_forecast_obs_pairs = []
 
-    for target_year in years:
-        log.debug(f"\n{'-'*50}")
-        log.debug(f"Processing target year {target_year}")
+    def of_years():
+        """Yield the pairs of each target year."""
+        for target_year in years:
+            log.debug(f"\n{'-'*50}")
+            log.debug(f"Processing target year {target_year}")
+            forecast_obs = create_climatological_forecast_obs_pairs(
+                clim_onset, target_year, initialization_dates(target_year, rc.evaluation),
+                observed_of_year(target_year, clim_onset, rc, case.model, select, observed),
+                day_bins=day_bins, leave_one_out=leave_one_out)
+            log.debug(f"Target year {target_year}: {forecast_obs.n_cases} cases")
+            yield forecast_obs
 
-        # Get initialization dates for this year
-        init_dates = initialization_dates(target_year, rc.evaluation)
-
-        # Create forecast-observation pairs for this year
-        forecast_obs = create_climatological_forecast_obs_pairs(
-            clim_onset, target_year, init_dates,
-            observed_of_year(target_year, clim_onset, rc, case.model, select, observed),
-            day_bins=day_bins, leave_one_out=leave_one_out)
-
-        if forecast_obs.n_cases > 0:
-            all_forecast_obs_pairs.append(forecast_obs)
-            log.debug(f"Target year {target_year} completed: {forecast_obs.n_cases} cases")
-        else:
-            log.debug(f"No pairs generated for target year {target_year}")
-
-    # Combine all years
-    if not all_forecast_obs_pairs:
-        raise ValueError("No data was successfully processed for any target year")
-
-    combined_forecast_obs = PairArrays.concat(all_forecast_obs_pairs)
+    combined_forecast_obs = concat_year_pairs(of_years())
 
     log.debug(f"Climatological forecast cases of target years {list(years)}: {combined_forecast_obs.n_cases}")
 

@@ -333,6 +333,8 @@ MISSING_POLICIES = ("flag", "zero", "drop", "keep")
 """The values of the missing-data policy."""
 HORIZON_POLICIES = ("censor", "truncate", "reject")
 """The values of the horizon policy."""
+DEFAULT_HORIZON = "censor"
+"""The horizon policy used when none is set."""
 
 
 def _check_dtype(values: np.ndarray) -> None:

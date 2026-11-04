@@ -72,3 +72,13 @@ def test_recipe_rejects_month_days_that_not_every_year_has(value):
     from hcwf.blend.recipe import _is_month_day
     assert not _is_month_day(value)
     assert _is_month_day("05-01") and _is_month_day("12-31")
+
+
+def test_schema_help_restates_the_blend_defaults():
+    from hcwf.blend import random_forest
+    from hcwf.config import schema
+    help_of = {f.key: f.help for f in schema.FIELDS}
+    assert f"'{R.DEFAULT_FIXED_CUTOFF}'" in help_of["blend_fixed_cutoff"]
+    assert f"count: {R.DEFAULT_BINS[0]}, days: {R.DEFAULT_BINS[1]}" in help_of["blend_bins"]
+    assert f"lead_days: {list(R.DEFAULT_LEAD_DAYS)}" in help_of["blend_models"]
+    assert random_forest.DEFAULT_MISSING_ONSET in help_of["blend_random_forest"]

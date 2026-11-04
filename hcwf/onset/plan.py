@@ -138,13 +138,13 @@ class Plan:
     """How to build every amount the plan reads."""
     dry: Cmp | None = None
     """The dry-day comparison; None means a dry day is a valid day that is not wet."""
-    horizon: str = "censor"
+    horizon: str = model.DEFAULT_HORIZON
     """What a span past the data does: ``"censor"``, ``"truncate"`` or ``"reject"`` (see `compile`)."""
     keep_missing: bool = False
     """Whether missing days count as neither wet nor dry nor unknown (see `compile`)."""
 
 
-def compile(definition: model.Definition, *, horizon: str = "censor", missing: str = "flag") -> Plan:
+def compile(definition: model.Definition, *, horizon: str = model.DEFAULT_HORIZON, missing: str = "flag") -> Plan:
     """Turn a definition into a plan (a pure function of the definition and the two run options).
 
     ``horizon`` says what a span past the data does. ``"censor"``: the candidate is unknown, so the search ends

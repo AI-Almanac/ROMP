@@ -27,6 +27,12 @@ from .samples import DailyInputs, Weekly
 __all__ = ["FittedForest", "Params", "cross_validate", "feature_matrix", "fit", "folds", "predict", "weekly_from_daily"]
 
 
+DEFAULT_MAX_FEATURES = "sqrt"
+"""The features tried at each split unless the recipe says otherwise."""
+DEFAULT_MISSING_ONSET = "after_week4"
+"""What a season without an onset is unless the recipe says otherwise."""
+
+
 @dataclass(frozen=True)
 class Params:
     """How the forest blend is fitted (onset-forest's ``ForestParams``) and cross-validated."""
@@ -37,7 +43,7 @@ class Params:
     """The number of trees."""
     min_samples_leaf: int = 20
     """The fewest training samples in a leaf."""
-    max_features: str | None = "sqrt"
+    max_features: str | None = DEFAULT_MAX_FEATURES
     """The features tried at each split (``"sqrt"``, ``"log2"``, ...); ``None`` tries all."""
     max_samples: float = 1.0
     """The share of the training samples each tree is grown on."""
@@ -49,7 +55,7 @@ class Params:
     """The last lead day with its own probability; later onsets share the final ``later`` column."""
     days_per_week: int = 7
     """The lead days that make one week bin."""
-    missing_onset: str = "after_week4"
+    missing_onset: str = DEFAULT_MISSING_ONSET
     """What a season without an onset is: ``"after_week4"`` (lead day ``max_day + 1``) or ``"drop"``."""
     years_per_fold: int = 1
     """The consecutive years held out in each cross-validation fold."""

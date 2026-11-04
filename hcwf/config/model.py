@@ -28,6 +28,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from hcwf.config import schema
+from hcwf.onset.model import DEFAULT_HORIZON
 
 if TYPE_CHECKING:  # pragma: no cover
     from hcwf.blend.recipe import Recipe
@@ -431,7 +432,7 @@ class OnsetOptions:
         dict
             ``{"horizon": ..., "missing": ...}``; the horizon is ``"censor"`` when none is set.
         """
-        return {"horizon": self.horizon or "censor",
+        return {"horizon": self.horizon or DEFAULT_HORIZON,
                 "missing": self.ingest(forecast, units).get("missing")}
 
 

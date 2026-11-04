@@ -26,6 +26,7 @@ from hcwf.errors import RecipeError, UnitsError
 from hcwf.config.datasets import parse_year_list, suggest
 
 from hcwf.blend.design import Formula, WindowVariant, formula_columns
+from hcwf.blend.random_forest import DEFAULT_MAX_FEATURES, DEFAULT_MISSING_ONSET
 from hcwf.blend.random_forest import Params as ForestParams
 from hcwf.onset.units import parse_month_day
 from hcwf.onset.model import Curve, Definition, DerivedSeasons, Season, ThresholdSpec
@@ -48,6 +49,12 @@ CUTOFF_MODES = ("fixed_cutoff", "ref_onset", "no_ref_filter")
 """The values of ``evaluation.cutoff_mode``."""
 CV_METHODS = ("global", "local", "clusters")
 """The values of ``evaluation.cv_methods``."""
+DEFAULT_LEAD_DAYS = (1, 45)
+"""The ``models[].lead_days`` min and max unless the recipe says otherwise."""
+DEFAULT_BINS = (4, 7)
+"""The ``features.bins`` count and days unless the recipe says otherwise."""
+DEFAULT_FIXED_CUTOFF = "06-02"
+"""The ``onset.fixed_cutoff`` month-day unless the recipe says otherwise."""
 WINDOW_TOKENS = ("trigger", "window", "dry_spell", "sum_window", "follow", "min_dry")
 """The names of the onset definition's windows that a rain predictor's ``window`` may use."""
 _RAIN_TRANSFORMS = ("identity", "none", "", "sqrt", "fourth_root", "log1p")
@@ -98,7 +105,7 @@ class Model:
 
     name: str
     """``models[].name``; prefixes every column derived from it."""
-    lead_days: tuple[int, int] = (1, 45)
+    lead_days: tuple[int, int] = DEFAULT_LEAD_DAYS
     """``models[].lead_days`` min and max."""
     max_member: int | None = None
     """``models[].max_member``: members whose index is at most this are read."""
@@ -160,7 +167,7 @@ class OnsetExtras:
     units (``units_*``) and the reading options are HCWF config keys.
     """
 
-    fixed_cutoff: str = "06-02"
+    fixed_cutoff: str = DEFAULT_FIXED_CUTOFF
     """``onset.fixed_cutoff``: the start of the ``fixed_cutoff`` forecast probabilities, as a month-day."""
     reference: ReferenceSpec | None = None
     """``onset.reference_onset``."""
@@ -213,7 +220,7 @@ class ClimatologySpec:
 class Features:
     """The weekly features (``BlendConfig.features``)."""
 
-    bins: LeadBins = field(default_factory=lambda: LeadBins.uniform(4, 7))
+    bins: LeadBins = field(default_factory=lambda: LeadBins.uniform(*DEFAULT_BINS))
     """``features.bins.count`` and ``days``: ``LeadBins.uniform(count, days)`` (outcomes ``week1`` to ``weekN``, later)."""
     probability_days: int = 28
     """The lead days the onset probabilities cover."""
@@ -1187,14 +1194,14 @@ def _rain_model(name: str, value, problems: list[str]) -> Model:
     where = f"blend.models.{name}"
     node = _strict(value, ("lead_days", "max_member", "rain_horizon", "rain_predictors", "rain_transform"), where,
                    problems)
-    lead = node.get("lead_days", (1, 45))
+    lead = node.get("lead_days", DEFAULT_LEAD_DAYS)
     if isinstance(lead, dict):
         lead = _strict(lead, ("min", "max"), f"{where}.lead_days", problems)
-        lead = (lead.get("min", 1), lead.get("max", 45))
+        lead = (lead.get("min", DEFAULT_LEAD_DAYS[0]), lead.get("max", DEFAULT_LEAD_DAYS[1]))
     if (not isinstance(lead, (list, tuple)) or len(lead) != 2
             or not all(isinstance(x, int) and not isinstance(x, bool) for x in lead)):
         problems.append(f"{where}.lead_days: expected [min, max] (whole numbers) or {{min, max}}, got {lead!r}")
-        lead = (1, 45)
+        lead = DEFAULT_LEAD_DAYS
     horizon = _strict(node.get("rain_horizon"), ("max_day", "policy"), f"{where}.rain_horizon", problems)
     if horizon.get("max_day") is not None:
         _check_type(horizon["max_day"], "int", f"{where}.rain_horizon.max_day", problems)
@@ -1317,7 +1324,7 @@ def _features(cfg: dict, problems: list[str]) -> Features:
         The features.
     """
     bins = _strict(cfg.get("blend_bins"), ("count", "days"), "blend.bins", problems)
-    count, days = bins.get("count", 4), bins.get("days", 7)
+    count, days = bins.get("count", DEFAULT_BINS[0]), bins.get("days", DEFAULT_BINS[1])
     out: dict = {}
     if all(isinstance(x, int) and not isinstance(x, bool) and x >= 1 for x in (count, days)):
         out["bins"] = LeadBins.uniform(count, days)
@@ -1351,16 +1358,17 @@ def _forest(value, days: int, problems: list[str]) -> ForestParams | None:
     where = "blend.random_forest"
     node = _strict(value, ("name", "trees", "min_samples_leaf", "max_depth", "max_samples", "max_features",
                            "random_state", "max_day", "missing_onset", "years_per_fold"), where, problems)
-    if node.get("max_features", "sqrt") not in ("sqrt", "all"):
+    if node.get("max_features", DEFAULT_MAX_FEATURES) not in ("sqrt", "all"):
         problems.append(f"{where}.max_features: {node['max_features']!r} is not 'sqrt' or 'all'")
-    if node.get("missing_onset", "after_week4") not in ("after_week4", "drop"):
+    if node.get("missing_onset", DEFAULT_MISSING_ONSET) not in ("after_week4", "drop"):
         problems.append(f"{where}.missing_onset: {node['missing_onset']!r} is not 'after_week4' or 'drop'")
     kinds = {"name": "str", "trees": "int", "min_samples_leaf": "int", "max_depth": "int", "max_samples": "number",
              "random_state": "int", "max_day": "int", "years_per_fold": "int"}
     for key, kind in kinds.items():
         if node.get(key) is not None:
             _check_type(node[key], kind, f"{where}.{key}", problems)
-    max_features = None if node.get("max_features", "sqrt") == "all" else node.get("max_features", "sqrt")
+    max_features = node.get("max_features", DEFAULT_MAX_FEATURES)
+    max_features = None if max_features == "all" else max_features
     try:
         return ForestParams(**{**{k: v for k, v in node.items() if k != "max_features"}, "max_features": max_features,
                                "days_per_week": days})

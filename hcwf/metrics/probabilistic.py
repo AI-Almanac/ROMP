@@ -438,6 +438,22 @@ def pietra(P: np.ndarray, Y: np.ndarray) -> float:
     return np.nan
 
 
+def later_probability(listed: np.ndarray) -> np.ndarray:
+    """Return the probability of the ``later`` bin: what the listed bins leave of 1, kept in [0, 1].
+
+    Parameters
+    ----------
+    listed : numpy.ndarray
+        The summed probability of every other bin, any shape.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``1 - listed`` limited to the range 0 to 1 (NaN stays NaN).
+    """
+    return np.clip(1.0 - listed, 0.0, 1.0)
+
+
 def skill_score(score, reference, what: str = "score"):
     """Compute ``1 - score/reference``: positive when the score beats the reference (both scores lower-is-better).
 

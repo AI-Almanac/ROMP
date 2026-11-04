@@ -20,7 +20,7 @@ from hcwf.onset import plan as P
 from hcwf.onset.backends import reference
 from hcwf.onset.describe import describe
 from hcwf.onset.model import (
-    Curve, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, resolution_of,
+    DEFAULT_HORIZON, Curve, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, resolution_of,
 )
 from hcwf.onset.units import MONTH_NAMES as _MONTHS
 
@@ -1041,7 +1041,7 @@ def _detect_single(plan: P.Plan, start: int, end: int, data_end: int):
 
 def trace_observed(defn: Definition, rain: DailyRain, *, lat: float | None, lon: float | None, year: int,
                    season: str | None = None, thresholds=None, season_climatology: xr.Dataset | None = None,
-                   horizon: str = "censor", missing: str | None = None) -> Anatomy:
+                   horizon: str = DEFAULT_HORIZON, missing: str | None = None) -> Anatomy:
     """Trace the onset search of the cell nearest ``(lat, lon)`` in the season of ``year``.
 
     The cell must lie within half a grid step of ``(lat, lon)``. The jobs are the engine's own
@@ -1175,7 +1175,7 @@ def trace_forecast(defn: Definition, forecast: ForecastRain, *, init, lat: float
                    member=None, history: DailyRain | None = None, thresholds=None,
                    lead_window: tuple[int, int] = (1, 30), season: str | None = None,
                    restrict_to_season: bool = True, season_climatology: xr.Dataset | None = None,
-                   horizon: str = "censor", missing: str | None = None) -> Anatomy:
+                   horizon: str = DEFAULT_HORIZON, missing: str | None = None) -> Anatomy:
     """Trace the onset search of one init (and member) at the cell nearest ``(lat, lon)``.
 
     With ``history`` the search is stitched (observed history before lead 1, then the forecast, with the engine's

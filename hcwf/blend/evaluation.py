@@ -73,6 +73,8 @@ class RunSettings:
     """The recipe's cutoff tag, a part of every artifact name."""
     year_tag: str
     """The recipe's year tag, a part of every artifact name."""
+    output_tag: str
+    """The suffix on every evaluation artifact, e.g. ``"_fixed_cutoff_2023_2025"`` (`Recipe.output_tag`)."""
 
     @classmethod
     def from_recipe(cls, recipe: Recipe) -> RunSettings:
@@ -96,12 +98,8 @@ class RunSettings:
             holdout_years=tuple([*years.true_holdout, *years.cv_holdout]),
             cutoff_tag=recipe.cutoff_tag(),
             year_tag=recipe.year_tag(),
+            output_tag=recipe.output_tag(),
         )
-
-    @property
-    def output_tag(self) -> str:
-        """The suffix on every evaluation artifact, e.g. ``"_fixed_cutoff_2023_2025"``."""
-        return f"{self.cutoff_tag}{self.year_tag}"
 
     @property
     def fit_years(self) -> list[int]:
@@ -1158,7 +1156,7 @@ def _climatology_baselines(ctx: _Context, scores: _Scores) -> dict[str, Predicti
                 if earlier_col not in ctx.weekly.columns:
                     raise ValueError("unc_clim_raw requires earlier_col and it must exist in wide_df.")
                 earlier = np.clip(expit(np.asarray(ctx.weekly.take(earlier_col, rows), dtype=float)), 0.0, 1.0)
-                later = np.clip(1.0 - (earlier + _row_sum(weeks)), 0.0, 1.0)
+                later = metrics.later_probability(earlier + _row_sum(weeks))
                 # The earlier bin is renormalised with the rest.
                 every = [earlier, *weeks, later]
                 total = _row_sum(every)
@@ -1166,7 +1164,7 @@ def _climatology_baselines(ctx: _Context, scores: _Scores) -> dict[str, Predicti
                 earlier, *weeks, later = [np.where(good, v / np.where(good, total, 1.0), v) for v in every]
             else:
                 earlier = None
-                later = np.clip(1.0 - _row_sum(weeks), 0.0, 1.0)
+                later = metrics.later_probability(_row_sum(weeks))
             preds = Predictions.of_samples(ctx.weekly, rows, np.column_stack([*weeks, later]), labels + ["later"],
                                            earlier=earlier)
             out[model] = preds
@@ -1209,7 +1207,7 @@ def _forecast_baselines(ctx: _Context, result: Evaluation, scores: _Scores) -> d
                 if not labels:
                     warnings.warn(f"Skipping raw for {name} ({variant}); no {base}_week* columns found")
                 elif len(rows):
-                    later = np.clip(1.0 - _row_sum(weeks), 0.0, 1.0)
+                    later = metrics.later_probability(_row_sum(weeks))
                     preds = Predictions.of_samples(ctx.weekly, rows, np.column_stack([*weeks, later]), labels + ["later"])
                     scores.add(preds, f"{label}_raw", "raw", yearly=False,
                                warn_as=f"Error in raw forecast '{name}'")
@@ -1263,7 +1261,7 @@ def _calibrated(ctx: _Context, base: str, name: str, variant: str, *, export: bo
         warnings.warn(f"Skipping calibrated for {name} ({variant}); no {base}_week* columns found")
         return None, None
     labels = weeks + ["later"]
-    P = np.column_stack([*values, np.maximum(0.0, 1.0 - _row_sum(values))])
+    P = np.column_stack([*values, metrics.later_probability(_row_sum(values))])
     outcome = ctx.weekly.outcome_codes(rows, labels)
     year = ctx.weekly.take("year", rows)
     allowed = ctx.allowed[ctx.in_years([*run.training_years, *run.holdout_years])]

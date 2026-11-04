@@ -21,7 +21,7 @@ import xarray as xr
 from hcwf.onset import calendar as cal
 from hcwf.onset import plan as plan_mod
 from hcwf.onset.model import (
-    MISSING_POLICIES, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, StitchedJobs, resolution_of)
+    DEFAULT_HORIZON, MISSING_POLICIES, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, StitchedJobs, resolution_of)
 
 NO_PRESET = -1
 """The ``preset`` value of a job that still needs a search (a `~hcwf.onset.model.Status` code is never negative)."""
@@ -789,7 +789,7 @@ def _check_search_start(search_start: Mapping | None) -> None:
 
 def detect_observed(definition: Definition, rain: DailyRain, *, thresholds=None, years=None,
                     season_climatology: xr.Dataset | None = None, backend: str = "numba",
-                    attrs: dict | None = None, horizon: str = "censor", missing: str | None = None,
+                    attrs: dict | None = None, horizon: str = DEFAULT_HORIZON, missing: str | None = None,
                     search_start: Mapping[str, str | xr.DataArray] | None = None) -> xr.Dataset:
     """Detect onset in every (year, season, cell).
 
@@ -1721,7 +1721,7 @@ def detect_forecast(definition: Definition, forecast: ForecastRain, *, threshold
                     lead_window: tuple[int, int] = (1, 30), restrict_to_season: bool = True,
                     backend: str = "numba", attrs: dict | None = None,
                     history: DailyRain | None = None, threshold_windows=None,
-                    season_climatology: xr.Dataset | None = None, horizon: str = "censor",
+                    season_climatology: xr.Dataset | None = None, horizon: str = DEFAULT_HORIZON,
                     missing: str | None = None, search_start: Mapping[str, str | xr.DataArray] | None = None,
                     onset_count: bool = False) -> xr.Dataset:
     """Detect onset in every (init, [member], season, cell) of a forecast.
