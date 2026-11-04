@@ -163,12 +163,13 @@ def _fair_terms(squares, P, members):
     Returns
     -------
     numpy.ndarray of float64, shape (samples, bins)
-        The fair terms; ``inf`` members take nothing off.
+        The fair terms; ``inf`` members take nothing off, and a single member gives NaN (or infinity) as the division does.
     """
     members = np.asarray(members, dtype=float)
     if members.ndim == 1 and P.ndim == 2:
         members = members[:, None]
-    return squares - (P * (1 - P)) / (members - 1)
+    with np.errstate(divide="ignore", invalid="ignore"):   # one member: no fair term, as the NaN says
+        return squares - (P * (1 - P)) / (members - 1)
 
 
 def brier_scores(P: np.ndarray, Y: np.ndarray, members=None, *, scale: str = "sample", by_bin: bool = False,

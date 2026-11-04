@@ -51,6 +51,16 @@ def test_the_ensemble_mean_of_members_without_an_onset_does_not_warn():
     assert count[:, 0].tolist() == [2, 0, 0] and np.isnan(ensemble_day[1, 0]) and ensemble_day[0, 0] == 4.0
 
 
+def test_the_fair_brier_term_of_one_member_does_not_warn():
+    from hcwf.metrics.probabilistic import _fair_terms
+
+    P = np.array([[0.0, 0.5], [1.0, 0.25]])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fair = _fair_terms(np.zeros((2, 2)), P, np.array([1.0, 26.0]))
+    assert np.isnan(fair[0, 0]) and np.isinf(fair[0, 1]) and np.isfinite(fair[1]).all()
+
+
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
     """Units data whose forecasts hold some negative rain."""
