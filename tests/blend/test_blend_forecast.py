@@ -574,6 +574,8 @@ def test_a_registry_definition_is_frozen_as_text(region):
     mapping["onset"].pop("rule")
     mapping["onset"]["definition"] = "icpac_blend"
     mapping["onset"].pop("thresholds")
+    mapping["blend"]["models"]["ens"]["rain_predictors"] = []    # icpac_blend names no rain threshold: no diff predictor
+    mapping["blend"]["formulas"] = {"blended_model": "outcome ~ prob_clim_qx + ens_p_onset_qx"}
     registry = definition_mod.load("icpac_blend")
 
     frozen = frozen_config(mapping, registry.source_yaml)

@@ -199,3 +199,16 @@ def test_mme_weights_are_a_mapping_or_a_file_and_must_fit_the_sources(tmp_path):
     inline = {"blend_mme": {"weights": {"a": 1.0}}, "config_file": str(tmp_path / "run.yaml")}
     _anchor_mme_weights(inline)
     assert inline["blend_mme"]["weights"] == {"a": 1.0}
+
+
+def test_a_diff_rain_predictor_needs_an_onset_definition_with_a_named_rain_threshold():
+    """`icpac` has none: the check says so (it failed late in the sample support as 'diff_* has no finite values')."""
+    from hcwf.onset import definition
+
+    cfg = {**BASE, "blend_models": {"m": {"rain_predictors": [{"agg": "diff"}]}},
+           "blend_formulas": {"f": "outcome ~ prob_clim_qx + diff_m_qx"}}
+    with pytest.raises(RecipeError, match=r"rain_predictors\[0\]: a 'diff' predictor .* 'icpac' has none"):
+        R.recipe_from_config(cfg).check(definition.load("icpac"))
+    other = {**cfg, "blend_models": {"m": {"rain_predictors": [{"agg": "max", "window": 5}]}},
+             "blend_formulas": {"f": "outcome ~ prob_clim_qx + max_m_5day_qx"}}
+    R.recipe_from_config(other).check(definition.load("icpac"))

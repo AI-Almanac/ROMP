@@ -678,7 +678,8 @@ class Recipe:
     def check(self, definition: Definition) -> None:
         """Check the rules that need the onset definition.
 
-        The rain-window tokens must resolve, and the formulas may name only features this recipe builds.
+        The rain-window tokens must resolve, a ``diff`` rain predictor needs the definition to name a rain threshold, and
+        the formulas may name only features this recipe builds.
 
         Parameters
         ----------
@@ -697,6 +698,11 @@ class Recipe:
                     self.window_days(predictor, definition)
                 except RecipeError as error:
                     problems.extend(f"models[{model.name}].rain_predictors[{index}]: {p}" for p in error.problems)
+                if predictor.agg == "diff" and not definition.thresholds:
+                    problems.append(
+                        f"models[{model.name}].rain_predictors[{index}]: a 'diff' predictor is the model's rain minus "
+                        f"the onset definition's named rain threshold, and the definition {definition.id!r} has none; "
+                        "use max or min predictors, or an onset definition with a named threshold")
         if not problems:
             available = self.feature_bases(definition)
             for name, formula in self.evaluation.formulas:
