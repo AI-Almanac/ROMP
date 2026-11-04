@@ -25,7 +25,7 @@ from typing import Literal
 from hcwf.errors import RecipeError
 from hcwf.config.datasets import parse_year_list, suggest
 
-from hcwf.blend.design import Formula, WindowVariant
+from hcwf.blend.design import Formula, WindowVariant, formula_columns
 from hcwf.blend.random_forest import Params as ForestParams
 from hcwf.onset.model import Curve, Definition, DerivedSeasons, Season, ThresholdSpec
 from hcwf.metrics.bins import LeadBins
@@ -711,7 +711,7 @@ class Recipe:
             for name, formula in self.evaluation.formulas:
                 if not formula.enabled:
                     continue
-                for token in formula_terms(formula.text):
+                for token in formula_columns(formula.text):
                     if token not in available:
                         close = difflib.get_close_matches(token, sorted(available), n=2)
                         hint = f" (did you mean {' or '.join(close)}?)" if close else ""
@@ -941,28 +941,6 @@ def probability_feature_base(model: str, variant: str) -> str:
         ``"<model>_p_onset<suffix>"``.
     """
     return f"{model}_p_onset{VARIANT_SUFFIX[variant]}"
-
-
-_FORMULA_FUNCTIONS = re.compile(r"^(?:I|C|Q|center|standardize|scale|np|numpy)(?:\..+)?$")
-"""A Patsy or numpy function name that is not a feature."""
-
-
-def formula_terms(text: str) -> list[str]:
-    """Return the feature names a formula's right-hand side refers to.
-
-    Parameters
-    ----------
-    text : str
-        The formula, with or without ``~``.
-
-    Returns
-    -------
-    list of str
-        The tokens of the right-hand side that are not numbers or function names.
-    """
-    rhs = text.split("~", 1)[1] if "~" in text else text
-    tokens = [t.strip() for t in re.split(r"[+\-*:(),]", rhs)]
-    return [t for t in tokens if t and not re.fullmatch(r"\d+(\.\d+)?", t) and not _FORMULA_FUNCTIONS.match(t)]
 
 
 def _check_rain_transform(value, path: str, problems: list[str]) -> None:

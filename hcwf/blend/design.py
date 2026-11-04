@@ -202,6 +202,10 @@ def _numeric(dtype) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_FORMULA_FUNCTIONS = re.compile(r"^(?:I|C|Q|center|standardize|scale|np|numpy)(?:\..+)?$")
+"""A Patsy or numpy function name that is not a feature."""
+
+
 def formula_columns(formula: str) -> list[str]:
     """Return the feature names of a formula's right-hand side.
 
@@ -213,11 +217,12 @@ def formula_columns(formula: str) -> list[str]:
     Returns
     -------
     list of str
-        The names between the operators ``+ - * : ( )``, without empty ones, digits and ``1``; repeats are kept.
+        The names between the operators ``+ - * : ( ) ,``, without empty ones, numbers and the Patsy or numpy
+        function names (``I``, ``C``, ``np.log``, ...); repeats are kept.
     """
     rhs = formula.split("~", 1)[1] if "~" in formula else formula
-    names = [t.strip() for t in re.split(r"[+\-\*:\(\)]", rhs)]
-    return [n for n in names if n and not n.isdigit() and n != "1"]
+    names = [t.strip() for t in re.split(r"[+\-\*:\(\),]", rhs)]
+    return [n for n in names if n and not re.fullmatch(r"\d+(\.\d+)?", n) and not _FORMULA_FUNCTIONS.match(n)]
 
 
 def _expanded_terms(formula: str, n_bins: int) -> tuple[str, list[tuple[str, set[str]]]]:

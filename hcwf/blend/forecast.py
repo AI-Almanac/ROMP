@@ -24,6 +24,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.blend import features, training
+from hcwf.blend.design import formula_columns
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, blend_season_start
 from hcwf.config import detect as dataset_detect
 from hcwf.errors import IncompatibleForecast
@@ -454,7 +455,7 @@ def _input_columns(model, weekly) -> list[str]:
     list of str
         The columns of `weekly` that appear in a term, in the order of its columns.
     """
-    names = {part for feature in model.features for part in str(feature).split(":")}
+    names = {part for feature in model.features for part in formula_columns(str(feature))}
     return [c for c in weekly.columns if c in names]
 
 
