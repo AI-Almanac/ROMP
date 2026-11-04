@@ -16,6 +16,7 @@ from hcwf.onset.alignment import check_forecast_alignment
 from hcwf.onset.describe import describe
 from hcwf.onset.ingest import ingest, ingest_forecast
 from hcwf.errors import DefinitionError, RegionError
+from hcwf.io.dims import find_dim
 
 
 def _list(args) -> int:
@@ -102,10 +103,14 @@ def _open(path: str, var: str) -> xr.DataArray:
     Returns
     -------
     xarray.DataArray
-        The variable, loaded into memory.
+        The variable, read into memory block by block (`hcwf.spatial.select.load_blocks`).
     """
-    with xr.open_dataset(path) as ds:
-        return ds[var].load()
+    from hcwf.config.detect import open_data
+    from hcwf.spatial.select import load_blocks
+
+    with open_data(path) as ds:
+        da = ds[var]
+        return load_blocks(da, find_dim([str(d) for d in da.dims], "time") or da.dims[0])
 
 
 def _check_alignment(args) -> int:
@@ -155,8 +160,7 @@ def _explain(args) -> int:
     defn = definition.load(args.definition)
     if args.no_dry_spell_check:
         defn = definition.without_dry_spell_check(defn)
-    with xr.open_dataset(args.obs) as ds:
-        rain = ingest(ds[args.obs_var].load(), day_boundary=args.day_boundary, units=args.obs_units, source=args.obs)
+    rain = ingest(_open(args.obs, args.obs_var), day_boundary=args.day_boundary, units=args.obs_units, source=args.obs)
     thresholds = clim = None
     years = tuple(args.threshold_years) if args.threshold_years else None
     if defn.thresholds:

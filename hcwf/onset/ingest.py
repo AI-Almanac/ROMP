@@ -21,7 +21,7 @@ import xarray as xr
 
 from hcwf.log import Counted
 from hcwf.onset.model import MISSING_POLICIES, RESOLUTIONS, DailyRain, ForecastRain
-from hcwf.io.dims import ROLE_ALIASES, find_dim
+from hcwf.io.dims import ROLE_ALIASES, find_dim, rename_spatial
 
 MM_PER_UNIT = {
     **{name: 1.0 for name in ("mm", "mm/day", "mm/d", "mm day-1", "mm d-1", "mm day**-1", "kg m-2", "kg m**-2",
@@ -184,29 +184,6 @@ def _find_dim(da: xr.DataArray, role: str, override: str | None, label: str | No
     if found is None and required:
         raise ValueError(f"Cannot find the {label} dim among {da.dims}; tried {ROLE_ALIASES[role]}")
     return found
-
-
-def _rename_spatial(da: xr.DataArray) -> xr.DataArray:
-    """Rename latitude/longitude style dims to ``lat`` and ``lon``.
-
-    Parameters
-    ----------
-    da : xarray.DataArray
-        The data; a dim already called ``lat`` or ``lon`` is kept.
-
-    Returns
-    -------
-    xarray.DataArray
-        ``da`` with the spatial dims renamed (``da`` itself when there is nothing to rename).
-    """
-    renames = {}
-    for target in ("lat", "lon"):
-        if target in da.dims:
-            continue
-        name = find_dim(list(da.dims), target)
-        if name is not None:
-            renames[name] = target
-    return da.rename(renames) if renames else da
 
 
 def _read_time(values: np.ndarray, constant_time_of_day: bool) -> tuple[str, np.ndarray]:
@@ -619,7 +596,7 @@ def ingest(da: xr.DataArray, *, day_boundary: str, units: str | None = None, sou
     time_dim = _find_dim(da, "time", None)
     if time_dim not in da.coords:
         raise ValueError(f"The time dim {time_dim!r} has no coordinate values")
-    da = _rename_spatial(da.rename({time_dim: "time"}) if time_dim != "time" else da)
+    da = rename_spatial(da.rename({time_dim: "time"}) if time_dim != "time" else da)
     others = tuple(d for d in da.dims if d != "time")
     da = da.transpose(*others, "time")
 
@@ -1264,7 +1241,7 @@ def ingest_forecast_info(da: xr.DataArray, *, day_boundary: str, lead_label: str
     renames = {init: "init_time", lead: "lead"}
     if member is not None:
         renames[member] = "member"
-    daily = _rename_spatial(daily.rename({k: v for k, v in renames.items() if k != v}))
+    daily = rename_spatial(daily.rename({k: v for k, v in renames.items() if k != v}))
     lead_values = _lead_days(daily)
     spatial = tuple(d for d in daily.dims if d not in ("init_time", "member", "lead"))
     dim_order = ("init_time",) + (("member",) if member is not None else ()) + spatial + ("lead",)

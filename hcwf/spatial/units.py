@@ -35,6 +35,7 @@ from scipy import sparse
 
 from hcwf.config import schema
 from hcwf.errors import AreaError, UnitsSpecError
+from hcwf.io.dims import find_dim
 from . import ids as unit_ids
 from . import regrid
 from .regrid import SparseTransform
@@ -46,10 +47,6 @@ KINDS = ("grid", "polygon", "region")
 """The kinds of unit: a grid cell, a polygon and a region (a set of cells averaged into one series)."""
 _GRID_ID = re.compile(r"^(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)$")
 """The pattern of a ``<lat>_<lon>`` grid id, with the latitude and the longitude as groups."""
-_LAT_NAMES = ("lat", "center_lat", "latitude")
-"""The accepted names of a latitude column, in order of preference."""
-_LON_NAMES = ("lon", "center_lon", "longitude")
-"""The accepted names of a longitude column, in order of preference."""
 
 
 def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
@@ -87,8 +84,8 @@ def read_centroids(source, id_col: str | None = None) -> pd.DataFrame:
     if id_col and id_col not in table.columns:
         raise ValueError(f"centroids id_col '{id_col}' not found. Found: {table.columns.tolist()}")
     key = id_col or next((c for c in ("target_id", *unit_ids.UNIT_ID_COLUMNS) if c in table.columns), table.columns[0])
-    lat = next((c for c in _LAT_NAMES if c in table.columns), None)
-    lon = next((c for c in _LON_NAMES if c in table.columns), None)
+    lat = find_dim(list(table.columns), "lat")
+    lon = find_dim(list(table.columns), "lon")
     if not lat or not lon:
         raise ValueError("The centroids need lat/lon (or center_lat/center_lon) columns.")
     table = table.rename(columns={key: "id", lat: "lat", lon: "lon"})

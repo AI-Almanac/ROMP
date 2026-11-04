@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from hcwf.io.dims import find_dim
 from hcwf.spatial.masks import _nearest, _overlap, cell_bounds, cell_shares
 
 from . import ids as unit_ids
@@ -192,9 +193,9 @@ def read_weights(source, context: str = "weights") -> pd.DataFrame:
         table["source_id"] = unit_ids.normalize(table["source_id"], context=f"{context} source IDs")
         keys = ["source_id"]
     else:
-        lat = "latitude" if "latitude" in table.columns else "lat"
-        lon = "longitude" if "longitude" in table.columns else "lon"
-        if lat not in table.columns or lon not in table.columns:
+        lat = find_dim(list(table.columns), "lat")
+        lon = find_dim(list(table.columns), "lon")
+        if lat is None or lon is None:
             raise ValueError(f"{context} must contain source_id, or latitude and longitude.")
         table["lat"] = pd.to_numeric(table[lat], errors="raise").astype(float)
         table["lon"] = pd.to_numeric(table[lon], errors="raise").astype(float)

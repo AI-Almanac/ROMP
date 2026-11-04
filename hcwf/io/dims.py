@@ -12,8 +12,8 @@ ROLE_ALIASES = {
     "init_time": ("init_time", "time", "forecast_reference_time", "initial_time"),
     "step": ("lead", "step", "prediction_timedelta", "prediction_timedelta_daily", "day", "lead_day", "lead_days"),
     "member": ("member", "number", "ensemble", "realization", "sample", "members", "ensemble_member"),
-    "lat": ("lat", "latitude", "y"),
-    "lon": ("lon", "longitude", "x"),
+    "lat": ("lat", "latitude", "y", "nav_lat", "lats", "center_lat"),
+    "lon": ("lon", "longitude", "x", "nav_lon", "lons", "long", "center_lon"),
     "unit": ("adm3_name", "adm3"),
 }
 """Names (compared in lower case, in this order of preference) a dimension may have for each role."""
@@ -121,32 +121,45 @@ def _rename_unit(ds):
     return ds
 
 
-def _rename_spatial(ds):
-    """Rename the latitude and longitude coordinates to ``lat`` and ``lon`` (not needed for a unit dimension).
+def rename_spatial(obj, *, fuzzy=False, required=False):
+    """Rename the latitude and longitude names of a dataset or array to ``lat`` and ``lon``: the one implementation.
+
+    Each of the two is renamed when it is not already present, from the aliases of `ROLE_ALIASES` (the dimensions and
+    coordinates are searched). A ``unit`` dimension stands in for both and nothing is renamed.
 
     Parameters
     ----------
-    ds : xarray.Dataset
-        The dataset.
+    obj : xarray.Dataset or xarray.DataArray
+        The data.
+    fuzzy : bool, default False
+        Also accept a name holding ``lat`` or ``lon`` when no alias is present (`ROLE_KEYWORDS`).
+    required : bool, default False
+        Raise when no latitude or no longitude name is found (unless there is a ``unit`` dimension).
 
     Returns
     -------
-    xarray.Dataset
-        The dataset with ``lat`` and ``lon`` coordinates; unchanged if it has ``lon`` or a ``unit`` dimension.
+    xarray.Dataset or xarray.DataArray
+        The data with ``lat`` and ``lon`` names; ``obj`` itself when there is nothing to rename.
 
     Raises
     ------
     IndexError
-        No latitude or no longitude coordinate is found.
+        ``required`` and no latitude or no longitude name is found.
     """
-    coord_list = list(ds.coords.keys())
-    if "lon" not in coord_list and "unit" not in ds.dims:
-        lat = find_dim(coord_list, "lat", fuzzy=True)
-        lon = find_dim(coord_list, "lon", fuzzy=True)
-        if lat is None or lon is None:
-            raise IndexError("list index out of range")
-        ds = ds.rename({lat: "lat", lon: "lon"})
-    return ds
+    if "unit" in obj.dims:
+        return obj
+    names = list(dict.fromkeys([*obj.dims, *obj.coords]))
+    renames = {}
+    for target in ("lat", "lon"):
+        if target in names:
+            continue
+        name = find_dim(names, target, fuzzy=fuzzy)
+        if name is None:
+            if required:
+                raise IndexError(f"no {target} name among {sorted(map(str, names))}")
+            continue
+        renames[name] = target
+    return obj.rename(renames) if renames else obj
 
 
 def dim_fmt(ds):
@@ -164,7 +177,7 @@ def dim_fmt(ds):
     xarray.Dataset
         The dataset with ``lat``, ``lon`` and ``time`` (or ``unit``) names.
     """
-    ds = _rename_spatial(_rename_unit(ds))
+    ds = rename_spatial(_rename_unit(ds), fuzzy=True, required=True)
     coord_list = list(ds.coords.keys())
 
     if set(ds.dims) == {"lat", "lon"} and len(ds.dims) == 2:
@@ -251,7 +264,7 @@ def dim_fmt_model(ds, model_dims=None):
     xarray.Dataset
         The dataset with canonical dimension names; ``step`` holds integer days.
     """
-    ds = _rename_spatial(_rename_unit(rename_model_dims(ds, model_dims)))
+    ds = rename_spatial(_rename_unit(rename_model_dims(ds, model_dims)), fuzzy=True, required=True)
     coord_list = list(ds.coords.keys())
 
     if "init_time" not in coord_list:

@@ -102,3 +102,20 @@ def test_check_reads_the_leads_of_every_alias(tmp_path, lead_dim):
     report = check.CheckReport()
     check._leads(dic, report, {"M": path})
     assert "3 leads" in report.text()
+
+
+def test_one_spatial_rename_for_datasets_and_arrays():
+    """Datasets and arrays are renamed by one function: aliases, an optional fuzzy match, an error when required."""
+    from hcwf.io.dims import dim_fmt, rename_spatial
+
+    da = xr.DataArray(np.zeros((2, 3)), dims=("latitude", "lon"), coords={"latitude": [0.0, 1.0], "lon": [0.0, 1.0, 2.0]})
+    assert rename_spatial(da).dims == ("lat", "lon")
+    odd = xr.Dataset({"v": (("t", "gridlat", "gridlon"), np.zeros((1, 2, 2)))},
+                     coords={"t": [0], "gridlat": [0.0, 1.0], "gridlon": [0.0, 1.0]})
+    assert set(rename_spatial(odd).dims) == {"t", "gridlat", "gridlon"}
+    assert set(rename_spatial(odd, fuzzy=True).dims) == {"t", "lat", "lon"}
+    with pytest.raises(IndexError):
+        rename_spatial(odd, required=True)
+    mask_style = xr.Dataset({"v": (("time", "nav_lat", "nav_lon"), np.zeros((1, 2, 2)))},
+                            coords={"time": [0], "nav_lat": [0.0, 1.0], "nav_lon": [0.0, 1.0]})
+    assert {"lat", "lon"} <= set(dim_fmt(mask_style).dims)

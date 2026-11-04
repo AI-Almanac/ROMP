@@ -45,6 +45,7 @@ import xarray as xr
 from hcwf.cache import memo
 from hcwf.config.datasets import suggest
 from hcwf.errors import MaskError
+from hcwf.io.dims import ROLE_ALIASES, find_dim
 import logging
 
 log = logging.getLogger(__name__)
@@ -61,10 +62,6 @@ _NE_LAND = ("physical", "land")
 """The Natural Earth (category, name) of the land shapes."""
 _COUNTRY_FIELDS = ("NAME", "NAME_LONG", "ADM0_A3")
 """The attributes of a Natural Earth country that a ``mask.country`` name is matched against."""
-_LAT_NAMES = ("lat", "latitude", "y", "nav_lat", "lats")
-"""The names recognised as the latitude axis of a mask file."""
-_LON_NAMES = ("lon", "longitude", "x", "nav_lon", "lons", "long")
-"""The names recognised as the longitude axis of a mask file."""
 _EPS = 1e-9
 """The slack of comparisons between areas, shares and coordinates."""
 
@@ -627,15 +624,15 @@ def shape_file_geometry(path):
     return _make_valid(frame.geometry.union_all())
 
 
-def _find_axis(ds, names, units, what, path):
+def _find_axis(ds, role, units, what, path):
     """Find the latitude or longitude coordinate of a dataset, by name, units and ``standard_name``.
 
     Parameters
     ----------
     ds : xarray.Dataset
         The dataset.
-    names : tuple of str
-        The accepted names, lower case.
+    role : {"lat", "lon"}
+        The role whose names (`hcwf.io.dims.ROLE_ALIASES`) are accepted.
     units : tuple of str
         The accepted ``units`` attributes, lower case.
     what : {"latitude", "longitude"}
@@ -653,14 +650,14 @@ def _find_axis(ds, names, units, what, path):
     MaskError
         No coordinate matches.
     """
-    for name in list(ds.coords) + list(ds.dims):
-        if str(name).lower() in names:
-            return name
+    found = find_dim(list(ds.coords) + list(ds.dims), role)
+    if found is not None:
+        return found
     for name in ds.coords:
         attrs = ds[name].attrs
         if str(attrs.get("units", "")).lower() in units or str(attrs.get("standard_name", "")).lower() == what:
             return name
-    raise MaskError(f"{path}: no {what} coordinate found (looked for {', '.join(names)}); coordinates are "
+    raise MaskError(f"{path}: no {what} coordinate found (looked for {', '.join(ROLE_ALIASES[role])}); coordinates are "
                     f"{', '.join(map(str, ds.coords))}")
 
 
@@ -703,8 +700,8 @@ def read_raster_mask(path, variable=None, keep_value=1, condition=None):
     except Exception as exc:
         raise MaskError(f"cannot open the mask file {path}: {type(exc).__name__}: {exc}") from exc
     with ds:
-        lat_name = _find_axis(ds, _LAT_NAMES, ("degrees_north", "degree_north", "degrees_n"), "latitude", path)
-        lon_name = _find_axis(ds, _LON_NAMES, ("degrees_east", "degree_east", "degrees_e"), "longitude", path)
+        lat_name = _find_axis(ds, "lat", ("degrees_north", "degree_north", "degrees_n"), "latitude", path)
+        lon_name = _find_axis(ds, "lon", ("degrees_east", "degree_east", "degrees_e"), "longitude", path)
         if variable is None:
             candidates = [v for v in ds.data_vars if lat_name in ds[v].dims and lon_name in ds[v].dims]
             if len(candidates) != 1:
