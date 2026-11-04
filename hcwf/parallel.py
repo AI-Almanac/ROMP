@@ -11,7 +11,8 @@ callers.
 onset tables, climatology pairs) are spread over `worker_count` processes (``parallel: {workers: N}``; default the
 cores available, never more than the years):
 
-* Every year goes to a worker. While the workers boot (they are started first, with the "spawn" method: a fork
+* Every year goes to a worker; the pool is as small as still runs the years in the same number of rounds (`even_workers`: 25 years on 24 workers
+  are 13 and 12, not 24 and a last year alone). While the workers boot (they are started first, with the "spawn" method: a fork
   after numba's threads ran is unsafe; each gets ``cores // workers`` numba and BLAS threads, `THREAD_LIMITS`) this process pre-warms what all the
   years share (thresholds, masks; see the ``prewarm`` argument), so each is read, built and logged once, here, and
   then travels to the workers as one small snapshot. The pool is kept for the run (see `shutdown`), so the next
@@ -529,6 +530,31 @@ def spec_workers(parallel, tasks: int, item_bytes: int | None = None) -> int:
                         None if item_bytes is None else [item_bytes])
 
 
+def even_workers(tasks: int, workers: int) -> int:
+    """Return the fewest workers that still run ``tasks`` equal items in as many rounds as ``workers`` would.
+
+    A pool of ``workers`` runs ``ceil(tasks / workers)`` rounds, and its last round holds only the remainder: 25 years on 24
+    workers are two rounds of 24 and then 1, the last year running alone while 23 workers idle. The same two rounds are 13
+    and 12 years on 13 workers: the time is the same, the tail is gone, and each process has more of the cores and
+    memory.
+
+    Parameters
+    ----------
+    tasks : int
+        The number of items.
+    workers : int
+        The most workers allowed (at least 1).
+
+    Returns
+    -------
+    int
+        The worker count, at least 1 and at most ``workers`` and ``tasks``.
+    """
+    tasks = max(1, int(tasks))
+    workers = max(1, min(int(workers), tasks))
+    return -(-tasks // -(-tasks // workers))
+
+
 def start_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA,
                     prewarm: Callable[[], None] | None = None, item_bytes: int | None = None) -> Pending:
     """Start ``func([year], *args)`` for each year; the Pending gives the results in year order.
@@ -560,8 +586,8 @@ def start_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DA
         Its `Pending.result` gives the list of results in year order, None for a skipped year.
     """
     years = list(years)
-    return start_items(_years_call, years, (func, args, skip), workers=spec_workers(parallel, len(years), item_bytes),
-                       label=int, prewarm=prewarm)
+    workers = even_workers(len(years), spec_workers(parallel, len(years), item_bytes))
+    return start_items(_years_call, years, (func, args, skip), workers=workers, label=int, prewarm=prewarm)
 
 
 def map_year_args(func, years, args: tuple, parallel, skip: str | None = NO_DATA,

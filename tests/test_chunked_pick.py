@@ -65,3 +65,10 @@ def test_other_selections_use_the_ordinary_read(source):
     reversed_rows = source["tp"].isel(init_time=[5, 3, 1])
     assert select._picked_rows(reversed_rows, 0) is None
     np.testing.assert_array_equal(select.load_blocks(reversed_rows, "init_time").values, reversed_rows.load().values)
+
+
+def test_a_member_list_beside_the_init_list_keeps_the_chunk_path(source):
+    """Two lists (inits and a subset of members) are still read one chunk range at a time, with the plain values."""
+    members = picked(source, member=[0, 2])
+    assert select._picked_rows(members) is not None
+    np.testing.assert_array_equal(select.load_blocks(members, "init_time").values, picked(source, member=[0, 2]).load().values)

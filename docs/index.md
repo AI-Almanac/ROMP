@@ -38,6 +38,7 @@ reference, the run file sections, run folders and caches.
 blending
 onset_in_hcwf
 onset_spec
+reading_data
 migrating_from_onset_blending
 ```
 

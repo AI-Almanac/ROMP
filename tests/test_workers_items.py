@@ -46,6 +46,32 @@ def test_year_workers_are_cut_to_the_memory_of_a_year(monkeypatch):
     assert parallel.spec_workers(ParallelSpec(enabled=False, workers=8), 10, item_bytes=1) == 1
 
 
+@pytest.mark.parametrize("tasks, limit", [(25, 24), (25, 20), (25, 12), (25, 16), (10, 9), (7, 3), (5, 8), (1, 4), (0, 3)])
+def test_even_workers_keep_the_rounds_and_leave_no_straggler(tasks, limit):
+    """The same number of rounds as the limit gives, in which no round is short of the others by more than one item."""
+    count = parallel.even_workers(tasks, limit)
+    capped = max(1, min(limit, max(tasks, 1)))
+    rounds = -(-max(tasks, 1) // capped)
+    assert 1 <= count <= capped
+    assert -(-max(tasks, 1) // count) == rounds   # no more rounds than before
+    assert (rounds - 1) * count < max(tasks, 1) <= rounds * count
+    last = max(tasks, 1) - (rounds - 1) * count
+    assert last >= count - rounds   # the last round is nearly as full as the others
+    if tasks > 1 and limit > 1:
+        assert count > 1
+
+
+def test_25_years_on_24_workers_run_as_13_and_12(monkeypatch):
+    """The straggler case: the 25th year no longer starts alone in a second round."""
+    from hcwf.config.model import ParallelSpec
+
+    assert parallel.even_workers(25, 24) == 13 and parallel.even_workers(25, 12) == 9
+    seen = {}
+    monkeypatch.setattr(parallel, "start_items", lambda func, items, args, **options: seen.update(options))
+    parallel.start_year_args(lambda years: years, range(2000, 2025), (), ParallelSpec(enabled=True, workers=24))
+    assert seen["workers"] == 13
+
+
 def test_readers_are_this_process_alone_when_parallel_is_off_or_in_a_worker(monkeypatch):
     from hcwf.config.model import ParallelSpec
 

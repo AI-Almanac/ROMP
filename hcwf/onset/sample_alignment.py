@@ -42,6 +42,7 @@ from hcwf.cache import Store, file_identity
 from hcwf.io.stores import forecast_sources as _year_sources
 from hcwf.io.stores import listed_years, observation_source, open_store, years_in_folder
 from hcwf.config.datasets import is_zarr
+from hcwf.spatial.select import load_blocks
 from hcwf.onset import ingest as ing
 from hcwf.onset.alignment import (ForecastAlignmentReport, _match_axis, _sqrt_field,
                                   forecast_alignment_from_samples)
@@ -489,7 +490,7 @@ def _read_forecast(kw: dict, grid: tuple, sources: list):
                 da = da.sel(member=list(kw["members"])[:n_members])
             else:
                 da = da.isel(member=slice(0, n_members))
-        da = da.isel(lat=span_lat, lon=span_lon).load()
+        da = load_blocks(da.isel(lat=span_lat, lon=span_lon), "init_time")
         da = _scale(da, kw.get("unit_cvt"))
         da = da.isel(lat=fl - span_lat.start, lon=flon - span_lon.start)
         parts.append(da)
@@ -647,7 +648,7 @@ def _read_obs(kw: dict, grid: tuple, forecast, pad: int, n_days: int):
                 continue
             order = np.argsort(slot[hit])
             idx = slot[hit][order]
-            da = ds[kw["obs_var"]].isel(time=idx, lat=span_lat, lon=span_lon).load()
+            da = load_blocks(ds[kw["obs_var"]].isel(time=idx, lat=span_lat, lon=span_lon), "time")
             da = _scale(da, kw.get("obs_unit_cvt")).transpose("time", "lat", "lon")
             block = da.values[:, ol - span_lat.start][:, :, olon - span_lon.start]
             values[np.nonzero(hit)[0][order]] = block.reshape(len(idx), -1)

@@ -5,6 +5,10 @@ masks are switched off per call by a `~hcwf.config.model.Selection` (``land_only
 not say), as blend's readers do. `region_select` is the entry point: it takes the box (`region_box`), reads it into
 memory block by block (`load_blocks`, which reads only the storage tiles that hold a kept cell) and applies the masks
 that `hcwf.spatial.masks` builds. The region boxes themselves come from `hcwf.onset.regions`.
+
+Read lazily opened data of any size into memory through `load_blocks` or `read_box` (never ``.load()``): they read each
+stored chunk of a NetCDF file once, on the file's own chunk grid, lists of rows and reversed axes included; see the
+guide ``reading_data`` of the docs.
 """
 from __future__ import annotations
 
@@ -360,11 +364,13 @@ def read_box(da, box):
 
 
 def _picked_rows(da, axis=None):
-    """Unpick a lazy NetCDF4 selection that picks an increasing list of rows on one axis.
+    """Unpick a lazy NetCDF4 selection that picks an increasing list of rows on an axis.
 
     The axis is the one whose entry of the lazy selection is the list (the inits of a year out of a file's whole time
-    axis). The result is None for anything else (in memory, zarr, unchunked storage, a selection xarray cannot be
-    unpicked, rows not increasing): the caller then reads with xarray's own indexing.
+    axis; with several lists, the longest increasing one, and the others, such as a subset of members, are read as
+    the range that covers them and picked in memory by `_read_slices`). The result is None for anything else (in
+    memory, zarr, unchunked storage, a selection xarray cannot be unpicked, no increasing list): the caller then reads
+    with xarray's own indexing.
 
     Parameters
     ----------
@@ -412,9 +418,13 @@ def _picked_rows(da, axis=None):
         picked = [a for a, entry in enumerate(key)
                   if isinstance(entry, np.ndarray) and entry.ndim == 1 and entry.dtype.kind in "iu" and len(entry)
                   and entry[0] >= 0 and np.all(np.diff(entry) > 0)]
-        if len(picked) != 1 or (axis is not None and picked[0] != axis):
+        if not picked or (axis is not None and axis not in picked):
             return None
-        axis = picked[0]
+        axis = axis if axis is not None else max(picked, key=lambda a: len(key[a]))   # the longest list, the inits
+        for a, entry in enumerate(key):   # the other lists (a subset of members) are read as their covering range
+            if a != axis and isinstance(entry, np.ndarray) and not (
+                    entry.ndim == 1 and entry.dtype.kind in "iu" and len(entry) and entry.min() >= 0):
+                return None
         inner = [w for w in wrappers if not isinstance(w, (indexing.MemoryCachedArray, indexing.CopyOnWriteArray))]
 
         def read(new_key):
@@ -491,12 +501,16 @@ def _read_slices(da, index, axis):
     if plan is None:
         return da.isel({d: i for d, i in zip(da.dims, index) if i != slice(None)}).values
     read, key, stored, shape, axis = plan   # the rows of a run are picked along the list's own axis, whichever is blocked
-    keys, flips = [], []
+    keys, flips, takes = [], [], []
     for a, entry in enumerate(key):
         if a == axis:
             keys.append(None)
             continue
         narrowed, flip = _along(entry, shape[a], index[a])
+        if isinstance(narrowed, np.ndarray):   # another list: its covering range is read and the rows taken in memory
+            low = int(narrowed.min())
+            takes.append((a, narrowed - low))
+            narrowed = slice(low, int(narrowed.max()) + 1)
         keys.append(narrowed)
         if flip:
             flips.append(a)
@@ -508,6 +522,8 @@ def _read_slices(da, index, axis):
         group = rows[first:stop]
         keys[axis] = slice(int(group[0]), int(group[-1]) + 1)
         piece = read(tuple(keys))
+        for a, offsets in takes:
+            piece = np.take(piece, offsets, axis=a)
         if len(group) != piece.shape[axis]:
             piece = np.take(piece, group - group[0], axis=axis)
         if out is None:
