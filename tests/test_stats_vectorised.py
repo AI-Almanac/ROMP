@@ -904,11 +904,14 @@ def test_climatology_as_forecast_matches_loops(max_forecast_day):
     doy[2, 3] = np.nan
     doy[3, 0] = np.nan
     clim = _grid(doy)
-    observed = _observed_onsets()
-    args = (clim, 2020, INITS, observed)
+    # 2019, not a leap year: the loop placed a day of year from 1 January, while a day of the 365-day year is one day
+    # later from 1 March of a leap year (test_climatology_as_forecast_leap_year)
+    inits = INITS - pd.Timedelta(days=366)
+    observed = _observed_onsets() - np.timedelta64(366, "D")
+    args = (clim, 2019, inits, observed)
     kwargs = dict(max_forecast_day=max_forecast_day)
     old = _old_compute_climatology_as_forecast(*args, **kwargs)
-    new = compute_climatology_as_forecast(clim, INITS, observed, **kwargs)
+    new = compute_climatology_as_forecast(clim, inits, observed, **kwargs)
 
     # Documented differences: the doy column was an object column of 0-d arrays and is now float64, and
     # rows without a climatological onset now have no climatological_onset_date (the loop repeated the
@@ -922,6 +925,15 @@ def test_climatology_as_forecast_matches_loops(max_forecast_day):
     expected["climatological_onset_doy"] = expected["climatological_onset_doy"].astype(float)
     expected.loc[no_clim, "climatological_onset_date"] = None
     _assert_frames_identical(expected, new)
+
+
+def test_climatology_as_forecast_leap_year():
+    """In a leap year a day of the 365-day year from day 60 on falls one day later than the plain day of year."""
+    clim = _grid(np.full((len(LATS), len(LONS)), 152.0))   # 1 June in every year
+    observed = _grid(np.full((len(LATS), len(LONS)), np.datetime64("2020-06-20"), dtype="datetime64[ns]"),
+                     dtype="datetime64[ns]")
+    new = compute_climatology_as_forecast(clim, INITS, observed, max_forecast_day=30)
+    assert (pd.to_datetime(new["climatological_onset_date"]) == pd.Timestamp("2020-06-01")).all()
 
 
 def test_climatology_as_forecast_without_valid_cases_is_empty():
