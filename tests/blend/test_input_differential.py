@@ -1,4 +1,5 @@
-"""hcwf's input path against onset_blending's own readers on the same synthetic files (see differential_input.py)."""
+"""hcwf's input path against onset_blending's own readers on the same synthetic files (see differential_input.py).
+The onset_blending dump is reused from the oracle cache while its key is unchanged (tests/blend/_oracle_cache.py)."""
 from pathlib import Path
 
 import pytest
@@ -15,4 +16,4 @@ BLENDING = Path("/home/hcwf/code/onset_blending")
 def test_the_arrays_read_are_bit_identical(tmp_path):
     env = {"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/bin"}
     assert_dumps_identical(SCRIPT, BLENDING / ".venv/bin/python", tmp_path,
-                           hcwf_kwargs={"cwd": ROOT, "env": env}, oracle_kwargs={"cwd": BLENDING})
+                           hcwf_kwargs={"cwd": ROOT, "env": env}, oracle_kwargs={"cwd": BLENDING}, src_first=False)

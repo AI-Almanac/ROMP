@@ -799,7 +799,7 @@ def store_kinds(root, kinds=None) -> list[Store]:
     return [Store(kind, root) for kind in Store.kinds(root) if not kinds or kind in kinds]
 
 
-SCHEMA = {"observed_onsets": 1, "thresholds": 1, "harmonic_seasons": 1, "model_thresholds": 1, "detect": 1, "alignment": 1}
+SCHEMA = {"observed_onsets": 1, "thresholds": 1, "harmonic_seasons": 1, "model_thresholds": 1, "detect": 1, "alignment": 1, "oracle": 1}
 """The code version of each kind of result. Bump a kind's number in the same commit as any change to how that result is
 computed (onset engine and backends, threshold computation, harmonic seasons, detection): `Store` adds it to the parts of
 every entry of the kind, so older entries, in any shared cache folder, simply miss once. Kinds not listed carry none."""

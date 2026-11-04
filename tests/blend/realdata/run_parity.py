@@ -9,6 +9,14 @@ artifact (CSV, NetCDF, JSON, trained.blend members), forecast both trained blend
 file of every model, compare the forecasts, and compare hcwf's artifacts with the job's stored
 output. Skips (exit 0) when the data or either environment is missing. Run under pytest it skips
 unless HCWF_REALDATA=1 (it takes minutes and gigabytes).
+
+onset_blending's two outputs (its training and its forecast) are the same for the same inputs, so they are computed
+once and reused: they live in the ``oracle`` kind of the shared hcwf cache (``$HCWF_ORACLE_CACHE_DIR``, else
+``$HCWF_CACHE_DIR``, default ``~/.cache/hcwf``), keyed by onset_blending's commit (a dirty checkout is never reused),
+package source and interpreter environment, the config text, the command line and the path, size and mtime of every
+input file (tests/blend/_oracle_cache.py). The report says "reused <key> (computed in N s)" for a reused output.
+``HCWF_ORACLE_REFRESH=1`` recomputes them; ``hcwf-run cache clean --kind oracle`` deletes them. hcwf is never
+reused: its steps run cold, in a cache folder under --work that is emptied at the start of each run.
 """
 from __future__ import annotations
 
@@ -23,6 +31,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import _oracle_cache  # noqa: E402
 
 DATA = Path(os.environ.get("ALMANAC_DATASETS", "/home/hcwf/code/ai-almanac/datasets"))
 JOBS = Path(os.environ.get("HCWF_JOBS_DIR", Path.home() / ".local/share/ai-almanac-spark/jobs"))
@@ -39,13 +50,86 @@ def job_dir(prefix):
     return hits[0] if hits else None
 
 
-def run_timed(cmd, log: Path, cwd=None):
+def run_timed(cmd, log: Path, cwd=None, env=None):
     """Run cmd under /usr/bin/time; return 'wall s, peak KB' (the last stderr line)."""
-    p = subprocess.run(TIME + [str(c) for c in cmd], cwd=cwd, capture_output=True, text=True)
+    p = subprocess.run(TIME + [str(c) for c in cmd], cwd=cwd, env=env, capture_output=True, text=True)
     log.write_text(p.stdout + "\n--- stderr ---\n" + p.stderr)
     if p.returncode:
         raise RuntimeError(f"{cmd[:4]} failed ({p.returncode}); see {log}")
     return p.stderr.strip().splitlines()[-1]
+
+
+# ------------------------------------------------- onset_blending's reused outputs
+
+def config_inputs(text: str):
+    """Return the input files of a config and whether they are all known: every string value that is a path.
+
+    Parameters
+    ----------
+    text : str
+        The config YAML.
+
+    Returns
+    -------
+    tuple of (list of str, bool)
+        The strings of the config that name an absolute path (existing or not), and False when a string looks like a
+        relative data path (``.nc``, ``.csv``, ...), which this function cannot resolve: reuse is then switched off.
+    """
+    import yaml
+
+    found, known = [], True
+
+    def walk(node):
+        """Collect the path strings under a loaded YAML node."""
+        nonlocal known
+        if isinstance(node, dict):
+            node = list(node.values())
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, str):
+            if node.startswith("/"):
+                found.append(node)
+            elif node.lower().endswith((".nc", ".csv", ".zarr", ".json", ".npz", ".yml", ".yaml", ".parquet")):
+                known = False
+
+    walk(yaml.safe_load(text))
+    return found, known
+
+
+def oracle_run(parts: dict, command_template: list, produce, target: Path, label: str, reusable: bool = True):
+    """Return onset_blending's output of a command: the stored one when its key is unchanged, else run it and store it.
+
+    The key (tests/blend/_oracle_cache.py) is the oracle's commit, package source and environment plus ``parts`` and the
+    command line with its work-folder paths replaced by names. ``HCWF_ORACLE_REFRESH=1`` recomputes.
+
+    Parameters
+    ----------
+    parts : dict
+        The inputs of the command: config text, identity of every input file, ...
+    command_template : list
+        The command line with placeholders instead of the paths in the work folder.
+    produce : callable
+        ``produce(target)`` runs the command and writes its output at ``target``.
+    target : pathlib.Path
+        Where a fresh output goes.
+    label : str
+        Names the entry in the line printed to stderr.
+    reusable : bool, default True
+        False when the inputs of the key are not all known.
+
+    Returns
+    -------
+    tuple of (pathlib.Path, dict)
+        The output (a stored one is read-only) and the info of `_oracle_cache.reuse`.
+    """
+    return _oracle_cache.reuse({"command": command_template, **parts}, produce, target, src=OB_REPO, python=OB_PY,
+                               src_first=False, path0="/tmp", label=label, reusable=reusable)
+
+
+def oracle_time(ran: dict, info: dict) -> str:
+    """Return what to print for the time of an oracle command: this run's, or a note that it was reused."""
+    return f"reused {info['fingerprint']} (computed in {info['seconds']} s)" if info["reused"] else ran["timing"]
 
 
 # ----------------------------------------------------------------- comparison
@@ -190,14 +274,31 @@ def main(argv=None):
         cfgp.write_text(text)
         rows, times = [], {}
         ob_out, run_yaml = W / "ob_out", W / "run.yaml"
+        import shutil
+        # hcwf always runs cold: its own cache folder, empty at the start of every run (not the shared one, which
+        # holds only onset_blending's reused outputs here)
+        hcwf_env = {**os.environ, "HCWF_CACHE_DIR": str(W / "hcwf_cache")}
+        train_info = {"fingerprint": None}
         if not args.skip_train:
-            import shutil
-            for d in (ob_out, W / "runs"):
+            for d in (ob_out, W / "runs", W / "hcwf_cache"):
                 shutil.rmtree(d, ignore_errors=True)
-            times["onset_blending train"] = run_timed(
-                [OB_PY, "-m", "onset_blending", "train", cfgp, "-o", ob_out], W / "ob.log", cwd="/tmp")
-            subprocess.run([HCWF_RUN, "convert", cfgp, "-o", run_yaml, "--force"], check=True, capture_output=True)
-            times["hcwf-run train"] = run_timed([HCWF_RUN, "-p", run_yaml, "--quiet"], W / "hcwf.log", cwd=W)
+            ran = {}
+            inputs, known = config_inputs(text)
+
+            def produce_train(target):
+                """Train onset_blending into `target`."""
+                ran["timing"] = run_timed([OB_PY, "-m", "onset_blending", "train", cfgp, "-o", target], W / "ob.log",
+                                          cwd="/tmp")
+
+            ob_out, train_info = oracle_run(
+                {"config": text, "inputs": _oracle_cache.inputs_identity(inputs)},
+                ["-m", "onset_blending", "train", "<config>", "-o", "<out>"], produce_train, ob_out,
+                f"{key} train", known)
+            times["onset_blending train"] = oracle_time(ran, train_info)
+            subprocess.run([HCWF_RUN, "convert", cfgp, "-o", run_yaml, "--force"], check=True, capture_output=True,
+                           env=hcwf_env)
+            times["hcwf-run train"] = run_timed([HCWF_RUN, "-p", run_yaml, "--quiet"], W / "hcwf.log", cwd=W,
+                                                env=hcwf_env)
         blend_dirs = sorted((W / "runs").glob("*/blend"))
         if not blend_dirs:
             raise SystemExit(f"{key}: no hcwf blend folder under {W / 'runs'}")
@@ -223,19 +324,30 @@ def main(argv=None):
         for model, folder in names.items():
             fargs += ["--forecast", f"{model}={DATA / region / 'models' / folder / '2024.nc'}"]
         for sub in ("forecast_ob", "forecast_hcwf"):
-            import shutil
             shutil.rmtree(W / sub, ignore_errors=True)
-        times["onset_blending forecast"] = run_timed(
-            [OB_PY, "-m", "onset_blending", "forecast", ob_out / "trained.blend", *fargs, "-o", W / "forecast_ob"],
-            W / "ob_fc.log", cwd="/tmp")
+        ran = {}
+        live = [Path(a.split("=", 1)[1]) for a in fargs if "=" in a]
+
+        def produce_forecast(target):
+            """Forecast the live files with onset_blending's trained blend into `target`."""
+            ran["timing"] = run_timed([OB_PY, "-m", "onset_blending", "forecast", ob_out / "trained.blend", *fargs,
+                                       "-o", target], W / "ob_fc.log", cwd="/tmp")
+
+        # the forecast of a trained blend is a function of that blend (its train key) and of the live files
+        forecast_ob, info = oracle_run(
+            {"train": train_info["fingerprint"], "models": sorted(names), "live": _oracle_cache.inputs_identity(live)},
+            ["-m", "onset_blending", "forecast", "<trained.blend>", "--forecast", "<model>=<file>", "-o", "<out>"],
+            produce_forecast, W / "forecast_ob", f"{key} forecast", train_info["fingerprint"] is not None)
+        times["onset_blending forecast"] = oracle_time(ran, info)
         times["hcwf-run forecast"] = run_timed(
-            [HCWF_RUN, "forecast", mo_out / "trained.blend", *fargs, "-o", W / "forecast_hcwf"], W / "hcwf_fc.log", cwd=W)
-        compare_dirs(W / "forecast_ob", W / "forecast_hcwf", "forecast ob-vs-hcwf", rows)
+            [HCWF_RUN, "forecast", mo_out / "trained.blend", *fargs, "-o", W / "forecast_hcwf"], W / "hcwf_fc.log",
+            cwd=W, env=hcwf_env)
+        compare_dirs(forecast_ob, W / "forecast_hcwf", "forecast ob-vs-hcwf", rows)
         # forecasts of the job's own trained blend with hcwf (old blend files still load)
         shutil.rmtree(W / "forecast_hcwf_job", ignore_errors=True)
         subprocess.run([HCWF_RUN, "forecast", job / "output/trained.blend", *fargs, "-o", W / "forecast_hcwf_job"],
-                       check=True, capture_output=True, cwd=W)
-        compare_dirs(W / "forecast_ob", W / "forecast_hcwf_job", "forecast ob(new)-vs-hcwf(job blend)", rows)
+                       check=True, capture_output=True, cwd=W, env=hcwf_env)
+        compare_dirs(forecast_ob, W / "forecast_hcwf_job", "forecast ob(new)-vs-hcwf(job blend)", rows)
         report.append((key, times, rows))
     for key, times, rows in report:
         print(f"\n=== {key}")

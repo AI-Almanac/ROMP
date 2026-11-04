@@ -1,6 +1,7 @@
 """The same synthetic files and configs through onset_blending's onsets and features (its own environment) and
 hcwf's (hcwf.onset.detect, hcwf.blend.features) give bit-identical observed onsets, forecast onset counts, climatology
-and weekly features, legacy tables included (tests/blend/differential_onsets.py)."""
+and weekly features, legacy tables included (tests/blend/differential_onsets.py). The onset_blending dump is reused
+from the oracle cache while its key is unchanged (tests/blend/_oracle_cache.py)."""
 
 import os
 from pathlib import Path

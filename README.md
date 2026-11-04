@@ -241,6 +241,16 @@ pytest --lf           # re-run the last failures
 pytest tests/test_cache.py   # a single file needs no extra options
 ```
 
+The slow differential tests against `onset_blending` (`tests/blend/test_*differential.py`) and the real-data driver
+`tests/blend/realdata/run_parity.py` reuse the oracle's outputs: `onset_blending` is frozen, so its result for the same
+inputs is computed once and kept in the `oracle` kind of the shared cache (`$HCWF_ORACLE_CACHE_DIR`, else
+`$HCWF_CACHE_DIR`, default `~/.cache/hcwf`; `hcwf-run cache info` lists it). An entry is keyed by `onset_blending`'s git
+commit (a checkout with uncommitted changes is never reused), the source of the imported package, the interpreter and
+its installed package versions, the driver script (and the test files it imports) or the oracle command line, the config,
+and the path, size and mtime of the input data files; any change recomputes. The hcwf side always runs cold and every
+comparison is as strict as before. Force a recompute with `HCWF_ORACLE_REFRESH=1`, or delete the entries with
+`hcwf-run cache clean --kind oracle`. Details: `tests/blend/_oracle_cache.py`.
+
 The pytest cache (`.pytest_cache/`) and testmon data (`.testmondata*`) are ignored by Git.
 
 Current version 0.0.1; APIs may change. MIT License.

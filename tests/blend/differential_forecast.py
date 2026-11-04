@@ -15,6 +15,9 @@ Steps (each its own process; the oracle's in onset_blending's environment when O
     compare   every forecast file byte for byte (CSV; the NetCDF of hcwf's must agree with its CSV), every refusal
               with the same reasons, in the three results
 
+The oracle step is reused from the oracle cache (tests/blend/_oracle_cache.py: keyed by onset_blending's commit,
+environment and this script; ``HCWF_ORACLE_REFRESH=1`` recomputes); the hcwf steps always run.
+
 Each scenario is a forecast directory, or `refused.json` with the reasons the forecast was refused for.
 tests/blend/test_blend_forecast_differential.py runs this when the onset_blending checkout exists.
 """
@@ -35,9 +38,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 
+import _oracle_cache  # noqa: E402
 import differential_training as training  # noqa: E402
 
-ORACLE_SRC = "/home/hcwf/code/onset_blending"
+ORACLE_SRC = "/home/hcwf/code/onset_blending"  # the checkout whose commit keys the stored oracle output
 LIVE_YEAR = 2013
 SCENARIOS = {
     # name: (files by model, issue date, fewer members)
@@ -229,16 +233,28 @@ def run_all(work: Path, oracle_python: str | None) -> list[str]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         write_data(root)
-    steps = [(python, "oracle", str(root), str(work / "oracle")),
-             (sys.executable, "old", str(root), str(work / "oracle"), str(work / "old")),
-             (sys.executable, "new", str(root), str(work / "new"))]
-    for interpreter, *arguments in steps:
-        for target in arguments[-1:]:
-            Path(target).mkdir(parents=True)
+
+    def run_step(interpreter, *arguments):
+        """Run one step of this script in a process and raise with its stderr on a bad exit."""
         done = subprocess.run([interpreter, script, *arguments], capture_output=True, text=True)
         if done.returncode:
             raise RuntimeError(f"step {arguments[0]} failed:\n{done.stderr[-4000:]}")
-    return compare(work / "oracle", work / "old", work / "new")
+
+    def produce(target):
+        """Run onset_blending's step into a new folder."""
+        target.mkdir(parents=True)
+        run_step(python, "oracle", str(root), str(target))
+
+    # onset_blending's step is the one reused (tests/blend/_oracle_cache.py); the hcwf steps always run, cold
+    oracle, _ = _oracle_cache.reuse(
+        {"driver": _oracle_cache.driver_hash(script), "script": "differential_forecast.py oracle"}, produce,
+        work / "oracle", src=ORACLE_SRC, python=python, src_first=True, path0=Path(script).parent,
+        label="differential_forecast oracle")
+    (work / "oracle_used").write_text(str(oracle))
+    for arguments in (("old", str(root), str(oracle), str(work / "old")), ("new", str(root), str(work / "new"))):
+        Path(arguments[-1]).mkdir(parents=True)
+        run_step(sys.executable, *arguments)
+    return compare(oracle, work / "old", work / "new")
 
 
 if __name__ == "__main__":
@@ -256,7 +272,9 @@ if __name__ == "__main__":
             print("\n".join(problems) or "identical")
             timings = {}
             for label in ("oracle", "old", "new"):
-                meta = json.loads((Path(sys.argv[2]) / label / "_meta.json").read_text())
+                folder = (Path((Path(sys.argv[2]) / "oracle_used").read_text()) if label == "oracle"
+                          else Path(sys.argv[2]) / label)
+                meta = json.loads((folder / "_meta.json").read_text())
                 timings[label] = (sum(v for k, v in meta.items() if k[0] != "_" and ".season" in k),
                                   meta["_rss_mb"])
             print("forecast seconds (season scenario, all configs) and peak RSS MB per step: "
