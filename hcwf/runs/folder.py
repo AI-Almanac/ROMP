@@ -3,7 +3,7 @@
 Two modes, decided by the config:
 
 * **explicit** (``output.data_dir`` is written in the run config): files go to that folder (figures to
-  ``figure_dir``) with the historical file names, exactly as before; a re-run overwrites. The run's log is
+  ``figure_dir``, by default its ``figures/`` subfolder) with the historical file names, exactly as before; a re-run overwrites. The run's log is
   ``run.log`` there and the onset cache is ``<dir_out>/.onset_cache``.
 * **run folder** (``data_dir`` left out): ``runs/`` next to the config file holds one folder per run, named
   ``<region>_<definition>[+mod]_<years>_<fingerprint>`` (at most 40 characters). The 4-character fingerprint
@@ -309,7 +309,9 @@ def plan(dic: dict, config_file=None, write: bool = True) -> RunPaths:
     explicit_fig = sources.get("dir_fig") == "run config"
     if explicit_out:
         root = Path(dic["dir_out"])
-        return RunPaths(True, root, None, digest, root, Path(dic["dir_fig"]), root / "onsets", None, None, False, write)
+        # figures follow the run's output: figure_dir when it is set, else <data_dir>/figures (a bare flat dict names its own)
+        figures = Path(dic["dir_fig"]) if explicit_fig or "config_sources" not in dic else root / "figures"
+        return RunPaths(True, root, None, digest, root, figures, root / "onsets", None, None, False, write)
     base = Path(config_file).resolve().parent if config_file else Path.cwd()
     runs_dir = base / "runs"
     name = run_name(dic, digest)

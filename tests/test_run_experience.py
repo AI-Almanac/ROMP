@@ -495,6 +495,20 @@ def test_explicit_data_dir_wins_and_keeps_the_old_file_names(world, tmp_path):
         "onsets_DET.nc", "onsets_climatology.nc", "onsets_observed.nc"]
 
 
+def test_figures_of_an_explicit_data_dir_go_to_its_figures_folder_not_the_working_directory(world, tmp_path, monkeypatch):
+    """Without figure_dir the figures follow data_dir (they went to ./figures of the current directory)."""
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    out = tmp_path / "out"
+    path = _fresh(world, tmp_path, output={"data_dir": str(out), "plot_spatial_far_mr_mae": True})
+    assert flat_config(path)["run_paths"].dir_fig == out / "figures"
+    hcwf.run(path, write=True, quiet=True)
+    assert list((out / "figures").glob("*.png")) and not (cwd / "figures").exists()
+    chosen = _fresh(world, tmp_path, output={"data_dir": str(out), "figure_dir": str(tmp_path / "fig")})
+    assert flat_config(chosen)["run_paths"].dir_fig == tmp_path / "fig"
+
+
 def test_export_goes_to_the_runs_onsets_folder_with_short_names(world, tmp_path):
     """hcwf-run export in a run folder writes onsets/<source>.nc."""
     path = _fresh(world, tmp_path)
@@ -568,16 +582,20 @@ def test_check_prints_the_plan_and_runs_nothing(world, tmp_path):
 
 
 def test_check_fails_on_missing_files_a_refused_rerun_and_unresolvable_configs(world, tmp_path):
-    """Non-zero exit with the problem named; --overwrite makes an existing run folder acceptable."""
+    """Non-zero exit with the problem named; an existing run folder is a hint (a re-run needs --overwrite), not an error."""
     raw = raw_config(world, evaluation={"end_date": [2021, 5, 31]})
     done = _cli(tmp_path, "-p", str(write_config(tmp_path, raw)), "--check")
     assert done.returncode == 1 and "ERROR: DET forecast files missing for 2021" in done.stdout
     assert "ERROR: observation files missing for 2021" in done.stdout
     ok = _fresh(world, tmp_path)
     hcwf.run(ok, write=True, quiet=True)
-    refused = _cli(tmp_path, "-p", str(ok), "--check")
-    assert refused.returncode == 1 and "already ran" in refused.stdout
+    again = _cli(tmp_path, "-p", str(ok), "--check")
+    assert again.returncode == 0 and "HINT [overwrite]: this config already ran" in again.stdout
+    assert "--overwrite" in again.stdout and "ERROR" not in again.stdout
+    assert hcwf.check(ok).ok
     assert _cli(tmp_path, "-p", str(ok), "--check", "--overwrite").returncode == 0
+    refused = _cli(tmp_path, "-p", str(ok))   # the run itself still refuses
+    assert refused.returncode == 1 and "already ran" in refused.stdout
     broken = write_config(tmp_path, {"region": "ethiopia", "models": "nope"}, "broken.yaml")
     done = _cli(tmp_path, "-p", str(broken), "--check")
     assert done.returncode == 1 and "nothing was run" in done.stdout

@@ -823,7 +823,7 @@ def _run_folder(dic: dict, report: CheckReport, overwrite: bool = False) -> None
     dic : dict
         The flat config; ``run_paths`` holds the planned folders.
     report : CheckReport
-        The report to add to; a run folder that exists is an error unless ``overwrite``.
+        The report to add to; a run folder that exists is a hint (a re-run needs ``overwrite``), not an error.
     overwrite : bool, default False
         Whether ``--overwrite`` is given.
     """
@@ -840,8 +840,8 @@ def _run_folder(dic: dict, report: CheckReport, overwrite: bool = False) -> None
         if paths.exists and overwrite:
             report.add("  exists: --overwrite is given, so a run would clear it first")
         elif paths.exists:
-            report.error(f"this config already ran: {paths.root}. A run is refused unless --overwrite is given "
-                         "(which clears that folder first)")
+            report.hint("overwrite", f"this config already ran: {paths.root}. Running it again needs overwrite=True "
+                        "(--overwrite), which clears that folder first; without it the run is refused")
         else:
             report.add("  new: a run would create it")
     report.add(f"log: {paths.log_file}")
