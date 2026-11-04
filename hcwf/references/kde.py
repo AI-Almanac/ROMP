@@ -21,7 +21,7 @@ for operation, so the two give identical probabilities for the same inputs
 Days are plain numbers on any common axis: the day of the year for HCWF's reference
 forecast, the days since the season start for onset_blending (`season_days` makes either). Each date is counted
 from the season start of its season's year (the year the onset was detected for, the target year for an init), so
-a season crossing New Year (Kenya's short rains, October to January) counts a January onset after the autumn
+a season crossing New Year (for example October to January) counts a January onset after the autumn
 inits; onset_blending counted from the calendar year of the date, so parity with it holds for seasons inside one
 calendar year.
 

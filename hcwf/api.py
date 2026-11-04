@@ -14,7 +14,7 @@ This module implements the functions that `hcwf` re-exports (`run`, `check`) and
     plan = hcwf.check("run.yaml")                              # the same report as `hcwf-run -p run.yaml --check`
 
     from hcwf.api import forecast
-    fc = forecast("run/blend/trained.blend", {"aifs": "live/aifs.nc"})   # a trained blend on live forecasts
+    fc = forecast("run/blend/trained.blend", {"<model>": "live/<model>.nc"})   # a trained blend on live forecasts
 
 A config with a ``blend:`` section trains the blend instead of benchmarking: ``result.blend`` is the
 `hcwf.blend.training.TrainingResult` (evaluation tables and the trained blend; ``write=True`` saves its artifacts under
@@ -376,7 +376,7 @@ def forecast(blend, forecasts, *, issue_date=None, fewer_members=False, output=N
 
     ::
 
-        fc = forecast("run/blend/trained.blend", {"aifs": "live/aifs_2026-06-09.nc"})
+        fc = forecast("run/blend/trained.blend", {"<model>": "live/<model>_2026-06-09.nc"})
         fc.weekly           # xarray.Dataset of blended week probabilities over (time, id)
         fc.weekly_table     # the same as blending's contract table (id, time, onset_threshold, lat, lon, cv_*, clim_*)
 

@@ -543,7 +543,7 @@ class Case:
 
     @property
     def name(self) -> str:
-        """The flat record's ``case_name``, e.g. ``"AIFS_1-15"``."""
+        """The flat record's ``case_name``, e.g. ``"<model>_1-15"``."""
         from hcwf.naming import combi_to_str
 
         return combi_to_str((self.for_model or self.model.name, self.window.span)).replace(" ", "_")

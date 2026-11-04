@@ -11,7 +11,7 @@ Two modes, decided by the config:
   changed config gets a new folder and the same config is refused (``RunExistsError``) unless ``overwrite``,
   which clears that folder first. Inside: ``run.yaml`` (the resolved config), ``definition.yaml``, ``run.log``
   and the subfolders ``onsets/``, ``scores/`` and ``figures/``, each only when it would hold more than one
-  file (else its files sit in the run folder); file names are short (``spatial_AIFS_1-15.nc``,
+  file (else its files sit in the run folder); file names are short (``spatial_<model>_1-15.nc``,
   ``onsets/observed.nc``). ``runs/.cache/`` is shared by all runs (thresholds, observed onsets). A run with a
   ``blend:`` section writes the blend's artifacts (summary CSVs, ``trained.blend``, ...) under their own names into
   the ``blend/`` subfolder, and nothing else besides ``run.yaml``, ``definition.yaml`` and ``run.log``.

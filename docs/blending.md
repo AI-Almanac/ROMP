@@ -8,16 +8,16 @@ A blend is part of the normal run file: a `blend:` section next to the usual `ob
 
 ```yaml
 project_name: Blend of one model
-region: null                       # no region: the whole domain of the files; or a region id such as ethiopia
+region: null                       # no region: the whole domain of the files; or a region id
 observations:
-  paths: [/data/obs/*.nc]          # any number of files per year; names or globs
-  variable: precip
+  paths: [/path/to/observations/*.nc]          # any number of files per year; names or globs
+  variable: <rain variable>
   units: mm
   day_boundary: "00 UTC, labelled by start"   # needed without a region
 models:
   - name: ens
-    paths: [/data/ens/*.nc]
-    variable: tp
+    paths: [/path/to/forecasts/*.nc]
+    variable: <rain variable>
     units: mm
 onset:
   definition: moron_robertson_blend   # a registry id; the region's default if there is a region
@@ -44,15 +44,15 @@ blend:
 Observations and models are read as the benchmark reads them: `path` is a folder of yearly files (`file_pattern`, `{}` is the year), a zarr store holding every year (`path: data/obs.zarr`), or `paths` lists files. The same dataset entries therefore work for a benchmark and a blend, and a model's forecasts may be one zarr store of all years (training reads the store's issues of the `evaluation` years, `start_date` to `end_date`, as the benchmark does; yearly files are read whole):
 
 ```yaml
-observations: {path: data/ethiopia/obs.zarr}
+observations: {path: /path/to/observations.zarr}
 models:
-  - {name: aifs, path: data/ethiopia/models/AIFS_v2.zarr}
+  - {name: <model>, path: /path/to/forecasts.zarr}
 ```
 
 ```bash
 hcwf-run -p blend.yaml --check     # the plan, including a "== Blend ==" block (outcomes, years, formulas, tag, artifact folder)
 hcwf-run -p blend.yaml             # train, cross-validate, fit the final model, write blend/
-hcwf-run init --blend --obs /path/to/obs --model /path/to/aifs -o blend.yaml   # a skeleton to edit
+hcwf-run init --blend --obs /path/to/obs --model /path/to/forecasts -o blend.yaml   # a skeleton to edit
 ```
 
 `hcwf-run init --blend` writes a skeleton with `TODO` marks; fill them in and it runs. A blend file without a `units:` section evaluates on the grid cells of every source (the default `hcwf-run convert` writes for a gridded config: `mode: cells`, trimmed grid ids, `dissemination_scope: inputs`); `--check` shows it under Units. Add a `units:` section only to change that.
@@ -87,10 +87,10 @@ The onset itself comes from the `onset:` section: a registry definition or an in
 
 ```yaml
 units:
-  shapefile: /data/adm3.shp
+  shapefile: /path/to/units.shp
   unit_id_col: ADM3_PCODE
   unit_name_col: ADM3_EN
-  dissemination: /data/dissemination_units.csv
+  dissemination: /path/to/dissemination_units.csv
   dissemination_scope: training
 ```
 
@@ -99,7 +99,7 @@ Benchmarks (runs without `blend:`) use the same `units:` section; see `examples/
 ## Several regions: batch
 
 ```bash
-hcwf-run -p ethiopia.yaml -p india.yaml        # one after another
+hcwf-run -p <region_a>.yaml -p <region_b>.yaml        # one after another
 hcwf-run -p 'regions/*.yaml' --overwrite       # a glob names every file it matches
 ```
 
@@ -130,7 +130,7 @@ The names are those of the former `onset_blending` output contract, so consumers
 
 ```bash
 hcwf-run forecast runs/<run>/blend/trained.blend \
-    --forecast aifs_ens='live/ens_2026-06-09.nc' --forecast aifs_det='live/det_2026-06-09.nc' \
+    --forecast <model>_ens='live/ens_2026-06-09.nc' --forecast <model>_det='live/det_2026-06-09.nc' \
     [--issue-date 2026-06-09] [--fewer-members] [--netcdf] [-o forecasts/2026-06-09]
 ```
 
@@ -149,7 +149,7 @@ From Python:
 
 ```python
 from hcwf.api import forecast
-fc = forecast("runs/<run>/blend/trained.blend", {"aifs_ens": "live/ens_2026-06-09.nc"}, write=True, netcdf=True)
+fc = forecast("runs/<run>/blend/trained.blend", {"<model>_ens": "live/ens_2026-06-09.nc"}, write=True, netcdf=True)
 fc.weekly_table     # the CSV contract as a DataFrame
 fc.weekly           # the same as an xarray.Dataset over (time, id)
 fc.folder           # where it was written

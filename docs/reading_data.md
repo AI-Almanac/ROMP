@@ -48,7 +48,7 @@ again by every block along time, is blocked along the axis with the most chunks 
 * **NetCDF/HDF5**: one thread decodes at a time per process, so a big read may be split over reader processes
   (`readers=`, `hcwf.parallel.reader_pool`); a worker never starts any. Several files are read one at a time (the library is
   not thread-safe).
-* **zarr stores** (`data/india`, `data/ethiopia`; one init per chunk): opened with `hcwf.io.stores.open_store` and
+* **zarr stores** (for example `data/<dataset>.zarr`; one init per chunk): opened with `hcwf.io.stores.open_store` and
   `chunks=None`, so nothing is decoded until a selection is read; chunks are independent, so years may be prefetched in
   threads, and a store chunked over many years is read in blocks and sliced per year (`hcwf.io.observations`).
   The same `select` functions read them: their chunk information is the store's.

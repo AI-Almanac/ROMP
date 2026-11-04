@@ -2,17 +2,17 @@
 
 HCWF ships no datasets; you describe your own, either inline in the run config::
 
-    observations: {path: /data/obs, file_pattern: "{}.nc", variable: rain, units: mm,
+    observations: {path: /path/to/observations, file_pattern: "{}.nc", variable: rain, units: mm,
                    day_boundary: "00 UTC, labelled by start"}
     models:
-      - {name: AIFS, path: /data/aifs, variable: tp, units: m, lead_label: start,
+      - {name: <model>, path: /path/to/forecasts, variable: tp, units: m, lead_label: start,
          dims: {init_time: time, step: lead}}
 
 or once in a dataset file of yours (listed under ``dataset_files:`` or, as a folder of
 ``<id>.yaml`` files, ``catalog_dirs:`` in the run config) and referenced by id::
 
     observations: {dataset: my_obs}
-    models: [{dataset: my_aifs, name: AIFS}]
+    models: [{dataset: my_forecast, name: <model>}]
 
 Keys of an entry: ``id`` (files only), ``title``, ``kind`` (``observations`` or ``forecast``; implied inline),
 ``name`` (short name used in output files), ``path``, ``file_pattern`` (default ``"{}.nc"``, ``{}`` is the year),

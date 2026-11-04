@@ -1092,7 +1092,7 @@ def _fields() -> tuple[Field, ...]:
         Field("blend_cluster_var", "str", "grouping column of the 'clusters' method (default 'cluster')", None,
               "blend", "cluster_var", nullable=True, fill=False),
         Field("blend_formulas", "any", "the blend models: a mapping of name to a formula text "
-              "('outcome ~ prob_clim_qx + diff_AIFS_qx') or to {text, enabled}; features are <base>_qx or "
+              "('outcome ~ prob_clim_qx + diff_<model>_qx') or to {text, enabled}; features are <base>_qx or "
               "<base>_week<n>", None, "blend", "formulas", nullable=True, fill=False),
         Field("blend_final_formula", "str", "the formula fitted on every training year for operations (default: the "
               "only enabled formula)", None, "blend", "final_formula", nullable=True, fill=False),

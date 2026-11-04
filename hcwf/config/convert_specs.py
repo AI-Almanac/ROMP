@@ -1246,7 +1246,7 @@ class _Spec:
     Parameters
     ----------
     label : str
-        The spec's name in notes, for example ``"ground_truth"`` or ``"forecast[AIFS]"``.
+        The spec's name in notes, for example ``"ground_truth"`` or ``"forecast[<model>]"``.
     data : dict, optional
         The loaded spec; None is empty.
     notes : list of str

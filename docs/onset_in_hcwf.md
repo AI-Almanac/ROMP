@@ -4,7 +4,7 @@ HCWF detects onset with the `hcwf.onset` component (contract: `docs/onset_spec.m
 
 ## Quick start
 
-For a known region you need no onset settings at all. With `region: Ethiopia` in your run YAML, HCWF uses ICPAC's definition, CHIRPS's day boundary and the region's threshold years, and prints each choice and where it came from at the start of the run.
+For a known region you need no onset settings at all. With `region: <region>` in your run YAML, HCWF uses the region's registered definition, day boundary and threshold years, and prints each choice and where it came from at the start of the run.
 
 ```
 hcwf-run -p run.yaml
@@ -13,21 +13,21 @@ hcwf-run -p run.yaml
 To choose yourself, set `onset:` in the run file:
 
 ```yaml
-region: Ethiopia
+region: <region>
 onset:
-  definition: icpac            # registry id, or the path of a YAML file
+  definition: <onset definition>            # registry id, or the path of a YAML file
   override: {wet_day: at least 2 mm}   # optional; merged like `extends`, same strict errors
 ```
 
-or a complete definition inline under `onset: {rule: {...}}`. The run prints the definition's description, `icpac v1, overridden: wet_day` and the hash, and writes the resolved definition and config to the run folder (`definition.yaml`, `run.yaml`; `resolved_definition.yaml`, `resolved_config.yaml` in an explicit `output.data_dir`).
+or a complete definition inline under `onset: {rule: {...}}`. The run prints the definition's description, `<definition> v1, overridden: wet_day` and the hash, and writes the resolved definition and config to the run folder (`definition.yaml`, `run.yaml`; `resolved_definition.yaml`, `resolved_config.yaml` in an explicit `output.data_dir`).
 
 Look definitions up with the CLI:
 
 ```
 hcwf-run onset list                 # definitions
-hcwf-run onset describe icpac       # the rule in words, hash, status, notes
+hcwf-run onset describe <definition>       # the rule in words, hash, status, notes
 hcwf-run onset regions              # regions with their defaults
-hcwf-run onset schematic icpac --png icpac.png
+hcwf-run onset schematic <definition> --png <definition>.png
 ```
 
 A rule that differs a little goes in `onset.override`, or in a shared YAML file with `extends: <id>` (set `definition` to its path). A region you add as a YAML file in `hcwf/onset/regions/` takes the defaults of the regions it is `part_of` (see `sub_ethiopia.yaml`); one with no `definitions` of its own or inherited has none: set `onset.definition` and `observations.day_boundary`.
@@ -67,7 +67,7 @@ A candidate on lead k needs leads up to k + R - 1, where R is how many days from
 If that is below `max_forecast_day`, then `max_forecast_day`, `verification_windows`, `tolerances` and `day_bins` (all under `evaluation:`) are clipped (windows and bins that start later are dropped), and HCWF prints, for example:
 
 ```
-Lead window      : 1-29 for AIFS (icpac reads 22 days from the onset day; forecasts have 50 leads)  [shortened from max_forecast_day 30]
+Lead window      : 1-29 for <model> (<definition> reads 22 days from the onset day; forecasts have 50 leads)  [shortened from max_forecast_day 30]
 ```
 
 The run uses the shortest window over its models; it is stored as the `lead_window` attribute of the spatial-metric NetCDFs. If no lead is usable HCWF stops and suggests `onset.dry_spell_check: false`, which shrinks R.
@@ -117,7 +117,7 @@ Finding on AIFS: CHIRPS v3 (00 UTC day, labelled by start) lines up with `start`
 
 ## Exporting onset dates
 
-`hcwf-run export -p run.yaml [--sources observed,AIFS,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to the run's `onsets/` folder (`<output.data_dir>/onsets/` with an explicit `data_dir`) before a normal run scores (the detection runs twice). In Python: `hcwf.runs.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}` (files `<source>.nc` in a run folder, `onsets_<source>.nc` with an explicit `data_dir`); `hcwf.io.output.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
+`hcwf-run export -p run.yaml [--sources observed,<model>,climatology,conditional_climatology] [--out DIR]` runs only the detection (no scoring) and writes one NetCDF per source; `output.save_onsets: true` in the run file writes them to the run's `onsets/` folder (`<output.data_dir>/onsets/` with an explicit `data_dir`) before a normal run scores (the detection runs twice). In Python: `hcwf.runs.export.export_onsets(cfg, sources=None, out=None)` returns `{source: path}` (files `<source>.nc` in a run folder, `onsets_<source>.nc` with an explicit `data_dir`); `hcwf.io.output.open_onsets(path)` opens a file (see below). Without `--sources` you get observed, every model and the climatology reference the run uses.
 
 The values are the ones HCWF scores: the export calls the scoring's own functions with the keyword arguments the scoring builds (masks, shortened lead window, `forecast_history`, thresholds, definition). Unlike the scored tables, which keep only cases with an observed onset and an init before it, the files hold every init and cell; the flag `scored` (1 for those cases) marks what HCWF scores. Dates are CF times (int32 days since 1970-01-01, with the data's calendar; cftime for non-standard calendars); no onset is the fill value (NaT) and NaN in the float variables. Onset date, day of year and lead are set only where `status` is `ONSET`: a `PRIOR` search is reported as no onset, as scored. Files are zlib-compressed NetCDF4, CF-1.8, with global attributes holding the definition (id, version, hash, sentence, YAML, overrides), thresholds (source, years, files, values hash), mask summary, forecast history, lead label and window, day boundaries, dataset paths, HCWF version, creation time and the resolved run config (`resolved_config_yaml`).
 

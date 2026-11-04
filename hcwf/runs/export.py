@@ -3,9 +3,9 @@
 Use it from Python::
 
     from hcwf.runs.export import export_onsets
-    paths = export_onsets(cfg, sources=["observed", "AIFS"], out="onsets")   # {source: Path}
+    paths = export_onsets(cfg, sources=["observed", "<model>"], out="onsets")   # {source: Path}
 
-or with ``hcwf-run export -p run.yaml [--sources observed,AIFS,climatology] [--out DIR]``, or ``output.save_onsets:
+or with ``hcwf-run export -p run.yaml [--sources observed,<model>,climatology] [--out DIR]``, or ``output.save_onsets:
 true`` in the run file (files go to the run's ``onsets/`` folder, ``dir_out/onsets/`` with an explicit ``dir_out``,
 before scoring).
 

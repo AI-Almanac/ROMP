@@ -5,7 +5,7 @@ probabilistic metrics, skill scores, maps, reliability diagrams) and trains and 
 forecasts and climatology into onset probabilities. Everything is driven by one YAML run file, on grid cells, polygons
 or political boundaries, for any region.
 
-Onset is detected by the `hcwf.onset` component. An onset definition is a short YAML file (for example ICPAC's), run
+Onset is detected by the `hcwf.onset` component. An onset definition is a short YAML file (a registry definition or your own), run
 identically on observations and on every forecast.
 
 HCWF absorbed the former `onset_blending` repository and was called `momp` / ROMP before. If you used either, read
@@ -15,7 +15,7 @@ HCWF absorbed the former `onset_blending` repository and was called `momp` / ROM
 
 ```bash
 pip install .
-hcwf-run init --obs /path/to/obs --model /path/to/aifs --years 2019 2024 -o run.yaml
+hcwf-run init --obs /path/to/obs --model /path/to/forecasts --years <first> <last> -o run.yaml
 hcwf-run -p run.yaml --check     # validate, resolve and print the plan; runs nothing
 hcwf-run -p run.yaml             # run it
 ```
