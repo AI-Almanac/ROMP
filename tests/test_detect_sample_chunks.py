@@ -168,3 +168,12 @@ def test_time_steps_do_not_depend_on_the_chunk_grid(tmp_path):
         picked.append(list(detect.load_sample(da, ROLES).time.values))
         ds.close()
     assert picked[0] == picked[1] == picked[2]
+
+
+def test_chunked_axes_use_the_centre_chunks_whatever_their_length():
+    """A short chunked axis is cut to its centre chunk(s) joined to 32 cells; a contiguous short axis is read whole."""
+    runs = [(i, min(i + 17, 81)) for i in range(0, 81, 17)]
+    assert list(detect._cell_positions(81, runs)) == list(range(34, 68))
+    assert list(detect._cell_positions(81, None)) == list(range(81))
+    assert list(detect._cell_positions(20, [(0, 20)])) == list(range(20))
+    assert list(detect._cell_positions(40, [(0, 10), (10, 20), (20, 30), (30, 40)])) == list(range(40))

@@ -667,8 +667,12 @@ class TrainedBlend:
             if len(seen) > 1:
                 groups = "; ".join(f"{', '.join(names[:4])}{'...' if len(names) > 4 else ''}"
                                    for names in seen.values())
-                problems.append(f"{model.name}: its training files differ in dimensions, members, lead days or grid "
-                                f"({groups}); a blend needs one forecast structure to forecast with")
+                found = [json.loads(text) for text in seen]
+                fields = ", ".join(f"{key}: {' vs '.join(dict.fromkeys(str(s.get(key)) for s in found))}"
+                                   for key in dict.fromkeys(k for s in found for k in s)
+                                   if len({json.dumps(s.get(key), sort_keys=True) for s in found}) > 1)
+                problems.append(f"{model.name}: its training files differ in {fields} ({groups}); "
+                                f"a blend needs one forecast structure to forecast with")
                 continue
             signatures[model.name] = json.loads(next(iter(seen)))
             units[model.name] = _freeze_units(rc, recipe, model.name, ids)

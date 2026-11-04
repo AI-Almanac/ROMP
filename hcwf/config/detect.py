@@ -243,9 +243,10 @@ def _block_indices(n: int, per_index: int) -> list[np.ndarray]:
 def _cell_positions(n: int, runs) -> np.ndarray:
     """Return the positions of the block a sample reads along a lat or lon axis.
 
-    An axis of at most ``_SAMPLE_CELLS`` cells is read whole. A longer one is cut to the stored chunk that holds its
-    centre, joined with neighbouring chunks until it holds ``_SAMPLE_MIN_CELLS`` cells and cut to the ``_SAMPLE_CELLS``
-    nearest the centre if that is longer; an axis stored contiguously is cut to a centred block of ``_SAMPLE_CELLS``.
+    A chunked axis (any length) is cut to the stored chunk that holds its centre, joined with neighbouring chunks until
+    it holds ``_SAMPLE_MIN_CELLS`` cells and cut to the ``_SAMPLE_CELLS`` nearest the centre if that is longer. An axis
+    stored contiguously is read whole when it has at most ``_SAMPLE_CELLS`` cells, else cut to a centred block of
+    ``_SAMPLE_CELLS``.
 
     Parameters
     ----------
@@ -259,10 +260,10 @@ def _cell_positions(n: int, runs) -> np.ndarray:
     numpy.ndarray of int64
         The positions, consecutive and increasing.
     """
-    if n <= _SAMPLE_CELLS:
-        return np.arange(n)
     centre = n // 2
     if runs is None:
+        if n <= _SAMPLE_CELLS:
+            return np.arange(n)
         start = (n - _SAMPLE_CELLS) // 2
         return np.arange(start, start + _SAMPLE_CELLS)
     first = next(i for i, (lo, hi) in enumerate(runs) if lo <= centre < hi)

@@ -713,3 +713,18 @@ def test_frozen_weights_may_name_their_units_adm3_name_as_onset_blendings_files_
     assert list(units.ids[positions]) == ["south"]
     transform = units.transform(np.array(LATS + [10.5]), np.array(LONS))
     assert transform.shape == (2, 6) and transform.weighted_matrix[1].sum() == 2.0
+
+
+def test_training_files_of_one_model_with_another_structure_are_refused(tmp_path):
+    """One season file whose values accumulate since the issue, the others daily, is named with the field that differs."""
+    write_observations(tmp_path / "obs")
+    write_forecasts(tmp_path / "ens")
+    odd = tmp_path / "ens" / "2012.nc"
+    with xr.open_dataset(odd) as ds:
+        accumulated = ds.assign(tp=ds["tp"].cumsum("day", keep_attrs=True)).load()
+    accumulated.to_netcdf(tmp_path / "odd.nc")
+    (tmp_path / "odd.nc").replace(odd)
+    result = trained(tmp_path)
+
+    with pytest.raises(BlendFileError, match=r"ens: its training files differ in .*accumulation: .*since_init.*2012\.nc"):
+        TrainedBlend.from_training(result)
