@@ -393,3 +393,11 @@ def test_grouped_auc_matches_auc_per_group_with_ties_and_empty_classes():
         want = prob.auc(y[group == k].astype(int), score[group == k])
         assert (np.isnan(want) and np.isnan(got[k])) or got[k] == want
     assert np.isnan(got[groups]) and np.isnan(got[5]) and np.isnan(got[6])
+
+
+def test_hcwf_skill_score_against_a_perfect_reference_is_nan_with_a_warning():
+    brier = {"fair_brier_score": 0.2, "bin_fair_brier_scores": {"Days 1-5": 0.1}}
+    clim = {"fair_brier_score": 0.0, "bin_fair_brier_scores": {"Days 1-5": 0.2}}
+    with pytest.warns(UserWarning, match="fair Brier score is zero"):
+        skill = score.calculate_skill_scores(brier, {"fair_rps": 0.5}, clim, {"fair_rps": 1.0})
+    assert np.isnan(skill["fair_brier_skill_score"]) and skill["fair_rps_skill_score"] == 0.5

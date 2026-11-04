@@ -216,7 +216,7 @@ def start_pairs(rc, model, select=Selection()):
 def climatological_pairs(clim_onset, rc, *, years, day_bins):
     """Return the climatological forecast-observation pairs of all target years, concatenated.
 
-    The run `rc` carries the init dates. A year that fails is logged and left out.
+    The run `rc` carries the init dates. An error in any year propagates; a year without pairs is left out.
 
     Parameters
     ----------
@@ -239,7 +239,7 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
     ValueError
         No year gives pairs.
     """
-    clim_onset_slice = clim_onset #!!!!! region subset
+    clim_onset_slice = clim_onset
 
     all_forecast_obs_pairs = []
 
@@ -247,28 +247,23 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
         log.debug(f"\n{'-'*50}")
         log.debug(f"Processing target year {target_year}")
 
-        try:
-            # Get initialization dates for this year
-            init_dates = initialization_dates(target_year, rc.evaluation)
+        # Get initialization dates for this year
+        init_dates = initialization_dates(target_year, rc.evaluation)
 
-            # Create forecast-observation pairs for this year
-            forecast_obs = create_climatological_forecast_obs_pairs(
-                clim_onset_slice,
-                target_year,
-                init_dates,
-                day_bins=day_bins,
-                max_forecast_day=rc.evaluation.max_forecast_day
-            )
+        # Create forecast-observation pairs for this year
+        forecast_obs = create_climatological_forecast_obs_pairs(
+            clim_onset_slice,
+            target_year,
+            init_dates,
+            day_bins=day_bins,
+            max_forecast_day=rc.evaluation.max_forecast_day
+        )
 
-            if forecast_obs.n_cases > 0:
-                all_forecast_obs_pairs.append(forecast_obs)
-                log.debug(f"Target year {target_year} completed: {forecast_obs.n_cases} cases")
-            else:
-                log.debug(f"No pairs generated for target year {target_year}")
-
-        except Exception as e:
-            log.error(f"Error processing target year {target_year}: {e}")
-            continue
+        if forecast_obs.n_cases > 0:
+            all_forecast_obs_pairs.append(forecast_obs)
+            log.debug(f"Target year {target_year} completed: {forecast_obs.n_cases} cases")
+        else:
+            log.debug(f"No pairs generated for target year {target_year}")
 
     # Combine all years
     if not all_forecast_obs_pairs:

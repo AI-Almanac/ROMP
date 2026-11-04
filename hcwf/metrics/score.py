@@ -333,7 +333,8 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
     -------
     dict
         ``fair_brier_skill_score`` and ``fair_rps_skill_score`` (float) and ``bin_fair_brier_skill_scores`` (bin label
-        to float, NaN where a bin is missing in one of them).
+        to float, NaN where a bin is missing in one of them). ``fair_brier_skill_score`` is NaN, with a warning, when
+        the reference's fair Brier score is zero.
     """
     skill_scores = {}
 
@@ -342,9 +343,9 @@ def calculate_skill_scores(brier_forecast, rps_forecast,
     log.debug("="*60)
 
     # Fair Brier Skill Score (1-15 day overall)
-    if brier_climatology == 0:
-        fair_bss_bin = float("nan")
-        warnings.warn("\n brier_climatology is zero → fair BSS set to NaN \n")
+    if brier_climatology['fair_brier_score'] == 0:
+        fair_bss_overall = float("nan")
+        warnings.warn("the reference's fair Brier score is zero: fair BSS set to NaN")
     else:
         fair_bss_overall = probabilistic.skill_score(brier_forecast['fair_brier_score'], brier_climatology['fair_brier_score'])
 

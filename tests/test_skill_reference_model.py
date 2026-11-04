@@ -140,3 +140,23 @@ def test_climatology_reference_is_unchanged(config):
     assert _text(results["RPS_ref"]) == _text(calculate_rps(pairs))
     assert _text(results["AUC_ref"]) == _text(calculate_auc_climatology(pairs))
     assert prepare_pairs(rc, case.model, select).reference is None
+
+
+def test_an_error_in_one_climatology_year_propagates(config, monkeypatch):
+    """A failing year is an error, not a year silently left out of the climatology pairs."""
+    from hcwf.scoring import pairs as pairs_module
+
+    rc, case, select = _typed(dict(config, ref_model="climatology"))
+    clim_onset = climatological_onset_dataset(rc, case, select)
+    real = pairs_module.create_climatological_forecast_obs_pairs
+    bad_year = rc.evaluation.years[-1]
+
+    def failing(clim, year, *args, **kwargs):
+        """Fail for the last year, delegate otherwise."""
+        if year == bad_year:
+            raise RuntimeError("boom")
+        return real(clim, year, *args, **kwargs)
+
+    monkeypatch.setattr(pairs_module, "create_climatological_forecast_obs_pairs", failing)
+    with pytest.raises(RuntimeError, match="boom"):
+        climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS)
