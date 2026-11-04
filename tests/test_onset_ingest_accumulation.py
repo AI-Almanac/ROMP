@@ -1,7 +1,5 @@
 """Tests for forecast de-accumulation, sub-daily steps, daily boundaries and unit checks in hcwf.onset.ingest."""
-import os
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -10,9 +8,9 @@ import xarray as xr
 
 from hcwf.onset.ingest import (IngestInfo, detect_accumulation, detect_units, ingest_forecast,
                                ingest_forecast_info)
+from real_data import DATA, needs_data
 
 BOUNDARY = "00 UTC, labelled by start"
-DATA = Path(os.environ.get("HCWF_TEST_DATA", "/nonexistent"))
 
 
 def make(per_interval, step_hours, inits=("2001-05-01",), members=0, kind="since_init", units="mm",
@@ -207,7 +205,7 @@ def test_unreachable_boundary_and_snapping():
     assert tenths(fc) == [40, 40, 40]
 
 
-@pytest.mark.skipif(not DATA.exists(), reason="set HCWF_TEST_DATA to run real-data checks")
+@needs_data
 def test_real_aifs_v2_is_daily():
     """The AIFS_v2 archive is detected as daily totals with daily steps."""
     path = DATA / "india/models/AIFS_v2/2020.nc"

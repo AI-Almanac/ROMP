@@ -1,5 +1,4 @@
 """Tests of the sampled alignment check (hcwf.onset.sample_alignment) against the whole-year check."""
-import os
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +9,7 @@ import xarray as xr
 from hcwf.onset import sample_alignment as align_sample
 from hcwf.onset.alignment import check_forecast_alignment, forecast_alignment_from_samples
 from hcwf.onset.ingest import ingest, ingest_forecast
+from real_data import DATA, needs_data
 
 START = "00 UTC, labelled by start"
 
@@ -116,7 +116,6 @@ def test_datasets_given_by_paths_are_read(tmp_path, monkeypatch):
     assert cached and again.verdict == by_paths.verdict
 
 
-DATA = Path(os.environ.get("HCWF_TEST_DATA", "/nonexistent"))
 ZARR = Path(__file__).resolve().parents[1] / "data"
 
 CASES = {
@@ -148,8 +147,8 @@ def _full_year(case, label, year=2012):
     return report.verdict, [r.best_lag for r in report.per_lead.values()]
 
 
-@pytest.mark.skipif(not DATA.exists(), reason="set HCWF_TEST_DATA to run real-data checks")
-@pytest.mark.parametrize("name", ["ethiopia", "india"])
+@needs_data
+@pytest.mark.parametrize("name", ["ethiopia", pytest.param("india", marks=pytest.mark.slow)])  # india: 8-12 s
 @pytest.mark.parametrize("label", ["start", "end"])
 @pytest.mark.parametrize("source", ["netcdf", "zarr"])
 def test_sample_agrees_with_full_year(name, label, source):

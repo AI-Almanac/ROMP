@@ -2,11 +2,10 @@
 bit-identical coefficients, CV predictions, forest trees and MME weights (tests/blend/differential_blend.py)."""
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+from _differential import assert_dumps_identical
 
 pytestmark = pytest.mark.slow  # full run against onset_blending: --run-slow
 
@@ -16,11 +15,4 @@ ORACLE_PYTHON = Path(os.environ.get("ONSET_BLENDING_PYTHON", "/home/hcwf/code/on
 
 @pytest.mark.skipif(not ORACLE_PYTHON.exists(), reason="onset_blending's environment is not available")
 def test_hcwf_blend_is_onset_blending_bit_for_bit(tmp_path):
-    for python, package in ((sys.executable, "hcwf"), (str(ORACLE_PYTHON), "onset_blending")):
-        subprocess.run([python, str(SCRIPT), "dump", package, str(tmp_path / f"{package}.pkl")], check=True,
-                       capture_output=True, text=True)
-
-    compared = subprocess.run([sys.executable, str(SCRIPT), "compare", str(tmp_path / "hcwf.pkl"),
-                               str(tmp_path / "onset_blending.pkl")], capture_output=True, text=True)
-
-    assert compared.stdout.strip() == "identical", compared.stdout
+    assert_dumps_identical(SCRIPT, ORACLE_PYTHON, tmp_path)

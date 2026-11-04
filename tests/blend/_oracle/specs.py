@@ -7,7 +7,7 @@ the same config. The package itself reads the config."""
 from __future__ import annotations
 
 from onset_blending import config as cfg
-from onset_blending.config import BlendConfig, ForecastModel
+from onset_blending.config import BlendConfig
 
 # Dimension names the readers know, mapped to theirs; the config's renames win.
 _OBSERVATION_DIMS = {
@@ -24,35 +24,6 @@ _FORECAST_DIMS = {
 _CONNECT_VARIANT = {"fixed_cutoff": "fixed_cutoff", "ref_onset": "ref"}
 CLIMATOLOGY = "clim"
 UNCONDITIONAL_CLIMATOLOGY = "clim_unc"
-
-
-def climatology_key(window: tuple[int, int] | None = None) -> str:
-    """The combine's name for a climatology (its columns are <key>_p_onset_day_<k>)."""
-    return CLIMATOLOGY if window is None else f"{CLIMATOLOGY}_{cfg.window_tag(window)}"
-
-
-def _onset_options(config: BlendConfig) -> dict:
-    definition = config.onset.definition
-    spell = definition.dry_spell
-    dry_spell = {
-        "mode": spell.mode,
-        "min_dry_days": spell.min_dry_days,
-        "sum_window": spell.sum_window,
-        "sum_min_mm": spell.sum_min_mm,
-    }
-    if spell.dry_day_min_mm is not None:
-        dry_spell["dry_day_min_mm"] = spell.dry_day_min_mm
-    return {
-        "window": definition.window,
-        "onset_definition": {
-            "wet_day_min_mm": definition.wet_day_min_mm,
-            "trigger_rule": definition.trigger_rule,
-            "wet_day_comparison": definition.wet_day_comparison,
-            "follow_days": definition.follow_days,
-            "followup_anchor": definition.followup_anchor,
-            "dry_spell": dry_spell,
-        },
-    }
 
 
 def _thresholds(config: BlendConfig) -> dict:
@@ -114,89 +85,8 @@ def _cell_transform(config: BlendConfig, path: str | None) -> dict:
     return {"cell_transform_enabled": True, "cell_transform_file": str(config.path(path))}
 
 
-def observation_spec(config: BlendConfig) -> dict:
-    obs = config.observations
-    return {
-        "type": "ground_truth_rainfall",
-        "input": {"value_col": obs.variable},
-        "dimensions": {"rename": {**_OBSERVATION_DIMS, **obs.dims}},
-        "options": {
-            **_onset_options(config),
-            "cutoff_month_day": config.onset.season_start,
-            "missing_rain_policy": obs.missing_rain,
-            # Observation dates moved onto the forecasts' end-of-window labels.
-            "date_shift_days": 1 if obs.date_marks == "start" else 0,
-            **_cell_transform(config, obs.cell_transform),
-        },
-        "output": {"write_long": False},
-        **_common(config),
-    }
-
-
-def forecast_spec(config: BlendConfig, model: ForecastModel) -> dict:
-    options = {
-        **_onset_options(config),
-        "min_day": model.lead_days.min,
-        "max_day": model.lead_days.max,
-        "fixed_cutoff_month_day": config.onset.fixed_cutoff,
-        **_cell_transform(config, model.cell_transform),
-    }
-    if model.rain_horizon.max_day is not None:
-        options["rain_day_max"] = model.rain_horizon.max_day
-        options["rain_horizon_policy"] = model.rain_horizon.resolved_policy
-    spec = {
-        "type": "rainfall_forecast",
-        "input": {"value_col": model.variable, "wide_day_dim": "day", "wide_prefix": "rain"},
-        "dimensions": {"rename": {**_FORECAST_DIMS, **model.dims}},
-        "options": options,
-        **_common(config),
-    }
-    if model.max_member is not None:
-        spec["filter"] = {"max_number": model.max_member}
-    return spec
-
-
-def used_variants(config: BlendConfig) -> list[str]:
-    return cfg.probability_variants(config)
-
-
 def _cutoff_variant(config: BlendConfig) -> str:
     return cfg.cutoff_variant(config)
-
-
-def connect_spec(config: BlendConfig) -> dict:
-    features = config.features
-    onset = config.onset.definition
-    variants = [_CONNECT_VARIANT[v] for v in used_variants(config)]
-    models = []
-    for model in config.models:
-        entry = {
-            "name": model.name,
-            "variants": variants,
-            "rain_predictors": [
-                {"agg": p.agg, "window": cfg.resolve_window(p, onset)} for p in model.rain_predictors
-            ],
-        }
-        if model.rain_transform is not None:
-            entry["rain_transform"] = model.rain_transform
-        if model.rain_horizon.max_day is not None:
-            entry["rain_day_max"] = model.rain_horizon.max_day
-            entry["rain_horizon_policy"] = model.rain_horizon.resolved_policy
-        models.append(entry)
-    return {
-        "day_max": features.probability_days,
-        "days_per_bin": features.bins.days,
-        "n_bins": features.bins.count,
-        "climatology": {
-            "base_prefix": CLIMATOLOGY,
-            "unconditional_prefix": UNCONDITIONAL_CLIMATOLOGY,
-            "output_prefix": cfg.CLIMATOLOGY_FEATURE,
-            "window_tags": [cfg.window_tag(w) for w in config.climatology.windows],
-        },
-        "rain_transform": features.rain_transform,
-        "forecast_models": models,
-        **_geometry(config),
-    }
 
 
 def cv_spec(config: BlendConfig) -> dict:

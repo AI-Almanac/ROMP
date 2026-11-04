@@ -81,12 +81,6 @@ def get_forecast_variant_suffix(spec, variant):
     return m[variant]
 
 
-def forecast_prob_cols(forecast_name, variant_suffix, n_bins=4):
-    """Build dict of week1..weekN probability column names."""
-    base = f"{forecast_name}_p_onset{variant_suffix}"
-    return {f"week{w}": f"{base}_week{w}" for w in range(1, int(n_bins) + 1)}
-
-
 def forecast_label(forecast_name, variant):
     return forecast_name if variant == "base" else f"{forecast_name}_{variant}"
 
@@ -114,46 +108,6 @@ def make_cutoff_tag(cutoff_mode):
     if cutoff_mode == "no_ref_filter":
         return "_no_ref_filter"
     return ""
-
-
-def input_rds_from_cutoff(cutoff_mode, resolution=""):
-    # Derive the CV-input filename from the single-source-of-truth cutoff tag
-    # (make_cutoff_tag) instead of hardcoding the variant token. The variant
-    # segment is generic (e.g. "fixed_cutoff"), so this tracks any rename.
-    prefix = f"{resolution}_" if resolution else ""
-    variant = make_cutoff_tag(cutoff_mode).lstrip("_")
-    variant_part = f"{variant}_" if variant else ""
-    return f"cv_data_{prefix}{variant_part}new_pipeline.pkl"
-
-
-def resolve_blend_input_path(
-    cutoff_mode,
-    run_cfg=None,
-    *,
-    input_path=None,
-    work_dir=None,
-    pipeline_input_root=DEFAULT_PIPELINE_INPUT_ROOT,
-):
-    """Resolve a connector artifact for evaluation or saved-model use."""
-    if input_path:
-        return input_path
-
-    run_cfg = run_cfg or {}
-    if "input_rds_override" in run_cfg:
-        raise ValueError(
-            "run.input_rds_override has been removed; use --input_path "
-            "or --blend_input."
-        )
-
-    input_file = input_rds_from_cutoff(cutoff_mode)
-    if work_dir:
-        return os.path.join(work_dir, input_file)
-
-    return os.path.join(
-        pipeline_input_root,
-        run_cfg.get("pipeline_input_dir", ""),
-        input_file,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,86 +306,6 @@ def build_formulas_from_spec(spec, cutoff_mode, data=None,
         return formulas, resolution
     return formulas
 
-
-def print_formula_summary(spec, cutoff_mode, formulas=None):
-    """
-    Print a human-readable summary of all blending models: the yml shorthand,
-    the fully expanded formula, and the exact list of predictor columns used.
-
-    Call this at the start of 1_blend_evaluation.py to make the models
-    transparent before any fitting happens.
-    """
-    if formulas is None:
-        formulas = build_formulas_from_spec(spec, cutoff_mode)
-    formula_cfg = (spec.get("models") or {}).get("formulas") or {}
-
-    width = 70
-    print()
-    print("=" * width)
-    print("  BLENDING MODELS — formula resolution summary")
-    print("=" * width)
-
-    for model_name, expanded in formulas.items():
-        yml_text = None
-        if model_name in formula_cfg:
-            yml_text = formula_cfg[model_name].get("text")
-
-        feature_cols = _parse_formula_cols(expanded)
-
-        print()
-        print(f"  Model: {model_name}")
-        print(f"  {'-' * (width - 2)}")
-
-        if yml_text:
-            print("  yml shorthand:")
-            print(f"    {yml_text}")
-            print()
-
-        print("  Effective formula:")
-        lhs, rhs = expanded.split("~", 1)
-        terms = [t.strip() for t in rhs.split("+")]
-        lines = []
-        line = ""
-        for i, t in enumerate(terms):
-            sep = " + " if i < len(terms) - 1 else ""
-            if len(line) + len(t) + len(sep) > 60 and line:
-                lines.append(line)
-                line = t + sep
-            else:
-                line += t + sep
-        if line:
-            lines.append(line)
-        indent = "    " + " " * (len(lhs.strip()) + 3)
-        print(f"    {lhs.strip()} ~  {lines[0]}")
-        for l in lines[1:]:
-            print(f"    {indent}{l}")
-
-        print()
-
-# BEFORE
-        #print(f"  Predictor columns used ({len(feature_cols)}):")
-        #groups = {}
-        #for col in feature_cols:
-        #    root = re.sub(r"_week\d$", "", col)
-        #    groups.setdefault(root, []).append(col)
-        #for root, cols in groups.items():
-        #    weeks = ", ".join(c.split("_week")[-1] for c in cols)
-        #    scale = "(logit)" if "clim" in root else "(mm)"
-        #    print(f"    {root}_week[{weeks}]  {scale}")
-
-# AFTER
-        lhs_exp, rhs_exp = expanded.split("~", 1)
-        all_terms = [t.strip() for t in rhs_exp.split("+")]
-        print(f"  Predictor terms used ({len(all_terms)}):")
-        for term in all_terms:
-            scale = "(logit)" if "clim" in term else ("(interaction)" if ":" in term else "(mm)")
-            print(f"    {term}  {scale}")
-
-    print()
-    print("=" * width)
-    print(f"  Total models: {len(formulas)}")
-    print("=" * width)
-    print()
 
 # ---------------------------------------------------------------------------
 # Raw and calibrated predictions
@@ -695,46 +569,6 @@ def make_calibrated_preds_from_wide(wide_df, forecast_name, variant,
 # ---------------------------------------------------------------------------
 # Multinomial CV
 # ---------------------------------------------------------------------------
-import itertools
-
-def expand_wilkinson(formula_str, df):
-    """
-    Expand R-style Wilkinson formula: a*b*c -> a + b + c + a:b + a:c + b:c + a:b:c
-    Returns (feature_cols, X) where X is the design matrix as a DataFrame.
-    """
-    if "~" in formula_str:
-        rhs = formula_str.split("~", 1)[1].strip()
-    else:
-        rhs = formula_str.strip()
-
-    # Split top-level terms on '+'
-    top_terms = [t.strip() for t in rhs.split("+")]
-
-    all_cols = {}
-    for term in top_terms:
-        if "*" in term:
-            # Get the base variable names
-            vars_ = [v.strip() for v in term.split("*")]
-            # Generate all subsets of size 1..n
-            for r in range(1, len(vars_) + 1):
-                for combo in itertools.combinations(vars_, r):
-                    col_name = ":".join(combo)
-                    if len(combo) == 1:
-                        all_cols[col_name] = df[combo[0]]
-                    else:
-                        # Product of all variables in combo
-                        product = df[combo[0]].copy()
-                        for v in combo[1:]:
-                            product = product * df[v]
-                        all_cols[col_name] = product
-        else:
-            # Plain additive term
-            if term in df.columns:
-                all_cols[term] = df[term]
-
-    X = pd.DataFrame(all_cols, index=df.index)
-    return list(X.columns), X
-
 
 def _make_multinom_clf():
     """
@@ -1663,22 +1497,6 @@ def summarize_models_pooled(all_cells, baseline_model="unc_clim_raw"):
     return model_avg
 
 
-def summarize_maps_compare(all_cells, method, clim_model="clim_raw", final_model="blended_model"):
-    """Per-cell comparison of a final model vs climatology."""
-    clim_df = (all_cells[all_cells["model"] == clim_model]
-               .rename(columns={"brier": "brier_clim", "rps": "rps_clim", "auc": "auc_clim"})
-               [["id", "brier_clim", "rps_clim", "auc_clim"]])
-    final_df = (all_cells[all_cells["model"] == final_model]
-                .rename(columns={"brier": "brier_final", "rps": "rps_final", "auc": "auc_final"})
-                [["id", "brier_final", "rps_final", "auc_final"]])
-    merged = clim_df.merge(final_df, on="id", how="outer")
-    merged["auc_diff"] = merged["auc_final"] - merged["auc_clim"]
-    merged["brier_skill"] = 1.0 - (merged["brier_final"] / merged["brier_clim"])
-    merged["rps_skill"] = 1.0 - (merged["rps_final"] / merged["rps_clim"])
-    merged["cv_method"] = method
-    return merged
-
-
 # ---------------------------------------------------------------------------
 # MME blend optimization (Section 4 — was missing from Python translation)
 # ---------------------------------------------------------------------------
@@ -1766,86 +1584,6 @@ def optimize_mme_weights(P_allowed_clean, Y_allowed, w_col_names, mc_cores=1):
     return {"weights": w_star, "rps": opt_rps, "weights_df": weights_df}
 
 
-def apply_mme_weights(mme_sources, blend_names, opt_w, id_vars, bins5=None):
-    """
-    Apply optimized MME weights to produce blended cv_* predictions.
-
-    Parameters
-    ----------
-    mme_sources : dict name -> DataFrame with cv_* columns
-    blend_names : list of str
-    opt_w : np.ndarray of weights (same order as blend_names)
-    id_vars : list of str (columns to keep as metadata)
-    bins5 : list of str, defaults to the interval bins inferred from the first
-        source's cv_week* columns (week1..weekN + later).
-
-    Returns
-    -------
-    DataFrame with id_vars + cv_week1..cv_later
-    """
-    if bins5 is None:
-        first = mme_sources[blend_names[0]]
-        bins5 = [f"week{w}" for w in _cv_weeks(first)] + ["later"]
-    cols5 = [f"cv_{b}" for b in bins5]
-
-    # Join all sources on id_vars
-    join_list = []
-    for nm in blend_names:
-        src = mme_sources[nm].copy()
-        rename_map = {c: f"cv_{nm}_{c[3:]}" for c in cols5 if c in src.columns}
-        src = src[id_vars + [c for c in cols5 if c in src.columns]].rename(columns=rename_map)
-        join_list.append(src)
-
-    base = join_list[0]
-    for j in range(1, len(join_list)):
-        base = base.merge(join_list[j], on=id_vars, how="inner")
-
-    # Build P matrices and weighted sum
-    P_list = []
-    for nm in blend_names:
-        sel_cols = [f"cv_{nm}_{b}" for b in bins5]
-        P_list.append(base[sel_cols].values.astype(float))
-
-    P_mix = sum(wi * Pi for wi, Pi in zip(opt_w, P_list))
-    P_mix = clean_probs5(P_mix)
-
-    result = base[id_vars].copy()
-    for j, b in enumerate(bins5):
-        result[f"cv_{b}"] = P_mix[:, j]
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Mapping helpers
 # ---------------------------------------------------------------------------
-
-def exclude_for_mapping(df):
-    """Exclude NE and SW island cells."""
-    return df[~((df["lon"] > 90) | ((df["lon"] < 75) & (df["lat"] < 12)))]
-
-
-def create_cell_polygon(lat, lon, half_size=1):
-    """Create a rectangular polygon for a grid cell center."""
-    return pd.DataFrame({
-        "lon": [lon - half_size, lon + half_size, lon + half_size, lon - half_size, lon - half_size],
-        "lat": [lat - half_size, lat - half_size, lat + half_size, lat + half_size, lat - half_size],
-    })
-
-
-def build_polygons_for_mapping(grid_centers, allowed_cells, half_size=1):
-    """Build cell polygons for choropleth mapping."""
-    poly_data = grid_centers[["id"]].drop_duplicates()
-    poly_data = exclude_for_mapping(poly_data)
-
-    polys = []
-    for _, cell in poly_data.iterrows():
-        poly = create_cell_polygon(cell["lat"], cell["lon"], half_size=half_size)
-        poly["id"] = cell["id"]
-        poly["lat_center"] = cell["lat"]
-        poly["lon_center"] = cell["lon"]
-        polys.append(poly)
-
-    polygons_df = pd.concat(polys, ignore_index=True) if polys else pd.DataFrame()
-    allowed_ids = set(allowed_cells["id"])
-    allowed_polygons_df = polygons_df[polygons_df["id"].isin(allowed_ids)] if not polygons_df.empty else polygons_df
-    return {"polygons_df": polygons_df, "allowed_polygons_df": allowed_polygons_df}

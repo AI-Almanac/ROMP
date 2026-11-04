@@ -1,6 +1,4 @@
 """Tests for hcwf.onset.alignment on synthetic rainfall with known shifts."""
-import os
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -9,6 +7,7 @@ import xarray as xr
 
 from hcwf.onset.alignment import check_alignment, check_forecast_alignment
 from hcwf.onset.ingest import ingest, ingest_forecast
+from real_data import DATA, needs_data
 
 START = "00 UTC, labelled by start"
 N_DAYS = 200
@@ -142,15 +141,15 @@ def test_forecast_unknown_lead_and_no_cells():
     assert report.verdict == "inconclusive"
 
 
-# Optional real-data checks: point HCWF_TEST_DATA at a folder with ethiopia/ and india/ obs and models.
-DATA = Path(os.environ.get("HCWF_TEST_DATA", "/nonexistent"))
+# Real-data checks: see real_data.py for where the data is looked for.
 
 
-@pytest.mark.skipif(not DATA.exists(), reason="set HCWF_TEST_DATA to run real-data checks")
+@needs_data
 @pytest.mark.parametrize("obs_path,var,boundary,model_path,good_label", [
     ("ethiopia/obs/2020.nc", "total_precipitation_24hr", "00 UTC, labelled by start",
      "ethiopia/models/AIFS_v2/2020.nc", "start"),
-    ("india/obs/data_2020.nc", "RAINFALL", "03 UTC, labelled by end", "india/models/AIFS_v2/2020.nc", "end"),
+    pytest.param("india/obs/data_2020.nc", "RAINFALL", "03 UTC, labelled by end", "india/models/AIFS_v2/2020.nc", "end",
+                 marks=pytest.mark.slow),  # 6 s
 ])
 def test_real_data_lead_label(obs_path, var, boundary, model_path, good_label):
     """On real observations and AIFS forecasts, the correct lead label is aligned and the other is shifted."""

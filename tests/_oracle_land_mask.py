@@ -102,57 +102,6 @@ def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
 
 
 
-def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
-    """Draw the polygon boundary for `da` on `ax` when `polygon` is truthy and a boundary is defined.
-
-    Returns `ax`, or (ax, polygon_lat, polygon_lon, polygon_defined) if `return_polygon` is True.
-    """
-    polygon_defined = False
-
-    if polygon:
-        polygon1_lat, polygon1_lon = polygon_boundary(da)
-
-        if len(polygon1_lat) > 0 and len(polygon1_lon) > 0:
-            polygon_defined = True
-
-    # Add CMZ polygon only if defined
-    if polygon_defined:
-
-        ax = polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=linewidth)
-
-    if return_polygon:
-        return ax, polygon1_lat, polygon1_lon, polygon_defined
-    else:
-        return ax
-
-
-
-def get_india_outline(shpfile_path):
-    """
-    Get region outline coordinates from shapefile.
-    """
-    import geopandas as gpd
-    # Update this path to your India shapefile
-    india_gdf = gpd.read_file(shpfile_path)
-
-    boundaries = []
-    for geom in india_gdf.geometry:
-        if hasattr(geom, 'exterior'):
-            coords = list(geom.exterior.coords)
-            lon_coords = [coord[0] for coord in coords]
-            lat_coords = [coord[1] for coord in coords]
-            boundaries.append((lon_coords, lat_coords))
-        elif hasattr(geom, 'geoms'):
-            for sub_geom in geom.geoms:
-                if hasattr(sub_geom, 'exterior'):
-                    coords = list(sub_geom.exterior.coords)
-                    lon_coords = [coord[0] for coord in coords]
-                    lat_coords = [coord[1] for coord in coords]
-                    boundaries.append((lon_coords, lat_coords))
-    return boundaries
-
-
-
 def _grid_key(lat, lon) -> str:
     """A hash of the lat and lon values (as float64), the cache key of a grid."""
     lat = np.ascontiguousarray(np.asarray(lat, dtype="float64"))
@@ -173,12 +122,6 @@ def _raw_land_mask(key: str, lat: xr.DataArray, lon: xr.DataArray) -> xr.DataArr
         land_mask = regionmask.defined_regions.natural_earth_v5_0_0.land_110
         _RAW_MASKS[key] = land_mask.mask(lon, lat=lat)
     return _RAW_MASKS[key]
-
-
-def clear_land_masks() -> None:
-    """Forget every cached land mask (for tests)."""
-    _RAW_MASKS.clear()
-    _LAND_BOOL.clear()
 
 
 _LAND_BOOL: dict = {}
@@ -327,45 +270,6 @@ def shp_mask(da, region='Ethiopia', resolution='10m', category='cultural', name=
         return da_masked, mask_da
     else:
         return da_masked
-
-
-def shp_outline(ax, region='Ethiopia', resolution='10m', category='cultural', name='admin_0_countries'):
-    """ add shapefile country boundaries to plot"""
-
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-
-    # get region boundary
-    region_geom = get_shp(region=region, resolution=resolution, category=category, name=name)
-
-    if region_geom is None:
-        log.warning("specified region is not in cartopy.io.shapereader")
-        return ax
-
-    if hasattr(ax, "add_geometries"):
-        # Cartopy GeoAxes
-        ax.add_geometries(
-            [region_geom],
-            crs=ccrs.PlateCarree(),
-            facecolor="none",
-            edgecolor="black",
-            linewidth=1.5,
-            zorder=10
-        )
-    else:
-        # Regular matplotlib Axes — handle both Polygon and MultiPolygon
-        geoms = [region_geom] if region_geom.geom_type == 'Polygon' else list(region_geom.geoms)
-        for geom in geoms:
-            x, y = geom.exterior.xy
-            ax.plot(x, y, color="black", linewidth=1.5, zorder=10)
-
-    # Optional: background
-    if hasattr(ax, "add_feature"):
-        ax.add_feature(cfeature.COASTLINE)
-        ax.add_feature(cfeature.BORDERS, linestyle=":")
-
-    return ax
-
 
 
 def apply_nc_mask(ds, nc_mask, mask_var=None, keep_value=1):

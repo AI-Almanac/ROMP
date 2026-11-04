@@ -160,15 +160,6 @@ def compare_dirs(A: Path, B: Path, label, rows, mapping=lambda n: n):
 
 # ----------------------------------------------------------------- the driver
 
-def live_files(region):
-    out = []
-    for d in sorted((DATA / region / "models").iterdir()):
-        f = d / "2024.nc"
-        if f.exists():
-            out.append((d.name, f))
-    return out
-
-
 def model_names(blend_cfg: Path):
     import yaml
     cfg = yaml.safe_load(blend_cfg.read_text())

@@ -5,10 +5,10 @@ environment when that exists (identical but for the last bit of the Pietra index
 """
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 
+import _differential as differential
 import pytest
 
 pytestmark = pytest.mark.slow  # full run against onset_blending: --run-slow
@@ -19,13 +19,11 @@ ORACLE_PYTHON = Path(os.environ.get("ONSET_BLENDING_PYTHON", ORACLE_SRC / ".venv
 
 
 def dump(python, package, target):
-    subprocess.run([str(python), str(SCRIPT), "dump", package, str(target), "2"], check=True, capture_output=True,
-                   text=True)
+    differential.dump(SCRIPT, python, package, target, "2")
 
 
 def compared(first, second):
-    return subprocess.run([sys.executable, str(SCRIPT), "compare", str(first), str(second)], capture_output=True,
-                          text=True).stdout.strip()
+    return differential.compare(SCRIPT, first, second)
 
 
 @pytest.fixture(scope="module")

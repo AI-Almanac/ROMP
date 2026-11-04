@@ -516,18 +516,6 @@ def nc_read_forecast_wide(nc_path, var_name, dim_rename_map, spec,
         ds.close()
 
 
-def _named_grid(frame, dim_rename_map, adm3_dim_name):
-    """A grid frame of raw dimension columns, renamed as nc_read_forecast_wide names them."""
-    frame = rename_dimensions(frame, dim_rename_map or {})
-    frame.columns = frame.columns.str.lower()
-    adm3_col_renamed = adm3_dim_name.lower() if adm3_dim_name else None
-    if adm3_col_renamed and adm3_col_renamed in frame.columns:
-        frame = frame.rename(columns={adm3_col_renamed: "id"})
-    if "adm3_name" in frame.columns:
-        frame = frame.rename(columns={"adm3_name": "id"})
-    return frame
-
-
 def nc_read_groundtruth_long(nc_path, var_name, dim_rename_map, add_year=True,
                              missing_rain_policy="keep"):
     """

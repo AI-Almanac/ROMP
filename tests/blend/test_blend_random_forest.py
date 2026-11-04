@@ -1,7 +1,6 @@
 """hcwf.blend.random_forest: the CRPS random forest blend, on arrays, with onset-forest's numerics (a port of
 onset_blending@1e6d696 tests/test_random_forest.py)."""
 import numpy as np
-import pandas as pd
 import pytest
 
 from hcwf.blend import random_forest
@@ -88,26 +87,6 @@ def test_cross_validation_seeds_each_fold_after_the_base_seed():
         expected = random_forest.predict(random_forest.fit(X[train], lead[train], names, seeded), X[test])
         assert np.array_equal(daily, expected)
         assert set(year[test]) == set(test_years)
-
-
-def test_the_forest_is_onset_forests():
-    onset_forest = pytest.importorskip("onset_forest")
-    X, lead = samples()
-    issue = pd.Timestamp("2020-06-01")
-    frame = pd.DataFrame(X[:, :2], columns=["lat", "lon"])
-    for d in (1, 2):
-        frame[f"m_rain_mean_day_{d}"] = X[:, 1 + d]
-    for d in range(1, 29):
-        frame[f"clim_p_onset_day_{d}"] = X[:, 4] + d
-    frame["time"] = issue
-    frame["true_onset_date"] = [issue + pd.Timedelta(days=v) if np.isfinite(v) else pd.NaT for v in lead]
-    legacy = onset_forest.fit(frame, ["m"], onset_forest.ForestParams(n_estimators=6, min_samples_leaf=5, n_jobs=1))
-
-    names = list(frame.columns[:-2])
-    fitted = random_forest.fit(frame[names].to_numpy(dtype=float), lead, names, PARAMS)
-
-    expected = onset_forest.predict(legacy, frame)[list(onset_forest.DAILY_COLUMNS)].to_numpy()
-    assert np.array_equal(random_forest.predict(fitted, frame[names].to_numpy(dtype=float)), expected)
 
 
 def test_a_crps_forest_needs_finite_inputs():

@@ -6,6 +6,7 @@ regression grids (Ethiopia and India observations and models), synthetic grids (
 latitudes, a grid crossing 0 degrees, one-row and one-column grids) and the box of every registered region,
 for every combination of land_only, shp_only, nc_mask and the polygon (core monsoon zone) mask.
 """
+import functools
 from pathlib import Path
 
 import numpy as np
@@ -61,8 +62,10 @@ def _grids():
 GRIDS = _grids()
 
 
-def _boxed(lat, lon, region):
+@functools.cache
+def _boxed_cells(gname, region):
     """The grid after the region's box cut, as the pipeline does it, or None when nothing is left."""
+    lat, lon = GRIDS[gname]
     ds = xr.Dataset({"v": (("lat", "lon"), np.zeros((len(lat), len(lon)), "float32"))},
                     coords={"lat": lat, "lon": lon})
     out = new_region.region_box(ds, region=region)
@@ -72,9 +75,11 @@ def _boxed(lat, lon, region):
 
 
 def _cases():
-    for gname, (lat, lon) in GRIDS.items():
+    """Every grid x region pair whose region box holds a cell of the grid (the others have nothing to compare)."""
+    for gname in GRIDS:
         for region in REGION_NAMES:
-            yield pytest.param(gname, region, id=f"{gname}-{region}")
+            if _boxed_cells(gname, region) is not None:
+                yield pytest.param(gname, region, id=f"{gname}-{region}")
 
 
 def _ones(lat, lon):
@@ -100,10 +105,7 @@ def test_grids_cover_the_regression_data_when_present():
 
 @pytest.mark.parametrize("gname,region", list(_cases()))
 def test_kept_cells_are_the_old_cells(gname, region):
-    boxed = _boxed(*GRIDS[gname], region)
-    if boxed is None:
-        pytest.skip("the region box holds no cell of this grid")
-    lat, lon = boxed
+    lat, lon = _boxed_cells(gname, region)
     old_land = old.land_mask_for(lat, lon)
     old_shp = ~np.isnan(old.shp_mask(_ones(lat, lon), region=region).values)
 
@@ -140,11 +142,9 @@ def test_kept_cells_are_the_old_cells(gname, region):
     _same(got["v"].values, expect.values)
 
 
-@pytest.mark.parametrize("gname", sorted(GRIDS))
+@pytest.mark.parametrize("gname", sorted(g for g, (lat, lon) in GRIDS.items() if lat.size > 1 and lon.size > 1))
 def test_netcdf_mask_and_polygon_mask_are_the_old_ones(gname, tmp_path):
     lat, lon = GRIDS[gname]
-    if lat.size < 2 or lon.size < 2:
-        pytest.skip("needs a 2-D grid")
     da = _field(lat, lon, seed=1)
     ds = da.to_dataset(name="v")
     keep = (np.add.outer(np.arange(len(lat)), np.arange(len(lon))) % 3 != 0).astype("int8")

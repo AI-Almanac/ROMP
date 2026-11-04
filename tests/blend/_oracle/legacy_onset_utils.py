@@ -120,40 +120,6 @@ def read_ref_onset_dates(spec):
     return tbl[keys + ["ref_onset_date"]].drop_duplicates()
 
 
-def threshold_quantile_accumulation(series_by_id, window, q):
-    """
-    Data-driven onset threshold rule: per unit, the q-quantile of the
-    `window`-day rolling rainfall accumulation, pooled over all supplied days.
-
-    This is the "computed according to a rule" threshold y in the onset
-    definition "x days accumulating >= y". It is a pure function of the rainfall
-    and is exercised by utils/compute_thresholds.py (kept decoupled from the main
-    pipeline so it can run offline and write a per-unit thresholds CSV).
-
-    Parameters
-    ----------
-    series_by_id : dict[str, array-like]
-        Unit id -> 1-D daily rainfall (concatenated across the seasonal windows
-        / years to pool from). NaNs are treated as 0 in the rolling sum.
-    window : int
-        Trigger accumulation window (days) — normally options.window.
-    q : float
-        Quantile in [0, 1] (e.g. 0.9).
-
-    Returns
-    -------
-    dict[str, float]  unit id -> threshold. Units with fewer than `window`
-    valid days are omitted.
-    """
-    out = {}
-    for uid, series in series_by_id.items():
-        roll = roll_sum_na_rm_left(series, int(window))
-        if roll.size == 0:
-            continue
-        out[str(uid)] = float(np.quantile(roll, float(q)))
-    return out
-
-
 def _apply_threshold_scale(base, rule):
     """
     Apply a `scale` rule (factor / offset / clip) to a resolved base threshold,
