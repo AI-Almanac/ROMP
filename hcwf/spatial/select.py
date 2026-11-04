@@ -240,6 +240,80 @@ def _tiles(size: int, stored: int | None):
     return [(a, min(size, a + step)) for a in range(0, size, max(1, step))]
 
 
+def _lazy_key(da):
+    """Return the outer index a lazy selection applies to its file's variable, with that variable's shape.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The array, lazy or not.
+
+    Returns
+    -------
+    tuple or None
+        ``(key, shape)``: ``key`` has one slice or integer array per dim of the file's variable (which is the dims of ``da``
+        when the selection drops none) and ``shape`` is that variable's shape. None when ``da`` is in memory or its
+        selection is not an outer index xarray keeps (the callers then cut by position).
+    """
+    try:
+        from xarray.core import indexing
+
+        data = da.variable._data
+        while not isinstance(data, indexing.LazilyIndexedArray):
+            if tuple(data.shape) != tuple(da.shape):
+                return None
+            data = data.array
+        key = data.key
+        if not isinstance(key, (indexing.OuterIndexer, indexing.BasicIndexer)) or len(key.tuple) != da.ndim:
+            return None
+        shape = tuple(data.array.shape)
+        key = tuple(key.tuple)
+        for entry, n, size in zip(key, shape, da.shape):
+            size_of = len(range(n)[entry]) if isinstance(entry, slice) else np.ndim(entry) == 1 and len(entry)
+            if size_of != size:
+                return None
+        return key, shape
+    except Exception:  # noqa: BLE001 - an internal layout this does not know is cut by position
+        return None
+
+
+def _chunk_runs(da, axis: int, stored: int | None):
+    """Return the runs of positions along an axis that lie in one stored chunk of the file.
+
+    The positions of ``da`` are the file's rows through the lazy selection (a region box starts anywhere in the file, a
+    flipped latitude runs backwards), so the stored chunks are cut where the file rows cross a chunk boundary, not at
+    multiples of the chunk length from the first position: a piece made of whole runs reads each chunk once.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The array.
+    axis : int
+        The axis.
+    stored : int or None
+        The length of the file's chunks along the axis; None when it is not chunked (one run of the whole axis).
+
+    Returns
+    -------
+    list of tuple of (int, int)
+        The ``(start, stop)`` of each run in positions of ``da``. Cut at multiples of ``stored`` from the first position
+        (see `_tiles`) when the file's rows along the axis are not strictly monotonic or not known.
+    """
+    size = da.shape[axis]
+    if not stored:
+        return _tiles(size, None)
+    found = _lazy_key(da)
+    if found is not None and size:
+        key, shape = found
+        entry = key[axis]
+        rows = np.arange(shape[axis])[entry] if isinstance(entry, slice) else np.asarray(entry)
+        step = np.diff(rows)
+        if len(step) == 0 or np.all(step > 0) or np.all(step < 0):
+            edges = np.r_[0, np.flatnonzero(np.diff(rows // stored)) + 1, size].tolist()
+            return list(zip(edges[:-1], edges[1:]))
+    return _tiles(size, stored)
+
+
 def _picked_rows(da, axis=None):
     """Unpick a lazy NetCDF4 selection that picks an increasing list of rows on one axis.
 
@@ -312,7 +386,7 @@ def _picked_rows(da, axis=None):
 
 
 def _along(entry, extent, part):
-    """Narrow the index of one axis by a slice.
+    """Narrow the index of one axis by a slice, as an index HDF5 reads in file order.
 
     Parameters
     ----------
@@ -325,22 +399,24 @@ def _along(entry, extent, part):
 
     Returns
     -------
-    slice or numpy.ndarray of int
-        The narrowed index; ``entry`` itself when ``part`` takes everything.
-
-    Raises
-    ------
-    ValueError
-        ``entry`` is a slice and the result would run backwards.
+    index : slice or numpy.ndarray of int
+        The narrowed index; ``entry`` itself when ``part`` takes everything. A slice that runs backwards (a flipped
+        latitude) is returned as the forward slice of the same rows.
+    flip : bool
+        Whether the rows read through ``index`` are to be reversed to get the narrowed selection.
     """
     if part == slice(None):
-        return entry
-    if isinstance(entry, slice):
+        picked = range(extent)[entry] if isinstance(entry, slice) else None
+        if picked is None or picked.step > 0:
+            return entry, False
+    elif not isinstance(entry, slice):
+        return entry[part], False
+    else:
         picked = range(extent)[entry][part]
-        if picked.step < 0:
-            raise ValueError("a reversed slice")
-        return slice(picked.start, picked.stop, picked.step)
-    return entry[part]
+    if picked.step > 0:
+        return slice(picked.start, picked.stop, picked.step), False
+    forward = picked[::-1]
+    return slice(forward.start, forward.stop, forward.step), True
 
 
 def _read_slices(da, index, axis):
@@ -370,10 +446,15 @@ def _read_slices(da, index, axis):
     if plan is None:
         return da.isel({d: i for d, i in zip(da.dims, index) if i != slice(None)}).values
     read, key, stored, shape, axis = plan   # the rows of a run are picked along the list's own axis, whichever is blocked
-    try:
-        keys = [_along(entry, shape[a], index[a]) if a != axis else None for a, entry in enumerate(key)]
-    except ValueError:
-        return da.isel({d: i for d, i in zip(da.dims, index) if i != slice(None)}).values
+    keys, flips = [], []
+    for a, entry in enumerate(key):
+        if a == axis:
+            keys.append(None)
+            continue
+        narrowed, flip = _along(entry, shape[a], index[a])
+        keys.append(narrowed)
+        if flip:
+            flips.append(a)
     rows = key[axis][index[axis]]
     out = None
     chunk_of = rows // max(1, stored)
@@ -389,6 +470,8 @@ def _read_slices(da, index, axis):
         place = [slice(None)] * out.ndim
         place[axis] = slice(first, stop)
         out[tuple(place)] = piece
+    for a in flips:   # the reversed axes were read in file order
+        out = np.flip(out, axis=a)
     return out
 
 
@@ -401,8 +484,9 @@ _READ_BYTES_EACH = 32 * 1024 * 1024
 def _row_blocks(da, axis, rows):
     """Split an axis into blocks of about ``rows`` rows.
 
-    When the rows are the picked inits of a NetCDF file (see `_picked_rows`) a block ends where a stored chunk's rows
-    end, so a chunk is decoded for one block only.
+    When the file is chunked a block ends where a stored chunk's rows end (see `_chunk_runs`: the rows are the file's
+    through the selection, so a region box that starts inside a chunk or a flipped latitude is cut at the chunk edges
+    too), so a chunk is decoded for one block only.
 
     Parameters
     ----------
@@ -419,19 +503,16 @@ def _row_blocks(da, axis, rows):
         The ``(start, stop)`` of each block.
     """
     n = da.shape[axis]
-    plan = _picked_rows(da)
-    if plan is None or plan[4] != axis:
+    chunks = da.encoding.get("chunks") or da.encoding.get("chunksizes")
+    stored = chunks[axis] if chunks and len(chunks) == da.ndim else None
+    if not stored:
         return [(a, min(n, a + rows)) for a in range(0, n, rows)]
-    _, key, stored, _, _ = plan
-    chunk_of = np.asarray(key[axis]) // max(1, stored)
-    ends = np.r_[np.flatnonzero(np.diff(chunk_of)) + 1, n]   # where each chunk's rows end
-    blocks, first = [], 0
-    for end in ends.tolist():   # join neighbouring chunks' rows while the block stays within `rows`
+    blocks = []
+    for first, end in _chunk_runs(da, axis, stored):   # join neighbouring chunks' rows while the block stays within `rows`
         if blocks and end - blocks[-1][0] <= rows:
             blocks[-1] = (blocks[-1][0], end)
         else:
             blocks.append((first, end))
-        first = end
     return blocks
 
 
@@ -690,7 +771,7 @@ def _load_kept(da, block_dim, keep, keep_dims, compact=False, readers=None):
         rank = (np.cumsum(keep.reshape(-1)) - 1).reshape(keep.shape)   # a kept cell's place among the kept cells
     else:
         out = np.full(da.shape, np.nan, dtype=da.dtype)
-    ranges = [_tiles(da.shape[a], chunks[a] if chunks else None) for a in axes]
+    ranges = [_chunk_runs(da, a, chunks[a] if chunks else None) for a in axes]
     split, cut = None, [(None, None)]
     if _read_workers(da, readers) > 1 and chunks:
         # in reader processes the pieces are one stored chunk's rows of one tile, and cut along the axis with the most
@@ -699,7 +780,7 @@ def _load_kept(da, block_dim, keep, keep_dims, compact=False, readers=None):
         free = [i for i in range(da.ndim) if i != axis and i not in axes]
         if free:
             split = max(free, key=lambda i: -(-da.shape[i] // chunks[i]))
-            cut = _tiles(da.shape[split], chunks[split])
+            cut = _chunk_runs(da, split, chunks[split])
     jobs = []   # (tile bounds, kept cells of the tile, index) of every piece to read
     for corner in np.ndindex(*[len(r) for r in ranges]):
         bounds = [r[c] for r, c in zip(ranges, corner)]
