@@ -13,6 +13,9 @@ from hcwf.figures.field import colorbar_extend, draw_field, extent, units_of
 from hcwf.runs.folder import file_name
 import logging
 
+__all__ = ["plot_spatial_metrics"]
+
+
 log = logging.getLogger(__name__)
 
 

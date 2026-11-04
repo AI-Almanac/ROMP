@@ -33,11 +33,8 @@ from hcwf.onset.model import Curve, Definition, DerivedSeasons, Season, Threshol
 from hcwf.metrics.bins import LeadBins
 from hcwf.errors import DatasetError
 
-__all__ = [
-    "Baselines", "ClimatologySpec", "Evaluation", "ExternalPrediction", "Features",
-    "ForecastScoring", "Mme", "MmeSource", "Model", "OnsetExtras", "Outputs", "RainHorizon", "RainPredictor", "Recipe",
-    "RecipeError", "ReferenceSpec", "Years", "recipe_from_config",
-]
+__all__ = ["CLIMATOLOGY_FEATURE", "DEFAULT_FIXED_CUTOFF", "Recipe", "recipe_from_config", "year_windows", "years_of"]
+
 
 CLIMATOLOGY_FEATURE = "prob_clim"
 """Stem of the climatology's feature columns (blending `config.CLIMATOLOGY_FEATURE`)."""

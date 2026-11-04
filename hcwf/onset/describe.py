@@ -10,6 +10,9 @@ from hcwf.onset.model import (
     Total, Veto, WetDays,
 )
 
+__all__ = ["describe"]
+
+
 _MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
            "October", "November", "December")
 _OP_WORDS = {"ge": "at least", "gt": "more than", "le": "at most", "lt": "less than"}

@@ -54,6 +54,9 @@ if TYPE_CHECKING:  # pragma: no cover
     )
     from hcwf.config.onset import OnsetSetup
 
+__all__ = ["history_of", "observation_grid_of", "observation_years_of", "observations_of"]
+
+
 log = logging.getLogger(__name__)
 
 _obs_years = memo("io.observations.years")

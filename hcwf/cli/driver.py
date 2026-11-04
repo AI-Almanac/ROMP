@@ -22,6 +22,9 @@ from hcwf.errors import HCWFConfigError
 from hcwf import log as logs
 from hcwf.errors import ConfigSchemaError
 
+__all__ = []
+
+
 log = logging.getLogger(__name__)
 
 

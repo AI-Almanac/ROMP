@@ -14,6 +14,8 @@ from hcwf.io.paths import set_dir
 from hcwf.io.dims import dim_fmt_model
 from hcwf.errors import OnsetConfigError
 
+__all__ = []
+
 
 def usable_last_lead(n_leads: int, reach: int) -> int:
     """Return the last lead a candidate can be on when the rule reads ``reach`` days from the candidate.

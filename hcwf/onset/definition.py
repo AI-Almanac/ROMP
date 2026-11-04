@@ -26,6 +26,9 @@ from hcwf.onset.model import (
 )
 from hcwf.errors import UnitsError
 
+__all__ = ["definition_hash", "load", "loads", "override", "registry_ids", "without_dry_spell_check"]
+
+
 REGISTRY_DIR = Path(__file__).parent / "registry"
 """The folder of the bundled definitions, ``hcwf/onset/registry``."""
 

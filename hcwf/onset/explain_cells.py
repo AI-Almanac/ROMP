@@ -14,6 +14,9 @@ from hcwf.onset import explain
 from hcwf.onset.ingest import ingest
 import logging
 
+__all__ = ["write_explain_cells"]
+
+
 log = logging.getLogger(__name__)
 
 _GRID_TOLERANCE = 1e-3

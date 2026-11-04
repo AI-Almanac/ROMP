@@ -23,6 +23,13 @@ from hcwf.log import Counted
 from hcwf.onset.model import MISSING_POLICIES, RESOLUTIONS, DailyRain, ForecastRain
 from hcwf.io.dims import ROLE_ALIASES, find_dim, rename_spatial
 
+__all__ = [
+    "IngestInfo", "MM_PER_UNIT", "UNITS_HELP", "detect_accumulation", "detect_units", "ingest", "ingest_forecast",
+    "ingest_forecast_info", "lead_hours", "mm_per_unit", "observation_shift_days", "parse_day_boundary",
+    "unit_scale",
+]
+
+
 MM_PER_UNIT = {
     **{name: 1.0 for name in ("mm", "mm/day", "mm/d", "mm day-1", "mm d-1", "mm day**-1", "kg m-2", "kg m**-2",
                               "kg m-2 day-1", "kg m-2 d-1", "kg/m2", "kg/m2/day")},

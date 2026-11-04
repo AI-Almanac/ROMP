@@ -51,6 +51,9 @@ from hcwf.io.dims import matches
 from hcwf.io.stores import data_files, pattern_files
 from hcwf.errors import DatasetError
 
+__all__ = ["cache_dir", "forecast_signature", "open_data", "read_forecast_file", "signature_differences"]
+
+
 _PRECIP_RE = re.compile(r"(?i)precip|rain|prcp|(^|_)(tp|pr)($|_)")
 """Variable (or long/standard name) patterns that mark a precipitation-like variable."""
 _ORDER = ("path", "paths", "years", "file_pattern", "variable", "units", "unit_cvt", "dims", "day_boundary",
@@ -1538,8 +1541,6 @@ def forecast_signature(path, entry: dict, **options) -> dict:
 
     """
     return read_forecast_file(path, entry, **options)[0]
-
-
 
 
 def signature_differences(trained: dict, live: dict, *, fewer_members: bool = False) -> list[str]:

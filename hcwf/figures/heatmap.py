@@ -13,6 +13,9 @@ from hcwf.metrics.score import get_target_bins
 from hcwf.naming import tuple_to_str
 import logging
 
+__all__ = ["create_heatmap"]
+
+
 log = logging.getLogger(__name__)
 
 

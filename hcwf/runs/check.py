@@ -22,6 +22,8 @@ from hcwf.config.schema import has_blend
 from hcwf.config.model import CLIMATOLOGY_REFERENCES, CONDITIONAL_CLIMATOLOGY, climatology_years, evaluation_years
 from hcwf.config.onset import onset_setup
 
+__all__ = ["build_report"]
+
 log = logging.getLogger(__name__)
 
 _MAX_LISTED = 8

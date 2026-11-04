@@ -20,6 +20,8 @@ from hcwf.onset.viz import style
 from hcwf.onset.viz.anatomy import PANEL_RATIOS, _subtitle, _title, anatomy_panels, draw_anatomy
 from hcwf.onset.units import MONTH_NAMES as _MONTH_NAMES
 
+__all__ = []
+
 _MAP_IN = 4.4
 _LEFT_IN = 0.8
 _GAP_IN = 2.0

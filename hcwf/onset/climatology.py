@@ -23,6 +23,12 @@ from hcwf.onset.model import Definition, ThresholdSpec, resolution_of
 from hcwf.onset.units import DAYS_IN_MONTH
 from hcwf.spatial import ids
 
+__all__ = [
+    "ReferenceOnset", "ThresholdCache", "compute_thresholds", "compute_thresholds_from_forecasts",
+    "harmonic_seasons", "reduce_onset_days",
+]
+
+
 MAX_MISSING_FRACTION = 0.10
 """The largest fraction of reference days that may be missing before a threshold is NaN."""
 _CHUNK_VALUES = 1 << 24

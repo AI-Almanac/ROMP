@@ -10,6 +10,8 @@ import numpy as np
 
 from hcwf.onset.model import DayRef
 
+__all__ = []
+
 
 def label_keys(year, month, day) -> np.ndarray:
     """Return the ``int64`` key ``year*10000 + month*100 + day`` for each label.

@@ -10,6 +10,8 @@ from pathlib import Path
 
 from hcwf.errors import HCWFConfigError
 
+__all__ = ["ensure_config_exists", "parse_overrides"]
+
 
 OVERRIDE_FLAGS = ("model_list", "verification_window_list", "max_forecast_day", "dry_spell_check", "forecast_history",
                   "threshold_source", "onset_percentage_threshold", "tolerance_days_list", "day_bins", "start_date",

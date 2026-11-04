@@ -23,6 +23,9 @@ from hcwf.onset import plan as plan_mod
 from hcwf.onset.model import (
     DEFAULT_HORIZON, MISSING_POLICIES, DailyRain, Definition, DerivedSeasons, ForecastRain, Jobs, Status, StitchedJobs, resolution_of)
 
+__all__ = ["detect_forecast", "detect_observed", "lead_counts"]
+
+
 NO_PRESET = -1
 """The ``preset`` value of a job that still needs a search (a `~hcwf.onset.model.Status` code is never negative)."""
 MAX_TABLE_CELLS = 20_000_000
@@ -422,8 +425,6 @@ def build_observed_jobs(definition: Definition, rain: DailyRain, years=None,
     jobs = Jobs(series.ravel().copy(), start.ravel().astype(np.int64), end.ravel().astype(np.int64),
                 np.full(first.size, n_time, dtype=np.int64))
     return jobs, JobLayout(shape, preset.ravel(), names, n_series)
-
-
 
 
 def _add_days(calendar: str, year, month, day, offsets: np.ndarray):

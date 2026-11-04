@@ -37,6 +37,8 @@ from hcwf.spatial.masks import _nearest, _overlap, cell_bounds, cell_shares
 
 from . import ids as unit_ids
 
+__all__ = ["SparseTransform", "read_weights"]
+
 CELL_AREAS = ("planar", "cos_lat")
 """The cell-area conventions: planar degrees squared, or weighted by the cosine of the latitude."""
 MEASURES = ("area", "share")

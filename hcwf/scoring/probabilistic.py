@@ -15,6 +15,8 @@ from collections import defaultdict
 import logging
 from hcwf.log import progress
 
+__all__ = ["skill_score_in_bins"]
+
 log = logging.getLogger(__name__)
 
 

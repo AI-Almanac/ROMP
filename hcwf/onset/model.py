@@ -13,6 +13,13 @@ from typing import Literal, Union
 
 import numpy as np
 
+__all__ = [
+    "Amount", "Cells", "Comparison", "Curve", "DEFAULT_HORIZON", "DailyRain", "DayRef", "Definition",
+    "DerivedSeasons", "Detection", "DryRun", "FirstPassage", "ForecastRain", "HORIZON_POLICIES", "Jobs",
+    "MISSING_POLICIES", "RESOLUTIONS", "Season", "Span", "Status", "StitchedJobs", "ThresholdSpec", "Total", "Veto",
+    "WetDays",
+]
+
 
 class Status(IntEnum):
     """The outcome of one onset search (stored as ``int8``)."""

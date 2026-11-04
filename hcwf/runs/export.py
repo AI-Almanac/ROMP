@@ -58,6 +58,8 @@ from hcwf.onset.detect import (_ensemble_status, detect_forecast, detect_observe
                                ensemble_onset)
 import logging
 
+__all__ = ["default_sources", "export_onsets"]
+
 log = logging.getLogger(__name__)
 
 OBSERVED = "observed"

@@ -21,6 +21,12 @@ from hcwf.config.datasets import file_year, is_zarr, resolve_paths
 from hcwf.io.dims import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble, find_dim
 from hcwf.errors import DatasetError
 
+__all__ = [
+    "data_files", "dataset_years", "forecast_sources", "is_data_file", "model_sources", "observation_source",
+    "open_store", "pattern_files", "store_years", "year_files", "years_in_folder",
+]
+
+
 log = logging.getLogger(__name__)
 
 _stores = memo("io.stores.open", on_clear=lambda dataset: dataset.close())

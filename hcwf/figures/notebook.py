@@ -20,6 +20,9 @@ from hcwf.figures.rainfall_time_series import plot_rainfall_timeseries_with_onse
 from hcwf.onset.climatology import _doy_index
 from hcwf.references.climatology import climatological_onset, season_day_dates
 
+__all__ = ["obs_onset_analysis"]
+
+
 log = logging.getLogger(__name__)
 
 

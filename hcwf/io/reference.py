@@ -30,6 +30,9 @@ from hcwf.io.observations import (
 from hcwf.onset.ingest import ingest
 from hcwf.spatial.select import implicit_masks
 
+__all__ = ["reference_held", "reference_rain_year", "release_reference"]
+
+
 log = logging.getLogger(__name__)
 
 _reference = memo("io.reference.held", maxsize=1)

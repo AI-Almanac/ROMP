@@ -21,6 +21,9 @@ from hcwf.onset.calendar import label_keys
 from hcwf.onset.ingest import parse_day_boundary
 from hcwf.onset.model import DailyRain, ForecastRain
 
+__all__ = ["check_forecast_alignment"]
+
+
 _COORD_TOL = 1e-6
 _MIN_R = 0.1
 _MIN_MARGIN = 0.02

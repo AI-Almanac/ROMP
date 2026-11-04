@@ -37,9 +37,10 @@ from hcwf.references.kde import Climatology
 from hcwf.parallel import spec_workers
 from hcwf import parallel as pool
 
-log = logging.getLogger(__name__)
+__all__ = ["TrainingResult", "resources", "train"]
 
-__all__ = ["Inputs", "STAGE_TABLES", "TrainingResult", "prepare", "resources", "train"]
+
+log = logging.getLogger(__name__)
 
 
 def resources(rc: RunConfig, memory_budget: int | None = None) -> tuple[int, int | None]:

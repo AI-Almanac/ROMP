@@ -48,6 +48,12 @@ from hcwf.onset.model import DEFAULT_HORIZON, HORIZON_POLICIES, MISSING_POLICIES
 from hcwf.config.datasets import ALL_DIMS, expand_env, parse_year_list, suggest
 from hcwf.errors import DatasetError
 
+__all__ = [
+    "BY_KEY", "BY_PATH", "CV_MODES", "DEFAULT_CV", "FIELDS", "Field", "REQUIRED", "SECTIONS", "apply_defaults",
+    "flatten_sections", "has_blend", "normalise", "section_names",
+]
+
+
 SECTIONS = {
     "observations": "the observation dataset",
     "reference": "the reference model of the skill scores (climatology by default)",

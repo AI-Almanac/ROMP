@@ -23,6 +23,10 @@ import xarray as xr
 import pandas as pd
 import logging
 
+__all__ = [
+    "climatological_onset", "climatological_onset_dataset", "compute_climatology_as_forecast", "season_day_dates",
+]
+
 log = logging.getLogger(__name__)
 
 _MEMO = memo("references.climatology.onsets", maxsize=32)

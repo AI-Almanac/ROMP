@@ -10,6 +10,8 @@ The package root exposes the two entry points of the Python interface; everythin
 Both import `hcwf.api` lazily, so ``import hcwf`` itself is cheap.
 """
 
+__all__ = ["check", "run"]
+
 
 def run(cfg, **kwargs):
     """Run HCWF on a config and return its result; see `hcwf.api.run`.

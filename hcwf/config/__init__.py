@@ -35,6 +35,10 @@ from hcwf.config import schema
 from hcwf.config.convert import plain, render_yaml
 from hcwf.errors import ConfigSchemaError
 
+__all__ = [
+    "Blend", "Config", "Dataset", "Evaluation", "Mask", "Metrics", "Onset", "Output", "Reference", "UNSET", "Units",
+]
+
 
 class _Unset:
     """The type of `UNSET`: the marker for a key that was not set (distinct from ``None``, an explicit null)."""

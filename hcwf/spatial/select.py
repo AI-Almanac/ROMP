@@ -24,6 +24,11 @@ from hcwf.spatial.masks import apply_default_mask, default_keep
 if TYPE_CHECKING:  # pragma: no cover
     from hcwf.config.model import AreaSpec, Selection
 
+__all__ = [
+    "chunk_runs", "implicit_keep", "implicit_masks", "in_memory", "load_blocks", "mask_region_loaded", "read_box",
+    "region_box", "region_select", "scale_in_place",
+]
+
 log = logging.getLogger(__name__)
 
 

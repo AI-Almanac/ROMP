@@ -18,6 +18,9 @@ from hcwf.io.dims import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble
 from hcwf.io.stores import observation_source, open_store, year_files
 from hcwf.io.thresholds import load_thresholds
 
+__all__ = ["warm_up_of"]
+
+
 log = logging.getLogger(__name__)
 
 

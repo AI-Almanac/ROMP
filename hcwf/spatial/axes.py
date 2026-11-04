@@ -12,6 +12,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+__all__ = [
+    "broadcast_rows", "columns_of", "coords_of", "date_strings", "flat_positions", "locate", "snap", "spatial_dims",
+]
+
 GRID = ("lat", "lon")
 """The spatial dims of a grid-cell array."""
 UNIT = ("unit",)

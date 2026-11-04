@@ -26,7 +26,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-__all__ = ["Problems", "problems"]
+__all__ = ["problems"]
 
 
 @dataclass(frozen=True)

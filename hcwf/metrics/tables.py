@@ -11,6 +11,9 @@ from hcwf.metrics.error import year_points
 from hcwf.metrics.score import get_target_bins
 from hcwf.spatial import axes
 
+__all__ = ["add_back_dated_map", "score_tables"]
+
+
 log = logging.getLogger(__name__)
 
 

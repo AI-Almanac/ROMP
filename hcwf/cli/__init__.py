@@ -28,6 +28,9 @@ import os
 import sys
 from pathlib import Path
 
+__all__ = ["main"]
+
+
 HELP = """usage: hcwf-run [-p run.yaml] [--check] [--overwrite] [--quiet|--verbose] [overrides]      run the config
        hcwf-run init [options]                  write a starting run.yaml
        hcwf-run datasets -p run.yaml            show how the config's datasets resolve

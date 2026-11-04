@@ -24,6 +24,8 @@ from hcwf.onset.model import (
 from hcwf.onset.viz import style
 from hcwf.onset.units import MONTH_NAMES as _MONTHS
 
+__all__ = ["schematic"]
+
 WIDTH_IN = 9.0
 """Default figure width in inches."""
 MARGIN_IN = 0.35

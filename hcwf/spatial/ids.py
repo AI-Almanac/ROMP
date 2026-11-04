@@ -24,6 +24,8 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
+__all__ = ["GridIdConvention", "normalize", "resolve", "unit_id_column", "with_id_column"]
+
 log = logging.getLogger(__name__)
 
 _GRID_ID = re.compile(r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+))_([+-]?(?:\d+(?:\.\d*)?|\.\d+))$")

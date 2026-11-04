@@ -6,6 +6,9 @@ import logging
 
 from hcwf.spatial import axes
 
+__all__ = ["create_spatial_far_mr_mae"]
+
+
 log = logging.getLogger(__name__)
 
 

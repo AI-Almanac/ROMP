@@ -52,6 +52,12 @@ import numpy as np
 from hcwf import cache
 from hcwf import log as logs
 
+__all__ = [
+    "NO_DATA", "Pending", "SharedArrays", "attach", "concat_year_args", "default_resources", "detach", "map_items",
+    "map_year_args", "memory_budget", "ordered_prefetch", "reader_count", "reader_pool", "shutdown_readers",
+    "spec_workers", "start_year_args", "worker_count", "workers_within",
+]
+
 log = logging.getLogger(__name__)
 
 NO_DATA = "No data was successfully processed"

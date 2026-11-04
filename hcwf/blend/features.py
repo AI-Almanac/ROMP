@@ -42,6 +42,9 @@ from hcwf.onset import detect
 from hcwf.parallel import map_items
 from hcwf.parallel import workers_within
 
+__all__ = ["observed"]
+
+
 log = logging.getLogger(__name__)
 
 _CHUNK_ROWS = 262_144

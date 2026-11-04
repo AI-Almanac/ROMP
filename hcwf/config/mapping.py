@@ -24,6 +24,9 @@ from hcwf.config.model import CLIMATOLOGY, CLIMATOLOGY_REFERENCES
 from hcwf.config.datasets import Dataset, expand_path, get_dataset, load_datasets, suggest
 from hcwf.errors import ConfigSchemaError, DatasetError, RegionError
 
+__all__ = ["build_config"]
+
+
 YAML_SUFFIXES = (".yaml", ".yml")
 """File suffixes loaded as YAML."""
 _OBS_KEYS = {"obs": "name", "obs_dir": "path", "obs_file_pattern": "file_pattern", "obs_var": "variable",

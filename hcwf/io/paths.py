@@ -1,6 +1,8 @@
 """Helper for resolving file-system paths."""
 from pathlib import Path
 
+__all__ = ["set_dir"]
+
 
 def set_dir(path_str, work_dir=None):
     """Resolve a path string into an absolute, OS-agnostic path.

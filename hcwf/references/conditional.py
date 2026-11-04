@@ -27,6 +27,11 @@ from hcwf.references.kde import conditional_probabilities, season_days
 from hcwf.spatial import axes
 import logging
 
+__all__ = [
+    "compute_conditional_climatology_as_forecast", "concat_year_pairs", "conditional_lead_probabilities",
+    "conditional_pairs", "cv_mode", "is_conditional_climatology", "observed_of_year",
+]
+
 log = logging.getLogger(__name__)
 
 _GRID_TOLERANCE = 1e-3

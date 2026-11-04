@@ -47,8 +47,11 @@ from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, DEFAULT_FIXED_CUTOFF, years_o
 from hcwf.errors import ConvertError
 from hcwf.config.datasets import suggest
 
-__all__ = ["ConvertError", "Conversion", "convert_blend", "convert_blend_file", "convert_spec_files", "convert_specs",
-           "is_blend_config", "regex_to_glob", "rule_body", "resolve_rule"]
+__all__ = [
+    "convert_blend", "convert_blend_file", "convert_spec_files", "convert_specs", "is_blend_config",
+    "validate_conversion",
+]
+
 
 DERIVED = "derived from the config"
 """Reason given for dropping a key that the new config derives itself."""
@@ -1236,8 +1239,6 @@ _DAILY_OUT = {
     "predicted_prob_ref": "p_onset_ref",
     "forecast_rain": "rain_mean",
 }
-
-
 
 
 class _Spec:
@@ -2775,8 +2776,6 @@ class _Converter:
         return any("_p_onset_ref_" in text for text in texts)
 
 
-
-
 def _lower(value):
     """Lower-case and strip a value that may be None.
 
@@ -2809,8 +2808,6 @@ def _rain_transform(value):
     if isinstance(value, dict) and "power" in value:
         return f"power:{value['power']}"
     return value
-
-
 
 
 def convert_specs(

@@ -41,6 +41,8 @@ from . import regrid
 from .regrid import SparseTransform
 from hcwf.errors import RegionError
 
+__all__ = ["EvaluationUnits", "UNITS_KEYS", "UnitsSpec", "read_id_list"]
+
 log = logging.getLogger(__name__)
 
 KINDS = ("grid", "polygon", "region")

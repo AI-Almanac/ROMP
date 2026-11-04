@@ -21,6 +21,9 @@ from typing import Any, Mapping
 from hcwf.config import schema
 from hcwf.io.paths import set_dir
 
+__all__ = ["resolve", "resolve_command_line"]
+
+
 _NO_FILES = {"save_fig": False, "save_nc_spatial_far_mr_mae": False, "save_csv_score": False,
              "save_nc_climatology": False, "save_onsets": False, "plot_spatial_far_mr_mae": False,
              "plot_heatmap_bss_auc": False, "plot_reliability": False, "plot_climatology_onset": False,

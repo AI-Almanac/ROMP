@@ -14,6 +14,9 @@ import numpy as np
 
 from hcwf.onset import model
 
+__all__ = ["CondPlan", "Plan", "VetoPlan", "compile", "reject_exact_stitched"]
+
+
 GE, GT, LE, LT = 0, 1, 2, 3
 """Comparator codes: greater or equal, greater, less or equal, less."""
 OP_CODES = {"ge": GE, "gt": GT, "le": LE, "lt": LT}

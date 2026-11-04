@@ -37,6 +37,13 @@ if TYPE_CHECKING:  # pragma: no cover
     from hcwf.spatial.units import UnitsSpec
     from hcwf.spatial.masks import MaskSpec
 
+__all__ = [
+    "AreaSpec", "CLIMATOLOGY", "CLIMATOLOGY_REFERENCES", "CONDITIONAL_CLIMATOLOGY", "Case", "EvaluationSpec",
+    "ModelSpec", "NO_SELECTION", "ObsSpec", "OnsetOptions", "ParallelSpec", "RunConfig", "Selection", "Window",
+    "climatology_years", "complete_flat", "evaluation_years",
+]
+
+
 Dims = tuple[tuple[str, str], ...]
 """Canonical dimension name -> name in the files, as sorted-as-given pairs (a dict is not hashable)."""
 CLIMATOLOGY = "climatology"

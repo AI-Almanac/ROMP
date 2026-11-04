@@ -11,6 +11,9 @@ from hcwf.runs.folder import file_name
 from hcwf.naming import tuple_to_str
 import logging
 
+__all__ = ["plot_reliability_diagram"]
+
+
 log = logging.getLogger(__name__)
 
 def plot_reliability_diagram(pairs, case, spec):

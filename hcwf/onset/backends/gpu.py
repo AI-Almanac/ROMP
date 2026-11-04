@@ -25,6 +25,9 @@ try:
 except ImportError:
     cp = None
 
+__all__ = []
+
+
 TRUE, FALSE, UNKNOWN = 1, 0, -1
 """The three-valued codes of a requirement, a veto or a candidate: True, False and Unknown."""
 MISSING_FLAG, HORIZON_FLAG = 1, 2

@@ -25,6 +25,8 @@ import xarray as xr
 from hcwf.cache import memo
 from hcwf.spatial import ids
 
+__all__ = ["ThresholdScale", "read_threshold_grid", "read_threshold_table", "scale_values", "unit_thresholds"]
+
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")
 """The file suffixes `read_threshold_table` reads as NetCDF."""
 

@@ -11,6 +11,9 @@ from matplotlib import colors as mcolors
 import numpy as np
 import logging
 
+__all__ = []
+
+
 log = logging.getLogger(__name__)
 
 
@@ -753,7 +756,6 @@ def polygon_outline(ax, polygon1_lon, polygon1_lat, linewidth=1.25):
     return ax
 
 
-
 def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
     """Draw the polygon boundary for a field on ``ax`` when ``polygon`` is truthy and a boundary is defined.
 
@@ -801,7 +803,6 @@ def add_polygon(ax, da, polygon, return_polygon=False, linewidth=1.25):
         return ax, polygon1_lat, polygon1_lon, polygon_defined
     else:
         return ax
-
 
 
 def shapefile_outline(shpfile_path):

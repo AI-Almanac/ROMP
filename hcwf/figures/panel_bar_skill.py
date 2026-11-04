@@ -10,6 +10,9 @@ from hcwf.runs.folder import file_name
 from hcwf.naming import tuple_to_str
 import logging
 
+__all__ = ["panel_bar_bss_rpss_auc"]
+
+
 log = logging.getLogger(__name__)
 
 

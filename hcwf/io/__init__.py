@@ -5,3 +5,6 @@ files and zarr stores of a year are), `hcwf.io.observations` and `hcwf.io.foreca
 `hcwf.io.thresholds` and `hcwf.io.reference` (the thresholds and reference onsets), `hcwf.io.warmup` (what a run builds
 once before the years go to workers), `hcwf.io.output` (writing score tables) and `hcwf.io.paths` (path resolution).
 """
+
+__all__ = []
+

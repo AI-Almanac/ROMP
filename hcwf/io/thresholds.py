@@ -41,6 +41,9 @@ from hcwf.spatial.units import UNITS_KEYS
 if TYPE_CHECKING:  # pragma: no cover
     from hcwf.onset.model import ForecastRain
 
+__all__ = ["thresholds_of"]
+
+
 log = logging.getLogger(__name__)
 
 

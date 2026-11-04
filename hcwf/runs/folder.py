@@ -33,6 +33,8 @@ from hcwf.config import schema
 from hcwf.config.model import CLIMATOLOGY, CLIMATOLOGY_REFERENCES
 from hcwf.errors import RunExistsError
 
+__all__ = ["RunPaths", "apply", "file_name", "plan", "prepare"]
+
 MAX_NAME = 40
 """The most characters of a run folder name."""
 RUN_FILE = "run.yaml"

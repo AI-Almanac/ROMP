@@ -23,6 +23,12 @@ This is a dependency-free leaf: any module may import it, so there are no import
 the folder): they are not configuration errors, so the CLI handles them on their own.
 """
 
+__all__ = [
+    "AreaError", "BlendFileError", "ConfigSchemaError", "ConvertError", "DatasetError", "DefinitionError",
+    "HCWFConfigError", "IncompatibleForecast", "MaskError", "OnsetConfigError", "RecipeError", "RegionError",
+    "RunExistsError", "UnitsError", "UnitsSpecError",
+]
+
 
 class HCWFConfigError(ValueError):
     """Base of every configuration or validation error; the CLI reports these without a traceback."""

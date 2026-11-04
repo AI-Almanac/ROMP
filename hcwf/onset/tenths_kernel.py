@@ -12,6 +12,8 @@ except ImportError:  # pragma: no cover - exercised only without numba
 
 import numpy as np
 
+__all__ = []
+
 if numba is not None:
 
     @njit(parallel=True, cache=True)

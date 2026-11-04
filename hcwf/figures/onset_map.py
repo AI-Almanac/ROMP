@@ -20,6 +20,9 @@ from hcwf.figures.field import colorbar_extend, draw_field, extent, units_of
 from hcwf.runs.folder import file_name
 import logging
 
+__all__ = ["plot_spatial_climatology_onset"]
+
+
 log = logging.getLogger(__name__)
 
 def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=False,

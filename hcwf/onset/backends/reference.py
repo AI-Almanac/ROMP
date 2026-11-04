@@ -17,6 +17,9 @@ from hcwf.onset import plan as P
 from hcwf.onset.backends import windowed
 from hcwf.onset.model import Detection, Jobs, Status, StitchedJobs
 
+__all__ = ["Evaluation", "Tables", "detect", "evaluate"]
+
+
 TRUE, FALSE, UNKNOWN = 1, 0, -1
 """The three-valued codes of a requirement, a veto or a candidate: True, False and Unknown."""
 MISSING_FLAG, HORIZON_FLAG = 1, 2

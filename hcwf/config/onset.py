@@ -19,6 +19,11 @@ from hcwf.onset.ingest import parse_day_boundary
 from hcwf.onset.model import Definition, DerivedSeasons, FirstPassage
 from hcwf.errors import DefinitionError, RegionError
 
+__all__ = [
+    "FORECAST_BOUNDARY", "OnsetSetup", "Thresholds", "forecast_reach", "history_needs_previous_year", "onset_setup",
+]
+
+
 BACKENDS = ("numba", "reference", "gpu")
 """The onset engines a config may ask for."""
 FORECAST_BOUNDARY = "00 UTC, labelled by {label}"

@@ -26,6 +26,8 @@ from hcwf.onset.model import DailyRain, Definition, DerivedSeasons, ForecastRain
 from hcwf.onset.viz import style
 from hcwf.onset.viz.anatomy import _coord_text
 
+__all__ = []
+
 _STANDARD = {"standard", "gregorian", "proleptic_gregorian"}
 _NO_ONSET = (Status.NOT_FOUND, Status.CENSORED, Status.INSUFFICIENT_DATA)
 _ROW_IN = 0.2

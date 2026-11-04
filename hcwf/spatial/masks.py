@@ -48,6 +48,11 @@ from hcwf.errors import MaskError
 from hcwf.io.dims import ROLE_ALIASES, find_dim
 import logging
 
+__all__ = [
+    "MaskSpec", "absorb_records", "get_shp", "mask_attrs", "polygon_mask", "record_lines", "records", "reset",
+    "shp_mask",
+]
+
 log = logging.getLogger(__name__)
 
 RESOLUTIONS = ("10m", "50m", "110m")

@@ -22,6 +22,8 @@ from hcwf.spatial import ids as unit_ids
 from hcwf.spatial.select import load_blocks, region_box, scale_in_place
 from hcwf.spatial.units import EvaluationUnits, UnitsSpec
 
+__all__ = ["declared_scale", "point_dims", "read_units", "select_units", "unit_table", "unit_transform", "units_files"]
+
 log = logging.getLogger(__name__)
 
 SOURCE_POLICIES = ("flag", "keep", "zero", "drop")

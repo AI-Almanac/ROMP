@@ -4,6 +4,9 @@
 from hcwf.metrics.score import calculate_brier_score, calculate_auc, calculate_rps, calculate_brier_score_climatology, calculate_auc_climatology, calculate_skill_scores
 import logging
 
+__all__ = ["create_score_results"]
+
+
 log = logging.getLogger(__name__)
 
 def create_score_results(prepared, metrics, ev):

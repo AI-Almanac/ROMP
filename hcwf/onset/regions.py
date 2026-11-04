@@ -23,6 +23,11 @@ from hcwf.onset.model import Definition
 from hcwf.spatial.units import UnitsSpec
 from hcwf.errors import UnitsSpecError
 
+__all__ = [
+    "ancestors", "box", "check_definition_region", "definitions_for", "load_region", "polygon_boundary",
+    "region_ids", "units_spec",
+]
+
 log = logging.getLogger(__name__)
 
 REGIONS_DIR = Path(__file__).parent / "regions"

@@ -12,6 +12,8 @@ from hcwf.metrics.tables import add_back_dated_map
 import logging
 from hcwf.log import progress
 
+__all__ = ["spatial_far_mr_mae_map"]
+
 log = logging.getLogger(__name__)
 
 

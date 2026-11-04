@@ -18,6 +18,8 @@ from hcwf.onset import climatology, engine
 from hcwf.onset.model import DailyRain, Definition, DerivedSeasons, Status
 from hcwf.onset.viz import style
 
+__all__ = []
+
 _STANDARD = {"standard", "gregorian", "proleptic_gregorian"}
 ROW_IN = 0.42
 """Height in inches of one definition's row in the dot plot."""

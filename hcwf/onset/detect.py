@@ -28,6 +28,12 @@ from hcwf.onset.thresholds import unit_thresholds
 from hcwf.spatial import axes
 import logging
 
+__all__ = [
+    "check_alignment", "count_members", "detect_deterministic", "detect_ensemble", "detect_forecast",
+    "detect_observed", "detect_observed_dataset", "ensemble_onset", "unit_convention",
+]
+
+
 log = logging.getLogger(__name__)
 
 _GRID_TOLERANCE = 1e-3

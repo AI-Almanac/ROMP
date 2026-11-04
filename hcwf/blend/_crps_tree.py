@@ -22,6 +22,8 @@ from joblib import Parallel, delayed
 from numba import njit
 from hcwf.onset.engine import lead_counts
 
+__all__ = []
+
 
 def _jit(**options):
     """Return a decorator that compiles with ``njit``, caching on disk when a cache location is writable.

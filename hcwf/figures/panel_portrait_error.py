@@ -10,6 +10,9 @@ from hcwf.runs.folder import file_name
 from hcwf.figures.visual import portrait_plot
 import logging
 
+__all__ = ["panel_portrait_mae_far_mr"]
+
+
 log = logging.getLogger(__name__)
 
 

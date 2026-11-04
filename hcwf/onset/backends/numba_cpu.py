@@ -27,6 +27,9 @@ try:
 except ImportError:  # pragma: no cover - exercised only without numba
     numba = None
 
+__all__ = []
+
+
 MISSING_FLAG, HORIZON_FLAG = 1, 2
 """The bits of the flags that say why an interval is not observable: missing data (1) and the data horizon (2)."""
 HORIZONS = {"censor": 0, "truncate": 1, "reject": 2}

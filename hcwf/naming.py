@@ -4,6 +4,8 @@ The helpers here are small and dependency-free. Tuples such as a verification wi
 ``('a', (1, 15), 'X')`` are turned into tags like ``a_1-15_X`` that name output files and label plots.
 """
 
+__all__ = ["combi_to_str", "tuple_to_str", "tuple_to_str_range"]
+
 
 def combi_to_str(combi, sep="_", tuple_sep="-", suffix=""):
     """Convert a combination such as ``('a', (1, 15), 'X')`` into a string tag.

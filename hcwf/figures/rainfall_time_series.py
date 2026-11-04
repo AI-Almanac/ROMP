@@ -7,6 +7,9 @@ import pandas as pd
 import matplotlib.dates as mdates
 import logging
 
+__all__ = []
+
+
 log = logging.getLogger(__name__)
 
 def plot_rainfall_timeseries_with_onset_and_wetspell(pr, onset_date, lat_select, lon_select, year_select=None, save_path=None, incl_clim=None, pr_clim=None, onset_clim=None):

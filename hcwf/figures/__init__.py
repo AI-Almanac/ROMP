@@ -6,3 +6,6 @@ Each module draws one kind of figure from the results of a run: maps (`hcwf.figu
 (`hcwf.figures.rainfall_time_series`) and notebook helpers (`hcwf.figures.notebook`). `hcwf.figures.visual` holds
 the basemap and colour helpers they share.
 """
+
+__all__ = []
+

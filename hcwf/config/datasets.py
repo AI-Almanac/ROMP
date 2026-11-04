@@ -47,6 +47,9 @@ import yaml
 
 from hcwf.errors import DatasetError
 
+__all__ = ["TEMPLATES", "file_year", "is_zarr", "parse_year_list", "resolve_paths", "suggest"]
+
+
 KINDS = ("observations", "forecast")
 """The values of ``kind``."""
 DATASET_KEYS = ("id", "title", "kind", "name", "path", "paths", "years", "file_pattern", "variable", "units",

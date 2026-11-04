@@ -11,6 +11,9 @@ from hcwf.metrics import probabilistic
 from hcwf.metrics.bins import LeadBins
 import logging
 
+__all__ = ["get_target_bins"]
+
+
 log = logging.getLogger(__name__)
 
 

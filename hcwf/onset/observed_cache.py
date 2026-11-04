@@ -35,6 +35,12 @@ import xarray as xr
 from hcwf.cache import Codec, Store, file_identity, memo, on_run_end, part_hash
 from hcwf.config.model import Selection
 
+__all__ = [
+    "SUBFOLDER", "absorb", "activate", "current", "drain_new", "export_state", "fingerprint", "install_state",
+    "observation_files", "parts_for", "threshold_hash",
+]
+
+
 log = logging.getLogger(__name__)
 
 SUBFOLDER = "observed_onsets"

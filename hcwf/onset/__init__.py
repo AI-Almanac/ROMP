@@ -5,3 +5,6 @@ The package follows ``docs/onset_spec.md``. `hcwf.onset.model` holds the types, 
 and `hcwf.onset.model.ForecastRain`, `hcwf.onset.engine` runs a definition on them through a backend of
 `hcwf.onset.backends`, and `hcwf.onset.detect` drives observed and forecast detection.
 """
+
+__all__ = []
+

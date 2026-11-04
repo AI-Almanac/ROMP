@@ -7,6 +7,12 @@ listed; `hcwf.onset.ingest`, `hcwf.config.detect` and the ``dim_fmt`` functions 
 """
 import pandas as pd
 
+__all__ = [
+    "ROLE_ALIASES", "dim_fmt", "dim_fmt_model", "dim_fmt_model_ensemble", "find_dim", "matches",
+    "rename_model_dims", "rename_spatial",
+]
+
+
 ROLE_ALIASES = {
     "time": ("time", "valid_time", "date"),
     "init_time": ("init_time", "time", "forecast_reference_time", "initial_time"),

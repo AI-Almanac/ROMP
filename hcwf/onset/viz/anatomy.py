@@ -18,6 +18,8 @@ from hcwf.onset.explain import _OP_WORDS, Anatomy, _total_label, date_ymd, forma
 from hcwf.onset.model import Status
 from hcwf.onset.viz import style
 
+__all__ = ["anatomy_plot"]
+
 _ROW_LABELS = ("requirement not met", "dry spell followed", "undecided / onset")
 _OP_SIGNS = {"ge": "≥", "gt": ">", "le": "≤", "lt": "<"}
 _MONTH_STEPS = (1, 2, 3, 5, 7, 10, 14, 21)

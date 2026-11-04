@@ -49,6 +49,8 @@ from hcwf.onset.alignment import (ForecastAlignmentReport, _match_axis, _sqrt_fi
                                   forecast_alignment_from_samples)
 from hcwf.onset.calendar import label_keys
 
+__all__ = ["check_labels", "check_models", "sample_spec"]
+
 SAMPLE_INITS = 40
 """Most inits in the sample."""
 SAMPLE_CELLS = 3000

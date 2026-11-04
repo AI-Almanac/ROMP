@@ -20,6 +20,9 @@ from hcwf.onset import regions
 from hcwf.onset.ingest import UNITS_HELP
 from hcwf.errors import RegionError
 
+__all__ = ["write_init"]
+
+
 _OBS_PLACEHOLDERS = (("file_pattern", '"{}.nc"', "the year placeholder; detected from the files if left out"),
                      ("variable", "rainfall", "rainfall variable; detected if it is the only one"),
                      ("units", "mm", f"{UNITS_HELP}; read from the file's attribute if left out"),

@@ -16,6 +16,8 @@ from typing import Iterator
 from hcwf.errors import UnitsError
 from hcwf.onset.model import Amount, Comparison, DayRef, DryRun, DryWindow, Op, Span
 
+__all__ = ["MONTH_NAMES", "parse_month_day"]
+
 
 _COMPARATORS: dict[str, Op] = {
     "at least": "ge",

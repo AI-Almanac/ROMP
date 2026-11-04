@@ -18,6 +18,8 @@ from hcwf.onset.ingest import ingest, ingest_forecast
 from hcwf.errors import DefinitionError, RegionError
 from hcwf.io.dims import find_dim
 
+__all__ = []
+
 
 def _list(args) -> int:
     """Print every registry definition with its title and regions.

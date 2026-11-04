@@ -18,6 +18,9 @@ from hcwf.config import schema
 from hcwf.config.datasets import suggest
 from hcwf.errors import ConfigSchemaError
 
+__all__ = ["convert_flat_onset", "flat_onset_to_rule", "flat_to_mapping", "plain", "render_yaml"]
+
+
 SECTION_ORDER = ("observations", "reference", "models", "onset", "units", "blend", "evaluation", "metrics", "output")
 """The sections of a run YAML, in the order they are written."""
 INTERNAL_KEYS = ("dataset_report", "config_sources", "lead_window", "onset_lead_lines", "run_paths",

@@ -49,9 +49,11 @@ from hcwf.config import detect as dataset_detect
 from hcwf.config.datasets import is_zarr, resolve_paths
 from hcwf.io import stores
 
+__all__ = ["TrainedBlend"]
+
+
 log = logging.getLogger(__name__)
 
-__all__ = ["FEATURES_VERSION", "FORMAT", "FORMAT_VERSION", "FrozenUnits", "LEGACY_HCWF_FORMAT", "OLD_FORMAT", "TrainedBlend", "frozen_config"]
 
 FEATURES_VERSION = 1
 """The version of the numbers the features are computed from.

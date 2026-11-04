@@ -25,6 +25,8 @@ from hcwf.parallel import map_year_args
 import logging
 from hcwf.log import progress
 
+__all__ = []
+
 log = logging.getLogger(__name__)
 
 

@@ -10,6 +10,9 @@ import numpy as np
 import pandas as pd
 import logging
 
+__all__ = ["onset_metrics"]
+
+
 log = logging.getLogger(__name__)
 
 

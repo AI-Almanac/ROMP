@@ -32,6 +32,9 @@ from collections.abc import Iterator
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 
+__all__ = ["Counted", "progress", "session", "verbosity_from"]
+
+
 ROOT = "hcwf"
 QUIET, NORMAL, VERBOSE = -1, 0, 1
 _LEVELS = {QUIET: logging.WARNING, NORMAL: logging.INFO, VERBOSE: logging.DEBUG}

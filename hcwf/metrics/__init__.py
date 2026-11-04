@@ -1,1 +1,4 @@
 """Pure metrics on arrays and tables (no reading, no onset detection, no run config): contingency (FAR, MR, MAE), Brier, RPS, AUC, skill scores and day-bin pairing. The per-case flows that call them are in hcwf.scoring."""
+
+__all__ = []
+

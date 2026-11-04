@@ -19,6 +19,8 @@ from hcwf.config.onset import onset_setup
 from hcwf.onset import definition as definition_mod
 from hcwf.onset.describe import describe
 
+__all__ = ["definition_lines", "resolved_config_text_of", "write_resolved"]
+
 
 def definition_lines(setup) -> list[str]:
     """Return printable lines about the onset definition in use: its identity, plain-words sentence and hash.

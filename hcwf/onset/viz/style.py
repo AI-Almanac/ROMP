@@ -16,6 +16,8 @@ import matplotlib as mpl
 
 from hcwf.onset.model import Status
 
+__all__ = ["palette"]
+
 
 @dataclass(frozen=True)
 class Palette:

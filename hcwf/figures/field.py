@@ -14,6 +14,9 @@ from matplotlib.colors import BoundaryNorm
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
 
+__all__ = []
+
+
 NO_DATA = "lightgrey"
 """Colour of a polygon without a value."""
 _MARKER_AREA = 60

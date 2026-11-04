@@ -19,6 +19,9 @@ import numpy as np
 from hcwf.onset import plan as P
 from hcwf.onset.model import Detection, Status
 
+__all__ = []
+
+
 _NOT_FOUND = int(Status.NOT_FOUND)
 _FAR = 1 << 40
 
