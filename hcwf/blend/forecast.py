@@ -24,7 +24,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.blend import features, training
-from hcwf.blend.recipe import CLIMATOLOGY_FEATURE
+from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, blend_season_start
 from hcwf.config import detect as dataset_detect
 from hcwf.errors import IncompatibleForecast
 
@@ -312,8 +312,7 @@ def _issue_problems(blend, issue_date: dt.date | None, held: dict[str, list[dt.d
                                 "the same one"]
     if issue_date is not None:
         year = issue_date.year
-        season = blend.setup.definition.seasons[0].start
-        start = dt.date.fromisoformat(f"{year}-{season.month:02d}-{season.day:02d}")
+        start = dt.date.fromisoformat(f"{year}-{blend_season_start(blend.setup)}")
         end = dt.date.fromisoformat(f"{year}-{blend.recipe.climatology.issue_end}")
         if not start <= issue_date <= end:
             problems.append(f"issue date {issue_date} is outside the season ({start} to {end})")

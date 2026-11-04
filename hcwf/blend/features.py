@@ -28,7 +28,7 @@ import pandas as pd
 import xarray as xr
 from scipy.special import logit
 
-from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, Recipe, probability_feature_base, window_tag
+from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, Recipe, blend_season_start, probability_feature_base, window_tag
 from hcwf.blend.samples import DailyInputs, ForecastOnsets, ObservedOnsets, Weekly
 from hcwf.config.model import Case, Selection, Window
 from hcwf.io import forecasts as forecasts_io
@@ -85,23 +85,6 @@ def reference_onset(recipe: Recipe) -> ReferenceOnset | None:
         raise FileNotFoundError(f"ref_onset file not found: {spec.file}")
     return ReferenceOnset.read(spec.file, date_col=spec.date_col, year_col=spec.year_col, day_col=spec.day_col,
                                base_date=spec.base_date, unit_col=spec.unit_col)
-
-
-def _season_start(setup) -> str:
-    """Return the start of the first season of an onset setup.
-
-    Parameters
-    ----------
-    setup : hcwf.config.onset.OnsetSetup
-        The run's onset setup (``rc.onset``); its definition's first season is read.
-
-    Returns
-    -------
-    str
-        The start day as ``"MM-DD"``.
-    """
-    start = setup.definition.seasons[0].start
-    return f"{start.month:02d}-{start.day:02d}"
 
 
 def observation_years(rc) -> list[int]:
@@ -190,9 +173,9 @@ def observed(rc, recipe: Recipe, thresholds, reference, *, workers: int = 1, kee
     run = replace(rc, evaluation=replace(rc.evaluation, years=(), climatology_years=tuple(years)),
                   onset_options=replace(rc.onset_options, horizon=recipe.onset.observed_horizon))
     select = Selection(reference_onset=reference, keep_unit_ids=None if keep_ids is None else sorted(keep_ids))
-    parts = map_items(_observed_year, years, (run, select, thresholds, _season_start(rc.onset)),
+    parts = map_items(_observed_year, years, (run, select, thresholds, blend_season_start(rc.onset)),
                       workers=max(1, min(workers, len(years))))
-    return ObservedOnsets.from_parts(parts, _season_start(rc.onset))
+    return ObservedOnsets.from_parts(parts, blend_season_start(rc.onset))
 
 
 def member_mean(rain: np.ndarray) -> np.ndarray:
@@ -587,7 +570,7 @@ def climatology(recipe: Recipe, setup, observed_onsets: ObservedOnsets, forecast
     spec = recipe.climatology
     train, test = kde.climatology_years(observed_onsets.years, forecast_years, train_years=spec.train_years,
                                         test_years=test_years or spec.test_years)
-    grid, by_year, max_h = kde.plan_issues(test, _season_start(setup), spec.issue_end,
+    grid, by_year, max_h = kde.plan_issues(test, blend_season_start(setup), spec.issue_end,
                                            recipe.climatology_forecast_window(), spec.horizon_dicts(), spec.cv_by_year)
     return kde.build_climatology(observed_onsets.onsets(), grid, by_year, max_h, train=train, test=test,
                                  min_onset_years=spec.min_onset_years, cv_by_year=spec.cv_by_year,

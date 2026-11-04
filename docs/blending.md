@@ -59,12 +59,14 @@ hcwf-run init --blend --obs /path/to/obs --model /path/to/aifs -o blend.yaml   #
 
 ## The `blend:` keys
 
+Blending works in one fixed season of the onset definition: the only one, or the one `onset.season` names when the definition has several (the onset setup refuses several without it). A definition with derived seasons (`dunning`) is refused, as is a season starting at a climatological date, before any data is read.
+
 `hcwf/config/schema.py` has every key with its help line. The main ones:
 
 | Key | Meaning |
 |---|---|
 | `years` | `training` (fit on these), `cv_holdout` (scored by leave-one-year-out cross-validation) and optional `true_holdout` (scored, never fitted). Each a list or text such as `'2000:2024,2026'`. Required. |
-| `formulas` | Name to formula (`outcome ~ prob_clim_qx + diff_<model>_qx`) or `{text, enabled}`. Features: `prob_clim_qx`, `<model>_p_onset_qx`, `diff_<model>_qx`, `max_<model>_<n>day_qx`, or a `_week<n>` variant. `diff_<model>` is the model's rain minus the onset definition's named rain threshold, so it needs a definition that names one (`thresholds:` in its rule); a definition such as `icpac`, whose rule gives the amount inline, has none and `--check` reports the `diff` predictor as an error. Use `<model>_p_onset_qx` or a `max`/`min` predictor there. |
+| `formulas` | Name to formula (`outcome ~ prob_clim_qx + diff_<model>_qx`) or `{text, enabled}`. Features: `prob_clim_qx`, `<model>_p_onset_qx`, `diff_<model>_qx`, `max_<model>_<n>day_qx`, or a `_week<n>` variant. `diff_<model>` is the model's rain minus the onset definition's named rain threshold, so it needs a definition whose first named threshold is a rain total (`mean total over` or a quantile of totals, as in `moron_robertson`); a definition such as `icpac`, whose rule gives the amount inline, has none, and `liebmann_marengo` names a daily mean for its cumulative-anomaly curve, not a total, so `--check` reports the `diff` predictor as an error for both. Window tokens (`trigger`, `follow`, ...) need a first-passage rule and are refused for the curve rules (`liebmann_marengo`, `dunning`); numeric windows work for every definition. Use `<model>_p_onset_qx` or a `max`/`min` predictor there. |
 | `final_formula` | The formula fitted on every training year for operations (default: the only enabled formula). |
 | `cutoff_mode`, `fixed_cutoff`, `reference_onset` | Which issue dates are scored (`fixed_cutoff`, `ref_onset`, `no_ref_filter`); the `MM-DD` of the fixed cutoff; the reference onset (`{month_day: MM-DD}` or a table of dates). |
 | `cv_methods` | `global` (default), `local` (one fit per unit), `clusters` (with `cluster_var`). |

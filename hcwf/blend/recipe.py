@@ -27,7 +27,7 @@ from hcwf.config.datasets import parse_year_list, suggest
 
 from hcwf.blend.design import Formula, WindowVariant
 from hcwf.blend.random_forest import Params as ForestParams
-from hcwf.onset.model import Definition
+from hcwf.onset.model import Curve, Definition, DerivedSeasons, Season, ThresholdSpec
 from hcwf.metrics.bins import LeadBins
 from hcwf.errors import DatasetError
 
@@ -678,8 +678,9 @@ class Recipe:
     def check(self, definition: Definition) -> None:
         """Check the rules that need the onset definition.
 
-        The rain-window tokens must resolve, a ``diff`` rain predictor needs the definition to name a rain threshold, and
-        the formulas may name only features this recipe builds.
+        The definition must have fixed seasons, the rain-window tokens must resolve, a ``diff`` rain predictor needs the
+        definition's first named threshold to be a rain total, and the formulas may name only features this recipe
+        builds.
 
         Parameters
         ----------
@@ -692,17 +693,19 @@ class Recipe:
             One or more rules fail (all problems are reported together).
         """
         problems: list[str] = []
+        if isinstance(definition.seasons, DerivedSeasons):
+            raise RecipeError([_DERIVED_MESSAGE.format(id=definition.id)])
         for model in self.models:
             for index, predictor in enumerate(model.rain_predictors):
                 try:
                     self.window_days(predictor, definition)
                 except RecipeError as error:
                     problems.extend(f"models[{model.name}].rain_predictors[{index}]: {p}" for p in error.problems)
-                if predictor.agg == "diff" and not definition.thresholds:
+                if predictor.agg == "diff" and (reason := _diff_problem(definition)):
                     problems.append(
                         f"models[{model.name}].rain_predictors[{index}]: a 'diff' predictor is the model's rain minus "
-                        f"the onset definition's named rain threshold, and the definition {definition.id!r} has none; "
-                        "use max or min predictors, or an onset definition with a named threshold")
+                        f"the onset definition's named rain threshold, and {reason}; use max or min predictors, or an "
+                        "onset definition whose first named threshold is a rain total")
         if not problems:
             available = self.feature_bases(definition)
             for name, formula in self.evaluation.formulas:
@@ -1538,4 +1541,83 @@ def recipe_from_config(cfg: dict, setup=None) -> Recipe:
                     outputs=Outputs(outputs.get("dir"), intermediates, bool(outputs.get("pickles", False))))
     if setup is not None:
         recipe.check(setup.definition)
+        blend_season_start(setup)
     return recipe
+
+
+_DERIVED_MESSAGE = ("the onset definition {id!r} takes its seasons per cell from a harmonic season analysis, which "
+                    "blending does not support (it needs one fixed season start); use a definition with fixed "
+                    "seasons")
+
+
+def _diff_problem(definition: Definition) -> str | None:
+    """Return why a ``diff`` rain predictor is meaningless for a definition, or None when it is meaningful.
+
+    The predictor subtracts the first named threshold from an N-day rain total, so that threshold must itself be a
+    total (``mean_total`` or ``quantile_total``) and the rule must be a first-passage rule.
+
+    Parameters
+    ----------
+    definition : hcwf.onset.model.Definition
+        The onset definition.
+
+    Returns
+    -------
+    str or None
+        A clause naming the problem, or None.
+    """
+    if not definition.thresholds:
+        return f"the definition {definition.id!r} has none"
+    name, spec = definition.thresholds[0]
+    if isinstance(definition.rule, Curve):
+        return (f"in the definition {definition.id!r} the threshold {name!r} is the baseline of a cumulative-anomaly "
+                "curve, not a rain total")
+    if not isinstance(spec, ThresholdSpec) or spec.kind not in ("mean_total", "quantile_total"):
+        return f"in the definition {definition.id!r} the threshold {name!r} ({spec.kind}) is not a rain total"
+    return None
+
+
+def blend_season(setup) -> Season:
+    """Return the season blending works in: the one the onset setup selects.
+
+    Parameters
+    ----------
+    setup : hcwf.config.onset.OnsetSetup
+        The run's onset setup; its ``season`` names the season (``onset.season`` in the config, defaulting to the
+        definition's only season).
+
+    Returns
+    -------
+    hcwf.onset.model.Season
+        The selected fixed season.
+
+    Raises
+    ------
+    RecipeError
+        The definition has derived seasons, or the selected season starts at a climatological date.
+    """
+    seasons = setup.definition.seasons
+    if isinstance(seasons, DerivedSeasons):
+        raise RecipeError([_DERIVED_MESSAGE.format(id=setup.definition.id)])
+    season = next(s for s in seasons if s.name == setup.season)
+    if season.start.month is None:
+        raise RecipeError([f"season {season.name!r} of the onset definition {setup.definition.id!r} starts at a "
+                           "climatological date, which blending does not support (it needs a fixed month-day start)"])
+    return season
+
+
+def blend_season_start(setup) -> str:
+    """Return the start of the season blending works in.
+
+    Parameters
+    ----------
+    setup : hcwf.config.onset.OnsetSetup
+        The run's onset setup (see `blend_season`).
+
+    Returns
+    -------
+    str
+        The start day as ``"MM-DD"``; `blend_season` refuses a definition without one.
+    """
+    start = blend_season(setup).start
+    return f"{start.month:02d}-{start.day:02d}"

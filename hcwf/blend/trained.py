@@ -42,6 +42,7 @@ import xarray as xr
 import yaml
 
 from hcwf.errors import BlendFileError
+from hcwf.blend.recipe import blend_season_start
 from hcwf.blend.samples import ObservedOnsets
 from hcwf.cache import atomic_write, file_identity
 from hcwf.config import detect as dataset_detect
@@ -949,7 +950,7 @@ class TrainedBlend:
         if _recipe_digest(recipe) != stored["digest"]:
             raise BlendFileError("the blend settings stored in the file no longer rebuild as they were when the "
                                  "blend was trained; retrain the blend")
-        season = f"{setup.definition.seasons[0].start.month:02d}-{setup.definition.seasons[0].start.day:02d}"
+        season = blend_season_start(setup)
         common = cls._common(members, observed_season=season)
         units = json.loads(members["units.json"])
         weights_arrays = _npz_load(members["weights.npz"])
@@ -1008,7 +1009,7 @@ class TrainedBlend:
         mapping = conversion.mapping
         rc = frozen_config(mapping)
         setup, recipe = rc.onset, rc.blend
-        season = f"{setup.definition.seasons[0].start.month:02d}-{setup.definition.seasons[0].start.day:02d}"
+        season = blend_season_start(setup)
         common = cls._common(members, observed_season=season)
         reference_meta = json.loads(members["reference.json"])
         reference_arrays = _npz_load(members["reference.npz"])
