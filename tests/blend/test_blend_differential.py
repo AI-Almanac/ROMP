@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.slow  # full run against onset_blending: --run-slow
+
 SCRIPT = Path(__file__).with_name("differential_blend.py")
 ORACLE_PYTHON = Path(os.environ.get("ONSET_BLENDING_PYTHON", "/home/hcwf/code/onset_blending/.venv/bin/python"))
 

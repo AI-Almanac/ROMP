@@ -156,6 +156,7 @@ def materialize(hist, hist_missing, fc, fc_missing, jobs, n_member, n_cells):
     return x, missing
 
 
+@pytest.mark.slow
 def test_numba_stitched_timing_india_ensemble(capsys):
     """Time stitched against detect on the materialized concatenation (both after warm-up); no speed assertion."""
     n_cells, n_member = 2000, 26

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.slow  # full run against onset_blending: --run-slow
+
 SCRIPT = Path(__file__).with_name("differential_input.py")
 ROOT = Path(__file__).resolve().parents[2]
 BLENDING = Path("/home/hcwf/code/onset_blending")

@@ -72,6 +72,7 @@ def test_trace_is_not_supported():
         numba_cpu.detect(plan, np.zeros((1, 1), np.int32), np.zeros((1, 1), bool), amounts, jobs, trace=True)
 
 
+@pytest.mark.slow
 def test_numba_faster_than_reference_on_forecast_shape():
     """43 inits x 26 members x 400 cells with an ICPAC-like rule: numba beats the reference after warm-up."""
     rng = np.random.default_rng(0)

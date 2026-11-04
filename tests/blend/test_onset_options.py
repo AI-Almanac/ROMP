@@ -100,9 +100,29 @@ def stitched_case(rng, exact_cells=4, n_hist=60, n_members=3, n_leads=25, n_jobs
     return hist, hist_missing, fc, fc_missing, jobs, thr
 
 
+# The everyday run keeps one stitched case per option value (every definition, horizon and missing policy at least
+# once); the rest of the grid costs a numba/GPU compilation per case and runs with --run-slow.
+STITCHED_EVERYDAY = {("dry_day_runs", "censor", "flag"), ("begins", "truncate", "keep"),
+                     ("begins_no_dry_day", "reject", "flag"), ("dry_window_and_run", "censor", "keep"),
+                     ("starting_within", "truncate", "flag")}
+assert {t[0] for t in STITCHED_EVERYDAY} == set(DEFINITIONS)
+STITCHED_PLANS = [pytest.param(*plan, id="-".join(plan), marks=[] if plan in STITCHED_EVERYDAY else pytest.mark.slow)
+                  for plan in OPTION_PLANS]
+
+
 @pytest.mark.parametrize("backend", [b for b in BACKENDS if b.id != "reference"])
-@pytest.mark.parametrize("name,horizon,missing", OPTION_PLANS)
+@pytest.mark.parametrize("name,horizon,missing", STITCHED_PLANS)
 def test_stitched_options_match_the_explicit_concatenation(backend, name, horizon, missing):
+    check_stitched(backend, name, horizon, missing)
+
+
+@pytest.mark.parametrize("name,horizon,missing", OPTION_PLANS)
+def test_stitched_reference_matches_the_explicit_concatenation_for_every_option(name, horizon, missing):
+    """The whole option grid on the small synthetic case, reference only (no compilation)."""
+    check_stitched(reference, name, horizon, missing)
+
+
+def check_stitched(backend, name, horizon, missing):
     rng = np.random.default_rng(3 + len(name))
     hist, hist_missing, fc, fc_missing, jobs, thr = stitched_case(rng)
     plan = P.compile(load(name), horizon=horizon, missing=missing)
