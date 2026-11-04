@@ -56,3 +56,12 @@ def test_derived_names(recipe):
     assert R.probability_feature_base("m", "ref_onset") == "m_p_onset_ref"
     assert R.window_tag((2000, 2010)) == "2000_2010"
     assert r.output_tag().startswith("_fixed_cutoff_") or r.output_tag().startswith("_")
+
+
+def test_a_climatology_horizon_needs_its_forecast_window():
+    problems = []
+    R._climatology({"horizons": [{"start": "05-01", "end": "05-31"}]}, problems)
+    assert len(problems) == 1 and "horizons[0].forecast_window: required" in problems[0]
+    problems = []
+    spec = R._climatology({"horizons": [{"start": "05-01", "end": "05-31", "forecast_window": 30}]}, problems)
+    assert not problems and spec.horizon_dicts()[0]["forecast_window"] == 30

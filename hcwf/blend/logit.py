@@ -967,14 +967,19 @@ def _fit(X: np.ndarray, y: np.ndarray):
     Returns
     -------
     sklearn.linear_model.LogisticRegression or None
-        The fitted classifier, or None with no rows, one class, or a solver failure (which warns).
+        The fitted classifier, or None with no rows, one class, or a solver that cannot fit (which warns).
+
+    Notes
+    -----
+    Only the solver's ``ValueError`` and ``numpy.linalg.LinAlgError`` count as a fold that cannot be fitted; any other
+    failure is a bug and propagates.
     """
     if len(X) == 0 or len(np.unique(y)) < 2:
         return None
     clf = multinomial()
     try:
         clf.fit(X, y)
-    except Exception as e:
+    except (ValueError, np.linalg.LinAlgError) as e:
         warnings.warn(f"_fit_predict_multinom fit failed: {e}")
         return None
     return clf

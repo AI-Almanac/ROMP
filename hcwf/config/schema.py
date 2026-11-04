@@ -43,11 +43,9 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from hcwf.errors import ConfigSchemaError, HCWFConfigError
-from hcwf.config.datasets import expand_env, parse_year_list, suggest
+from hcwf.config.datasets import ALL_DIMS, expand_env, parse_year_list, suggest
 from hcwf.errors import DatasetError
 
-DIM_NAMES = ("init_time", "step", "member", "lat", "lon", "unit")
-"""Canonical dimension names that ``dims`` may rename (``unit``: the dimension of evaluation units)."""
 SECTIONS = {
     "observations": "the observation dataset",
     "reference": "the reference model of the skill scores (climatology by default)",
@@ -601,7 +599,7 @@ def _dims(value):
     ValueError
         The value does not have the expected form.
     """
-    if not isinstance(value, dict) or not all(k in DIM_NAMES + ("time",) and isinstance(v, str) and v for k, v in value.items()):
+    if not isinstance(value, dict) or not all(k in ALL_DIMS and isinstance(v, str) and v for k, v in value.items()):
         raise ValueError
     return dict(value)
 

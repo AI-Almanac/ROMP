@@ -360,19 +360,17 @@ def resolve_token(token: str, rule) -> int:
     raise ValueError(f"unknown rain window token {token!r}")
 
 
-def rule_body(r, fixed_total: float | None = None, threshold: tuple | None = None) -> str:
+def rule_body(r, threshold: tuple | None = None) -> str:
     """Write the wet-day, dry-day, thresholds and onset parts of an HCWF definition for the rule `r`.
 
     The definition searches as onset_blending's ``find_onsets`` does. The total the trigger needs is the threshold
-    ``thr`` unless `fixed_total` is given. ``thr`` is the mean total over the trigger window unless `threshold` says over
-    which days of each year it is computed from the observations.
+    ``thr``, the mean total over the trigger window unless `threshold` says over which days of each year it is computed
+    from the observations.
 
     Parameters
     ----------
     r : types.SimpleNamespace
         The rule, as `resolve_rule` returns it.
-    fixed_total : float, optional
-        A fixed total amount in mm that replaces the ``thr`` threshold; None uses ``thr``.
     threshold : tuple of (int, str, str), optional
         ``(days, first month-day, last month-day)``: ``thr`` is the mean total over ``days`` days during those dates of
         each year; None is the mean total over the trigger window.
@@ -385,7 +383,7 @@ def rule_body(r, fixed_total: float | None = None, threshold: tuple | None = Non
     """
     wet = f"{'at least' if r.wet_day_comparison == 'gte' else 'more than'} {r.wet_day_min_mm} mm"
     cmp_ = "at least" if r.threshold_comparison == "gte" else "more than"
-    total = f"{cmp_} {fixed_total} mm" if fixed_total is not None else f"{cmp_} thr"
+    total = f"{cmp_} thr"
     require = ["{all days: wet}"] if r.trigger_rule == "all_days_wet" else ["{first day: wet}"]
     if r.min_wet_days is not None:
         require.append(f"{{wet days: at least {r.min_wet_days}}}")
@@ -504,8 +502,8 @@ def _years_value(years):
 
     Parameters
     ----------
-    years : tuple of int
-        The years, ascending and each once (a tuple, as `hcwf.blend.recipe.years_of` returns it); not empty.
+    years : sequence of int
+        The years, ascending and each once; not empty.
 
     Returns
     -------
@@ -515,7 +513,7 @@ def _years_value(years):
     if len(years) == 1:
         return years[0]
     runs, first = [], years[0]
-    for before, year in zip(years, years[1:] + (None,)):
+    for before, year in zip(years, [*years[1:], None]):
         if year != before + 1 if year is not None else True:
             runs.append((first, before))
             first = year
@@ -536,8 +534,6 @@ class _Convert:
         The folder relative paths start at; None is the working directory.
     region : str, optional
         An HCWF region id for the run; None is no region.
-    source : str
-        Where the config came from (kept as ``source``; nothing reads it).
 
     Attributes
     ----------
@@ -552,8 +548,8 @@ class _Convert:
         when the definition cannot be read).
     """
 
-    def __init__(self, data: dict, root: Path | None, region: str | None, source: str):
-        self.data, self.root, self.region, self.source = data, root, region, source
+    def __init__(self, data: dict, root: Path | None, region: str | None):
+        self.data, self.root, self.region = data, root, region
         self.problems: list[str] = []
         self.notes: list[str] = []
         self.comments: dict = {}
@@ -1173,7 +1169,7 @@ def is_blend_config(data) -> bool:
             and isinstance((data.get("observations") or {}).get("files"), dict))
 
 
-def convert_blend(data: dict, *, data_root=None, region: str | None = None, source: str = "") -> Conversion:
+def convert_blend(data: dict, *, data_root=None, region: str | None = None) -> Conversion:
     """Convert a BlendConfig given as a mapping (what its YAML holds) to an HCWF run.
 
     Relative paths start at `data_root` (the config's own ``data_root`` key unless given; the working directory without
@@ -1187,8 +1183,6 @@ def convert_blend(data: dict, *, data_root=None, region: str | None = None, sour
         Where relative paths start; None uses the config's ``data_root``.
     region : str, optional
         An HCWF region id for the run; None is no region, the data's whole domain, as blending uses it.
-    source : str, default ""
-        Where the config came from.
 
     Returns
     -------
@@ -1196,7 +1190,7 @@ def convert_blend(data: dict, *, data_root=None, region: str | None = None, sour
         The run mapping, its comments and the notes.
     """
     root = data_root if data_root is not None else data.get("data_root")
-    return _Convert(dict(data), Path(root).resolve() if root else None, region, source).convert()
+    return _Convert(dict(data), Path(root).resolve() if root else None, region).convert()
 
 
 def convert_blend_file(path, *, region: str | None = None) -> Conversion:
@@ -1226,7 +1220,7 @@ def convert_blend_file(path, *, region: str | None = None) -> Conversion:
     if not isinstance(data, dict):
         raise ConvertError([f"{path}: expected a mapping of keys"])
     root = path.parent.resolve() / (data.get("data_root") or ".")
-    return convert_blend(data, data_root=root.resolve(), region=region, source=str(path))
+    return convert_blend(data, data_root=root.resolve(), region=region)
 
 
 # -- the legacy spec sets (ported from onset_blending.legacy.specs) -------------------------------------------------

@@ -1054,7 +1054,7 @@ def test_climatological_pairs_match_loops(day_bins):
     clim_onset = _climatological_onsets()
     kwargs = dict(day_bins=day_bins, max_forecast_day=day_bins[-1][1])
     old = _old_create_climatological_forecast_obs_pairs(clim_onset, 2020, INITS, **kwargs)
-    new = create_climatological_forecast_obs_pairs(clim_onset, 2020, INITS, **kwargs)
+    new = create_climatological_forecast_obs_pairs(clim_onset, 2020, INITS, day_bins=day_bins)
     assert new.n_cases > 0
     _assert_pairs_match(old, new, extra=["total_members_with_onset"])
 
@@ -1064,7 +1064,7 @@ def test_climatological_pairs_without_cases_are_empty():
     clim_onset = _climatological_onsets()
     late = [pd.Timestamp("2020-12-01")]
     kwargs = dict(day_bins=((1, 5),), max_forecast_day=5)
-    assert create_climatological_forecast_obs_pairs(clim_onset, 2020, late, **kwargs).n_cases == 0
+    assert create_climatological_forecast_obs_pairs(clim_onset, 2020, late, day_bins=((1, 5),)).n_cases == 0
     assert len(_old_create_climatological_forecast_obs_pairs(clim_onset, 2020, late, **kwargs)) == 0
 
 

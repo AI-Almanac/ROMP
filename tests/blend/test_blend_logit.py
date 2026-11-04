@@ -335,3 +335,26 @@ def test_global_cv_checks_its_folds():
         logit.global_cv(*args, holdout_years=[1990], training_years=range(2001, 2009))
     with pytest.raises(ValueError, match="missing outcome classes: nope"):
         logit.global_cv(*args, holdout_years=[2003], training_years=range(2001, 2009), required_classes=["nope"])
+
+
+class _Failing:
+    """A classifier whose fit raises `error`."""
+
+    def __init__(self, error):
+        self.error = error
+
+    def fit(self, X, y):
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [ValueError("bad"), np.linalg.LinAlgError("singular")])
+def test_a_solver_that_cannot_fit_gives_no_model_and_a_warning(monkeypatch, error):
+    monkeypatch.setattr(logit, "multinomial", lambda: _Failing(error))
+    with pytest.warns(UserWarning, match="fit failed"):
+        assert logit._fit(np.zeros((4, 1)), np.array(["a", "b", "a", "b"], dtype=object)) is None
+
+
+def test_any_other_failure_of_the_fit_propagates(monkeypatch):
+    monkeypatch.setattr(logit, "multinomial", lambda: _Failing(RuntimeError("bug")))
+    with pytest.raises(RuntimeError, match="bug"):
+        logit._fit(np.zeros((4, 1)), np.array(["a", "b", "a", "b"], dtype=object))

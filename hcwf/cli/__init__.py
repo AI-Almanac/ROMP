@@ -119,10 +119,7 @@ def _init(argv) -> int:
     try:
         target = write_init(args.output, force=args.force, region=args.region, obs=args.obs, models=args.model,
                             years=tuple(args.years), definition=args.definition, blend=args.blend)
-    except (FileExistsError, ValueError, KeyError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:  # noqa: BLE001 - region and dataset errors carry their own fix text
+    except Exception as exc:  # noqa: BLE001 - file, value, region and dataset errors carry their own fix text
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     if str(target) != "-":

@@ -50,7 +50,7 @@ def test_the_files_of_a_folder_are_those_blending_lists_in_its_order(tmp_path):
 
     for pattern, years in ((r"\.nc$", ()), (r"\.nc$", [2001, 2003]), (r"^[0-9]{4}\.nc$", ()), (r"^(2001|2004)\.nc$", ())):
         data = {"files": {"folder": str(tmp_path), "pattern": pattern, **({"years": years} if years else {})}}
-        conversion = C._Convert({}, None, None, "").files(data["files"], "observations")
+        conversion = C._Convert({}, None, None).files(data["files"], "observations")
         got = resolve_paths(conversion["paths"], None, conversion.get("years"))
         assert got == blending_list(pattern, years), pattern
 
@@ -58,7 +58,7 @@ def test_the_files_of_a_folder_are_those_blending_lists_in_its_order(tmp_path):
 def test_listed_files_keep_blendings_years_filter(tmp_path):
     for year in (2001, 2002, 2003):
         (tmp_path / f"f{year}.nc").write_bytes(b"")
-    entry = C._Convert({}, tmp_path, None, "").files({"paths": ["f2001.nc", "f2002.nc", "f2003.nc"], "years": "2002:2003"}, "m")
+    entry = C._Convert({}, tmp_path, None).files({"paths": ["f2001.nc", "f2002.nc", "f2003.nc"], "years": "2002:2003"}, "m")
     assert [p.name for p in resolve_paths(entry["paths"], None, entry["years"])] == ["f2002.nc", "f2003.nc"]
 
 

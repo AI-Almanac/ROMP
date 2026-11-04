@@ -153,12 +153,14 @@ def _temporal(cfg) -> list[str]:
     try:
         sd = datetime(*cfg.start_date)
         ed = datetime(*cfg.end_date)
-        if sd >= ed:
+        if sd > ed:
             errors.append(f"start_date ({sd.date()}) is after end_date ({ed.date()})")
+        elif sd == ed:
+            errors.append(f"start_date ({sd.date()}) equals end_date; the period needs at least two days")
 
         sy = cfg.start_year_clim
         ey = cfg.end_year_clim
-        if sd > ed:
+        if sy > ey:
             errors.append(f"start_year_clim ({sy}) is after end_year_clim ({ey})")
 
         for key, name, first, last, bounds in (

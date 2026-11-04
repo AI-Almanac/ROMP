@@ -1145,6 +1145,8 @@ def _climatology_baselines(ctx: _Context, scores: _Scores) -> dict[str, Predicti
     """
     rows = _holdout_rows(ctx)
     out = {}
+    if not len(rows):
+        return out
     for model, prefix in _climatology_models(ctx.recipe):
         try:
             labels, weeks = _week_columns(ctx, rows, prefix, logits=True)
@@ -1165,8 +1167,6 @@ def _climatology_baselines(ctx: _Context, scores: _Scores) -> dict[str, Predicti
             else:
                 earlier = None
                 later = np.clip(1.0 - _row_sum(weeks), 0.0, 1.0)
-            if not len(rows):
-                continue
             preds = Predictions.of_samples(ctx.weekly, rows, np.column_stack([*weeks, later]), labels + ["later"],
                                            earlier=earlier)
             out[model] = preds

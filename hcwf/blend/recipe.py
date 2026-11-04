@@ -16,6 +16,7 @@ labels, artifact tags) are computed here once. The other blend modules take a `R
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 from dataclasses import dataclass, field
@@ -703,8 +704,6 @@ class Recipe:
                     continue
                 for token in formula_terms(formula.text):
                     if token not in available:
-                        import difflib
-
                         close = difflib.get_close_matches(token, sorted(available), n=2)
                         hint = f" (did you mean {' or '.join(close)}?)" if close else ""
                         problems.append(f"evaluation.formulas.{name}: {token!r} is not a feature this recipe "
@@ -1281,10 +1280,13 @@ def _climatology(value, problems: list[str]) -> ClimatologySpec:
         if "start" not in item or "end" not in item:
             problems.append(f"{at}: start and end month-days are required")
             continue
+        if item.get("forecast_window") is None:
+            problems.append(f"{at}.forecast_window: required (the lead days of the issue dates in the period)")
+            continue
         for key in ("start", "end"):
             if not _MONTH_DAY.match(str(item[key]).strip()):
                 problems.append(f"{at}.{key}: expected a month-day like '05-01', got {item[key]!r}")
-        horizons.append((str(item["start"]).strip(), str(item["end"]).strip(), item.get("forecast_window", 0)))
+        horizons.append((str(item["start"]).strip(), str(item["end"]).strip(), item["forecast_window"]))
     out["horizons"] = tuple(horizons)
     for key in ("train_years", "test_years"):
         if node.get(key) is not None:

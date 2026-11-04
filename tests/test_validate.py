@@ -51,9 +51,11 @@ def new_message(values) -> str | None:
 
 FATAL = {   # name: (the values that make the config invalid, the message)
     'start after end': ({'start_date': (2019, 8, 1), 'end_date': (2019, 5, 1)},
-        'HCWF Configuration is invalid:\n  • start_date (2019-08-01) is after end_date (2019-05-01)\n  • start_year_clim (2006) is after end_year_clim (2020)'),
+        'HCWF Configuration is invalid:\n  • start_date (2019-08-01) is after end_date (2019-05-01)'),
+    'climatology start after end': ({'start_year_clim': 2020, 'end_year_clim': 2006},
+        'HCWF Configuration is invalid:\n  • start_year_clim (2020) is after end_year_clim (2006)'),
     'start equals end': ({'start_date': (2019, 5, 1), 'end_date': (2019, 5, 1)},
-        'HCWF Configuration is invalid:\n  • start_date (2019-05-01) is after end_date (2019-05-01)'),
+        'HCWF Configuration is invalid:\n  • start_date (2019-05-01) equals end_date; the period needs at least two days'),
     'bad date': ({'start_date': (2019, 13, 1)},
         'HCWF Configuration is invalid:\n  • Date formatting error: month must be in 1..12'),
     'years outside': ({'years': (2010, 2019)},
@@ -183,3 +185,22 @@ def test_check_text_is_the_golden_text(world, flat, blend_flat):
     _golden("bad_units", _text({**flat, "units_mode": "bogus"}), base)
     _golden("blend_valid", _text(blend_flat), base)
     _golden("bad_blend", _text({**blend_flat, "blend_rain_transform": "cube"}), base)
+
+
+def test_dims_names_accepted_by_the_schema_are_those_of_the_dataset_kinds():
+    """The schema's ``dims`` names are the union of the observation and forecast names, derived from one tuple."""
+    from hcwf.config.datasets import FORECAST_DIMS, OBS_DIMS
+    from hcwf.config.schema import _dims
+    names = {"init_time", "step", "member", "lat", "lon", "unit", "time"}
+    assert set(OBS_DIMS) == {"time", "lat", "lon", "unit"}
+    assert set(FORECAST_DIMS) == names - {"time"}
+    for name in names:
+        assert _dims({name: "x"}) == {name: "x"}
+    with pytest.raises(ValueError):
+        _dims({"depth": "x"})
+
+
+def test_years_value_takes_any_sequence():
+    from hcwf.config.convert_specs import _years_value
+    assert _years_value([2000, 2001, 2002, 2005]) == _years_value((2000, 2001, 2002, 2005)) == "2000:2002,2005"
+    assert _years_value([2003]) == 2003

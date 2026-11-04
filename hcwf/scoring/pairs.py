@@ -255,8 +255,7 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
             clim_onset_slice,
             target_year,
             init_dates,
-            day_bins=day_bins,
-            max_forecast_day=rc.evaluation.max_forecast_day
+            day_bins=day_bins
         )
 
         if forecast_obs.n_cases > 0:

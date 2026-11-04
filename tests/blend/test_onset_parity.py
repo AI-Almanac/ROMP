@@ -8,6 +8,7 @@ and every onset day must equal the oracle's.
 from __future__ import annotations
 
 import itertools
+import re
 
 import numpy as np
 import pytest
@@ -33,7 +34,10 @@ season: {from: 01-01, to: 12-31}
 
 def definition_yaml(r, fixed_total: float | None = None, threshold: tuple | None = None) -> str:
     """The hcwf definition text of a blending rule (what `hcwf-run convert` writes, with this header)."""
-    return HEAD + rule_body(r, fixed_total, threshold)
+    body = rule_body(r, threshold)
+    if fixed_total is not None:   # a fixed total in mm replaces the ``thr`` threshold
+        body = re.sub(r"\{total: (at least|more than) thr\}", rf"{{total: \1 {fixed_total} mm}}", body)
+    return HEAD + body
 
 
 def _backends():

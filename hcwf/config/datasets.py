@@ -54,10 +54,12 @@ DATASET_KEYS = ("id", "title", "kind", "name", "path", "paths", "years", "file_p
 """The keys a dataset entry may hold."""
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-OBS_DIMS = ("time", "lat", "lon", "unit")
-"""The dimension names an observation dataset may rename in ``dims``."""
 FORECAST_DIMS = ("init_time", "step", "member", "lat", "lon", "unit")
-"""The dimension names a forecast dataset may rename in ``dims``."""
+"""The dimension names a forecast dataset may rename in ``dims`` (``unit``: the dimension of evaluation units)."""
+OBS_DIMS = ("time",) + tuple(d for d in FORECAST_DIMS if d not in ("init_time", "step", "member"))
+"""The dimension names an observation dataset may rename in ``dims``."""
+ALL_DIMS = FORECAST_DIMS + ("time",)
+"""Every dimension name some ``dims`` mapping may rename (the union of `OBS_DIMS` and `FORECAST_DIMS`)."""
 _YEAR_ANYWHERE = re.compile(r"(19|20)\d{2}")
 _YEAR_WHOLE = re.compile(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)")
 

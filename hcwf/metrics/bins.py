@@ -548,7 +548,7 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
 
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
 def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, *,
-                                             day_bins, max_forecast_day):
+                                             day_bins):
     """Create forecast-observation pairs from a climatological ensemble in which each year is a member.
 
     Uses day of year instead of calendar dates for the onset comparison. All years of `clim_onset` (the target year
@@ -565,8 +565,6 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
         The initialisation dates of the forecasts.
     day_bins : sequence of (int, int)
         The ``(first day, last day)`` bins within the forecast window, e.g. ``[(1, 5), (6, 10), (11, 15)]``.
-    max_forecast_day : int
-        Not used: the last day of `day_bins` is the maximum forecast day.
 
     Returns
     -------
@@ -581,7 +579,7 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     """
     # the forecast window is the span of day_bins
     bins = LeadBins.from_day_bins(day_bins)
-    max_forecast_day, min_forecast_day = bins.last_day, bins.first_day
+    max_forecast_day, min_forecast_day = bins.last_day, bins.first_day   # the last day of the bins is the maximum
 
     # Get the observed onset for the target year
     if target_year not in clim_onset.year.values:
