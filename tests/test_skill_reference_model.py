@@ -128,12 +128,13 @@ def test_forecast_model_dims_are_not_applied_to_the_reference(config, tmp_path):
 
 def test_climatology_reference_is_unchanged(config):
     """The climatology reference equals the scores computed straight from the climatology pairs."""
-    config = dict(config, ref_model="climatology")
+    # three climatology years only: leaving the scored year out would leave two members and a reference Brier of 0
+    config = dict(config, ref_model="climatology", climatology_cv="none")
     results = _results(config)
 
     rc, case, select = _typed(config)
     clim_onset = climatological_onset_dataset(rc, case, select)
-    pairs = climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS).select(DAY_BINS)
+    pairs = climatological_pairs(clim_onset, rc, case, select, years=rc.evaluation.years, day_bins=DAY_BINS).select(DAY_BINS)
 
     assert pairs_equal(results["climatology_pairs"], pairs)
     assert _text(results["BS_ref"]) == _text(calculate_brier_score_climatology(pairs))
@@ -159,4 +160,4 @@ def test_an_error_in_one_climatology_year_propagates(config, monkeypatch):
 
     monkeypatch.setattr(pairs_module, "create_climatological_forecast_obs_pairs", failing)
     with pytest.raises(RuntimeError, match="boom"):
-        climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS)
+        climatological_pairs(clim_onset, rc, case, select, years=rc.evaluation.years, day_bins=DAY_BINS)

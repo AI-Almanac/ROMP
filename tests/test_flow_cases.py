@@ -73,7 +73,7 @@ def test_prepared_reference_is_the_case_builders(configs, monkeypatch):
     settings: the rule lives there only (scoring/pairs.py asks for it)."""
     dic, rc = _run(configs, "model_reference", True)
     read = []
-    monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: read.append(model) or Pending.finished(table))
+    monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: read.append(model) or Pending.finished((table, {})))
     monkeypatch.setattr(skill.reference_io, "release_reference", lambda: None)
     table = pd.DataFrame({"a": [1]})
     for model in rc.models:
@@ -100,7 +100,7 @@ def test_one_process_frees_the_reference_rain_before_the_years_are_read(configs,
     dic, rc = _run(configs, name, True)
     rc = RunConfig.from_flat({**dic, "parallel": False}, check=False)
     steps, table = [], pd.DataFrame({"a": [1]})
-    monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: steps.append("pairs") or Pending.finished(table))
+    monkeypatch.setattr(skill, "start_pairs", lambda rc_, model, select=None: steps.append("pairs") or Pending.finished((table, {})))
     monkeypatch.setattr(skill.reference_io, "release_reference", lambda: steps.append("release"))
     monkeypatch.setattr(skill, "climatological_onset_dataset", lambda *a: steps.append("climatology") or "onsets")
     monkeypatch.setattr(skill.thresholds_io, "thresholds_of", lambda *a: steps.append("thresholds"))

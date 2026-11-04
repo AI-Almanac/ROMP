@@ -547,12 +547,13 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
 
 
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
-def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, *,
-                                             day_bins):
+def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, observed_onset_da=None, *,
+                                             day_bins, leave_one_out=False):
     """Create forecast-observation pairs from a climatological ensemble in which each year is a member.
 
-    Uses day of year instead of calendar dates for the onset comparison. All years of ``clim_onset`` (the target year
-    included) are the members; the target year's onset is the observation. A case is a place with an observed onset and
+    Uses day of year instead of calendar dates for the onset comparison. The years of ``clim_onset`` are the members
+    (without the target year when ``leave_one_out`` is set); the observation is ``observed_onset_da``, by default the
+    target year's slice of ``clim_onset``. A case is a place with an observed onset and
     an init before it, kept when at least one member has an onset; the probabilities use only the members with an onset.
 
     Parameters
@@ -560,34 +561,42 @@ def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates
     clim_onset : xarray.DataArray
         Onset dates (``datetime64``) of all years, dims (year, lat, lon) or (year, unit).
     target_year : int
-        The year used as the truth for the observations.
+        The year evaluated.
     init_dates : sequence of datetime-like
         The initialisation dates of the forecasts.
+    observed_onset_da : xarray.DataArray of datetime64, optional
+        The target year's observed onsets over the spatial axes (the run's own, which the models are scored against);
+        by default the target year's slice of ``clim_onset``, which must then hold the year.
     day_bins : sequence of (int, int)
         The ``(first day, last day)`` bins within the forecast window, e.g. ``[(1, 5), (6, 10), (11, 15)]``.
+    leave_one_out : bool, default False
+        Leave the target year out of the members when ``clim_onset`` holds it (a year outside the climatology years has
+        nothing to leave out).
 
     Returns
     -------
     PairArrays
-        The cases in order of init date, lon, lat. `PairArrays.members` is the number of years and
+        The cases in order of init date, lon, lat. `PairArrays.members` is the number of member years and
         `PairArrays.members_with_onset` the members behind each case's probabilities.
 
     Raises
     ------
     ValueError
-        ``target_year`` is not in ``clim_onset``.
+        ``observed_onset_da`` is not given and ``target_year`` is not in ``clim_onset``.
     """
     # the forecast window is the span of day_bins
     bins = LeadBins.from_day_bins(day_bins)
     max_forecast_day, min_forecast_day = bins.last_day, bins.first_day   # the last day of the bins is the maximum
 
     # Get the observed onset for the target year
-    if target_year not in clim_onset.year.values:
-        raise ValueError(f"Target year {target_year} not found in climatological dataset")
+    if observed_onset_da is None:
+        if target_year not in clim_onset.year.values:
+            raise ValueError(f"Target year {target_year} not found in climatological dataset")
+        observed_onset_da = clim_onset.sel(year=target_year)
+    obs_onset_da = observed_onset_da
 
-    obs_onset_da = clim_onset.sel(year=target_year)
-
-    # Use ALL years as ensemble members (including target year) ### redundant
+    if leave_one_out:
+        clim_onset = clim_onset.isel(year=np.flatnonzero(clim_onset.year.values != target_year))
     ensemble_years = list(clim_onset.year.values)
 
     # Create extended bins including "before initialization" and "after max_forecast_day" bins

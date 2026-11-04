@@ -32,7 +32,7 @@ CONDITIONAL_CLIMATOLOGY = "conditional_climatology"
 CLIMATOLOGY_REFERENCES = ("climatology", CONDITIONAL_CLIMATOLOGY)
 """The names of the climatology references."""
 CV_MODES = ("none", "leave_one_year_out")
-"""The values of ``climatology_cv``."""
+"""The values of ``climatology_cv`` (both climatology references: the conditional and the unconditional)."""
 DEFAULT_CV = "leave_one_year_out"
 """The ``climatology_cv`` used when none is given."""
 _GRID_TOLERANCE = 1e-3
@@ -300,11 +300,12 @@ def create_conditional_climatological_forecast_obs_pairs(clim_onset, target_year
                       members_with_onset=np.full(len(init_case), np.inf))
 
 
-def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bins):
+def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bins, observed=None):
     """Make the conditional climatology pairs of all ``years``, concatenated.
 
-    A year's observed onsets come from ``clim_onset`` when it holds that year,
-    otherwise they are detected from the year's rainfall as for the forecasts.
+    A year's observed onsets (the truth) are those of ``observed`` (the run's own, which the models are scored
+    against); a year missing there comes from ``clim_onset`` when it holds that year, otherwise it is detected from the
+    year's rainfall as for the forecasts (`observed_of_year`).
     The run ``rc`` carries the init dates, the onset definition and ``climatology_cv``.
 
     Parameters
@@ -321,6 +322,8 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
         The target years.
     day_bins : sequence
         The day bins.
+    observed : dict of int to xarray.DataArray, optional
+        The observed onsets of the run's years.
 
     Returns
     -------
@@ -333,22 +336,54 @@ def conditional_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bi
         No year gave a case, or the ``climatology_cv`` setting is not a valid mode.
     """
     from hcwf.io.forecasts import initialization_dates
-    from hcwf.io.thresholds import thresholds_of
-
-    thresholds = thresholds_of(rc, case.model, select)
     cv = cv_mode(rc.reference.climatology_cv)
     tables = []
     for year in years:
         log.debug(f"Conditional climatology pairs for target year {year}")
-        observed = None if year in clim_onset.year.values else _detect_observed(year, rc, select, thresholds)
         table = create_conditional_climatological_forecast_obs_pairs(
-            clim_onset, year, initialization_dates(year, rc.evaluation), observed, day_bins=day_bins,
-            climatology_cv=cv)
+            clim_onset, year, initialization_dates(year, rc.evaluation),
+            observed_of_year(year, clim_onset, rc, case.model, select, observed), day_bins=day_bins, climatology_cv=cv)
         if table.n_cases:
             tables.append(table)
     if not tables:
         raise ValueError("No data was successfully processed for any target year")
     return PairArrays.concat(tables)
+
+
+def observed_of_year(year, clim_onset, rc, model, select, observed=None):
+    """Return the observed onsets of a target year, the truth of a climatology reference.
+
+    ``observed`` holds the run's own onsets of the evaluated years, the ones the models are scored against (made once
+    by `hcwf.scoring.pairs.forecast_obs_pairs`); a year missing from it is read from ``clim_onset`` when that holds the
+    year (the same values), else detected like the model's (`hcwf.onset.detect.detect_observed`, which reuses the
+    observed-onset cache).
+
+    Parameters
+    ----------
+    year : int
+        The target year.
+    clim_onset : xarray.DataArray of datetime64
+        The onsets of the climatology years.
+    rc : hcwf.config.model.RunConfig
+        The run.
+    model : hcwf.config.model.ModelSpec
+        The model the onset thresholds are loaded for (read only when the year has to be detected).
+    select : hcwf.config.model.Selection
+        The call's choices.
+    observed : dict of int to xarray.DataArray, optional
+        The run's observed onsets by year.
+
+    Returns
+    -------
+    xarray.DataArray of datetime64
+        The observed onset dates over ``(lat, lon)`` (or ``unit``).
+    """
+    if observed is not None and year in observed:
+        return observed[year]
+    if year in clim_onset.year.values:
+        return clim_onset.sel(year=year)
+    from hcwf.io.thresholds import thresholds_of
+    return _detect_observed(year, rc, select, thresholds_of(rc, model, select))
 
 
 def _detect_observed(year, rc, select, thresholds):

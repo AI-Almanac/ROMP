@@ -136,7 +136,9 @@ def flat_config(name: str, paths: dict[str, str], out: Path) -> dict:
              if v is not None}
     evaluation = dict(case["evaluation"])
     top = {key: evaluation.pop(key) for key in ("years", "years_clim") if key in evaluation}   # top-level keys of the old schema
-    return {**_config(paths, out, ensemble=case["ensemble"], onset=onset, evaluation=evaluation), **top}
+    # the old outputs keep every climatology year as a member (the default now leaves the scored year out)
+    return {**_config(paths, out, ensemble=case["ensemble"], onset=onset, evaluation=evaluation), **top,
+            "reference": {"climatology_cv": "none"}}
 
 
 def condense(out: Path) -> dict:

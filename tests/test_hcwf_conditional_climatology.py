@@ -159,15 +159,19 @@ def test_climatology_reference_is_unchanged(config):
     config = dict(config, ref_model="climatology")
     results = scores(config)
     clim_onset = climatological_onset_dataset(*typed(config))
-    rc, _, _ = typed(config)
-    pairs = climatological_pairs(clim_onset, rc, years=rc.evaluation.years, day_bins=DAY_BINS).select(DAY_BINS)
+    rc, case, select = typed(config)
+    pairs = climatological_pairs(clim_onset, rc, case, select, years=rc.evaluation.years,
+                                 day_bins=DAY_BINS).select(DAY_BINS)
 
     assert pairs_equal(results["climatology_pairs"], pairs)
     assert repr(results["BS_ref"]) == repr(calculate_brier_score_climatology(pairs))
     assert repr(results["RPS_ref"]) == repr(calculate_rps(pairs))
     assert repr(results["AUC_ref"]) == repr(calculate_auc_climatology(pairs))
+    # the climatology_cv key reaches the unconditional climatology too: the target year (a climatology year here)
+    # is one of the members with "none" and not with the default leave_one_year_out
     again = scores(dict(config, climatology_cv="none"))
-    assert pairs_equal(again["climatology_pairs"], results["climatology_pairs"])
+    assert set(again["climatology_pairs"].members) == {len(CLIM_YEARS)}
+    assert set(results["climatology_pairs"].members) == {len(CLIM_YEARS) - 1}
 
     det = dict(config, probabilistic=False, model="climatology")
     metrics, onsets = compute_metrics(*typed(det))

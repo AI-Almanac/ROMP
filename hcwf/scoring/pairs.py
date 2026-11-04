@@ -22,7 +22,8 @@ from hcwf.metrics.bins import PairArrays, create_climatological_forecast_obs_pai
 from hcwf.onset.detect import check_alignment, detect_ensemble, detect_observed
 from hcwf.parallel import NO_DATA, Pending, concat_year_args, spec_workers, start_year_args
 from hcwf.references.climatology import climatological_onset_dataset
-from hcwf.references.conditional import CLIMATOLOGY_REFERENCES, conditional_pairs, is_conditional_climatology
+from hcwf.references.conditional import (CLIMATOLOGY_REFERENCES, conditional_pairs, cv_mode, is_conditional_climatology,
+                                         observed_of_year)
 from hcwf.scoring.onset_tables import reports_back_dated, share_ensemble_tables
 
 log = logging.getLogger(__name__)
@@ -187,8 +188,9 @@ def start_pairs(rc, model, select=Selection()):
     Returns
     -------
     hcwf.parallel.Pending
-        Its ``result()`` waits for the work and returns the `hcwf.metrics.bins.PairArrays` of all years (joined in
-        year order; a year without data is left out).
+        Its ``result()`` waits for the work and returns ``(pairs, observed)``: the `hcwf.metrics.bins.PairArrays` of all
+        years (joined in year order; a year without data is left out) and a dict of each processed year's observed
+        onsets, the truth of the pairs (a climatology reference is scored against the same).
     """
     years = list(rc.evaluation.years)
     pending = start_year_args(_pairs_of_years, years, (rc, model, select), rc.parallel,
@@ -197,7 +199,7 @@ def start_pairs(rc, model, select=Selection()):
                                                                           select=select) if len(years) > 1 else None)
 
     def join():
-        """Concatenate the year pairs in year order, hand the onset tables on, and return the pairs.
+        """Concatenate the year pairs in year order, hand the onset tables on, and return the pairs and observed onsets.
 
         A year without data is left out; no data at all raises `ValueError`.
         """
@@ -208,15 +210,17 @@ def start_pairs(rc, model, select=Selection()):
         for _, year_tables in parts:
             tables.update(year_tables)
         share_ensemble_tables(rc, model, tables, select)
-        return PairArrays.concat([pairs for pairs, _ in parts])
+        return PairArrays.concat([pairs for pairs, _ in parts]), {year: onset for year, (_, onset) in tables.items()}
 
     return Pending(join)
 
 
-def climatological_pairs(clim_onset, rc, *, years, day_bins):
+def climatological_pairs(clim_onset, rc, case, select=Selection(), *, years, day_bins, observed=None):
     """Return the climatological forecast-observation pairs of all target years, concatenated.
 
-    The run ``rc`` carries the init dates. An error in any year propagates; a year without pairs is left out.
+    The run ``rc`` carries the init dates and ``reference.climatology_cv``: with ``leave_one_year_out`` the target year
+    is not one of its own members. The truth of a year is its observed onsets in ``observed`` (see
+    `hcwf.references.conditional.observed_of_year`). An error in any year propagates; a year without pairs is left out.
 
     Parameters
     ----------
@@ -224,10 +228,16 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
         The onsets of the climatology years, dims (year, lat, lon) or (year, unit).
     rc : hcwf.config.model.RunConfig
         The resolved run config.
+    case : hcwf.config.model.Case
+        The case that carries the reference (its model's thresholds detect a year ``observed`` lacks).
+    select : hcwf.config.model.Selection, default Selection()
+        The selection of the cells.
     years : iterable of int
         The target years.
     day_bins : sequence of (int, int)
         The ``(first day, last day)`` bins within the forecast window.
+    observed : dict of int to xarray.DataArray, optional
+        The run's observed onsets by year.
 
     Returns
     -------
@@ -239,7 +249,7 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
     ValueError
         No year gives pairs.
     """
-    clim_onset_slice = clim_onset
+    leave_one_out = cv_mode(rc.reference.climatology_cv) == "leave_one_year_out"
 
     all_forecast_obs_pairs = []
 
@@ -252,11 +262,9 @@ def climatological_pairs(clim_onset, rc, *, years, day_bins):
 
         # Create forecast-observation pairs for this year
         forecast_obs = create_climatological_forecast_obs_pairs(
-            clim_onset_slice,
-            target_year,
-            init_dates,
-            day_bins=day_bins
-        )
+            clim_onset, target_year, init_dates,
+            observed_of_year(target_year, clim_onset, rc, case.model, select, observed),
+            day_bins=day_bins, leave_one_out=leave_one_out)
 
         if forecast_obs.n_cases > 0:
             all_forecast_obs_pairs.append(forecast_obs)
@@ -288,7 +296,7 @@ class PreparedPairs(NamedTuple):
     """The climatology reference's pairs (conditional or not); None for a model reference."""
 
 
-def _climatology_years(years, clim_onset, rc, case, select, day_bins):
+def _climatology_years(years, clim_onset, rc, case, select, day_bins, observed):
     """Return the climatology reference's pairs of ``years`` (the form `hcwf.parallel.concat_year_args` calls).
 
     Parameters
@@ -305,6 +313,8 @@ def _climatology_years(years, clim_onset, rc, case, select, day_bins):
         The selection of the cells.
     day_bins : sequence of (int, int)
         The ``(first day, last day)`` bins within the forecast window.
+    observed : dict of int to xarray.DataArray
+        The run's observed onsets by year (the truth).
 
     Returns
     -------
@@ -312,11 +322,11 @@ def _climatology_years(years, clim_onset, rc, case, select, day_bins):
         The conditional or unconditional climatological pairs, as the run's reference asks.
     """
     if is_conditional_climatology(rc.reference.model):
-        return conditional_pairs(clim_onset, rc, case, select, years=years, day_bins=day_bins)
-    return climatological_pairs(clim_onset, rc, years=years, day_bins=day_bins)
+        return conditional_pairs(clim_onset, rc, case, select, years=years, day_bins=day_bins, observed=observed)
+    return climatological_pairs(clim_onset, rc, case, select, years=years, day_bins=day_bins, observed=observed)
 
 
-def _climatology_pairs(clim_onset, rc, case, select):
+def _climatology_pairs(clim_onset, rc, case, select, observed=None):
     """Return the pairs of the climatology reference (conditional or not) for all years.
 
     The years run in worker processes unless ``parallel`` is off.
@@ -331,6 +341,8 @@ def _climatology_pairs(clim_onset, rc, case, select):
         The case that carries the reference.
     select : hcwf.config.model.Selection
         The selection of the cells.
+    observed : dict of int to xarray.DataArray, optional
+        The run's observed onsets by year, which the model is scored against.
 
     Returns
     -------
@@ -338,7 +350,7 @@ def _climatology_pairs(clim_onset, rc, case, select):
         The pairs of all years, concatenated.
     """
     return concat_year_args(_climatology_years, rc.evaluation.years,
-                            (clim_onset, rc, case, select, rc.evaluation.day_bins), rc.parallel,
+                            (clim_onset, rc, case, select, rc.evaluation.day_bins, observed), rc.parallel,
                             combine=PairArrays.concat)
 
 
@@ -409,10 +421,10 @@ def prepare_pairs(rc, model, select=Selection()):
         clim_onset = climatological_onset_dataset(rc, case, select)
         reference_io.release_reference()
 
-    forecast_obs_df_all = pending.result()
-    ref_obs_df_all = ref_pending.result() if ref_pending is not None else None
+    forecast_obs_df_all, observed = pending.result()
+    ref_obs_df_all = ref_pending.result()[0] if ref_pending is not None else None
 
     if climatology:
-        climatology_obs_df_all = _climatology_pairs(clim_onset, rc, case, select)
+        climatology_obs_df_all = _climatology_pairs(clim_onset, rc, case, select, observed)
 
     return PreparedPairs(forecast_obs_df_all, ref_obs_df_all, clim_onset, climatology_obs_df_all)

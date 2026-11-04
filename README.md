@@ -126,7 +126,7 @@ Without `output.data_dir`, a run writes to `runs/<region>_<definition>[+mod]_<ye
 
 ## Caches
 
-Observed onsets are detected once per run, shared by all models, windows and references, and kept across runs in `runs/.cache/observed_onsets/` (`<data_dir>/.onset_cache/` with an explicit `data_dir`), keyed by a fingerprint of the observation files, ingest settings, evaluated cells and mask, definition, thresholds and season climatology, and years (not the backend, models, windows or reference). The run prints a hit or miss and, on a miss, which parts differ from the nearest cached entry. Dataset detections are kept in the shared cache `$HCWF_CACHE_DIR`, else `~/.cache/hcwf`.
+Observed onsets are detected once per run, shared by all models, windows and references, and kept across runs in `runs/.cache/observed_onsets/` (`<data_dir>/.onset_cache/` with an explicit `data_dir`), keyed by a fingerprint of the observation files, ingest settings, evaluated cells and mask, definition, thresholds and season climatology, and years (not the backend, models, windows or reference). The run prints a hit or miss and, on a miss, which parts differ from the nearest cached entry. The climatology references are scored against these same onsets, also for years outside the climatology period, and by default leave the scored year out of their own climatology (`reference.climatology_cv: leave_one_year_out`; `none` keeps all climatology years). Dataset detections are kept in the shared cache `$HCWF_CACHE_DIR`, else `~/.cache/hcwf`.
 
 ```bash
 hcwf-run cache info                                  # kinds, entries, sizes, ages of runs/.cache here and the shared cache

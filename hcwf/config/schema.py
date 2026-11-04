@@ -979,9 +979,10 @@ def _fields() -> tuple[Field, ...]:
               "from a KDE of observed onsets over start_year_clim..end_year_clim; needs >= 10 onset years per "
               "cell, other cells are not scored by the reference) or a reference model's name", "climatology",
               "reference", "model"),
-        Field("climatology_cv", "str", "cross-validation of the conditional climatology: 'none' or "
-              "'leave_one_year_out' (refit the KDE without the evaluated year); only used by ref_model "
-              "'conditional_climatology'", "leave_one_year_out",
+        Field("climatology_cv", "str", "cross-validation of the climatology references ('climatology' and "
+              "'conditional_climatology'): 'leave_one_year_out' leaves the evaluated year out of its own climatology "
+              "(members or KDE fit; a year outside the climatology years has nothing to leave out), 'none' keeps all "
+              "climatology years; not used by a model reference", "leave_one_year_out",
               "reference", choices=("none", "leave_one_year_out")),
         Field("ref_model_dir", "path", "reference data folder (default: the observations')", None, "reference",
               "path", nullable=True),
