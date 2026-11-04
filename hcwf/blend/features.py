@@ -422,7 +422,7 @@ def _forecast_runs(item, rc, case, select, spec, thresholds, fixed_cutoff, refer
 
 
 def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=None, member_ids=None,
-             units=None, issue_dates=None, workers: int = 1, budget_bytes: int | None = None,
+             units=None, issue_dates=None, years=None, workers: int = 1, budget_bytes: int | None = None,
              needed_only: bool = False) -> ForecastOnsets:
     """Collect a model's forecast onsets over every one of its files, runs of issues in parallel as far as memory allows.
 
@@ -450,6 +450,9 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
         Override the model's units specification (a forecast passes the trained blend's).
     issue_dates : iterable of datetime-like, optional
         Read only the issues on these days (files without any are left out).
+    years : iterable of int, optional
+        For a zarr store of all years, read only the issues of these years (training reads the evaluation years, as
+        the benchmark does); None reads all of them. Files are read whole.
     workers : int, default 1
         The most worker processes.
     budget_bytes : int, optional
@@ -480,7 +483,8 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
         member_ids=None if member_ids is None else [int(m) for m in member_ids],
         rain_horizon=(spec.rain_horizon.max_day, spec.rain_horizon.policy), check_units=False,
         keep_unit_ids=None if keep_ids is None else sorted(keep_ids),
-        issue_dates=None if issue_dates is None else tuple(issue_dates))
+        issue_dates=None if issue_dates is None else tuple(issue_dates),
+        model_files_years=None if not years else tuple(sorted(years)))
     series, keep_days = _forecast_needs(recipe, spec, needed_only)
     infos = [_forecast_file_info(path, case, select, units) for path in sources]
     files = [(path, info) for path, info in zip(sources, infos) if info is not None]

@@ -41,7 +41,7 @@ blend:
     ens: {lead_days: [1, 40], rain_predictors: [{agg: diff}]}
 ```
 
-Observations and models are read as the benchmark reads them: `path` is a folder of yearly files (`file_pattern`, `{}` is the year), a zarr store holding every year (`path: data/obs.zarr`), or `paths` lists files. The same dataset entries therefore work for a benchmark and a blend, and a model's forecasts may be one zarr store of all years:
+Observations and models are read as the benchmark reads them: `path` is a folder of yearly files (`file_pattern`, `{}` is the year), a zarr store holding every year (`path: data/obs.zarr`), or `paths` lists files. The same dataset entries therefore work for a benchmark and a blend, and a model's forecasts may be one zarr store of all years (training reads the store's issues of the `evaluation` years, `start_date` to `end_date`, as the benchmark does; yearly files are read whole):
 
 ```yaml
 observations: {path: data/ethiopia/obs.zarr}

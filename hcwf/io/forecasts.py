@@ -624,8 +624,8 @@ class UnitForecast:
     issue_dates : iterable of datetime-like or str, optional
         Keep only the issues on these days (dates or ISO texts); None keeps all.
     select : hcwf.config.model.Selection, default NO_SELECTION
-        Picks the lead days (``first_lead``, ``last_lead``, ``rain_horizon``) and members (``max_member``,
-        ``member_ids``).
+        Picks the lead days (``first_lead``, ``last_lead``, ``rain_horizon``), members (``max_member``,
+        ``member_ids``) and, for a zarr store, the years of its issues (``model_files_years``).
 
     Attributes
     ----------
@@ -682,6 +682,9 @@ class UnitForecast:
             if not self._single and (select.max_member is not None or select.member_ids is not None):
                 da = select_members(da, at_most=select.max_member, among=select.member_ids, where=name)
             self.issues = pd.DatetimeIndex(da["init_time"].values).normalize().to_numpy()
+            if store and select.model_files_years:   # the years of a store that are read, as the files of a year are
+                keep = np.flatnonzero(pd.DatetimeIndex(self.issues).year.isin(list(select.model_files_years)))
+                da, self.issues = da.isel(init_time=keep), self.issues[keep]
             if issue_dates is not None:
                 wanted = np.array([np.datetime64(d, "D") for d in issue_dates])
                 rows = np.flatnonzero(np.isin(self.issues.astype("datetime64[D]"), wanted))

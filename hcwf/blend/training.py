@@ -139,8 +139,8 @@ def prepare(rc: RunConfig, *, test_years: tuple[int, int] | None = None,
     for model in recipe.models:
         started = time.perf_counter()
         forecasts[model.name] = features.forecast(rc, recipe, model.name, thresholds, reference,
-                                                  keep_ids=blendable, workers=workers, budget_bytes=budget,
-                                                  needed_only=True)
+                                                  keep_ids=blendable, years=rc.evaluation.years,
+                                                  workers=workers, budget_bytes=budget, needed_only=True)
         lap(f"{model.name} forecast onsets", started)
 
     started = time.perf_counter()

@@ -65,6 +65,18 @@ def test_training_reads_zarr_stores_as_it_reads_files(region):
     _same_features(files, stores)
 
 
+def test_a_store_of_more_years_than_the_evaluation_trains_the_blend_of_those_years(region):
+    """The issues read are those of the evaluation years (as the benchmark reads them): the store's other years are left."""
+    root, files = region
+    write_forecasts(root / "ens_more", years=range(2005, 2014))
+    _store(root / "ens_more", root / "ens_more.zarr", range(2005, 2014))
+
+    stores = train(_rc(root, obs_dir=str(root / "obs.zarr"), obs_paths=None,
+                       model_dir_list=(str(root / "ens_more.zarr"),), model_paths_list=(None,)))
+
+    _same_features(files, stores)
+
+
 def test_training_reads_a_file_pattern_as_it_reads_files(region):
     root, files = region
 
