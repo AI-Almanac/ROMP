@@ -1,4 +1,9 @@
-"""The `hcwf-run onset` commands: list, describe, regions, check-alignment, explain, schematic."""
+"""The ``hcwf-run onset`` commands: list, describe, regions, check-alignment, explain, schematic.
+
+Each command prints to the screen; ``explain`` and ``schematic`` can also save a PNG. The commands are thin wrappers
+over the onset component (definitions, regions, ingestion, alignment and plots); ``hcwf-run onset COMMAND -h`` lists the
+options of each one.
+"""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +19,18 @@ from hcwf.errors import DefinitionError, RegionError
 
 
 def _list(args) -> int:
-    """Print every registry definition with its title and regions."""
+    """Print every registry definition with its title and regions.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed command line (no options).
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+    """
     for ident in definition.registry_ids():
         defn = definition.load(ident)
         where = ", ".join(defn.regions) or "any region"
@@ -23,7 +39,18 @@ def _list(args) -> int:
 
 
 def _describe(args) -> int:
-    """Print the sentence, hash, status and notes of a definition."""
+    """Print the sentence, hash, status and notes of a definition.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed command line: ``definition`` (a registry id or a YAML path) and ``no_dry_spell_check``.
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+    """
     defn = definition.load(args.definition)
     if args.no_dry_spell_check:
         defn = definition.without_dry_spell_check(defn)
@@ -39,7 +66,18 @@ def _describe(args) -> int:
 
 
 def _regions(args) -> int:
-    """Print every region with its default definition, day boundary and climatology years."""
+    """Print every region with its default definition, day boundary and climatology years.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed command line (no options).
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+    """
     for ident in regions.region_ids():
         region = regions.load_region(ident)
         default, also = regions.definitions_for(ident)
@@ -52,13 +90,38 @@ def _regions(args) -> int:
 
 
 def _open(path: str, var: str) -> xr.DataArray:
-    """Open one variable of a NetCDF file."""
+    """Open one variable of a NetCDF file.
+
+    Parameters
+    ----------
+    path : str
+        The NetCDF file.
+    var : str
+        The variable.
+
+    Returns
+    -------
+    xarray.DataArray
+        The variable, loaded into memory.
+    """
     with xr.open_dataset(path) as ds:
         return ds[var].load()
 
 
 def _check_alignment(args) -> int:
-    """Compare a forecast file with an observation file at day lags -3..+3 and print the verdict."""
+    """Compare a forecast file with an observation file at day lags -3..+3 and print the verdict.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed command line: ``obs``, ``obs_var``, ``obs_day_boundary``, ``obs_units``, ``model``, ``model_var``,
+        ``units`` and ``lead_label``.
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+    """
     obs = ingest(_open(args.obs, args.obs_var), day_boundary=args.obs_day_boundary, units=args.obs_units,
                  source=args.obs)
     forecast = ingest_forecast(_open(args.model, args.model_var), day_boundary=f"00 UTC, labelled by {args.lead_label}",
@@ -68,7 +131,24 @@ def _check_alignment(args) -> int:
 
 
 def _explain(args) -> int:
-    """Print the readable log of one cell's onset search and optionally save its anatomy plot."""
+    """Print the readable log of one cell's onset search and optionally save its anatomy plot.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed command line: ``obs``, ``obs_var``, ``obs_units``, ``day_boundary``, ``definition``, ``lat``,
+        ``lon``, ``year``, ``threshold_years``, ``no_dry_spell_check``, ``png`` and ``dark``.
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+
+    Raises
+    ------
+    ValueError
+        The definition needs thresholds or has derived seasons and ``--threshold-years`` is not given.
+    """
     from hcwf.onset import climatology, explain
     from hcwf.onset.model import DerivedSeasons
 
@@ -99,7 +179,18 @@ def _explain(args) -> int:
 
 
 def _schematic(args) -> int:
-    """Save the schematic of a definition as a PNG."""
+    """Save the schematic of a definition as a PNG.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed command line: ``definition``, ``png`` and ``dark``.
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+    """
     from hcwf.onset.viz.schematic import schematic
 
     schematic(definition.load(args.definition), mode="dark" if args.dark else "light").savefig(args.png, dpi=150)
@@ -108,7 +199,20 @@ def _schematic(args) -> int:
 
 
 def main(argv=None) -> int:
-    """Run the command line; returns the exit status."""
+    """Run the ``hcwf-run onset`` command line.
+
+    An error of the definition, the region or a file is printed on stderr and gives exit status 1.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        The arguments after ``onset``; ``sys.argv`` when None.
+
+    Returns
+    -------
+    int
+        The exit status: 0, or 1 after an error.
+    """
     parser = argparse.ArgumentParser(prog="hcwf-run onset", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="definition ids with titles and regions").set_defaults(run=_list)

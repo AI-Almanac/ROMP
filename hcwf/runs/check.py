@@ -6,6 +6,9 @@ evidence, the mask, the lead windows, which files exist or are missing, the samp
 the observations, sanity hints (each names the key to set), the run folder and the observed-onset cache that a run
 would use. Reading is limited to a sample of the files; nothing is written. Errors (a run would fail) make
 ``CheckReport.ok`` False.
+
+The module is the engine of ``hcwf-run --check`` (`hcwf.cli`) and of the ``check`` of `hcwf.api`. The run folder it
+reports is planned by `hcwf.runs.folder`.
 """
 from __future__ import annotations
 
@@ -23,7 +26,9 @@ from hcwf.config.onset import onset_setup
 log = logging.getLogger(__name__)
 
 _MAX_LISTED = 8
+"""The most items `_short` lists before it cuts the list."""
 _GRID_TOLERANCE = 1e-3
+"""How close in degrees a model cell must lie to an observation cell to count as matched."""
 _SETTING_KEYS = (
     ("region", "region"), ("start_date", "first date"), ("end_date", "last date"), ("init_days", "init weekdays"),
     ("start_year_clim", "climatology from"), ("end_year_clim", "climatology to"),
@@ -31,6 +36,7 @@ _SETTING_KEYS = (
     ("max_forecast_day", "max forecast day"), ("day_bins", "day bins"), ("probabilistic", "ensemble"),
     ("members", "members"), ("ref_model", "reference"), ("climatology_cv", "climatology_cv"),
     ("onset_percentage_threshold", "ensemble onset share"), ("forecast_history", "forecast history"))
+"""The flat config keys the Settings section lists, with the label shown for each."""
 
 
 @dataclass
@@ -38,8 +44,11 @@ class CheckReport:
     """The outcome of a check: printable lines, the errors (a run would fail) and the warnings (hints)."""
 
     lines: list[str] = field(default_factory=list)
+    """The lines of the report, in order."""
     errors: list[str] = field(default_factory=list)
+    """The errors: what would make a run fail."""
     warnings: list[str] = field(default_factory=list)
+    """The warnings (hints), each as ``[key] text``."""
 
     @property
     def ok(self) -> bool:
@@ -47,49 +56,132 @@ class CheckReport:
         return not self.errors
 
     def text(self) -> str:
-        """The whole report as text."""
+        """Return the whole report as text.
+
+        Returns
+        -------
+        str
+            The lines joined by newlines.
+        """
         return "\n".join(self.lines)
 
     def section(self, title: str) -> None:
-        """Start a titled section."""
+        """Start a titled section.
+
+        Parameters
+        ----------
+        title : str
+            The section title, shown as ``== title ==`` after a blank line.
+        """
         self.lines += ["", f"== {title} =="]
 
     def add(self, text: str) -> None:
-        """Add one line."""
+        """Add one line.
+
+        Parameters
+        ----------
+        text : str
+            The line.
+        """
         self.lines.append(text)
 
     def error(self, text: str) -> None:
-        """Record an error (also listed in the summary)."""
+        """Record an error (also listed in the summary).
+
+        Parameters
+        ----------
+        text : str
+            What would make a run fail; the report line is ``ERROR: text``.
+        """
         self.errors.append(text)
         self.lines.append(f"ERROR: {text}")
 
     def hint(self, key: str, text: str) -> None:
-        """Record a warning naming the key to set."""
+        """Record a warning naming the key to set.
+
+        Parameters
+        ----------
+        key : str
+            The config key the hint is about.
+        text : str
+            The hint; the report line is ``HINT [key]: text``.
+        """
         self.warnings.append(f"[{key}] {text}")
         self.lines.append(f"HINT [{key}]: {text}")
 
 
 def _short(values, limit=_MAX_LISTED) -> str:
-    """A list of values as text, cut after `limit` items."""
+    """Return a list of values as text, cut after `limit` items.
+
+    Parameters
+    ----------
+    values : iterable
+        The values.
+    limit : int, default 8
+        The most items to show.
+
+    Returns
+    -------
+    str
+        The items separated by commas, with ``... (n in all)`` appended when some are left out.
+    """
     values = list(values)
     text = ", ".join(str(v) for v in values[:limit])
     return text + (f", ... ({len(values)} in all)" if len(values) > limit else "")
 
 
 def _source(dic: dict, key: str) -> str:
-    """Where a flat key's value came from, in brackets."""
+    """Return where a flat key's value came from, in brackets.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config, with ``config_sources`` when known.
+    key : str
+        The key.
+
+    Returns
+    -------
+    str
+        For example ``[run config]``; ``[resolved]`` when the source is not recorded.
+    """
     return f"[{(dic.get('config_sources') or {}).get(key, 'resolved')}]"
 
 
 def _open(path):
-    """The lazy Dataset of a NetCDF file or zarr store (a context manager that closes it)."""
+    """Open a NetCDF file or zarr store lazily.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The file or the zarr store.
+
+    Returns
+    -------
+    xarray.Dataset
+        The lazy Dataset; it is a context manager that closes it.
+    """
     from hcwf.config.datasets import is_zarr
 
     return xr.open_zarr(str(path), chunks=None) if is_zarr(path) else xr.open_dataset(path)
 
 
 def _store_has_year(store, year) -> bool:
-    """True if the zarr store has a datetime coordinate value in the year."""
+    """Return whether the zarr store has a datetime coordinate value in the year.
+
+    Parameters
+    ----------
+    store : str or pathlib.Path
+        The zarr store.
+    year : int
+        The year.
+
+    Returns
+    -------
+    bool
+        True when a one-dimensional datetime coordinate has a value in `year`, and also when the store has no such
+        coordinate (nothing can be said, so the year is taken as present).
+    """
     ds = xr.open_zarr(str(store), chunks=None)
     for coord in ds.coords.values():
         if coord.ndim == 1 and np.issubdtype(coord.dtype, np.datetime64):
@@ -98,9 +190,23 @@ def _store_has_year(store, year) -> bool:
 
 
 def _find(folder, patterns, year):
-    """The path of the yearly file in folder matching one of the patterns, or None.
+    """Return the path of the yearly file in `folder` matching one of the patterns, or None.
 
     A folder that is a zarr store holds all years: the store is returned if it has times in the year.
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        The folder of the files, or a zarr store.
+    patterns : iterable of str
+        The file name patterns, each formatted with the year (``pattern.format(year)``).
+    year : int
+        The year.
+
+    Returns
+    -------
+    pathlib.Path or None
+        The first file that exists (or the store), else None.
     """
     from hcwf.config.datasets import is_zarr
 
@@ -114,7 +220,15 @@ def _find(folder, patterns, year):
 
 
 def _settings(dic: dict, report: CheckReport) -> None:
-    """The settings section: the main keys with their sources, then the onset setup lines."""
+    """Add the settings section: the main keys with their sources, then the onset setup lines.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to.
+    """
     report.section("Settings")
     report.add(f"config file     : {dic.get('config_file', '(not from a file)')}")
     for key, label in _SETTING_KEYS:
@@ -134,7 +248,18 @@ def _settings(dic: dict, report: CheckReport) -> None:
 
 
 def _box_text(dic: dict) -> str:
-    """The box of the region a run selects cells with, and which region it is the domain of."""
+    """Return the box of the region a run selects cells with, and which region it is the domain of.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+
+    Returns
+    -------
+    str
+        A sentence: the lat and lon limits, or that there is no region or that it is unknown.
+    """
     from hcwf.onset import regions
 
     name = dic.get("region")
@@ -148,7 +273,15 @@ def _box_text(dic: dict) -> str:
 
 
 def _datasets(dic: dict, report: CheckReport) -> None:
-    """The datasets section: what was detected or given for each dataset, with evidence."""
+    """Add the datasets section: what was detected or given for each dataset, with evidence.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config; ``dataset_report`` holds the lines.
+    report : CheckReport
+        The report to add to; a ``warning:`` line is also recorded as a warning.
+    """
     report.section("Datasets")
     for line in dic.get("dataset_report") or ("(no datasets described)",):
         report.add(line)
@@ -163,12 +296,37 @@ def _datasets(dic: dict, report: CheckReport) -> None:
 
 
 def _years(dic: dict) -> tuple[tuple, tuple]:
-    """The evaluated years and the climatology years."""
+    """Return the evaluated years and the climatology years.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+
+    Returns
+    -------
+    tuple of (tuple, tuple)
+        The evaluated years and the climatology years.
+    """
     return evaluation_years(dic), climatology_years(dic)
 
 
 def _files(dic: dict, report: CheckReport) -> dict:
-    """List which yearly files exist; missing files a run needs are errors. Returns the first sample path per dataset."""
+    """List which yearly files exist; missing files a run needs are errors.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to.
+
+    Returns
+    -------
+    dict
+        The first existing file of each dataset (``observations`` and each model name; None when none exists), for the
+        sampled checks that follow.
+    """
     report.section("Files")
     years, clim = _years(dic)
     setup = onset_setup(dic)
@@ -209,12 +367,26 @@ def _files(dic: dict, report: CheckReport) -> dict:
 
 
 def _listed_files(dic: dict, report: CheckReport) -> dict:
-    """The files of datasets given as lists (`paths`): how many exist, over which years; a missing one is an error."""
+    """List the files of datasets given as lists (``paths``): how many exist, over which years; a missing one is an error.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config, with ``obs_paths`` and ``model_paths_list``.
+    report : CheckReport
+        The report to add to.
+
+    Returns
+    -------
+    dict
+        The first existing file of each listed dataset (None when none exists).
+    """
     from hcwf.config.datasets import file_year
 
     samples = {}
 
     def one(label, files):
+        """Report one dataset's listed files and record the first existing one in `samples`."""
         files = [Path(f) for f in files]
         gone = [f for f in files if not f.exists()]
         years = sorted({file_year(f) for f in files} - {None})
@@ -234,7 +406,24 @@ def _listed_files(dic: dict, report: CheckReport) -> dict:
 
 
 def _grid(path, dims=None, forecast=False):
-    """(lat, lon, variable-lat-order) of the first file: the coordinate arrays after the usual renames."""
+    """Return the lat and lon coordinate arrays of a file, after the usual renames.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The file or zarr store.
+    dims : dict, optional
+        The dataset's dimension renames, as the config gives them.
+    forecast : bool, default False
+        Whether the file is a forecast (its dims are formatted as a model's).
+
+    Returns
+    -------
+    lat : numpy.ndarray of float64
+        The latitudes.
+    lon : numpy.ndarray of float64
+        The longitudes.
+    """
     from hcwf.io.dims import dim_fmt, dim_fmt_model, rename_model_dims
 
     with _open(path) as ds:
@@ -243,7 +432,18 @@ def _grid(path, dims=None, forecast=False):
 
 
 def _box(dic: dict):
-    """The region's lat/lon box (lats, latn, lonw, lone), or None when the region is unknown."""
+    """Return the region's lat/lon box, or None when the region is unknown.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config; ``region`` names the region.
+
+    Returns
+    -------
+    tuple of (float, float, float, float) or None
+        The south, north, west and east limits, or None.
+    """
     from hcwf.onset.regions import box
 
     try:
@@ -253,7 +453,24 @@ def _box(dic: dict):
 
 
 def _in_box(lat, lon, box):
-    """Latitudes and longitudes (0-360 normalised) inside the box."""
+    """Return the latitudes and longitudes (0-360 normalised) inside the box.
+
+    Parameters
+    ----------
+    lat : numpy.ndarray of float64
+        The latitudes.
+    lon : numpy.ndarray of float64
+        The longitudes.
+    box : tuple of (float, float, float, float) or None
+        The south, north, west and east limits; None keeps everything.
+
+    Returns
+    -------
+    lat : numpy.ndarray of float64
+        The latitudes inside, sorted (all of them, unsorted, without a box).
+    lon : numpy.ndarray of float64
+        The longitudes inside as 0-360 values, sorted (a box that crosses the 0 meridian is handled).
+    """
     if box is None:
         return lat, lon % 360
     lats, latn, lonw, lone = box
@@ -265,7 +482,20 @@ def _in_box(lat, lon, box):
 
 
 def _matched(values, targets) -> float:
-    """The share of values that have a target within the grid tolerance."""
+    """Return the share of values that have a target within the grid tolerance.
+
+    Parameters
+    ----------
+    values : numpy.ndarray of float64
+        The coordinates to match.
+    targets : numpy.ndarray of float64
+        The coordinates to match against.
+
+    Returns
+    -------
+    float
+        The share in 0 to 1; 1 for no values and 0 for no targets.
+    """
     if len(values) == 0:
         return 1.0
     if len(targets) == 0:
@@ -275,7 +505,17 @@ def _matched(values, targets) -> float:
 
 
 def _grids(dic: dict, report: CheckReport, samples: dict) -> None:
-    """Grid hints: latitude order and obs/model grid mismatches inside the region box."""
+    """Add the grid hints: latitude order and obs/model grid mismatches inside the region box.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to.
+    samples : dict
+        The sample file of each dataset (`_files`).
+    """
     report.section("Grids")
     box = _box(dic)
     obs_path = samples.get("observations")
@@ -318,7 +558,24 @@ def _grids(dic: dict, report: CheckReport, samples: dict) -> None:
 
 
 def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
-    """The mask section: cells kept on the observations' grid (the mask is built on a sample file)."""
+    """Add the mask section: the cells kept on the observations' grid (the mask is built on a sample file).
+
+    Nothing is added when the run has no ``mask`` or there is no observation sample.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to; a mask that cannot be built is an error.
+    samples : dict
+        The sample file of each dataset (`_files`).
+
+    Returns
+    -------
+    None
+        Nothing is returned.
+    """
     mask, path = dic.get("mask"), samples.get("observations")
     if not mask or path is None:
         return
@@ -345,8 +602,18 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
 
 
 def _units(report: CheckReport, found) -> None:
-    """The evaluation units each source is read onto (the `units:` section and the region's): mode, tables, restriction;
-    an invalid section (a problem of hcwf.config.validate) and a named file that is not there are errors."""
+    """Add the evaluation units each source is read onto (the ``units:`` section and the region's).
+
+    The mode, tables and restriction are listed. An invalid section (a problem of `hcwf.config.validate`) and a named
+    file that is not there are errors.
+
+    Parameters
+    ----------
+    report : CheckReport
+        The report to add to.
+    found : hcwf.config.validate.Problems
+        The problems of the config, with the ``units`` texts and the unit ``specs`` of each source.
+    """
     if found.units:
         report.section("Units")
         for text in found.units:
@@ -380,8 +647,19 @@ def _units(report: CheckReport, found) -> None:
 
 
 def _blend(dic: dict, report: CheckReport, found) -> None:
-    """The `blend:` section as the run reads it: models, years, bins, formulas, scoring, and the artifacts' folder; every
-    problem of the section (and the rules that need the onset definition) is an error."""
+    """Add the ``blend:`` section as the run reads it: models, years, bins, formulas, scoring, and the artifacts' folder.
+
+    Every problem of the section (and the rules that need the onset definition) is an error.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to.
+    found : hcwf.config.validate.Problems
+        The problems of the config, with the ``blend`` texts and the ``recipe`` (None when it could not be built).
+    """
     report.section("Blend")
     for text in found.blend:
         report.error(text)
@@ -420,7 +698,17 @@ def _blend(dic: dict, report: CheckReport, found) -> None:
 
 
 def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
-    """Lead windows and the leads of each model's files; leads that are not whole days are hinted."""
+    """Add the lead windows and the leads of each model's files; leads that are not whole days are hinted.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to.
+    samples : dict
+        The sample file of each dataset (`_files`).
+    """
     report.section("Lead windows")
     for line in dic.get("onset_lead_lines") or ():
         report.add(line)
@@ -458,10 +746,17 @@ def _leads(dic: dict, report: CheckReport, samples: dict) -> None:
 
 
 def _alignment(dic: dict, report: CheckReport) -> None:
-    """The alignment of each model with the observations: a sampled check, run in parallel over the models.
+    """Add the alignment of each model with the observations: a sampled check, run in parallel over the models.
 
     A few dozen inits spread over the period and a few thousand cells are read once per dataset and every lag is
-    correlated in one step (hcwf.onset.sample_alignment); the verdict is cached with a fingerprint of both datasets.
+    correlated in one step (`hcwf.onset.sample_alignment`); the verdict is cached with a fingerprint of both datasets.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to; skipped when ``onset.check_alignment`` is false.
     """
     report.section("Alignment")
     setup = onset_setup(dic)
@@ -497,7 +792,15 @@ def _alignment(dic: dict, report: CheckReport) -> None:
 
 
 def _short_climatology(dic: dict, report: CheckReport) -> None:
-    """Hint when the climatology period is short."""
+    """Hint when the climatology period or the threshold period is short.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to.
+    """
     n = len(climatology_years(dic))
     needs = 10 if dic.get("ref_model") == "conditional_climatology" else 15
     if n < needs:
@@ -513,7 +816,17 @@ def _short_climatology(dic: dict, report: CheckReport) -> None:
 
 
 def _run_folder(dic: dict, report: CheckReport, overwrite: bool = False) -> None:
-    """Where the run writes, and whether it would be refused."""
+    """Add where the run writes, and whether it would be refused.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config; ``run_paths`` holds the planned folders.
+    report : CheckReport
+        The report to add to; a run folder that exists is an error unless `overwrite`.
+    overwrite : bool, default False
+        Whether ``--overwrite`` is given.
+    """
     report.section("Run folder")
     paths = dic.get("run_paths")
     if paths is None:
@@ -535,7 +848,15 @@ def _run_folder(dic: dict, report: CheckReport, overwrite: bool = False) -> None
 
 
 def _cache(dic: dict, report: CheckReport) -> None:
-    """The observed-onset cache a run would use and which entries exist."""
+    """Add the observed-onset cache a run would use and which entries exist.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    report : CheckReport
+        The report to add to.
+    """
     report.section("Cache")
     from hcwf.onset import observed_cache
 
@@ -578,11 +899,23 @@ def _cache(dic: dict, report: CheckReport) -> None:
 
 
 def build_report(rc, found=None, overwrite: bool = False, alignment: bool = False) -> CheckReport:
-    """Check a resolved RunConfig (see the module text); reads samples of the files and writes nothing.
+    """Check a resolved run config (see the module text); reads samples of the files and writes nothing.
 
-    found is the hcwf.config.validate.Problems of the config (resolve(check=True) returns them); they are computed when
-    not given. overwrite says whether --overwrite is given (an existing run folder is then not an error). alignment
-    runs the alignment check once (`--check --alignment`).
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config; its flat ``values`` are what is checked.
+    found : hcwf.config.validate.Problems, optional
+        The problems of the config (``resolve(check=True)`` returns them); computed when not given.
+    overwrite : bool, default False
+        Whether ``--overwrite`` is given (an existing run folder is then not an error).
+    alignment : bool, default False
+        Run the alignment check once (``--check --alignment``).
+
+    Returns
+    -------
+    CheckReport
+        The report: lines, errors and warnings.
     """
     dic = dict(rc.values)   # the report reads the flat record (it also edits a copy: check_alignment)
     if alignment:

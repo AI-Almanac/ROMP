@@ -3,4 +3,5 @@ import sys
 
 from hcwf.cli import main
 
-main(["onset", *sys.argv[1:]])
+if __name__ == "__main__":   # not on import, so that Sphinx autosummary can import every module
+    main(["onset", *sys.argv[1:]])

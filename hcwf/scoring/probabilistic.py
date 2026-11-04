@@ -1,4 +1,9 @@
-"""Entry point computing binned and overall BSS, RPSS and AUC skill scores and their plots for probabilistic (ensemble) forecasts."""
+"""Entry point computing binned and overall BSS, RPSS and AUC skill scores and their plots for probabilistic (ensemble) forecasts.
+
+`skill_score_in_bins` loops over the cases of a run: it prepares the pairs of each model (`hcwf.scoring.pairs`), scores
+them (`hcwf.metrics.skill`), builds the tables (`hcwf.metrics.tables`) and writes or plots them. The spatial
+counterpart is `hcwf.scoring.deterministic`.
+"""
 from dataclasses import replace
 
 from hcwf.metrics.skill import create_score_results
@@ -14,14 +19,26 @@ log = logging.getLogger(__name__)
 
 
 def select_key_at_level(d, level, key):
-    """
-    Select a specific key at a given nesting level in a nested dict.
-    and remove that level from the returned dict.
+    """Select a key at a given nesting level in a nested dict and remove that level from the returned dict.
 
-    level = 1 → top level
-    level = 2 → second level
-    """
+    Levels count from 1: ``level=1`` is the top level and ``level=2`` the second one. Branches that have nothing under
+    `key` are left out of the result.
 
+    Parameters
+    ----------
+    d : dict
+        The nested dict.
+    level : int
+        The nesting level of the key to select.
+    key : object
+        The key to select at that level.
+
+    Returns
+    -------
+    dict
+        The selected subtree (``{}`` if `key` is missing) for ``level=1``, otherwise a dict of the top-level keys that
+        have a non-empty subtree.
+    """
     if level == 1:
         # drop this level: return the selected subtree
         return d.get(key, {})
@@ -38,11 +55,20 @@ def select_key_at_level(d, level, key):
 def skill_score_in_bins(rc):
     """Compute and plot binned and overall BSS, RPSS and AUC skill scores for each case of an ensemble forecast.
 
-    rc is the resolved RunConfig. Does nothing (returns None) unless the run is probabilistic. Returns
-    {"overall": DataFrame, "binned": DataFrame}: the score tables of every model and verification window (columns
-    model and window first), whether or not CSV files are written.
-    """
+    Does nothing unless the run is probabilistic. The score tables are returned whether or not CSV files are written;
+    what is saved and plotted follows the ``output`` flags of the run.
 
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    dict of str to pandas.DataFrame or None
+        ``{"overall": ..., "binned": ...}``, the score tables of every model and verification window (columns ``model``
+        and ``window`` first); None when the run is not probabilistic.
+    """
     # only execute for ensemble forecasts
     if not rc.evaluation.probabilistic:
         return
@@ -125,11 +151,23 @@ def skill_score_in_bins(rc):
             log.debug("%s %s", "\n\n\n result_overall_window = ", result_overall_window)
             panel_bar_bss_rpss_auc(result_overall_window, verification_window, spec)
 
+    return {"overall": _stacked(overall_frames), "binned": _stacked(binned_frames)}
+
+
+def _stacked(frames):
+    """Stack the per-case tables into one DataFrame with the ``model`` and ``window`` columns first.
+
+    Parameters
+    ----------
+    frames : list of pandas.DataFrame
+        The per-case tables, each with ``model`` and ``window`` columns.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The rows of all `frames` with a fresh index.
+    """
     import pandas as pd
 
-    def stacked(frames):
-        """The per-case tables as one DataFrame with the model and window columns first."""
-        table = pd.concat(frames, ignore_index=True)
-        return table[["model", "window"] + [c for c in table.columns if c not in ("model", "window")]]
-
-    return {"overall": stacked(overall_frames), "binned": stacked(binned_frames)}
+    table = pd.concat(frames, ignore_index=True)
+    return table[["model", "window"] + [c for c in table.columns if c not in ("model", "window")]]

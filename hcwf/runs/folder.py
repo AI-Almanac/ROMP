@@ -13,10 +13,12 @@ Two modes, decided by the config:
   and the subfolders ``onsets/``, ``scores/`` and ``figures/``, each only when it would hold more than one
   file (else its files sit in the run folder); file names are short (``spatial_AIFS_1-15.nc``,
   ``onsets/observed.nc``). ``runs/.cache/`` is shared by all runs (thresholds, observed onsets). A run with a
-``blend:`` section writes the blend's artifacts (summary CSVs, ``trained.blend``, ...) under their own names into the
-``blend/`` subfolder, and nothing else besides ``run.yaml``, ``definition.yaml`` and ``run.log``.
+  ``blend:`` section writes the blend's artifacts (summary CSVs, ``trained.blend``, ...) under their own names into
+  the ``blend/`` subfolder, and nothing else besides ``run.yaml``, ``definition.yaml`` and ``run.log``.
 
-``plan`` builds a ``RunPaths`` without touching the disk; ``prepare`` creates (or clears) the folder.
+`plan` builds a `RunPaths` without touching the disk; `prepare` creates (or clears) the folder; `file_name` names the
+output files. `hcwf.runs.resolved` writes the resolved config into the run folder, `hcwf.runs.check` reports the plan
+and `hcwf.runs.export` writes the onsets.
 """
 from __future__ import annotations
 
@@ -31,9 +33,13 @@ from hcwf.config import schema
 from hcwf.errors import RunExistsError
 
 MAX_NAME = 40
+"""The most characters of a run folder name."""
 RUN_FILE = "run.yaml"
+"""The name of the resolved config in a run folder."""
 DEFINITION_FILE = "definition.yaml"
+"""The name of the resolved onset definition in a run folder."""
 LOG_FILE = "run.log"
+"""The name of the run's log file."""
 _NOT_IN_FINGERPRINT = {
     "dataset_report", "config_sources", "onset_lead_lines", "run_paths", "config_file", "cache_dir", "short_names",
     "run_overrides", "dir_out", "dir_fig", "project_name", "parallel", "parallel_workers", "onset_backend",
@@ -41,26 +47,39 @@ _NOT_IN_FINGERPRINT = {
     "save_onsets", "plot_spatial_far_mr_mae", "plot_heatmap_bss_auc", "plot_reliability", "plot_climatology_onset",
     "plot_panel_heatmap_error", "plot_panel_heatmap_skill", "plot_bar_bss_rpss_auc", "plot_portrait", "explain_cells",
     "lead_window"}
+"""The keys of the flat config that do not define the results (folders, switches, plotting, ...)."""
 _BLEND_NOT_IN_FINGERPRINT = {"blend_climatology": ("workers",), "blend_outputs": ("intermediates", "pickles")}
 """Keys inside blend sections that do not define the results."""
 _CLIMATOLOGY_REFERENCES = ("climatology", "conditional_climatology")
+"""The reference models whose onsets come from no forecast."""
 
 
 @dataclass(frozen=True)
 class RunPaths:
-    """The places a run reads and writes. explicit is True when the config named dir_out (historical layout)."""
+    """The places a run reads and writes: the run folder, its output folders and the cache."""
 
     explicit: bool
+    """True when the config named ``dir_out`` (the historical layout)."""
     root: Path
+    """The run folder (the explicit ``dir_out`` in the historical layout)."""
     name: str | None
+    """The run folder's name; None in the historical layout."""
     fingerprint: str
+    """The 16-character hash of everything that defines the results (see `fingerprint`)."""
     dir_out: Path
+    """The folder of the score files (CSVs, NetCDF)."""
     dir_fig: Path
+    """The folder of the figures."""
     onsets: Path
+    """The folder of the onset files."""
     cache_dir: Path | None
+    """The shared cache folder; None in the historical layout."""
     runs_dir: Path | None
+    """The folder that holds the run folders; None in the historical layout."""
     short_names: bool
+    """Whether output files get the short names (`file_name`); True in a run folder."""
     write: bool = True
+    """False for a run that writes no files (a notebook run)."""
 
     @property
     def log_file(self) -> Path:
@@ -89,7 +108,19 @@ class RunPaths:
 
 
 def _plain(value):
-    """A JSON-able form of a config value (tuples to lists, paths and others to text)."""
+    """Return a JSON-able form of a config value (tuples to lists, paths and others to text).
+
+    Parameters
+    ----------
+    value : object
+        A config value: a scalar, a path, or a nested dict, list or tuple of them.
+
+    Returns
+    -------
+    object
+        The same structure with dict keys as sorted text, tuples as lists and anything that is not a number, string,
+        bool or None as text.
+    """
     if isinstance(value, dict):
         return {str(k): _plain(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
     if isinstance(value, (list, tuple)):
@@ -100,10 +131,21 @@ def _plain(value):
 
 
 def fingerprint(dic: dict) -> str:
-    """A 16-hex-character hash of everything in the flat config that defines the results.
+    """Return a 16-hex-character hash of everything in the flat config that defines the results.
 
     Left out: output folders and switches, plotting, project name, parallel, the backend, the blend's worker count and
-    debug outputs, and the reports the loader adds. The onset definition's own hash is included, so editing a definition file changes it.
+    debug outputs, and the reports the loader adds. The onset definition's own hash is included, so editing a
+    definition file changes it (a definition that cannot be built is left out of the hash).
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+
+    Returns
+    -------
+    str
+        The first 16 hex characters of a SHA-256 of the config's JSON form.
     """
     from hcwf.config.onset import onset_setup
     from hcwf.onset import definition as definition_mod
@@ -120,12 +162,39 @@ def fingerprint(dic: dict) -> str:
 
 
 def _clean(text: str) -> str:
-    """A name part with only letters, digits, '.', '-' and '_' in lower case."""
+    """Return a name part in lower case with every run of other characters than letters, digits, ``.`` and ``-`` as ``-``.
+
+    Parameters
+    ----------
+    text : object
+        The text of the part (anything is turned into text).
+
+    Returns
+    -------
+    str
+        The cleaned part, without leading or trailing ``-``; ``"x"`` when nothing is left.
+    """
     return re.sub(r"[^a-z0-9.\-]+", "-", str(text).lower()).strip("-") or "x"
 
 
 def run_name(dic: dict, digest: str) -> str:
-    """The folder name ``<region>_<definition>[+mod]_<years>_<4 characters of digest>``, at most 40 characters."""
+    """Return the folder name ``<region>_<definition>[+mod]_<years>_<4 characters of digest>``, at most 40 characters.
+
+    ``+mod`` marks a definition with overrides or a custom onset rule. The region and the definition are shortened to
+    fit.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    digest : str
+        The run's `fingerprint`; its first 4 characters end the name.
+
+    Returns
+    -------
+    str
+        The run folder name.
+    """
     from hcwf.config.onset import onset_setup
     from hcwf.onset import regions
 
@@ -153,7 +222,18 @@ def run_name(dic: dict, digest: str) -> str:
 
 
 def _count_scores(dic: dict) -> int:
-    """How many files the run will write to dir_out (an estimate from the switches and the cases)."""
+    """Estimate how many files the run will write to ``dir_out``, from the switches and the cases.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+
+    Returns
+    -------
+    int
+        The estimated number of score files.
+    """
     windows = len(dic.get("verification_window_list") or (None,))
     models = len(dic.get("model_list") or ())
     reference = 1 if dic.get("ref_model") else 0
@@ -164,7 +244,18 @@ def _count_scores(dic: dict) -> int:
 
 
 def _count_figures(dic: dict) -> int:
-    """How many files the run will write to dir_fig (an estimate: one per enabled plot and case, plus mask maps)."""
+    """Estimate how many files the run will write to ``dir_fig``: one per enabled plot and case, plus mask maps.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+
+    Returns
+    -------
+    int
+        The estimated number of figure files.
+    """
     windows = len(dic.get("verification_window_list") or (None,))
     models = len(dic.get("model_list") or ())
     on = lambda key: int(bool(dic.get(key)))   # noqa: E731 - a switch as 0 or 1
@@ -178,16 +269,39 @@ def _count_figures(dic: dict) -> int:
 
 
 def count_onsets(dic: dict) -> int:
-    """How many onset files a full export writes: observed, each model and a climatology reference."""
+    """Count the onset files a full export writes: observed, each model and a climatology reference.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+
+    Returns
+    -------
+    int
+        The number of files.
+    """
     return 1 + len(dic.get("model_list") or ()) + int(dic.get("ref_model") in _CLIMATOLOGY_REFERENCES)
 
 
 def plan(dic: dict, config_file=None, write: bool = True) -> RunPaths:
     """Decide the run's folders from the flat config (after overrides); nothing is created.
 
-    config_file is the path of the run YAML (``runs/`` goes next to it; the current folder when None).
-    write=False (notebook runs that write nothing) puts every output in the returned paths' temporary
-    stand-ins, which the caller creates; the cache is then in memory only.
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    config_file : str or pathlib.Path, optional
+        The path of the run YAML (``runs/`` goes next to it; the current folder when None).
+    write : bool, default True
+        False for notebook runs that write nothing; it is recorded in `RunPaths.write` and the caller handles the
+        folders.
+
+    Returns
+    -------
+    RunPaths
+        The folders: the explicit layout when the config wrote ``dir_out`` (or is a bare flat dict), else a run folder
+        under ``runs/``.
     """
     sources = dic.get("config_sources") or {}
     digest = fingerprint(dic)
@@ -209,7 +323,20 @@ def plan(dic: dict, config_file=None, write: bool = True) -> RunPaths:
 
 
 def apply(dic: dict, paths: RunPaths) -> dict:
-    """Put the planned folders into the flat config (dir_out, dir_fig, cache_dir, short_names, run_paths)."""
+    """Put the planned folders into the flat config (``dir_out``, ``dir_fig``, ``cache_dir``, ``short_names``, ``run_paths``).
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config; changed in place.
+    paths : RunPaths
+        The planned folders.
+
+    Returns
+    -------
+    dict
+        `dic`, the same object.
+    """
     dic["dir_out"], dic["dir_fig"] = str(paths.dir_out), str(paths.dir_fig)
     dic["cache_dir"] = str(paths.cache_dir) if paths.cache_dir is not None else None
     dic["short_names"] = paths.short_names
@@ -218,9 +345,23 @@ def apply(dic: dict, paths: RunPaths) -> dict:
 
 
 def prepare(paths: RunPaths, overwrite: bool = False) -> None:
-    """Create the run's folders. A run folder that already holds a run is refused, or cleared with overwrite.
+    """Create the run's folders.
 
-    Only the run folder itself is cleared (never ``runs/.cache`` or an explicit dir_out).
+    A run folder that already holds a run is refused, or cleared with `overwrite`. Only the run folder itself is
+    cleared (never ``runs/.cache`` or an explicit ``dir_out``).
+
+    Parameters
+    ----------
+    paths : RunPaths
+        The planned folders.
+    overwrite : bool, default False
+        Clear a run folder that already holds a run instead of refusing.
+
+    Raises
+    ------
+    RunExistsError
+        The run folder already holds a run and `overwrite` is false, or it is not directly inside ``runs_dir`` and so
+        will not be cleared.
     """
     if not paths.explicit and paths.exists:
         if not overwrite:
@@ -237,15 +378,32 @@ def prepare(paths: RunPaths, overwrite: bool = False) -> None:
 
 
 def file_name(paths, kind: str, *parts) -> str:
-    """The name of an output file of the given kind: short in run folders, historical for an explicit dir_out.
+    """Return the name of an output file of the given kind: short in run folders, historical for an explicit ``dir_out``.
 
-    `paths` is the run's RunPaths (None: the historical names).
+    The data kinds are ``overall`` and ``binned`` (score CSVs; parts model, window), ``spatial`` (spatial metrics
+    NetCDF; case name), ``climatology`` (climatological onset NetCDF; years text) and ``onset`` (onset export; source).
+    The figure kinds (the same in every layout) are ``heatmap`` and ``reliability`` (model, window), ``spatial_map``
+    (case name), ``climatology_map`` (years text), ``field_map`` (source name, variable, window), ``panel_error`` (first
+    model, max forecast day), ``panel_skill`` and ``panel_bar`` (window).
 
-    data kinds: ``overall`` and ``binned`` (score CSVs; parts model, window), ``spatial`` (spatial metrics NetCDF; case
-    name), ``climatology`` (climatological onset NetCDF; years text), ``onset`` (onset export; source).
-    figure kinds (the same in every layout): ``heatmap`` and ``reliability`` (model, window), ``spatial_map`` (case name),
-    ``climatology_map`` (years text), ``field_map`` (source name, variable, window), ``panel_error`` (first model,
-    max forecast day), ``panel_skill`` and ``panel_bar`` (window).
+    Parameters
+    ----------
+    paths : RunPaths or None
+        The run's paths (None: the historical names).
+    kind : str
+        The kind of file, one of those above.
+    *parts : tuple
+        The parts of the name for that kind (the names given in brackets above).
+
+    Returns
+    -------
+    str
+        The file name.
+
+    Raises
+    ------
+    ValueError
+        `kind` is not a known kind.
     """
     short = paths is not None and paths.short_names
     if kind == "overall":

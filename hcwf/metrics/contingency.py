@@ -1,4 +1,8 @@
-"""Onset contingency metrics (TP/FP/FN/TN, MAE) for model or climatology forecasts across years."""
+"""Onset contingency metrics (TP/FP/FN/TN, MAE) for model or climatology forecasts across years.
+
+`onset_metrics` turns the onset table of one year into one row of counts per grid point (or unit) and the summary
+totals. `hcwf.metrics.error` aggregates those per-year tables into maps; `hcwf.scoring.deterministic` calls both.
+"""
 
 from hcwf.spatial import axes
 
@@ -10,14 +14,39 @@ log = logging.getLogger(__name__)
 
 
 def onset_metrics(onset_df, window, *, back_dated, default_dims):
-    """Compute contingency matrix metrics following MATLAB logic with forecast and validation windows.
+    """Compute contingency-matrix metrics following the MATLAB logic with forecast and validation windows.
 
-    Returns one row per grid point (or evaluation unit, with a unit column instead of lat and lon), in order of first
-    appearance in onset_df, and summary totals.
-    With forecast_history "observed" (`back_dated`, see bins.reports_back_dated) the rows also have `n_back_dated`: the
-    cases whose forecast onset is dated on or before the init, which count as the first lead; 0 unless the window
-    starts at lead 1. "none" runs get no such column. `window` is the Window (span and tolerance); `default_dims` are the
-    spatial dims of a table with no rows (point_dims).
+    A forecast onset inside the verification window is a true positive when it lies within the tolerance of the
+    observed onset and a false positive otherwise. A forecast without an onset in the window is a false negative
+    when the observed onset lies in the window and a true negative when it does not. A forecast onset dated on or
+    before the init (back-dated by the observed history) is judged as if it fell on the first lead.
+
+    Parameters
+    ----------
+    onset_df : pandas.DataFrame
+        One row per forecast case: the spatial columns (``lat`` and ``lon``, or ``unit``), ``init_time``,
+        ``onset_date`` (the forecast onset, NaT for none) and ``obs_onset_date`` (the observed onset, the same on every
+        row of a grid point). May be empty.
+    window : hcwf.config.model.Window
+        The verification window: its ``span`` (first and last lead day) and ``tolerance`` (days).
+    back_dated : bool
+        Whether the run has ``forecast_history: observed`` (see `hcwf.scoring.onset_tables.reports_back_dated`): the
+        rows then also have ``n_back_dated``, the cases whose forecast onset is dated on or before the init, which count
+        as the first lead; 0 unless the window starts at lead 1. Runs with ``forecast_history: none`` get no such
+        column.
+    default_dims : sequence of str
+        The spatial dims to use for a table with no columns (``lat`` and ``lon``, or ``unit``).
+
+    Returns
+    -------
+    metrics_df : pandas.DataFrame
+        One row per grid point (or evaluation unit, with a ``unit`` column instead of ``lat`` and ``lon``), in order of
+        first appearance in `onset_df`: the counts ``total_forecasts``, ``true_positive``, ``true_negative``,
+        ``false_positive``, ``false_negative``, ``num_onset``, ``num_no_onset``, the errors ``mae_combined``,
+        ``mae_tp_only`` (days, NaN without cases), ``num_tp_errors``, ``num_fp_errors`` and the window columns.
+    summary_stats : dict
+        The totals over the grid points (``overall_*``), the mean MAEs, ``tolerance_days``, ``verification_window`` and
+        ``forecast_days``.
     """
     report_back_dated = back_dated
     tolerance_days, verification_window = window.tolerance, window.span

@@ -1,4 +1,10 @@
-"""Build forecast-observation pairs per day bin (from ensemble members or climatology) for probabilistic verification."""
+"""Build forecast-observation pairs per day bin (from ensemble members or climatology) for probabilistic verification.
+
+The module holds `LeadBins` (the lead bins of a forecast and their labels), `PairArrays` (the pairs of one model,
+reference or climatology as arrays, one row per case and one column per bin) and the two builders of pairs:
+`forecast_pairs` (from the members of a forecast onset table) and `create_climatological_forecast_obs_pairs` (from the
+years of a climatology). `hcwf.scoring.pairs` prepares the pairs of a run with them and `hcwf.metrics.score` scores them.
+"""
 
 from dataclasses import dataclass, replace
 
@@ -15,34 +21,67 @@ class LeadBins:
     """The lead bins of a forecast: inner (first, last) day pairs, and the bins before and after them.
 
     Lead days count from the day after issue: lead 1 is the day after the issue date. The inner bins are
-    HCWF's `day_bins` ((1, 5), (6, 10), ...); blending's week bins are `LeadBins.uniform(count, days)`. Around them
-    sit the "before" bin (leads below the first day: an onset on or before the issue when the first day is 1)
-    and the "after" bin (everything past the last day: blending's `later`).
+    HCWF's ``day_bins`` (``((1, 5), (6, 10), ...)``); blending's week bins are ``LeadBins.uniform(count, days)``. Around
+    them sit the "before" bin (leads below the first day: an onset on or before the issue when the first day is 1)
+    and the "after" bin (everything past the last day: blending's ``later``).
 
-    Labels come in two styles: "days" (HCWF: `Days a-b`, `Before day a`, `After day b`) and "week" (blending:
-    `week1..weekN`, `earlier`, `later`; contiguous bins from lead 1 only). Bin positions run over
-    labels(style, earlier=True), or over labels(style, earlier=False) when the before bin is left out.
+    Labels come in two styles: ``"days"`` (HCWF: ``Days a-b``, ``Before day a``, ``After day b``) and ``"week"``
+    (blending: ``week1..weekN``, ``earlier``, ``later``; contiguous bins from lead 1 only). Bin positions run over
+    ``labels(style, earlier=True)``, or over ``labels(style, earlier=False)`` when the before bin is left out.
     """
 
     inner: tuple
+    """The inner bins as ``(first day, last day)`` pairs of int, both ends inclusive; at least one."""
 
     def __post_init__(self):
+        """Normalise `inner` to a tuple of int pairs.
+
+        Raises
+        ------
+        ValueError
+            There is no inner bin.
+        """
         object.__setattr__(self, "inner", tuple((int(a), int(b)) for a, b in self.inner))
         if not self.inner:
             raise ValueError("lead bins need at least one inner bin")
 
     @classmethod
     def from_day_bins(cls, day_bins):
-        """The bins of HCWF's `day_bins`, e.g. ((1, 5), (6, 10), (11, 15))."""
+        """Return the bins of HCWF's ``day_bins``, e.g. ``((1, 5), (6, 10), (11, 15))``.
+
+        Parameters
+        ----------
+        day_bins : sequence of (int, int)
+            The ``(first day, last day)`` pairs of the inner bins.
+
+        Returns
+        -------
+        LeadBins
+            The bins.
+        """
         return cls(tuple(day_bins))
 
     @classmethod
     def uniform(cls, count, days):
-        """`count` bins of `days` days from lead 1 (blending's features.bins.count and days)."""
+        """Return `count` bins of `days` days each from lead 1 (blending's ``features.bins.count`` and ``days``).
+
+        Parameters
+        ----------
+        count : int
+            The number of bins.
+        days : int
+            The length of each bin in days.
+
+        Returns
+        -------
+        LeadBins
+            The contiguous bins ``(1, days), (days + 1, 2 * days), ...``.
+        """
         return cls(tuple((k * days + 1, (k + 1) * days) for k in range(count)))
 
     @property
     def n_inner(self):
+        """The number of inner bins."""
         return len(self.inner)
 
     @property
@@ -57,7 +96,7 @@ class LeadBins:
 
     @property
     def extended(self):
-        """The inner bins with the open bins around them: ((-inf, first - 1), *inner, (last + 1, inf))."""
+        """The inner bins with the open bins around them: ``((-inf, first - 1), *inner, (last + 1, inf))``."""
         return ((-float("inf"), self.first_day - 1),) + self.inner + ((self.last_day + 1, float("inf")),)
 
     @property
@@ -66,7 +105,26 @@ class LeadBins:
         return all(a[1] + 1 == b[0] for a, b in zip(self.inner, self.inner[1:]))
 
     def label(self, k, style="days"):
-        """Label of the bin at position k of `extended` (0: before, 1..n_inner: inner, n_inner + 1: after)."""
+        """Return the label of the bin at position `k` of `extended`.
+
+        Parameters
+        ----------
+        k : int
+            The position: 0 is the before bin, 1 to `n_inner` the inner bins, ``n_inner + 1`` the after bin.
+        style : {"days", "week"}, default "days"
+            The labelling style (see the class description).
+
+        Returns
+        -------
+        str
+            The label, e.g. ``"Days 6-10"`` or ``"week2"``.
+
+        Raises
+        ------
+        ValueError
+            `style` is neither ``"days"`` nor ``"week"``, or ``"week"`` is asked of bins that are not contiguous from
+            lead 1.
+        """
         if style == "days":
             if k == 0:
                 return f"Before day {self.first_day}"
@@ -79,19 +137,53 @@ class LeadBins:
         raise ValueError(f"style must be 'days' or 'week', not {style!r}")
 
     def labels(self, style="days", *, earlier=True):
-        """Labels in bin order: before (when `earlier`), the inner bins, after."""
+        """Return the labels in bin order: before (when `earlier`), the inner bins, after.
+
+        Parameters
+        ----------
+        style : {"days", "week"}, default "days"
+            The labelling style (see the class description).
+        earlier : bool, default True
+            Include the label of the before bin.
+
+        Returns
+        -------
+        list of str
+            The labels.
+        """
         return [self.label(k, style) for k in range(0 if earlier else 1, self.n_inner + 2)]
 
     def _require_weeks(self):
+        """Check that the bins can carry week labels.
+
+        Raises
+        ------
+        ValueError
+            The bins do not start at lead 1 or are not contiguous.
+        """
         if self.first_day != 1 or not self.contiguous:
             raise ValueError(f"week labels need contiguous bins from lead 1, not {self.inner}")
 
     def in_bin(self, lead, k, *, nan_after=False):
-        """Boolean array: which leads fall in the bin at position k of `extended`.
+        """Return which leads fall in the bin at position `k` of `extended`.
 
         A bin holds the leads from its first to its last day (the before bin everything below the first day, the
-        after bin everything above the last day). NaN falls in no bin, or in the after bin with nan_after (a member
+        after bin everything above the last day). NaN falls in no bin, or in the after bin with `nan_after` (a member
         with no onset in the window is an onset later than it).
+
+        Parameters
+        ----------
+        lead : array_like of float
+            The lead days (NaN for no onset), any shape.
+        k : int
+            The bin position in `extended`.
+        nan_after : bool, default False
+            Put NaN leads in the after bin.
+
+        Returns
+        -------
+        numpy.ndarray of bool
+            ``True`` where the lead is in the bin; the shape of `lead`.
         """
         lead = np.asarray(lead, dtype=float)
         if k == 0:
@@ -102,10 +194,27 @@ class LeadBins:
         return (start <= lead) & (lead <= end)
 
     def codes(self, lead, *, earlier=False):
-        """Position (in labels(earlier=earlier)) of the bin of each lead; -1 for NaN and, without `earlier`, for
-        leads below the first day.
+        """Return the position of the bin of each lead, in ``labels(earlier=earlier)``.
 
-        Needs contiguous bins; a lead past the last day is in the after bin. Blending's outcome codes.
+        The code is -1 for NaN and, without `earlier`, for leads below the first day. Needs contiguous bins; a lead
+        past the last day is in the after bin. These are blending's outcome codes.
+
+        Parameters
+        ----------
+        lead : array_like of float
+            The lead days (NaN for no onset), any shape.
+        earlier : bool, default False
+            Count the before bin as position 0 (the codes then run over the labels with the before bin).
+
+        Returns
+        -------
+        numpy.ndarray of int8
+            The bin position of each lead; the shape of `lead`.
+
+        Raises
+        ------
+        ValueError
+            The inner bins are not contiguous.
         """
         if not self.contiguous:
             raise ValueError(f"codes need contiguous bins, not {self.inner}")
@@ -118,12 +227,29 @@ class LeadBins:
         return codes.astype(np.int8)
 
     def column_slices(self):
-        """Slices of the inner bins in an array whose columns are lead days 1, 2, ... (blending's day sums)."""
+        """Return the slices of the inner bins in an array whose columns are lead days 1, 2, ... (blending's day sums).
+
+        Returns
+        -------
+        list of slice
+            One ``slice(first - 1, last)`` per inner bin.
+        """
         return [slice(a - 1, b) for a, b in self.inner]
 
     @staticmethod
     def first_day_of(label):
-        """The first lead day of a `Days a-b` label, 999 for any other label (to sort them last)."""
+        """Return the first lead day of a ``Days a-b`` label, 999 for any other label (to sort them last).
+
+        Parameters
+        ----------
+        label : str
+            A bin label.
+
+        Returns
+        -------
+        int
+            The first day ``a``, or 999.
+        """
         if 'Days ' in label:
             try:
                 return int(label.replace('Days ', '').split('-')[0])
@@ -140,40 +266,67 @@ class PairArrays:
     `prob` and `observed` are (case, bin) matrices of the predicted probability of an onset in the bin and whether
     the observed onset fell in it (0/1); `members` is the ensemble size behind each case's probabilities (inf for a
     conditional climatology). `start`, `end` and `labels` describe the bins once (the open before and after bins have
-    infinite edges). `init` and `place` ({dim: values}, as the builders order the cases) identify the cases.
+    infinite edges). `init` and `place` (``{dim: values}``, as the builders order the cases) identify the cases.
     Optional per-case counts: `members_with_onset` (climatologies: members with an onset, the size behind their
     probabilities) and `back_dated` / `onset_members` (the members whose onset is dated on or before the init, and all
-    members with an onset; forecast_history "observed" runs).
+    members with an onset; ``forecast_history: observed`` runs).
 
     The arrays are never changed after building: a verification window (`select`) and the years joined (`concat`) are
     new containers, the window's matrices views of the originals where its bins are adjacent.
     """
 
     prob: np.ndarray
+    """Predicted probability of an onset in each bin, ``float64``, shape (case, bin)."""
     observed: np.ndarray
+    """Whether the observed onset fell in each bin (0 or 1), ``int8``, shape (case, bin)."""
     members: np.ndarray
+    """The ensemble size behind each case's probabilities, ``int32``, shape (case,)."""
     start: np.ndarray
+    """First lead day of each bin (``-inf`` for the before bin), ``float64``, shape (bin,)."""
     end: np.ndarray
+    """Last lead day of each bin (``inf`` for the after bin), ``float64``, shape (bin,)."""
     labels: tuple
+    """The label of each bin, ``str``, one per bin."""
     init: np.ndarray
+    """The init date of each case, ``datetime64[D]``, shape (case,)."""
     place: dict
+    """The place of each case as ``{dim: values}`` (``lat`` and ``lon`` as float, or ``unit``), each shape (case,)."""
     members_with_onset: np.ndarray | None = None
+    """Climatologies only: the members with an onset behind each case, ``int32``, shape (case,)."""
     back_dated: np.ndarray | None = None
+    """Members whose onset is dated on or before the init, ``int32``, shape (case,); None when not tracked."""
     onset_members: np.ndarray | None = None
+    """Members with an onset, ``int32``, shape (case,); None when not tracked."""
 
     _PER_CASE = ("prob", "observed", "members", "init", "members_with_onset", "back_dated", "onset_members")
+    """The names of the fields that have one entry (row) per case, which `concat` joins."""
 
     @property
     def n_cases(self):
+        """The number of cases (rows)."""
         return len(self.prob)
 
     @property
     def n_bins(self):
+        """The number of bins (columns)."""
         return len(self.labels)
 
     @classmethod
     def empty(cls, bins, spatial):
-        """No cases, with the bins of `bins` (LeadBins) and the place dimensions `spatial`."""
+        """Return pairs with no cases.
+
+        Parameters
+        ----------
+        bins : LeadBins
+            The bins whose edges and labels the pairs carry.
+        spatial : sequence of str
+            The place dimensions (``lat`` and ``lon``, or ``unit``).
+
+        Returns
+        -------
+        PairArrays
+            Pairs with zero rows.
+        """
         n_bins = len(bins.extended)
         return cls(prob=np.empty((0, n_bins)), observed=np.empty((0, n_bins), dtype=np.int8),
                    members=np.empty(0, dtype=np.int32), **bin_fields(bins), init=np.empty(0, dtype="datetime64[D]"),
@@ -181,7 +334,25 @@ class PairArrays:
 
     @classmethod
     def concat(cls, parts):
-        """The cases of `parts` one after the other (the years of a run, in order); they must share their bins."""
+        """Join the cases of `parts` one after the other (the years of a run, in order).
+
+        An optional per-case field is joined only when every part has it, otherwise it is None.
+
+        Parameters
+        ----------
+        parts : iterable of PairArrays
+            The pairs to join; at least one, all with the same bins and place dimensions.
+
+        Returns
+        -------
+        PairArrays
+            The joined pairs, with the bins of the first part.
+
+        Raises
+        ------
+        ValueError
+            The parts differ in their bin labels or place dimensions.
+        """
         parts = list(parts)
         first = parts[0]
         for part in parts[1:]:
@@ -194,36 +365,91 @@ class PairArrays:
         return replace(first, place=place, **joined)
 
     def bins_where(self, keep):
-        """The pairs of the bins whose position is flagged in `keep` (bool per bin), a view where they are adjacent."""
+        """Return the pairs of the bins flagged in `keep`, with the matrices as views where the bins are adjacent.
+
+        Parameters
+        ----------
+        keep : array_like of bool, shape (bin,)
+            Which bin positions to keep.
+
+        Returns
+        -------
+        PairArrays
+            The pairs of the kept bins; the per-case fields other than `prob` and `observed` are shared.
+        """
         at = np.flatnonzero(keep)
         columns = slice(at[0], at[-1] + 1) if len(at) and at[-1] - at[0] + 1 == len(at) else at
         return replace(self, prob=self.prob[:, columns], observed=self.observed[:, columns], start=self.start[at],
                        end=self.end[at], labels=tuple(self.labels[k] for k in at))
 
     def select(self, day_bins):
-        """The pairs of the bins whose (first day, last day) is one of `day_bins` (a verification window's bins), in
-        the order they are stored."""
+        """Return the pairs of the bins whose ``(first day, last day)`` is one of `day_bins`, in the stored order.
+
+        Parameters
+        ----------
+        day_bins : iterable of (int, int)
+            A verification window's bins (`hcwf.config.model.Window.bins`).
+
+        Returns
+        -------
+        PairArrays
+            The pairs of the matching bins.
+        """
         wanted = {(float(a), float(b)) for a, b in day_bins}
         return self.bins_where([(s, e) in wanted for s, e in zip(self.start.tolist(), self.end.tolist())])
 
     def without_before(self):
-        """The pairs without their "Before day N" bins."""
+        """Return the pairs without their ``Before day N`` bins.
+
+        Returns
+        -------
+        PairArrays
+            The pairs of the other bins.
+        """
         return self.bins_where(["Before" not in label for label in self.labels])
 
     def sorted_order(self):
-        """Positions of the cases ordered by init and then place (the places in the order of their dimensions)."""
+        """Return the positions of the cases ordered by init and then place (the places in the order of their dimensions).
+
+        Returns
+        -------
+        numpy.ndarray of int64, shape (case,)
+            The permutation that sorts the cases.
+        """
         return np.lexsort((*(self.place[d] for d in reversed(list(self.place))), self.init))
 
 
 def bin_fields(bins):
-    """The bin edges and labels of `bins` (LeadBins) as the PairArrays fields."""
+    """Return the bin edges and labels of `bins` as the `PairArrays` fields.
+
+    Parameters
+    ----------
+    bins : LeadBins
+        The bins.
+
+    Returns
+    -------
+    dict
+        ``start`` and ``end`` (``float64`` arrays over the extended bins) and ``labels`` (a tuple of str).
+    """
     extended = bins.extended
     return {"start": np.array([b[0] for b in extended], dtype=float), "end": np.array([b[1] for b in extended], dtype=float),
             "labels": tuple(bins.labels())}
 
 
 def _log_pairs(pairs):
-    """Debug lines on the size and range of the pairs."""
+    """Log debug lines on the size and range of the pairs.
+
+    Parameters
+    ----------
+    pairs : PairArrays
+        The pairs; nothing is logged unless debug logging is on and there are pairs.
+
+    Returns
+    -------
+    None
+        Nothing is returned.
+    """
     if not log.isEnabledFor(logging.DEBUG) or not pairs.prob.size:
         return
     log.debug(f"Generated {pairs.n_cases} cases of {pairs.n_bins} bins each")
@@ -236,25 +462,30 @@ def _log_pairs(pairs):
 
 
 def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
-    """
-    Create forecast-observation pairs using specified day bins, including a final bin for "after max_forecast_day".
+    """Create forecast-observation pairs from the members of a forecast, with an open bin on each side of the day bins.
 
-    Parameters:
-    -----------
-    onset_all_members : DataFrame
-        DataFrame with ensemble member onset predictions
+    The bins are the day bins plus a before bin and a final "after the last day" bin that takes the members with no onset
+    in the forecast window. A case is one init and place; it is left out when it has no observed onset or was
+    initialised on or after it.
+
+    Parameters
+    ----------
+    onset_all_members : pandas.DataFrame
+        One row per member of a forecast case, with ``init_time``, the spatial columns (``lat`` and ``lon``, or ``unit``)
+        and ``onset_day`` (the member's onset in days from the init, NaN for none).
     onset_da : xarray.DataArray
-        Observed onset dates
-    day_bins : list of tuples
-        List of (start_day, end_day) tuples for bins within forecast window
-        e.g., [(1, 5), (6, 10), (11, 15)]
+        Observed onset dates (``datetime64``) on the spatial dims.
+    day_bins : sequence of (int, int)
+        The ``(first day, last day)`` bins within the forecast window, e.g. ``[(1, 5), (6, 10), (11, 15)]``.
     back_dated : bool
-        Whether the table also counts the members whose onset is dated on or before the init (reports_back_dated)
+        Whether the table also counts the members whose onset is dated on or before the init
+        (`hcwf.scoring.onset_tables.reports_back_dated`); fills `PairArrays.back_dated` and `PairArrays.onset_members`.
 
-    Returns the PairArrays of the forecast cases (init, then lat and lon or unit; in sorted order); cases without an
-    observed onset, or initialized on or after it, are left out.
+    Returns
+    -------
+    PairArrays
+        The forecast cases (init, then lat and lon or unit; in sorted order).
     """
-
     bins = LeadBins.from_day_bins(day_bins)
     extended_bins = bins.extended
 
@@ -318,30 +549,36 @@ def forecast_pairs(onset_all_members, onset_da, day_bins, *, back_dated):
 ## This function creates forecast-observation pairs using climatological ensemble where each year is a member
 def create_climatological_forecast_obs_pairs(clim_onset, target_year, init_dates, *,
                                              day_bins, max_forecast_day):
-    """
-    Create forecast-observation pairs using climatological ensemble where each year is a member.
-    Uses day-of-year instead of calendar dates for onset comparison.
+    """Create forecast-observation pairs from a climatological ensemble in which each year is a member.
 
-    Parameters:
-    -----------
+    Uses day of year instead of calendar dates for the onset comparison. All years of `clim_onset` (the target year
+    included) are the members; the target year's onset is the observation. A case is a place with an observed onset and
+    an init before it, kept when at least one member has an onset; the probabilities use only the members with an onset.
+
+    Parameters
+    ----------
     clim_onset : xarray.DataArray
-        3D array with dimensions [year, lat, lon] containing onset dates for all years
+        Onset dates (``datetime64``) of all years, dims (year, lat, lon) or (year, unit).
     target_year : int
-        The year to use as "truth" for observations
-    init_dates : list or pandas.DatetimeIndex
-        Initialization dates for forecasts
-    day_bins : list of tuples
-        List of (start_day, end_day) tuples for bins within forecast window
-        e.g., [(1, 5), (6, 10), (11, 15)]
-    max_forecast_day : int, default=15
-        Maximum forecast day
+        The year used as the truth for the observations.
+    init_dates : sequence of datetime-like
+        The initialisation dates of the forecasts.
+    day_bins : sequence of (int, int)
+        The ``(first day, last day)`` bins within the forecast window, e.g. ``[(1, 5), (6, 10), (11, 15)]``.
+    max_forecast_day : int
+        Not used: the last day of `day_bins` is the maximum forecast day.
 
-    Returns:
-    --------
-    PairArrays of the cases (a place with an observed onset and an init before it, then a member with an onset), in
-    order of init date, lon, lat
+    Returns
+    -------
+    PairArrays
+        The cases in order of init date, lon, lat. `PairArrays.members` is the number of years and
+        `PairArrays.members_with_onset` the members behind each case's probabilities.
+
+    Raises
+    ------
+    ValueError
+        `target_year` is not in `clim_onset`.
     """
-
     # the forecast window is the span of day_bins
     bins = LeadBins.from_day_bins(day_bins)
     max_forecast_day, min_forecast_day = bins.last_day, bins.first_day

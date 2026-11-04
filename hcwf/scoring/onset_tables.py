@@ -1,5 +1,9 @@
-"""The onset tables of a run: per year and case, read the data, detect onsets and score them (`onset_metrics`, in
-hcwf.metrics.contingency, is the pure part), cached across the cases that share them."""
+"""The onset tables of a run: per year and case, read the data, detect onsets and score them.
+
+`hcwf.metrics.contingency.onset_metrics` is the pure part of the scoring. The tables are cached across the cases that
+share them (`onset_tables`), and the skill pass of `hcwf.scoring.pairs` can hand its ensemble tables over
+(`share_ensemble_tables`) so that the spatial pass of `hcwf.scoring.deterministic` detects nothing twice.
+"""
 
 from hcwf.cache import memo
 from hcwf.config.model import Case, Selection
@@ -28,20 +32,31 @@ log = logging.getLogger(__name__)
 
 
 _ONSET_TABLES = memo("scoring.onset_tables", maxsize=1)
-"""The onset tables of the source being scored: {family key: {year: (onset table, observed onsets)}} (see onset_tables);
-one family is held, the next one's tables replace it."""
+"""The onset tables of the source being scored: ``{family key: {"tables": ..., "extra": ..., "pin": ...}}`` (see
+`onset_tables`); one family is held, the next one's tables replace it."""
 
 
 _SHARED = memo("scoring.onset_tables.shared")
-"""Ensemble onset tables the skill pass already detected, for the spatial pass: {family key: {year: (onset table, observed
-onsets)}}. onset_tables takes a family out of here (the first time it needs it), so each is held once."""
+"""Ensemble onset tables the skill pass already detected, for the spatial pass: ``{family key: {year: (onset table,
+observed onsets)}}``. `onset_tables` takes a family out of here (the first time it needs it), so each is held once."""
 
 
 def reports_back_dated(onset, model_name):
-    """Whether score outputs report back-dated forecast onsets: forecast_history "observed" in `onset` (the OnsetSetup).
+    """Return whether score outputs report back-dated forecast onsets (``forecast_history: observed``).
 
-    The climatology baselines (whose onsets come from no forecast; `model_name` says which source is scored) return
-    False, so their outputs stay as they are.
+    The climatology baselines (whose onsets come from no forecast) return False, so their outputs stay as they are.
+
+    Parameters
+    ----------
+    onset : hcwf.config.model.OnsetSetup
+        The onset setup of the run; its ``forecast_history`` is read.
+    model_name : str
+        The source being scored.
+
+    Returns
+    -------
+    bool
+        True when `model_name` is not a climatology reference and ``forecast_history`` is ``"observed"``.
     """
     if model_name in CLIMATOLOGY_REFERENCES:
         return False
@@ -49,19 +64,63 @@ def reports_back_dated(onset, model_name):
 
 
 def _family_key(rc, case, ens, thresh_da, years, select) -> tuple:
-    """The onset tables a case needs: the run, the source, the thresholds (by content, so reloaded equal ones match), the
-    years and the selection. Windows and tolerance are not in it: they only change the metrics."""
+    """Return the key of the onset tables a case needs.
+
+    The key holds the run, the source, the thresholds (by content, so reloaded equal ones match), the years and the
+    selection. Windows and tolerance are not in it: they only change the metrics.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    case : hcwf.config.model.Case
+        The case whose source is scored.
+    ens : bool
+        Whether the ensemble variant of the evaluation is meant.
+    thresh_da : xarray.DataArray
+        The thresholds of the source.
+    years : iterable of int
+        The years the tables cover.
+    select : hcwf.config.model.Selection
+        The selection of the cells.
+
+    Returns
+    -------
+    tuple
+        The hashable key.
+    """
     return (bool(ens), threshold_hash(thresh_da), tuple(years), repr(case.model), repr(select), rc)
 
 
 def _tables_of_years(years, rc, case, select, ens, extra):
-    """The onset table and the observed onsets of each year in years: {year: (onset_df, onset_da)}.
+    """Return the onset table and the observed onsets of each year.
 
     This is the part of the evaluation that reads and detects (the observed onsets, the forecast or climatology
     onsets paired with them); the metrics of a verification window are computed from it, so one table serves every
-    window. The onset table has one row per (init, grid point) as detect_deterministic (or, for ensembles,
-    detect_ensemble's ensemble table) gives. ens selects the ensemble variant of the evaluation (a climatology source
-    then never reads a forecast). `extra` holds the climatology's onsets (see onset_tables).
+    window. The onset table has one row per (init, grid point) as `hcwf.onset.detect.detect_deterministic` gives (or,
+    for ensembles, the ensemble table of `hcwf.onset.detect.detect_ensemble`). It is the function that the worker
+    processes run for a chunk of years.
+
+    Parameters
+    ----------
+    years : iterable of int
+        The years to process.
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    case : hcwf.config.model.Case
+        The case whose source is read.
+    select : hcwf.config.model.Selection
+        The selection of the cells.
+    ens : bool
+        Select the ensemble variant of the evaluation (a climatology source then never reads a forecast).
+    extra : dict
+        The climatology's onsets: ``climatological_onset_doy`` (climatology source) or ``clim_onset`` (conditional
+        climatology), see `onset_tables`.
+
+    Returns
+    -------
+    dict of int to tuple of (pandas.DataFrame, xarray.DataArray)
+        Maps each year to ``(onset_df, onset_da)``: the onset table and the observed onsets.
     """
     model, ev = case.model, rc.evaluation
     ref_clim = (model.name == "climatology")
@@ -83,7 +142,7 @@ def _tables_of_years(years, rc, case, select, ens, extra):
             pass
         elif use_ensemble or (not ref_clim and not ens):
             def read_forecast(year=year, imd=imd, ensemble=use_ensemble):
-                """The year's forecast of the cells the masks keep, checked against the observations (once per run)."""
+                """Read the year's forecast of the cells the masks keep and check it against the observations."""
                 log.debug("Extracting ensemble forecast data ..." if ensemble else "Extracting model forecast data ...")
                 cube = forecasts_io.forecast_of(year, rc, model, ensemble=ensemble, select=select, cells=True)
                 check_alignment(imd, cube, rc, case)
@@ -112,12 +171,27 @@ def _tables_of_years(years, rc, case, select, ens, extra):
 
 
 def share_ensemble_tables(rc, model, tables, select=Selection()):
-    """Hand the ensemble onset tables a pass over the run's years has already made to `onset_tables`, so the spatial
-    metrics of `model` (ModelSpec) read and detect nothing again.
+    """Hand the ensemble onset tables that a pass over the run's years has made to `onset_tables`.
 
-    `tables` is {year: (detect_ensemble's ensemble table, observed onsets)} made with this run's thresholds, history and
-    members, as _tables_of_years makes them. Only a set that covers every year of the run is kept (a year skipped
-    for a missing file is left to onset_tables, which reports it).
+    The spatial metrics of `model` then read and detect nothing again. `tables` are made with this run's thresholds,
+    history and members, as `_tables_of_years` makes them. Only a set that covers every year of the run is kept (a year
+    skipped for a missing file is left to `onset_tables`, which reports it).
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    model : hcwf.config.model.ModelSpec
+        The source the tables belong to.
+    tables : dict of int to tuple
+        Maps each year to ``(ensemble table of detect_ensemble, observed onsets)``.
+    select : hcwf.config.model.Selection, default Selection()
+        The selection of the cells.
+
+    Returns
+    -------
+    None
+        Nothing is returned; the tables are stored for `onset_tables`.
     """
     years = tuple(rc.evaluation.years)
     if set(tables) != set(years):
@@ -128,13 +202,33 @@ def share_ensemble_tables(rc, model, tables, select=Selection()):
 
 
 def onset_tables(rc, case, select=Selection(), *, ens=False, years=None):
-    """The onset tables of the years (default the run's), ({year: (onset_df, onset_da)}, extra), detected once for all
-    verification windows.
+    """Return the onset tables of the years, detected once for all verification windows.
 
     The first case of a source (model, climatology, ...) detects every year, in worker processes unless
     ``parallel`` is off; the cases of its other verification windows get the same tables back (they differ only in the
-    metrics). extra holds the climatological onset (a climatology source) and the climatology years' onsets
-    (conditional climatology). Only the source being scored is kept: a new source drops the previous one's tables.
+    metrics). Only the source being scored is kept: a new source drops the previous one's tables. The returned
+    observed onsets are deep copies, so the caller may change them.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    case : hcwf.config.model.Case
+        The case whose source is scored.
+    select : hcwf.config.model.Selection, default Selection()
+        The selection of the cells.
+    ens : bool, default False
+        Whether the ensemble variant of the evaluation is meant.
+    years : iterable of int, optional
+        The years to return; the run's years when None.
+
+    Returns
+    -------
+    tables : dict of int to tuple of (pandas.DataFrame, xarray.DataArray)
+        Maps each year to ``(onset_df, onset_da)``.
+    extra : dict
+        The climatological onset (``climatological_onset_doy``, a climatology source) or the climatology years' onsets
+        (``clim_onset``, conditional climatology); empty otherwise.
     """
     years = rc.evaluation.years if years is None else years
     thresh_da = thresholds_io.thresholds_of(rc, case.model, select)
@@ -167,7 +261,28 @@ def onset_tables(rc, case, select=Selection(), *, ens=False, years=None):
 
 
 def _metrics_of_tables(tables, extra, rc, case, years=None):
-    """The per-year metrics tables and observed onsets of one verification window, from the shared onset tables."""
+    """Return the per-year metrics tables and observed onsets of one verification window.
+
+    Parameters
+    ----------
+    tables : dict of int to tuple of (pandas.DataFrame, xarray.DataArray)
+        The shared onset tables (`onset_tables`).
+    extra : dict
+        The climatological onsets (`onset_tables`); a climatology source uses them as its observed onsets.
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    case : hcwf.config.model.Case
+        The case, which carries the window.
+    years : iterable of int, optional
+        The years to score; the run's years when None.
+
+    Returns
+    -------
+    metrics_df_dict : dict of int to pandas.DataFrame
+        Maps each year to its metrics table (`hcwf.metrics.contingency.onset_metrics`).
+    onset_da_dict : dict of int to xarray.DataArray
+        Maps each year to its observed onsets (the climatological onset for a climatology source).
+    """
     years = rc.evaluation.years if years is None else years
     metrics_df_dict = {}
     onset_da_dict = {}
@@ -195,11 +310,27 @@ def _metrics_of_tables(tables, extra, rc, case, years=None):
 
 
 def compute_metrics(rc, case, select=Selection()):
-    """Compute onset metrics for the case over the run's years (the onset dates are detected once per source, see
-    onset_tables): ({year: metrics table}, {year: observed onsets}).
+    """Compute the onset metrics of the case over the run's years.
 
-    Probabilistic runs are evaluated from the ensemble onset (the member-agreement onset of detect_ensemble),
-    deterministic ones from the model's own onset.
+    The onset dates are detected once per source (see `onset_tables`). Probabilistic runs are evaluated from the
+    ensemble onset (the member-agreement onset of `hcwf.onset.detect.detect_ensemble`), deterministic ones from the
+    model's own onset.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    case : hcwf.config.model.Case
+        The case to score.
+    select : hcwf.config.model.Selection, default Selection()
+        The selection of the cells.
+
+    Returns
+    -------
+    metrics_df_dict : dict of int to pandas.DataFrame
+        Maps each year to its metrics table.
+    onset_da_dict : dict of int to xarray.DataArray
+        Maps each year to its observed onsets.
     """
     tables, extra = onset_tables(rc, case, select, ens=bool(rc.evaluation.probabilistic))
     return _metrics_of_tables(tables, extra, rc, case)

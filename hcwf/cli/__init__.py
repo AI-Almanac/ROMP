@@ -1,4 +1,6 @@
-"""The `hcwf-run` command line: run a config, start one (init), convert an old one, describe datasets.
+"""The ``hcwf-run`` command line: run a config, start one (init), convert an old one, describe datasets.
+
+The commands are::
 
     hcwf-run -p run.yaml            run (also `hcwf-run run -p run.yaml`; HCWF_CONFIG works instead of -p)
     hcwf-run -p run.yaml --check    validate and print the plan, run nothing (exit 1 on errors)
@@ -14,6 +16,10 @@
     hcwf-run cache info|clean       what the on-disk caches hold (kinds, entries, sizes, ages); delete entries
     hcwf-run onset list|describe|regions|schematic|explain|check-alignment   the onset definitions and regions
     hcwf-run -h                     this help (with a config, -h lists the run-time overrides)
+
+This module holds the dispatcher `main` and the handlers of the subcommands other than a run. A run (the default
+command) is `hcwf.cli.driver.run_hcwf`; the override flags are defined in `hcwf.cli.parser` and the ``onset``
+subcommands in `hcwf.cli.onset`. The work itself is done by `hcwf.api`, `hcwf.runs`, `hcwf.config` and `hcwf.cache`.
 """
 from __future__ import annotations
 
@@ -73,10 +79,24 @@ commands:
              `schematic ID --png F`, `explain --obs ... --lat --lon --year` (why one cell got its date),
              `check-alignment` (obs vs forecast day lags). `hcwf-run onset COMMAND -h` lists each one's options.
 """
+"""The text of ``hcwf-run -h`` (shown when no config is named)."""
 
 
 def _init(argv) -> int:
-    """`hcwf-run init`: write a starting run config."""
+    """Write a starting run config (``hcwf-run init``).
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line after ``init``: ``--region``, ``--obs``, ``--model`` (repeatable), ``--years``,
+        ``--definition``, ``--blend``, ``-o``, ``--force`` and ``--dataset-template``.
+
+    Returns
+    -------
+    int
+        The exit code: 0 on success (or after printing a dataset template), 1 when the file cannot be written or the
+        region or datasets are wrong.
+    """
     from hcwf.config import datasets as dataset_schema
     from hcwf.config.init import write_init
 
@@ -111,7 +131,18 @@ def _init(argv) -> int:
 
 
 def _datasets(argv) -> int:
-    """`hcwf-run datasets -p run.yaml`: print the resolution of the config's datasets."""
+    """Print the resolution of the config's datasets (``hcwf-run datasets -p run.yaml``).
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line after ``datasets``: ``-p`` (the run config; ``$HCWF_CONFIG`` by default).
+
+    Returns
+    -------
+    int
+        The exit code: 0 when every dataset resolved, 1 when the config cannot be read or a dataset does not resolve.
+    """
     import warnings
 
     import yaml
@@ -147,7 +178,31 @@ def _datasets(argv) -> int:
 
 
 def _convert(argv) -> int:
-    """`hcwf-run convert SOURCE -o run.yaml`: a run YAML with flat onset keys, a BlendConfig YAML, or (--specs) a legacy spec set."""
+    """Convert an old config to a run YAML (``hcwf-run convert SOURCE -o run.yaml``).
+
+    The source is a run YAML with flat onset keys, an onset_blending config YAML, or (with ``--specs``) a legacy spec
+    set. Any failure of the conversion is printed and gives exit code 1.
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line after ``convert``: the source file, ``-o``, ``--force``, ``--region`` and, for ``--specs``,
+        ``--name``, ``--ground-truth``, ``--forecast``, ``--combine``, ``--connect``, ``--cv-models``, ``--regrid`` and
+        ``--data-root``.
+
+    Returns
+    -------
+    int
+        The exit code: 0 on success, 1 when the conversion failed.
+
+    Raises
+    ------
+    FileExistsError
+        The output file exists and ``--force`` is not given. Raised inside the command and printed as an error with exit
+        code 1; like every other error of the conversion it does not reach the caller.
+    ValueError
+        The source is not a YAML file. Printed as an error with exit code 1; it does not reach the caller either.
+    """
     import yaml
 
     p = argparse.ArgumentParser(prog="hcwf-run convert", description="Convert a run YAML with the old flat onset keys, an onset_blending "
@@ -215,14 +270,42 @@ def _convert(argv) -> int:
 
 
 def _converted(target) -> int:
+    """Print that the converted run YAML was written.
+
+    Parameters
+    ----------
+    target : str or pathlib.Path
+        The file written.
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+    """
     print(f"Wrote {target}. Check it, then run: hcwf-run -p {target}")
     return 0
 
 
 def _forecast_targets(blends, output):
-    """The output folder of each blend (None: beside the blend), or the text of the problem. With several blends and -o,
-    each gets a subfolder named after its folder, or after the run folder when that is `blend` (runs/<run>/blend/trained.blend);
-    two blends of one name are refused up front, before anything is written."""
+    """Return the output folder of each blend, or the text of the problem.
+
+    With several blends and ``-o``, each gets a subfolder named after its folder, or after the run folder when that is
+    ``blend`` (``runs/<run>/blend/trained.blend``); two blends of one name are refused up front, before anything is
+    written.
+
+    Parameters
+    ----------
+    blends : list of str
+        The ``trained.blend`` files.
+    output : str or None
+        The ``-o`` folder.
+
+    Returns
+    -------
+    list of str or None or str
+        One entry per blend: the folder to write to (None: beside the blend). A text instead of a list says that
+        several blends would write to the same subfolder.
+    """
     if not output:
         return [None] * len(blends)
     if len(blends) == 1:
@@ -240,7 +323,21 @@ def _forecast_targets(blends, output):
 
 
 def _forecast(argv) -> int:
-    """`hcwf-run forecast BLEND... --forecast MODEL=PATH [...]`: apply trained blends to live forecast files."""
+    """Apply trained blends to live forecast files (``hcwf-run forecast BLEND... --forecast MODEL=PATH [...]``).
+
+    A blend that cannot be applied is reported on stderr and the others still run.
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line after ``forecast``: the ``trained.blend`` files, ``--forecast`` (repeatable),
+        ``--issue-date``, ``--fewer-members``, ``--netcdf`` and ``-o``.
+
+    Returns
+    -------
+    int
+        The exit code: 0, or 1 when a blend failed.
+    """
     p = argparse.ArgumentParser(prog="hcwf-run forecast", description="Apply trained blends (trained.blend files) to "
                                 "live forecast files and write the blended onset probabilities.")
     p.add_argument("blend", nargs="+", help="a trained.blend file (several: one region each, applied in turn)")
@@ -280,7 +377,18 @@ def _forecast(argv) -> int:
 
 
 def _export(argv) -> int:
-    """`hcwf-run export -p run.yaml [--sources ...] [--out DIR]`: write the gridded onset dates as NetCDF."""
+    """Write the gridded onset dates as NetCDF (``hcwf-run export -p run.yaml [--sources ...] [--out DIR]``).
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line after ``export``: ``-p`` (``$HCWF_CONFIG`` by default), ``--sources`` and ``--out``.
+
+    Returns
+    -------
+    int
+        The exit code: 0 on success, 1 when the export failed.
+    """
     from hcwf.runs.export import export_onsets
 
     p = argparse.ArgumentParser(prog="hcwf-run export", description="Write the gridded onset dates of a run as "
@@ -303,7 +411,18 @@ def _export(argv) -> int:
 
 
 def _onset(argv) -> int:
-    """`hcwf-run onset ...`: the onset definitions, regions, schematic and one-cell explanations."""
+    """Run the ``onset`` commands (``hcwf-run onset ...``): definitions, regions, schematic and one-cell explanations.
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line after ``onset``.
+
+    Returns
+    -------
+    int
+        The exit code of `hcwf.cli.onset.main`.
+    """
     from hcwf.cache import run_scope
     from hcwf.cli.onset import main
 
@@ -312,7 +431,18 @@ def _onset(argv) -> int:
 
 
 def _age(seconds: float) -> str:
-    """A time span as text: 5m, 3h, 12d."""
+    """Return a time span as text: ``5m``, ``3h``, ``12d``.
+
+    Parameters
+    ----------
+    seconds : float
+        The span in seconds.
+
+    Returns
+    -------
+    str
+        The span in the largest of days, hours and minutes that it reaches, else in seconds (0 for a negative span).
+    """
     for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
         if seconds >= size:
             return f"{seconds / size:.0f}{unit}"
@@ -320,7 +450,18 @@ def _age(seconds: float) -> str:
 
 
 def _size(nbytes: float) -> str:
-    """A size in bytes as text: 3.2 MB."""
+    """Return a size in bytes as text, e.g. ``3.2 MB``.
+
+    Parameters
+    ----------
+    nbytes : float
+        The size in bytes.
+
+    Returns
+    -------
+    str
+        The size in B, KB, MB or GB (1024 per step).
+    """
     for unit in ("B", "KB", "MB", "GB"):
         if nbytes < 1024 or unit == "GB":
             return f"{nbytes:.0f} B" if unit == "B" else f"{nbytes:.1f} {unit}"
@@ -328,7 +469,19 @@ def _size(nbytes: float) -> str:
 
 
 def _cache(argv) -> int:
-    """`hcwf-run cache info|clean`: what the on-disk caches hold, and deleting entries."""
+    """Show what the on-disk caches hold, or delete entries (``hcwf-run cache info|clean``).
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line after ``cache``: the action (``info`` or ``clean``), ``--dir`` (repeatable), ``--kind``
+        (repeatable), ``--older-than``, ``--all`` and ``--dry-run``.
+
+    Returns
+    -------
+    int
+        The exit code, 0.
+    """
     import time
 
     from hcwf import cache as cache_mod
@@ -381,16 +534,36 @@ def _cache(argv) -> int:
 
 
 def _has_config(argv) -> bool:
-    """Whether a config is named by -p/--param in argv or HCWF_CONFIG."""
+    """Return whether a config is named by ``-p``/``--param`` in `argv` or by ``$HCWF_CONFIG``.
+
+    Parameters
+    ----------
+    argv : list of str
+        The command line.
+
+    Returns
+    -------
+    bool
+        True when a config is named.
+    """
     return any(a in ("-p", "--param") or a.startswith("--param=") for a in argv) or bool(os.environ.get("HCWF_CONFIG"))
 
 
 COMMANDS = {"init": _init, "datasets": _datasets, "convert": _convert, "export": _export, "forecast": _forecast,
             "cache": _cache, "onset": _onset}
+"""The subcommands: name to handler, which takes the arguments after the name and returns an exit code."""
 
 
 def main(argv=None) -> None:
-    """Entry point of `hcwf-run`: a subcommand, the top-level help, or (the default) a run of the config(s)."""
+    """Run `hcwf-run`: a subcommand, the top-level help, or (the default) a run of the config(s).
+
+    Exits with the code of the subcommand or of the run when it is not 0.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        The arguments after the program name; ``sys.argv`` is used (and replaced by these when given) when None.
+    """
     if argv is not None:
         sys.argv = [sys.argv[0], *argv]
     args = sys.argv[1:]

@@ -1,7 +1,8 @@
 """Brier score, RPS, AUC and skill-score calculations for binned onset forecast-observation pairs.
 
-The pairs (PairArrays: (case, bin) matrices) are scored by hcwf.metrics.probabilistic; this module only keeps
-HCWF's result layout (dicts keyed by bin label) and its guards.
+The pairs (`hcwf.metrics.bins.PairArrays`: (case, bin) matrices) are scored by `hcwf.metrics.probabilistic`; this
+module only keeps HCWF's result layout (dicts keyed by bin label) and its guards. `hcwf.metrics.skill` calls the
+functions of this module for the forecast and its reference, and `hcwf.metrics.tables` reads their result dicts.
 """
 
 import numpy as np
@@ -15,7 +16,20 @@ log = logging.getLogger(__name__)
 
 
 def get_target_bins(brier_forecast, brier_climatology):
-    """Extract and sort target bins"""
+    """Return the bin labels both results score, restricted to the ``Days a-b`` bins and sorted by first day.
+
+    Parameters
+    ----------
+    brier_forecast : dict
+        The forecast's Brier results (`calculate_brier_score`); its ``bin_fair_brier_scores`` keys are used.
+    brier_climatology : dict
+        The reference's Brier results; its ``bin_fair_brier_scores`` keys are used.
+
+    Returns
+    -------
+    list of str
+        The labels in both, starting with ``Days ``, in day order.
+    """
     all_forecast_bins = set(brier_forecast['bin_fair_brier_scores'].keys())
     all_clim_bins = set(brier_climatology['bin_fair_brier_scores'].keys())
     common_bins = all_forecast_bins.intersection(all_clim_bins)
@@ -31,8 +45,21 @@ def get_target_bins(brier_forecast, brier_climatology):
 
 
 def _brier_results(pairs, members):
-    """Brier results of pairs in HCWF's layout: overall and per-bin Brier and fair Brier scores (`members`: the
-    ensemble size of each case)."""
+    """Return the Brier results of pairs in HCWF's layout: overall and per-bin Brier and fair Brier scores.
+
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        The pairs to score.
+    members : numpy.ndarray, shape (case,)
+        The ensemble size behind each case, for the fair correction.
+
+    Returns
+    -------
+    dict
+        ``brier_score`` and ``fair_brier_score`` (float), ``bin_brier_scores`` and ``bin_fair_brier_scores`` (dicts
+        of bin label to float, in label order).
+    """
     scores = probabilistic.brier_scores(pairs.prob, pairs.observed, members, scale="element", by_bin=True,
                                         bin_mean="compensated", skipna=True)
     labels = pairs.labels
@@ -46,7 +73,20 @@ def _brier_results(pairs, members):
 
 
 def _require_members(pairs, what):
-    """Raise unless the first case has more than one ensemble member (the fair scores divide by members - 1)."""
+    """Check that the first case has more than one ensemble member (the fair scores divide by members - 1).
+
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        The pairs; without cases the member count is taken as 1.
+    what : str
+        The name of the score, for the message.
+
+    Raises
+    ------
+    ValueError
+        The first case has one member or fewer.
+    """
     n_members = pairs.members[0] if pairs.n_cases > 0 else 1
     if n_members <= 1:
         raise ValueError(
@@ -58,27 +98,29 @@ def _require_members(pairs, what):
 
 # Function to calculate Brier Score and Fair Brier Score for the model forecasts (both overall and bin-wise)
 def calculate_brier_score(pairs):
-    """
-    Calculate Brier Score and Fair Brier Score for probabilistic forecasts.
+    """Calculate the Brier score and the fair Brier score of probabilistic forecasts.
 
-    Brier Score = (1/n*m) * Σ(Y_ij - p_ij)²
-    Fair Brier Score = (1/n*m) * Σ[(Y_ij - p_ij)² - p_ij(1-p_ij)/(ens-1)]
+    The scores are::
 
-    where:
-    - n = number of forecasts
-    - m = number of bins per forecast
-    - Y_ij = 1 if onset occurred in bin j for forecast i, 0 otherwise
-    - p_ij = predicted probability for bin j in forecast i
-    - ens = number of ensemble members
+        Brier Score = (1/n*m) * sum(Y_ij - p_ij)^2
+        Fair Brier Score = (1/n*m) * sum[(Y_ij - p_ij)^2 - p_ij(1-p_ij)/(ens-1)]
 
-    Parameters:
-    -----------
-    pairs : PairArrays
-        Output from forecast_pairs(), restricted to the scored bins (PairArrays.select)
+    where ``n`` is the number of forecasts, ``m`` the number of bins per forecast, ``Y_ij`` is 1 if the onset occurred
+    in bin ``j`` for forecast ``i`` (0 otherwise), ``p_ij`` the predicted probability for bin ``j`` in forecast ``i``
+    and ``ens`` the number of ensemble members.
 
-    Returns:
-    --------
-    dict with Brier score metrics
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (`PairArrays.select`).
+
+    Returns
+    -------
+    dict
+        ``brier_score``, ``fair_brier_score`` (float), ``bin_brier_scores`` and ``bin_fair_brier_scores`` (dicts of
+        bin label to float). A `ValueError` is raised (by `_require_members`) when the first case has one ensemble
+        member or fewer.
+
     """
     _require_members(pairs, "Brier Score")
 
@@ -91,8 +133,21 @@ def calculate_brier_score(pairs):
 
 
 def _auc_results(pairs):
-    """AUC results of pairs in HCWF's layout: the overall AUC and the AUC of each bin (NaN where a bin has
-    only positives or only negatives)."""
+    """Return the AUC results of pairs in HCWF's layout: the overall AUC and the AUC of each bin.
+
+    The AUC of a bin is NaN where it has only positives or only negatives.
+
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        The pairs to score.
+
+    Returns
+    -------
+    dict
+        ``auc`` (float) and ``bin_auc_scores`` (bin label to float). When the overall AUC is NaN (all cases positive or
+        all negative) ``bin_auc_scores`` is empty and ``n_positive`` and ``n_negative`` are added.
+    """
     P, Y = pairs.prob, pairs.observed
     p_ij, y_ij = P.ravel(), Y.ravel()
     auc = probabilistic.auc(y_ij, p_ij)
@@ -112,53 +167,54 @@ def _auc_results(pairs):
 
 # Function to calculate Area Under the Curve (AUC) for the model forecasts (both overall and bin-wise)
 def calculate_auc(pairs):
-    """
-    Calculate Area Under the Curve (AUC) for probabilistic forecasts.
+    """Calculate the area under the curve (AUC) of probabilistic forecasts.
 
-    AUC = Σ_{i,j,i',j'} Y_{ij}(1-Y_{i'j'}) · 1[p_{ij} > p_{i'j'}] /
-          [(Σ_{i,j} Y_{ij})(Σ_{i,j} (1-Y_{ij}))]
+    The AUC is::
 
-    where:
-    - Y_{ij} = 1 if onset occurred in bin j for forecast i, 0 otherwise
-    - p_{ij} = predicted probability for bin j in forecast i
-    - 1[p_{ij} > p_{i'j'}] = indicator function (1 if true, 0 if false)
+        AUC = sum_{i,j,i',j'} Y_ij (1 - Y_i'j') 1[p_ij > p_i'j'] / [(sum_ij Y_ij) (sum_ij (1 - Y_ij))]
 
-    Parameters:
-    -----------
-    pairs : PairArrays
-        Output from forecast_pairs(), restricted to the scored bins (PairArrays.select)
+    where ``Y_ij`` is 1 if the onset occurred in bin ``j`` for forecast ``i`` (0 otherwise), ``p_ij`` the predicted
+    probability for bin ``j`` in forecast ``i`` and ``1[...]`` the indicator function. Ties count as 1/2.
 
-    Returns:
-    --------
-    dict with AUC metrics
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (`PairArrays.select`).
+
+    Returns
+    -------
+    dict
+        The results of `_auc_results`: ``auc`` and ``bin_auc_scores``.
     """
     return _auc_results(pairs)
 
 
 # Function to calculate Ranked Probability Score (RPS) and Fair RPS for the model forecasts for (either 15 day or 30 day forecast)
 def calculate_rps(pairs):
-    """
-    Calculate Ranked Probability Score (RPS) and Fair RPS for probabilistic forecasts.
+    """Calculate the ranked probability score (RPS) and the fair RPS of probabilistic forecasts.
 
-    RPS = (1/n*m) * Σ_i Σ_k (Σ_j≤k (Y_ij - p_ij))²
-    Fair RPS = (1/n*m) * Σ_i Σ_k [(Σ_j≤k (Y_ij - p_ij))² - (Σ_j≤k p_ij)(1 - Σ_j≤k p_ij)/(ens-1)]
+    The scores are::
 
-    where:
-    - n = number of forecasts
-    - m = number of bins per forecast
-    - Y_ij = 1 if onset occurred in bin j for forecast i, 0 otherwise
-    - p_ij = predicted probability for bin j in forecast i
-    - k = cumulative index (1 to m)
-    - ens = number of ensemble members
+        RPS = (1/n*m) * sum_i sum_k (sum_{j<=k} (Y_ij - p_ij))^2
+        Fair RPS = (1/n*m) * sum_i sum_k [(sum_{j<=k} (Y_ij - p_ij))^2
+                                          - (sum_{j<=k} p_ij)(1 - sum_{j<=k} p_ij)/(ens-1)]
 
-    Parameters:
-    -----------
-    pairs : PairArrays
-        Output from forecast_pairs(), restricted to the scored bins (PairArrays.select)
+    where ``n`` is the number of forecasts, ``m`` the number of bins per forecast, ``Y_ij`` is 1 if the onset occurred
+    in bin ``j`` for forecast ``i`` (0 otherwise), ``p_ij`` the predicted probability for bin ``j`` in forecast ``i``,
+    ``k`` the cumulative index (1 to ``m``) and ``ens`` the number of ensemble members. The cases are taken in order of
+    init and place, so that the mean over them is reproducible.
 
-    Returns:
-    --------
-    dict with RPS metrics
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        Output of `hcwf.metrics.bins.forecast_pairs`, restricted to the scored bins (`PairArrays.select`).
+
+    Returns
+    -------
+    dict
+        ``rps`` and ``fair_rps`` (float) and ``n_forecasts`` (int, the number of cases). A `ValueError` is raised (by `_require_members`) when the first case
+        has one ensemble member or fewer.
+
     """
     _require_members(pairs, "RPS")
 
@@ -190,22 +246,24 @@ def calculate_rps(pairs):
 
 
 def calculate_brier_score_climatology(pairs):
+    """Calculate the Brier score and the fair Brier score of a climatology (or other pooled-member) reference.
+
+    The scores of `calculate_brier_score`, over the bins that are not "Before" bins (e.g. ``Before day N``), with the
+    fair correction taken from each case's ``members_with_onset`` instead of ``members``.
+
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        Output of `hcwf.metrics.bins.create_climatological_forecast_obs_pairs`, restricted to the scored bins; needs
+        `PairArrays.members_with_onset`.
+
+    Returns
+    -------
+    dict
+        The keys of `calculate_brier_score` plus ``n_samples`` (int, entries scored) and ``filtered_bins`` (sorted
+        labels), and ``excluded_bins`` (``['Before initialization']``). With no bin left, the scores are NaN, the
+        bin dicts empty, ``n_samples`` 0 and ``filtered_bins`` empty.
     """
-    Calculate Brier Score and Fair Brier Score of a climatology (or other pooled-member) reference.
-
-    The scores of calculate_brier_score, over the bins that are not "Before" bins (e.g. "Before day N"), with the
-    fair correction taken from each case's members_with_onset instead of members.
-
-    Parameters:
-    -----------
-    pairs : PairArrays
-        Output from create_climatological_forecast_obs_pairs(), restricted to the scored bins; needs members_with_onset
-
-    Returns:
-    --------
-    dict with Brier score metrics
-    """
-
     # Filter out "Before initialization" bin
     filtered = pairs.without_before()
 
@@ -238,45 +296,45 @@ def calculate_brier_score_climatology(pairs):
 
 
 def calculate_auc_climatology(pairs):
-    """
-    Calculate Area Under the Curve (AUC) of a climatology reference: calculate_auc over the bins that are not
-    "Before" bins.
+    """Calculate the AUC of a climatology reference: `calculate_auc` over the bins that are not "Before" bins.
 
-    Parameters:
-    -----------
-    pairs : PairArrays
-        Output from create_climatological_forecast_obs_pairs(), restricted to the scored bins
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays
+        Output of `hcwf.metrics.bins.create_climatological_forecast_obs_pairs`, restricted to the scored bins.
 
-    Returns:
-    --------
-    dict with AUC metrics
+    Returns
+    -------
+    dict
+        The results of `_auc_results`: ``auc`` and ``bin_auc_scores``.
     """
     return _auc_results(pairs.without_before())
 
 
 def calculate_skill_scores(brier_forecast, rps_forecast,
                           brier_climatology, rps_climatology):
-    """
-    Calculate skill scores for forecast model relative to climatology.
+    """Calculate the skill scores of the forecast model relative to its reference (climatology or another model).
 
-    Skill Score = 1 - (forecast_score / climatology_score)
+    The skill score is ``1 - (forecast_score / climatology_score)``, from the fair scores: overall for the Brier score
+    and the RPS, and per ``Days a-b`` bin for the Brier score. The tables of the scores are written to the debug log.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     brier_forecast : dict
-        Brier score results from forecast model
+        Brier results of the forecast model (`calculate_brier_score`).
     rps_forecast : dict
-        RPS results from forecast model
+        RPS results of the forecast model (`calculate_rps`).
     brier_climatology : dict
-        Brier score results from climatology
+        Brier results of the reference (`calculate_brier_score_climatology` or `calculate_brier_score`).
     rps_climatology : dict
-        RPS results from climatology
+        RPS results of the reference.
 
-    Returns:
-    --------
-    dict with skill scores
+    Returns
+    -------
+    dict
+        ``fair_brier_skill_score`` and ``fair_rps_skill_score`` (float) and ``bin_fair_brier_skill_scores`` (bin label
+        to float, NaN where a bin is missing in one of them).
     """
-
     skill_scores = {}
 
     log.debug("="*60)

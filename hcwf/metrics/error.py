@@ -10,10 +10,28 @@ log = logging.getLogger(__name__)
 
 
 def year_points(metrics_df, onset_da, spatial, coords):
-    """The rows of a year's metrics table that stand for a location of the output grid, and where they sit on it.
+    """Return the rows of a year's metrics table that stand for a location of the output grid, and where they sit on it.
 
     A location's first row stands for it; locations outside the grid and those without an observed onset this year
-    are skipped. Returns (rows, index) with one index array per spatial dim (lat and lon, or unit).
+    are skipped.
+
+    Parameters
+    ----------
+    metrics_df : pandas.DataFrame
+        A year's per-grid-point metrics table (see `hcwf.metrics.contingency.onset_metrics`).
+    onset_da : xarray.DataArray
+        The year's observed onset; NaN or NaT marks a location without an onset.
+    spatial : sequence of str
+        The spatial dims (``lat`` and ``lon``, or ``unit``).
+    coords : dict of str to numpy.ndarray
+        The coordinates of the output grid for each dim of `spatial`.
+
+    Returns
+    -------
+    points : pandas.DataFrame
+        The kept rows of `metrics_df`.
+    index : tuple of numpy.ndarray of int64
+        One index array per spatial dim, the position of each kept row on the output grid.
     """
     shape = tuple(len(coords[d]) for d in spatial)
     points = metrics_df.drop_duplicates(list(spatial))
@@ -26,21 +44,25 @@ def year_points(metrics_df, onset_da, spatial, coords):
 
 
 def create_spatial_far_mr_mae(metrics_df_dict, onset_da_dict):
-    """Create spatial maps of False Alarm Rate, Miss Rate, yearly MAE, and mean MAE across years.
+    """Create spatial maps of the false alarm rate, the miss rate, the yearly MAE and the mean MAE across years.
+
+    The false alarm rate is ``sum(FP) / sum(FP + TN)`` and the miss rate ``sum(FN) / sum(num_onset)``, both over the
+    valid years (0 where the denominator is 0, NaN where no year is valid). The MAE maps are in days.
 
     Parameters
     ----------
-    metrics_df_dict : dict
-        Maps year to a per-grid-point metrics DataFrame (lat and lon, or unit; false_positive,
-        true_negative, false_negative, num_onset, mae_combined).
-    onset_da_dict : dict
-        Maps year to the observed onset DataArray; its grid defines the output
-        grid, and grid points with NaN onset in a year are skipped for that year.
+    metrics_df_dict : dict of int to pandas.DataFrame
+        Maps year to a per-grid-point metrics table (``lat`` and ``lon``, or ``unit``; ``false_positive``,
+        ``true_negative``, ``false_negative``, ``num_onset``, ``mae_combined``).
+    onset_da_dict : dict of int to xarray.DataArray
+        Maps year to the observed onset; the grid of the first defines the output grid, and grid points with NaN
+        onset in a year are skipped for that year.
 
     Returns
     -------
-    dict
-        'false_alarm_rate', 'miss_rate', 'mean_mae' and 'mae_<year>' lat/lon (or unit) DataArrays.
+    dict of str to xarray.DataArray
+        ``false_alarm_rate``, ``miss_rate``, ``mean_mae`` and ``mae_<year>``, ``float64`` over the output grid (``lat``
+        and ``lon``, or ``unit``).
     """
     first_year = list(onset_da_dict.keys())[0]
     spatial = axes.spatial_dims(onset_da_dict[first_year].dims)

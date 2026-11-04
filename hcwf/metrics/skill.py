@@ -7,13 +7,29 @@ import logging
 log = logging.getLogger(__name__)
 
 def create_score_results(prepared, metrics, ev):
-    """Compute Brier score, RPS and AUC (as flagged by metrics.BS, .RPS, .AUC) for the forecast model and its reference,
-    plus skill scores if metrics.skill_score is set, from the pairs `prepared` (PreparedPairs).
+    """Compute the Brier score, RPS and AUC of the forecast model and of its reference, and optionally skill scores.
 
-    The scored day bins are ev.day_bins (a window's bins: Window.bins). The reference is climatology or conditional
-    climatology (P(onset on lead k | no onset by the init)) when prepared.climatology is set, otherwise another model.
-    Returns a dict with forecast_pairs, climatology_pairs (the PairArrays of the window's bins), BS, RPS, AUC, their
-    *_ref counterparts, skill_score and (if skill_score) skill_results.
+    The scores computed are those flagged by ``metrics.BS``, ``metrics.RPS`` and ``metrics.AUC`` (a score that is not
+    flagged is None), plus the skill scores if ``metrics.skill_score`` is set. The scored day bins are ``ev.day_bins``
+    (a window's bins: `hcwf.config.model.Window.bins`). The reference is climatology or conditional climatology
+    (P(onset on lead k | no onset by the init)) when ``prepared.climatology`` is set, otherwise another model
+    (``prepared.reference``, with its own data and settings).
+
+    Parameters
+    ----------
+    prepared : hcwf.scoring.pairs.PreparedPairs
+        The pairs of the forecast and of its reference.
+    metrics : object
+        The metrics settings, with the flags ``BS``, ``RPS``, ``AUC`` and ``skill_score``.
+    ev : object
+        The evaluation settings; ``day_bins`` is the window's day bins.
+
+    Returns
+    -------
+    dict
+        ``forecast_pairs`` and ``climatology_pairs`` (the `hcwf.metrics.bins.PairArrays` of the window's bins; the
+        latter None without a climatology), ``BS``, ``RPS``, ``AUC`` and their ``*_ref`` counterparts (result dicts of
+        `hcwf.metrics.score`, or None), ``skill_score`` (always None) and, if ``metrics.skill_score``, ``skill_results``.
     """
     BS, RPS, AUC, day_bins = metrics.BS, metrics.RPS, metrics.AUC, ev.day_bins
     results = {}

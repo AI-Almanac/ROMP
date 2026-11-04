@@ -15,12 +15,27 @@ log = logging.getLogger(__name__)
 
 
 def score_tables(score_results):
-    """The overall and binned skill-score tables of one case, without writing anything.
+    """Return the overall and binned skill-score tables of one case, without writing anything.
 
-    Returns (overall_df, binned_df, binned_data, overall_scores_nested): the two DataFrames that
-    save_score_results writes, the binned columns as a dict and the overall scores as {metric: value}.
+    Parameters
+    ----------
+    score_results : dict
+        The results of `hcwf.metrics.skill.create_score_results`, with all of ``BS``, ``RPS``, ``AUC``, ``BS_ref``,
+        ``AUC_ref`` and ``skill_results`` (so skill scores must have been asked for).
+
+    Returns
+    -------
+    overall_df : pandas.DataFrame
+        One row with the fair Brier score and skill score, the fair RPS and skill score, ``AUC`` and ``AUC_ref``, and
+        ``back_dated_member_share`` when the forecast pairs track back-dated members.
+    binned_df : pandas.DataFrame
+        One row per ``Days a-b`` bin both the forecast and the reference score: the Brier skill score, the AUCs and
+        the Brier scores of the forecast and of the climatology.
+    binned_data : dict
+        The columns of `binned_df` as lists.
+    overall_scores_nested : dict of str to float
+        The overall scores as ``{metric: value}``.
     """
-
     # Save overall scores
     overall_scores = {
         'Metric': ['Fair_Brier_Score', 'Fair_Brier_Skill_Score', 'Fair_RPS', 'Fair_RPS_Skill_Score', 'AUC', 'AUC_ref'],
@@ -67,10 +82,20 @@ def score_tables(score_results):
 
 
 def back_dated_member_share(pairs):
-    """Share of the scored member onsets dated on or before their init, or None when the pairs do not track them.
+    """Return the share of the scored member onsets dated on or before their init, or None when the pairs do not track them.
 
     Reads the per-case `back_dated` and `onset_members` counts of the forecast pairs (present for definition runs with
-    forecast_history "observed"); NaN when no member found an onset.
+    ``forecast_history: observed``).
+
+    Parameters
+    ----------
+    pairs : hcwf.metrics.bins.PairArrays or None
+        The forecast pairs, or None.
+
+    Returns
+    -------
+    float or None
+        The share, NaN when no member found an onset, None when `pairs` is None or has no `PairArrays.back_dated`.
     """
     if pairs is None or pairs.back_dated is None:
         return None
@@ -79,11 +104,24 @@ def back_dated_member_share(pairs):
 
 
 def add_back_dated_map(spatial_metrics, metrics_df_dict, onset_da_dict):
-    """Add the `n_back_dated` map (in place) from per-year metrics tables that carry an `n_back_dated` column.
+    """Add the ``n_back_dated`` map (in place) from per-year metrics tables that carry an ``n_back_dated`` column.
 
-    Each cell holds the number of scored init cases, over the years with an observed onset there,
-    whose forecast onset was back-dated; a no-op for tables without the column (forecast_history "none" runs).
-    Returns spatial_metrics.
+    Each cell holds the number of scored init cases, over the years with an observed onset there, whose forecast
+    onset was back-dated; a no-op for tables without the column (``forecast_history: none`` runs).
+
+    Parameters
+    ----------
+    spatial_metrics : dict of str to xarray.DataArray
+        The maps of `hcwf.metrics.error.create_spatial_far_mr_mae`; ``n_back_dated`` is added to it.
+    metrics_df_dict : dict of int to pandas.DataFrame
+        Maps year to the per-grid-point metrics table.
+    onset_da_dict : dict of int to xarray.DataArray
+        Maps year to the observed onset; the grid of the first defines the map.
+
+    Returns
+    -------
+    dict of str to xarray.DataArray
+        `spatial_metrics`, the same object.
     """
     tables = [df for df in metrics_df_dict.values() if 'n_back_dated' in df.columns]
     if not tables:

@@ -1,22 +1,26 @@
 """Probabilistic skill on arrays: Brier score, RPS, AUC and Pietra index of lead-bin probabilities.
 
 One implementation for HCWF's pooled ensemble scores and the blending package's per-unit, pooled and per-year
-scores. Everything is array-based: P holds the probabilities and Y the 0/1 outcomes of (samples, bins) with the
-bins in lead order; `members` (the ensemble size behind each probability, a scalar, one per sample or one per
-entry) switches on the fair scores, which take out the sampling noise of the probability, p(1-p)/(members-1).
+scores. Everything is array-based: ``P`` holds the probabilities and ``Y`` the 0/1 outcomes of (samples, bins) with
+the bins in lead order; `members` (the ensemble size behind each probability, a scalar, one per sample or one per
+entry) switches on the fair scores, which take out the sampling noise of the probability, ``p(1-p)/(members-1)``.
 
 Conventions are options, never second implementations:
 
-- scale of the Brier score: "element" averages the squared error over all (sample, bin) entries (HCWF); "sample"
-  sums it over the bins and averages over the samples (blending: m times "element"); "pooled" is "sample" written
-  as one sum over everything divided by the samples (blending's pooled row; equal to "sample" up to rounding).
-- mean of a bin's entries: "numpy" is np.mean of the column (blending); "compensated" adds the entries one by one
-  with Kahan compensation, as a pandas groupby mean does (HCWF's per-bin scores, to the last bit).
-- summation of the RPS: "cumulative" is np.cumsum over the bins (blending); "prefix" sums the first k bins for each
-  k and adds the terms one after the other (HCWF). They differ only in the last bits, and for 8 bins or more.
-- which bins are scored is the columns passed in: HCWF scores its inner day bins only, blending its week bins and
-  `later` (plus the `earlier` column in the RPS, see `rps`).
-- AUC counts ties as 1/2, as the Mann-Whitney U statistic and sklearn's roc_auc_score do.
+* scale of the Brier score: ``"element"`` averages the squared error over all (sample, bin) entries (HCWF);
+  ``"sample"`` sums it over the bins and averages over the samples (blending: m times ``"element"``); ``"pooled"`` is
+  ``"sample"`` written as one sum over everything divided by the samples (blending's pooled row; equal to
+  ``"sample"`` up to rounding).
+* mean of a bin's entries: ``"numpy"`` is ``numpy.mean`` of the column (blending); ``"compensated"`` adds the entries
+  one by one with Kahan compensation, as a pandas groupby mean does (HCWF's per-bin scores, to the last bit).
+* summation of the RPS: ``"cumulative"`` is ``numpy.cumsum`` over the bins (blending); ``"prefix"`` sums the first
+  ``k`` bins for each ``k`` and adds the terms one after the other (HCWF). They differ only in the last bits, and for
+  8 bins or more.
+* which bins are scored is the columns passed in: HCWF scores its inner day bins only, blending its week bins and
+  ``later`` (plus the ``earlier`` column in the RPS, see `rps`).
+* AUC counts ties as 1/2, as the Mann-Whitney U statistic and sklearn's ``roc_auc_score`` do.
+
+`hcwf.metrics.score` wraps these functions in HCWF's result layout; the blend package calls them directly.
 """
 
 from __future__ import annotations
@@ -26,18 +30,48 @@ import numpy as np
 import pandas as pd
 
 BRIER_SCALES = ("element", "sample", "pooled")
+"""The accepted ``scale`` values of `brier_scores`."""
 BIN_MEANS = ("numpy", "compensated")
+"""The accepted ``bin_mean`` values of `brier_scores`."""
 RPS_SUMMATIONS = ("cumulative", "prefix")
+"""The accepted ``summation`` values of `rps_cases`."""
 AUC_METHODS = ("rank", "sklearn")
+"""The accepted ``auc_method`` values of `yearly_metrics`."""
 
 
 def one_hot(outcome: np.ndarray, n_classes: int) -> np.ndarray:
-    """(samples, classes) indicators of each sample's outcome code (-1: none)."""
+    """Return the indicators of each sample's outcome code.
+
+    Parameters
+    ----------
+    outcome : numpy.ndarray of int, shape (samples,)
+        The outcome code of each sample (-1: none).
+    n_classes : int
+        The number of classes (columns).
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (samples, classes)
+        1.0 in the column of a sample's code, 0.0 elsewhere (an all-zero row for -1).
+    """
     return np.column_stack([(outcome == k).astype(float) for k in range(n_classes)])
 
 
 def clean(P: np.ndarray) -> np.ndarray:
-    """Probabilities with non-finite or negative entries at 0, rows summing to 1 (uniform where a row has nothing)."""
+    """Return the probabilities with non-finite or negative entries at 0 and rows summing to 1.
+
+    A row with nothing left (sum 0) becomes uniform.
+
+    Parameters
+    ----------
+    P : numpy.ndarray, shape (samples, bins)
+        The probabilities; not changed.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (samples, bins)
+        The cleaned copy.
+    """
     P = np.array(P, dtype=float)
     P[~np.isfinite(P)] = 0.0
     P = np.maximum(P, 0.0)
@@ -51,7 +85,21 @@ def clean(P: np.ndarray) -> np.ndarray:
 
 @numba.njit(cache=True)
 def _compensated_column_means(values):
-    """Mean of each column over its non-NaN entries, added in order with Kahan compensation (pandas' groupby mean)."""
+    """Compute the mean of each column over its non-NaN entries, added in order with Kahan compensation.
+
+    This is the way pandas' groupby mean adds. Compiled with numba (``njit``): `values` must be a C-contiguous
+    ``float64`` array.
+
+    Parameters
+    ----------
+    values : numpy.ndarray of float64, shape (samples, bins)
+        The entries.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (bins,)
+        The column means, NaN for a column without a non-NaN entry.
+    """
     n, m = values.shape
     means = np.empty(m)
     for j in range(m):
@@ -71,7 +119,27 @@ def _compensated_column_means(values):
 
 
 def _bin_means(values, how, skipna=False):
-    """The mean of each column of an (samples, bins) array (see BIN_MEANS); "compensated" always skips NaN."""
+    """Return the mean of each column of a (samples, bins) array (see `BIN_MEANS`); ``"compensated"`` always skips NaN.
+
+    Parameters
+    ----------
+    values : numpy.ndarray of float64, shape (samples, bins)
+        The entries.
+    how : {"numpy", "compensated"}
+        How to take the mean.
+    skipna : bool, default False
+        Leave NaN out of the ``"numpy"`` mean (``numpy.nanmean``).
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (bins,)
+        The column means.
+
+    Raises
+    ------
+    ValueError
+        `how` is not in `BIN_MEANS`.
+    """
     if how not in BIN_MEANS:
         raise ValueError(f"bin_mean must be one of {BIN_MEANS}, not {how!r}")
     if how == "compensated":
@@ -81,8 +149,22 @@ def _bin_means(values, how, skipna=False):
 
 
 def _fair_terms(squares, P, members):
-    """The squared errors less p(1-p)/(members-1) entry by entry; members is a scalar, one per sample or one per
-    entry."""
+    """Return the squared errors less ``p(1-p)/(members-1)`` entry by entry.
+
+    Parameters
+    ----------
+    squares : numpy.ndarray of float64, shape (samples, bins)
+        The squared errors.
+    P : numpy.ndarray of float64, shape (samples, bins)
+        The probabilities.
+    members : float or numpy.ndarray
+        The ensemble size: a scalar, one per sample (shape (samples,)) or one per entry (shape (samples, bins)).
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (samples, bins)
+        The fair terms; ``inf`` members take nothing off.
+    """
     members = np.asarray(members, dtype=float)
     if members.ndim == 1 and P.ndim == 2:
         members = members[:, None]
@@ -91,15 +173,39 @@ def _fair_terms(squares, P, members):
 
 def brier_scores(P: np.ndarray, Y: np.ndarray, members=None, *, scale: str = "sample", by_bin: bool = False,
                  bin_mean: str = "numpy", skipna: bool = False) -> dict:
-    """Brier score, and with `members` the fair Brier score, of (samples, bins) probabilities and outcomes.
+    """Compute the Brier score, and with `members` the fair Brier score, of probabilities and outcomes.
 
-    Returns {"brier": float, "fair_brier": float (only with members)}; with by_bin also "bin_brier" and
-    "bin_fair_brier", the mean over the samples of each bin's entries (arrays, one value per column; bin_mean says
-    how the mean is taken, see BIN_MEANS). skipna leaves NaN entries out of the means (HCWF: a case with one
-    member has 0/0 in the fair term when p is 0 or 1).
-    The fair score subtracts p(1-p)/(members-1) from each squared error, so members must exceed 1 (an infinite
-    member count, as of a climatology, takes nothing off). With the "sample" and "pooled" scales and one member
+    The fair score subtracts ``p(1-p)/(members-1)`` from each squared error, so `members` must exceed 1 (an infinite
+    member count, as of a climatology, takes nothing off). With the ``"sample"`` and ``"pooled"`` scales and one member
     count per sample or for all, the correction is summed over the bins before it is taken off, as blending does.
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (samples, bins)
+        The predicted probabilities.
+    Y : numpy.ndarray, shape (samples, bins)
+        The outcomes (0 or 1).
+    members : float or numpy.ndarray, optional
+        The ensemble size behind the probabilities (a scalar, one per sample or one per entry); None for no fair score.
+    scale : {"element", "sample", "pooled"}, default "sample"
+        How the squared errors are averaged (see the module description).
+    by_bin : bool, default False
+        Also return the score of each bin.
+    bin_mean : {"numpy", "compensated"}, default "numpy"
+        How the mean of a bin's entries is taken (see the module description).
+    skipna : bool, default False
+        Leave NaN entries out of the means (HCWF: a case with one member has 0/0 in the fair term when ``p`` is 0 or 1).
+
+    Returns
+    -------
+    dict
+        ``brier`` (float); ``fair_brier`` (only with `members`); with `by_bin` also ``bin_brier`` and ``bin_fair_brier``,
+        the mean over the samples of each bin's entries (``float64`` arrays, one value per column).
+
+    Raises
+    ------
+    ValueError
+        `scale` is not in `BRIER_SCALES`, or `bin_mean` is not in `BIN_MEANS` (with `by_bin`).
     """
     if scale not in BRIER_SCALES:
         raise ValueError(f"scale must be one of {BRIER_SCALES}, not {scale!r}")
@@ -127,18 +233,57 @@ def brier_scores(P: np.ndarray, Y: np.ndarray, members=None, *, scale: str = "sa
 
 
 def brier(P: np.ndarray, Y: np.ndarray, *, scale: str = "sample") -> float:
-    """Brier score of (samples, bins) probabilities and outcomes (see `brier_scores` for the scales)."""
+    """Compute the Brier score of (samples, bins) probabilities and outcomes.
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (samples, bins)
+        The predicted probabilities.
+    Y : numpy.ndarray, shape (samples, bins)
+        The outcomes (0 or 1).
+    scale : {"element", "sample", "pooled"}, default "sample"
+        How the squared errors are averaged (see `brier_scores`).
+
+    Returns
+    -------
+    float
+        The Brier score.
+    """
     return brier_scores(P, Y, scale=scale)["brier"]
 
 
 def rps_cases(P: np.ndarray, Y: np.ndarray, members=None, *, summation: str = "cumulative",
               valid: np.ndarray | None = None):
-    """The RPS of every sample, sum over the bins k of (cumulative p - cumulative y)^2, and with `members` the
-    fair RPS (each term less cum_p(1-cum_p)/(members-1)); returns (rps, fair_rps) arrays, fair_rps None
-    without members.
+    """Compute the RPS of every sample, and with `members` the fair RPS.
 
-    valid: (samples, bins) False where a sample has no such bin (padding of samples with fewer bins, which must
-    be the last columns); only the "prefix" summation takes it.
+    The RPS is the sum over the bins ``k`` of ``(cumulative p - cumulative y)^2``; the fair RPS takes
+    ``cum_p(1-cum_p)/(members-1)`` off each term.
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (samples, bins)
+        The predicted probabilities.
+    Y : numpy.ndarray, shape (samples, bins)
+        The outcomes (0 or 1).
+    members : float or numpy.ndarray, optional
+        The ensemble size behind the probabilities (a scalar, or shape (samples,)); None for no fair RPS.
+    summation : {"cumulative", "prefix"}, default "cumulative"
+        How the cumulative sums are made (see the module description).
+    valid : numpy.ndarray of bool, shape (samples, bins), optional
+        False where a sample has no such bin (padding of samples with fewer bins, which must be the last columns); only
+        the ``"prefix"`` summation takes it.
+
+    Returns
+    -------
+    rps : numpy.ndarray of float64, shape (samples,)
+        The RPS of each sample.
+    fair_rps : numpy.ndarray of float64, shape (samples,) or None
+        The fair RPS of each sample; None without `members`.
+
+    Raises
+    ------
+    ValueError
+        `summation` is not in `RPS_SUMMATIONS`, or `valid` is given with the ``"cumulative"`` summation.
     """
     if summation not in RPS_SUMMATIONS:
         raise ValueError(f"summation must be one of {RPS_SUMMATIONS}, not {summation!r}")
@@ -166,12 +311,40 @@ def rps_cases(P: np.ndarray, Y: np.ndarray, members=None, *, summation: str = "c
 
 
 def rps(P: np.ndarray, Y: np.ndarray, *, summation: str = "cumulative") -> float:
-    """Mean over the samples of the RPS of (samples, bins) probabilities and one-hot outcomes."""
+    """Compute the mean over the samples of the RPS of probabilities and one-hot outcomes.
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (samples, bins)
+        The predicted probabilities.
+    Y : numpy.ndarray, shape (samples, bins)
+        The one-hot outcomes.
+    summation : {"cumulative", "prefix"}, default "cumulative"
+        How the cumulative sums are made (see `rps_cases`).
+
+    Returns
+    -------
+    float
+        The mean RPS.
+    """
     return float(np.mean(rps_cases(P, Y, summation=summation)[0]))
 
 
 def auc(y01: np.ndarray, score: np.ndarray) -> float:
-    """AUC by the Wilcoxon rank-sum over the finite scores; NaN when there are no positives or no negatives."""
+    """Compute the AUC by the Wilcoxon rank sum over the finite scores.
+
+    Parameters
+    ----------
+    y01 : numpy.ndarray, shape (n,)
+        The outcomes (0 or 1; NaN entries are left out).
+    score : numpy.ndarray of float64, shape (n,)
+        The predicted scores; non-finite entries are left out.
+
+    Returns
+    -------
+    float
+        The AUC, NaN when there are no positives or no negatives.
+    """
     ok = np.isfinite(score) & ~np.isnan(y01)
     y = y01[ok].astype(int)
     s = score[ok]
@@ -186,10 +359,25 @@ def auc(y01: np.ndarray, score: np.ndarray) -> float:
 
 
 def grouped_auc(y01: np.ndarray, score: np.ndarray, group: np.ndarray, n_groups: int) -> np.ndarray:
-    """`auc` of each group (codes 0..n_groups-1) of finite scores and 0/1 outcomes, from one sort of all the scores.
+    """Compute the `auc` of each group of finite scores and 0/1 outcomes, from one sort of all the scores.
 
-    The ranks within a group, ties averaged, and so the rank sums are those of `auc` on that group's values alone;
-    NaN for a group without positives or without negatives.
+    The ranks within a group, ties averaged, and so the rank sums are those of `auc` on that group's values alone.
+
+    Parameters
+    ----------
+    y01 : numpy.ndarray, shape (n,)
+        The outcomes (0 or 1).
+    score : numpy.ndarray of float64, shape (n,)
+        The finite predicted scores.
+    group : numpy.ndarray of int, shape (n,)
+        The group code of each entry, in ``0 .. n_groups - 1``.
+    n_groups : int
+        The number of groups.
+
+    Returns
+    -------
+    numpy.ndarray of float64, shape (n_groups,)
+        The AUC of each group, NaN for a group without positives or without negatives.
     """
     y01 = np.asarray(y01)
     group = np.asarray(group)
@@ -220,8 +408,23 @@ def grouped_auc(y01: np.ndarray, score: np.ndarray, group: np.ndarray, n_groups:
 
 
 def pietra(P: np.ndarray, Y: np.ndarray) -> float:
-    """Pietra index: the Kolmogorov-Smirnov statistic between the probabilities of the bins that happened and of
-    those that did not."""
+    """Compute the Pietra index.
+
+    This is the Kolmogorov-Smirnov statistic between the probabilities of the bins that happened and of those that
+    did not.
+
+    Parameters
+    ----------
+    P : numpy.ndarray
+        The predicted probabilities, any shape.
+    Y : numpy.ndarray
+        The outcomes (0 or 1), the shape of `P`.
+
+    Returns
+    -------
+    float
+        The statistic, NaN when no bin happened or none failed to.
+    """
     p = P.flatten()
     y = Y.flatten().astype(int)
     positive, negative = p[y == 1], p[y == 0]
@@ -233,19 +436,51 @@ def pietra(P: np.ndarray, Y: np.ndarray) -> float:
 
 
 def skill_score(score, reference):
-    """1 - score/reference: positive when the score beats the reference (both scores lower-is-better)."""
+    """Compute ``1 - score/reference``: positive when the score beats the reference (both scores lower-is-better).
+
+    Parameters
+    ----------
+    score : float or numpy.ndarray
+        The score being judged.
+    reference : float or numpy.ndarray
+        The reference score.
+
+    Returns
+    -------
+    float or numpy.ndarray
+        The skill score; ``inf``, ``-inf`` or NaN when `reference` is 0 (floats follow numpy division).
+    """
     return 1 - (score / reference)
 
 
 def cell_metrics(P: np.ndarray, outcome: np.ndarray, ids: np.ndarray, labels, *,
                  allowed: np.ndarray | None = None, earlier: np.ndarray | None = None) -> pd.DataFrame:
-    """Per-unit Brier, RPS, AUC and n, and a pooled 'ALL' row that adds the Pietra index and each bin's Brier
-    and AUC.
+    """Compute per-unit Brier, RPS, AUC and n, and a pooled ``ALL`` row.
 
-    P: (samples, bins) over the interval bins (`labels`); outcome: their codes (-1 without one); allowed: the
-    samples scored (the dissemination units); earlier: the probability of an onset before the issue, prepended
-    for the RPS (no outcome is 'earlier'). Samples without an outcome or with a missing probability are left
-    out. Brier is the "sample" scale, RPS the "cumulative" summation.
+    The pooled row adds the Pietra index and each bin's Brier score and AUC. Samples without an outcome or with a
+    missing probability are left out. Brier is the ``"sample"`` scale (``"pooled"`` for the pooled row), RPS the
+    ``"cumulative"`` summation.
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (samples, bins)
+        The probabilities of the interval bins (`labels`).
+    outcome : numpy.ndarray of int, shape (samples,)
+        The code of the bin that happened (-1 without one).
+    ids : numpy.ndarray, shape (samples,)
+        The unit of each sample.
+    labels : sequence of str
+        The label of each column of `P`.
+    allowed : numpy.ndarray of bool, shape (samples,), optional
+        The samples scored (the dissemination units); all when None.
+    earlier : numpy.ndarray of float64, shape (samples,), optional
+        The probability of an onset before the issue, prepended for the RPS (no outcome is "earlier").
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per unit (``id``, ``brier``, ``rps``, ``auc``, ``n``) and the ``ALL`` row (with ``lat`` and ``lon`` NaN,
+        ``pietra`` and the columns ``brier_<label>`` and ``auc_<label>``). Empty when no sample is kept.
     """
     P = np.asarray(P, dtype=float)
     keep = (outcome >= 0) & ~np.isnan(P).any(axis=1)
@@ -304,11 +539,36 @@ def cell_metrics(P: np.ndarray, outcome: np.ndarray, ids: np.ndarray, labels, *,
 
 def yearly_metrics(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, model: str, method: str, *,
                    auc_method: str = "rank") -> list[dict]:
-    """Per-year pooled Brier, RPS and AUC over the interval bins, every unit.
+    """Compute the per-year pooled Brier, RPS and AUC over the interval bins, every unit.
 
-    auc_method: "rank" is the rank-sum AUC (`auc`); "sklearn" is sklearn's roc_auc_score (NaN where a year lacks
-    positives or negatives), which blending's yearly scores use and which differs from the rank-sum one in the last
-    bits.
+    Samples without an outcome or with a missing probability are left out.
+
+    Parameters
+    ----------
+    P : numpy.ndarray of float64, shape (samples, bins)
+        The probabilities of the interval bins.
+    outcome : numpy.ndarray of int, shape (samples,)
+        The code of the bin that happened (-1 without one).
+    year : numpy.ndarray, shape (samples,)
+        The year of each sample.
+    model : str
+        The model name written in each row.
+    method : str
+        The cross-validation method written in each row (``cv_method``).
+    auc_method : {"rank", "sklearn"}, default "rank"
+        ``"rank"`` is the rank-sum AUC (`auc`); ``"sklearn"`` is sklearn's ``roc_auc_score`` (NaN where a year lacks
+        positives or negatives), which blending's yearly scores use and which differs from the rank-sum one in the last
+        bits.
+
+    Returns
+    -------
+    list of dict
+        One dict per year: ``year``, ``model``, ``cv_method``, ``brier``, ``rps`` and ``auc``.
+
+    Raises
+    ------
+    ValueError
+        `auc_method` is not in `AUC_METHODS`.
     """
     if auc_method not in AUC_METHODS:
         raise ValueError(f"auc_method must be one of {AUC_METHODS}, not {auc_method!r}")
@@ -329,6 +589,20 @@ def yearly_metrics(P: np.ndarray, outcome: np.ndarray, year: np.ndarray, model: 
 
 
 def _sklearn_auc(Y: np.ndarray, P: np.ndarray) -> float:
+    """Compute sklearn's ``roc_auc_score`` of flattened outcomes and probabilities, NaN when it cannot be computed.
+
+    Parameters
+    ----------
+    Y : numpy.ndarray
+        The outcomes (0 or 1), any shape.
+    P : numpy.ndarray
+        The probabilities, the shape of `Y`.
+
+    Returns
+    -------
+    float
+        The score; NaN when the outcomes are all of one class or sklearn raises.
+    """
     from sklearn.metrics import roc_auc_score
 
     y_long, p_long = Y.flatten(), P.flatten()
@@ -339,7 +613,27 @@ def _sklearn_auc(Y: np.ndarray, P: np.ndarray) -> float:
 
 
 def pooled_skill(cells: pd.DataFrame, baseline: str = "unc_clim_raw") -> pd.DataFrame:
-    """The pooled rows of every model, with skill against the baseline's (BSS, RPSS, AUC difference x100)."""
+    """Return the pooled rows of every model, with skill against the baseline's.
+
+    Parameters
+    ----------
+    cells : pandas.DataFrame
+        The per-unit and pooled rows of every model: ``id`` (``ALL`` for the pooled row), ``model``, ``brier``, ``rps``
+        and ``auc`` (see `cell_metrics`).
+    baseline : str, default "unc_clim_raw"
+        The model whose pooled row is the reference.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The pooled rows with ``brier_skill`` (BSS), ``rps_skill`` (RPSS) and ``AUC diff`` (the AUC difference times 100)
+        against the baseline.
+
+    Raises
+    ------
+    ValueError
+        No pooled row of `baseline` is in `cells`.
+    """
     pooled = cells[cells["id"] == "ALL"].copy()
     reference = pooled[pooled["model"] == baseline]
     if reference.empty:

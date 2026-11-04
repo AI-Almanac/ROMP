@@ -1,7 +1,8 @@
 """Command-line parser that overrides run-config values, plus argparse type helpers and the config path of the command line.
 
-The config itself is resolved by hcwf.config.build (the one resolve path); this module only finds the config named on
-the command line.
+The config itself is resolved by `hcwf.config.build` (the one resolve path); this module only finds the config named on
+the command line. `create_parser` defines the override flags and the run-control flags, `parse_overrides` returns the
+flags that were given, and `hcwf.cli.driver` reads the run-control flags and runs the config.
 """
 import argparse
 import os
@@ -13,11 +14,18 @@ from hcwf.errors import HCWFConfigError
 OVERRIDE_FLAGS = ("model_list", "verification_window_list", "max_forecast_day", "dry_spell_check", "forecast_history",
                   "threshold_source", "onset_percentage_threshold", "tolerance_days_list", "day_bins", "start_date",
                   "end_date", "show_plot", "show_panel", "probabilistic", "parallel", "region")
-"""The command-line flags that override a config value (the flat key names; `model_list` selects models of `models:`)."""
+"""The command-line flags that override a config value (the flat key names; ``model_list`` selects models of ``models:``)."""
 
 
 def create_parser():
-    """The command-line parser: every override flag defaults to None (not given), the run-control flags are flags."""
+    """Create the command-line parser: every override flag defaults to None (not given), the run-control flags are flags.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The parser, with the override flags (`OVERRIDE_FLAGS`) and the ``--check``, ``--alignment``, ``--overwrite``,
+        ``--quiet`` and ``--verbose`` flags.
+    """
     parser = argparse.ArgumentParser(description="HCWF Package Parameter Loader")
     add = parser.add_argument
     add("--model_list", nargs="+", default=None, help="evaluate only these models of the config's models: section")
@@ -57,10 +65,20 @@ def create_parser():
 
 
 def parse_overrides(cli_args=None) -> dict:
-    """The config overrides given on the command line, {flat key: value}; unknown arguments are ignored.
+    """Return the config overrides given on the command line as ``{flat key: value}``; unknown arguments are ignored.
 
-    Only the flags actually given are returned; build.resolve validates and records them as 'command line'.
-    cli_args is the argument list (sys.argv[1:] when None).
+    Only the flags actually given are returned; `hcwf.config.build.resolve` validates and records them as
+    ``command line``.
+
+    Parameters
+    ----------
+    cli_args : list of str, optional
+        The argument list; ``sys.argv[1:]`` when None.
+
+    Returns
+    -------
+    dict
+        The given override flags; ``model_list`` is a tuple.
     """
     args, _ = create_parser().parse_known_args(cli_args)
     out = {key: getattr(args, key) for key in OVERRIDE_FLAGS if getattr(args, key) is not None}
@@ -70,16 +88,42 @@ def parse_overrides(cli_args=None) -> dict:
 
 
 class ForceTupleAction(argparse.Action):
-    """Custom action to convert nargs list into a tuple automatically."""
+    """An argparse action that converts the ``nargs`` list into a tuple."""
 
     def __call__(self, parser, namespace, values, option_string=None):
-        """Store values on the namespace as a tuple."""
+        """Store values on the namespace as a tuple.
+
+        Parameters
+        ----------
+        parser : argparse.ArgumentParser
+            The parser (not used).
+        namespace : argparse.Namespace
+            Where the value is stored, under ``dest``.
+        values : sequence
+            The values of the flag.
+        option_string : str, optional
+            The flag as written (not used).
+        """
         setattr(namespace, self.dest, tuple(values))
 
 
 def parse_window_list(string):
-    """
-    Converts a string input like '1,15 16,20' into ((1, 15), (16, 20))
+    """Convert a string such as ``'1,15 16,20'`` into ``((1, 15), (16, 20))``.
+
+    Parameters
+    ----------
+    string : str
+        Space-separated ``start,end`` pairs of int.
+
+    Returns
+    -------
+    tuple of tuple of int
+        The pairs.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        The string is not in that format.
     """
     try:
         # Split by space to get individual pairs, then split by comma
@@ -90,7 +134,23 @@ def parse_window_list(string):
 
 
 def str2bool(v):
-    """Convert a yes/no/true/false-style string (or a bool) to bool for argparse."""
+    """Convert a yes/no/true/false-style string (or a bool) to bool for argparse.
+
+    Parameters
+    ----------
+    v : str or bool
+        ``yes``, ``true``, ``t``, ``y``, ``1`` or ``no``, ``false``, ``f``, ``n``, ``0`` in any case, or a bool.
+
+    Returns
+    -------
+    bool
+        The value.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        `v` is not one of those.
+    """
     if isinstance(v, bool):
         return v
     if v.lower() in ('yes', 'True', 'true', 't', 'y', '1'):
@@ -102,7 +162,23 @@ def str2bool(v):
 
 
 def ensure_config_exists(param_path: str) -> Path:
-    """Return param_path expanded and resolved, raising FileNotFoundError (with a hint) if it doesn't exist."""
+    """Return `param_path` expanded and resolved, raising `FileNotFoundError` (with a hint) if it does not exist.
+
+    Parameters
+    ----------
+    param_path : str
+        The path of the config file; ``~`` is expanded.
+
+    Returns
+    -------
+    pathlib.Path
+        The absolute path of the file.
+
+    Raises
+    ------
+    FileNotFoundError
+        The path is not a file.
+    """
     path = Path(param_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(
@@ -111,10 +187,25 @@ def ensure_config_exists(param_path: str) -> Path:
 
 
 def _get_config_path_pre_parse(cli_args=None):
-    """Return the config path from -p/--param in cli_args, else the HCWF_CONFIG environment variable.
+    """Return the config path from ``-p``/``--param`` in `cli_args`, else the ``HCWF_CONFIG`` environment variable.
 
-    A run must always say which config it uses; with neither set this raises,
-    explaining how to give one (start one with `hcwf-run init`, or see examples/config.yaml).
+    A run must always say which config it uses; with neither set this raises, explaining how to give one (start one with
+    ``hcwf-run init``, or see ``examples/config.yaml``).
+
+    Parameters
+    ----------
+    cli_args : list of str, optional
+        The argument list; ``sys.argv[1:]`` when None.
+
+    Returns
+    -------
+    str
+        The path as given.
+
+    Raises
+    ------
+    HCWFConfigError
+        No config is named.
     """
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("-p", "--param", default=None)

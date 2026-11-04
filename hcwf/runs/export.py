@@ -1,30 +1,34 @@
-"""NetCDF export of the gridded onset dates an HCWF run scores: what is collected here is written by hcwf.io.output.
+"""Export the gridded onset dates an HCWF run scores as NetCDF; what is collected here is written by `hcwf.io.output`.
+
+Use it from Python::
 
     from hcwf.runs.export import export_onsets
     paths = export_onsets(cfg, sources=["observed", "AIFS"], out="onsets")   # {source: Path}
 
-or ``hcwf-run export -p run.yaml [--sources observed,AIFS,climatology] [--out DIR]``, or ``output.save_onsets:
-true`` in the run file (files go to the run's onsets/ folder, dir_out/onsets/ with an explicit dir_out, before scoring).
+or with ``hcwf-run export -p run.yaml [--sources observed,AIFS,climatology] [--out DIR]``, or ``output.save_onsets:
+true`` in the run file (files go to the run's ``onsets/`` folder, ``dir_out/onsets/`` with an explicit ``dir_out``,
+before scoring).
 
 One file per source, each over all evaluated years: ``onsets_observed.nc``, ``onsets_<model>.nc`` for every
 model, ``onsets_climatology.nc`` and ``onsets_conditional_climatology.nc``. The values are not re-detected
-with other settings: every number comes from the functions the scoring code calls (hcwf.onset.detect,
-hcwf.references.climatology, hcwf.references.conditional), with the keyword arguments the scoring builds for
-the same case (Setting and Case dataclasses), so masks, lead window (after shortening), forecast history,
-thresholds and definition are the scored ones. Unlike the scoring tables, which keep only the cases with an
-observed onset and an init before it, the files cover every init and cell; the flag ``scored`` marks the cases
+with other settings: every number comes from the functions the scoring code calls (`hcwf.onset.detect`,
+`hcwf.references.climatology`, `hcwf.references.conditional`), with the keyword arguments the scoring builds for
+the same case (`hcwf.config.model.Case` and the setting dataclasses), so masks, lead window (after shortening),
+forecast history, thresholds and definition are the scored ones. Unlike the scoring tables, which keep only the cases
+with an observed onset and an init before it, the files cover every init and cell; the flag ``scored`` marks the cases
 the scoring keeps.
 
 Dates are CF time variables (int32 days since 1970-01-01 in the data's calendar, cftime for non-standard
 calendars, the fill value meaning no onset); day numbers and leads are float32 with NaN for none. Every file
 has CF-1.8 global attributes holding the definition, thresholds, masks, forecast history, lead window, data
-paths, versions and the resolved run config (see docs/onset_in_hcwf.md, "Exporting onset dates").
+paths, versions and the resolved run config (see ``docs/onset_in_hcwf.md``, "Exporting onset dates").
 """
 from __future__ import annotations
 
 import datetime
 import warnings
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
 import pandas as pd
@@ -56,7 +60,9 @@ import logging
 log = logging.getLogger(__name__)
 
 OBSERVED = "observed"
+"""The name of the observed source."""
 CLIMATOLOGY = "climatology"
+"""The name of the traditional climatology source."""
 _NO_OBS = np.datetime64("2262-01-01", "ns")
 """Stand-in observed onset (after every init) that makes every cell a case for the climatology functions."""
 
@@ -64,12 +70,34 @@ _NO_OBS = np.datetime64("2262-01-01", "ns")
 # --- configuration ----------------------------------------------------------------------------------
 
 def onsets_folder(rc: RunConfig) -> Path:
-    """The folder of the onset files: the run's ``onsets`` folder, or dir_out/onsets."""
+    """Return the folder of the onset files: the run's ``onsets`` folder, or ``dir_out/onsets``.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    pathlib.Path
+        The folder.
+    """
     return Path(rc.paths.onsets) if rc.paths is not None else Path(rc.output.data_dir) / "onsets"
 
 
 def default_sources(rc: RunConfig) -> list[str]:
-    """The sources a run uses: observed, every model and the climatology reference when it is one."""
+    """Return the sources a run uses: observed, every model and the climatology reference when it is one.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    list of str
+        The source names.
+    """
     names = [OBSERVED, *(m.name for m in rc.models)]
     if rc.reference.model in (CLIMATOLOGY, CONDITIONAL_CLIMATOLOGY):
         names.append(rc.reference.model)
@@ -77,7 +105,25 @@ def default_sources(rc: RunConfig) -> list[str]:
 
 
 def _check_sources(rc: RunConfig, sources) -> list[str]:
-    """The requested sources (a list or comma-separated text) checked against the ones the config can export."""
+    """Check the requested sources against the ones the config can export.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    sources : list of str or str or None
+        The requested sources, a list or comma-separated text; None for the default (`default_sources`).
+
+    Returns
+    -------
+    list of str
+        The sources, stripped.
+
+    Raises
+    ------
+    ValueError
+        A source is not ``observed``, a model of the run, ``climatology`` or ``conditional_climatology``.
+    """
     if sources is None:
         return default_sources(rc)
     if isinstance(sources, str):
@@ -93,7 +139,20 @@ def _check_sources(rc: RunConfig, sources) -> list[str]:
 # --- helpers for dates, attributes and encoding -------------------------------------------------------
 
 def _mask_summary(area: AreaSpec, sample: xr.DataArray) -> dict:
-    """The mask settings and how many cells (or units) of the loaded grid have no data at all in the sample variable."""
+    """Return the mask settings and how many cells (or units) of the loaded grid have no data at all in the sample.
+
+    Parameters
+    ----------
+    area : hcwf.config.model.AreaSpec
+        The area settings (region, mask files, polygon).
+    sample : xarray.DataArray
+        A sample of the loaded data; a cell has no data when it is NaN over every non-spatial dim.
+
+    Returns
+    -------
+    dict
+        ``region``, ``nc_mask``, ``shpfile_dir``, ``polygon``, ``n_cells`` and ``n_cells_without_data``.
+    """
     spatial = [d for d in sample.dims if d in ("lat", "lon", "unit")]
     other = [d for d in sample.dims if d not in spatial]
     empty = sample.isnull().all(other) if other else sample.isnull()
@@ -102,7 +161,13 @@ def _mask_summary(area: AreaSpec, sample: xr.DataArray) -> dict:
 
 
 def _version() -> str:
-    """The installed version of HCWF."""
+    """Return the installed version of HCWF.
+
+    Returns
+    -------
+    str
+        The version, or ``"unknown"`` when the package is not installed.
+    """
     from importlib import metadata
 
     try:
@@ -112,7 +177,35 @@ def _version() -> str:
 
 
 def _provenance(rc: RunConfig, case: Case, source: str, kind: str, thresholds, mask: dict, years, extra: dict) -> dict:
-    """Global attributes of an export file: CF convention, definition, thresholds, mask, settings, paths, versions, config."""
+    """Return the global attributes of an export file.
+
+    They hold the CF convention, the definition, the thresholds, the mask, the settings, the paths, the versions and the
+    resolved config.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    case : hcwf.config.model.Case
+        The case that carries the source's model.
+    source : str
+        The name of the source.
+    kind : str
+        What the source is (``"observed"``, ``"ensemble forecast"``, ...), written as ``source_kind``.
+    thresholds : object
+        The thresholds of the source, hashed into ``threshold_values_hash``; None for none.
+    mask : dict
+        The mask summary (`_mask_summary`).
+    years : iterable of int
+        The years the file covers.
+    extra : dict
+        More attributes, which override those above.
+
+    Returns
+    -------
+    dict
+        The attributes in the form NetCDF accepts (`hcwf.io.output.netcdf_attrs`).
+    """
     setup, ev, obs, model = rc.onset, rc.evaluation, rc.observations, case.model
     d = setup.definition
     window = ev.lead_window or (1, ev.max_forecast_day)
@@ -155,8 +248,21 @@ def _provenance(rc: RunConfig, case: Case, source: str, kind: str, thresholds, m
 
 # --- observed -----------------------------------------------------------------------------------------
 
-def _years_loop(rc: RunConfig, load):
-    """Yield (year, loaded) for every evaluated year, skipping (with a warning) years whose files are missing."""
+def _years_loop(rc: RunConfig, load) -> Iterator[tuple]:
+    """Yield ``(year, loaded)`` for every evaluated year, skipping (with a warning) years whose files are missing.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    load : callable
+        ``load(year)`` returns what to yield with the year; a `FileNotFoundError` skips the year.
+
+    Yields
+    ------
+    tuple of (int, object)
+        The year and what `load` returned for it.
+    """
     for year in rc.evaluation.years:
         try:
             yield year, load(year)
@@ -165,9 +271,25 @@ def _years_loop(rc: RunConfig, load):
 
 
 def collect_observed(rc: RunConfig) -> xr.Dataset:
-    """The observed onsets of every evaluated year, from hcwf.onset.detect.detect_observed_result (what is scored).
+    """Collect the observed onsets of every evaluated year, as `hcwf.onset.detect.detect_observed_dataset` gives them.
 
-    Dims (year, season, lat, lon), or (year, season, unit) on evaluation units: onset_date, onset_doy and status.
+    These are the observed onsets that are scored. The Dataset has dims (year, season, lat, lon), or (year, season,
+    unit) on evaluation units, and the variables ``onset_date``, ``onset_doy`` and ``status``.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    xarray.Dataset
+        The observed onsets with the global attributes of `_provenance`.
+
+    Raises
+    ------
+    ValueError
+        No observation year could be read.
     """
     case = rc.first_case(rc.models[0].name)
     thresholds = thresholds_of(rc, case.model)
@@ -204,13 +326,31 @@ def collect_observed(rc: RunConfig) -> xr.Dataset:
 # --- models -------------------------------------------------------------------------------------------
 
 def collect_model(rc: RunConfig, model: str) -> xr.Dataset:
-    """The onsets of one forecast model for every evaluated year, from hcwf.onset.detect._detect_forecast.
+    """Collect the onsets of one forecast model for every evaluated year, as `hcwf.onset.detect.detect_forecast` gives them.
 
-    Dims (init_time, [member], season, lat, lon), or with unit instead of lat and lon on evaluation units: onset_date, onset_doy, onset_lead (the engine's 1-based lead,
-    <= 0 when back-dated into the observed history), onset_day (days from the init date to the onset date, as
-    the scoring tables' onset_day), status and scored. Ensembles (the run's `probabilistic`) also have
-    members_by_status, onset_probability and the ensemble onset the scoring uses: ensemble_onset_date,
-    ensemble_onset_doy, ensemble_onset_day and ensemble_status.
+    The Dataset has dims (init_time, [member], season, lat, lon), or unit instead of lat and lon on evaluation units, and
+    the variables ``onset_date``, ``onset_doy``, ``onset_lead`` (the engine's 1-based lead, <= 0 when back-dated into
+    the observed history), ``onset_day`` (days from the init date to the onset date, as the scoring tables'
+    ``onset_day``), ``status`` and ``scored``. Ensembles (the run's ``probabilistic``) also have ``members_by_status``,
+    ``onset_probability`` and the ensemble onset the scoring uses: ``ensemble_onset_date``, ``ensemble_onset_doy``,
+    ``ensemble_onset_day`` and ``ensemble_status``.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    model : str
+        The name of the model.
+
+    Returns
+    -------
+    xarray.Dataset
+        The model's onsets with the global attributes of `_provenance`.
+
+    Raises
+    ------
+    ValueError
+        No forecast year of the model could be read.
     """
     case = rc.first_case(model)
     ev, threshold = rc.evaluation, rc.onset_options.percentage_threshold
@@ -219,7 +359,7 @@ def collect_model(rc: RunConfig, model: str) -> xr.Dataset:
     parts, sample, calendar, setup = [], None, "standard", None
 
     def load(year):
-        """The year's rain, forecast and observed onsets, as the scoring loads them."""
+        """Load the year's rain and forecast, as the scoring loads them."""
         return observations_of(year, rc), forecast_of(year, rc, case.model, ensemble=ensemble)
 
     for year, (rain, p_model) in _years_loop(rc, load):
@@ -247,7 +387,23 @@ def collect_model(rc: RunConfig, model: str) -> xr.Dataset:
 
 
 def _model_year(out: dict, ensemble: bool, threshold: float) -> xr.Dataset:
-    """One year of a model as a Dataset from the dict detect_forecast returns."""
+    """Return one year of a model as a Dataset, from the dict `hcwf.onset.detect.detect_forecast` returns.
+
+    Parameters
+    ----------
+    out : dict
+        The result of ``detect_forecast``.
+    ensemble : bool
+        Whether the run is probabilistic; the ensemble summary is then added.
+    threshold : float
+        The share of members that must have an onset for the ensemble onset (``onset.percentage_threshold``).
+
+    Returns
+    -------
+    xarray.Dataset
+        The year's onset variables over (init_time, season, lat, lon) or (init_time, season, unit), plus member when
+        present.
+    """
     res, calendar = out["result"], out["calendar"]
     dims = tuple(res["status"].dims)
     spatial = out["spatial"]
@@ -283,7 +439,29 @@ def _model_year(out: dict, ensemble: bool, threshold: float) -> xr.Dataset:
 
 def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: float, calendar: str,
                         init_days: np.ndarray) -> None:
-    """Add the ensemble summary (the engine's, and the ensemble onset HCWF scores) to variables, in place."""
+    """Add the ensemble summary (the engine's, and the ensemble onset HCWF scores) to `variables`, in place.
+
+    Parameters
+    ----------
+    variables : dict
+        The Dataset variables of the year; ``members_by_status``, ``onset_probability``, ``ensemble_onset_date``,
+        ``ensemble_onset_doy``, ``ensemble_onset_day`` and ``ensemble_status`` are added.
+    out : dict
+        The result of `hcwf.onset.detect.detect_forecast`.
+    res : xarray.Dataset
+        ``out["result"]``.
+    threshold : float
+        The share of members that must have an onset for the ensemble onset.
+    calendar : str
+        The calendar of the data.
+    init_days : numpy.ndarray
+        The init dates as days since 1970-01-01, one per init.
+
+    Returns
+    -------
+    None
+        Nothing is returned; `variables` is changed.
+    """
     spatial = out["spatial"]
     dims = ("init_time", "season", *spatial)
     by_status = res["members_by_status"].transpose("status_code", *dims)
@@ -315,7 +493,29 @@ def _ensemble_variables(variables: dict, out: dict, res: xr.Dataset, threshold: 
 # --- climatology references -----------------------------------------------------------------------------
 
 def _reference_inputs(rc: RunConfig, model: str):
-    """The reference's case, thresholds and per-year (year, observed onsets, init dates, rain sample) of a climatology reference."""
+    """Return the case, thresholds and per-year inputs of a climatology reference.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    model : str
+        The reference, ``climatology`` or ``conditional_climatology``.
+
+    Returns
+    -------
+    case : hcwf.config.model.Case
+        The reference's first case.
+    thresholds : object
+        The reference's thresholds.
+    years : list of tuple
+        One ``(year, observed onsets, init dates, rain)`` per readable year.
+
+    Raises
+    ------
+    ValueError
+        No observation year could be read.
+    """
     case = rc.first_case(model, reference_as=model)
     thresholds = thresholds_of(rc, case.model)
     years = []
@@ -327,19 +527,62 @@ def _reference_inputs(rc: RunConfig, model: str):
 
 
 def _scored(init_dates, obs_da: xr.DataArray) -> np.ndarray:
-    """The cases HCWF scores, (init, lat, lon) or (init, unit) bool: the cell has an observed onset and the init is before it."""
+    """Return the cases HCWF scores: the cell has an observed onset and the init is before it.
+
+    Parameters
+    ----------
+    init_dates : sequence of datetime-like
+        The init dates of the year.
+    obs_da : xarray.DataArray
+        The year's observed onsets.
+
+    Returns
+    -------
+    numpy.ndarray of bool, shape (init, lat, lon) or (init, unit)
+        True for a scored case.
+    """
     obs = obs_da.transpose(*axes.spatial_dims(obs_da.dims)).values.astype("datetime64[ns]")
     inits = pd.DatetimeIndex([pd.to_datetime(t) for t in init_dates]).values.astype("datetime64[ns]")
     return ~np.isnat(obs)[None] & (axes.broadcast_rows(inits, obs.ndim + 1) < obs[None])
 
 
 def _stand_in(obs_da: xr.DataArray) -> xr.DataArray:
-    """Observed onsets far in the future, so that the climatology functions return a row for every init and cell."""
+    """Return observed onsets far in the future, so that the climatology functions return a row for every init and cell.
+
+    Parameters
+    ----------
+    obs_da : xarray.DataArray
+        The observed onsets, whose shape and coordinates are copied.
+
+    Returns
+    -------
+    xarray.DataArray
+        ``datetime64[ns]`` with every value set to ``_NO_OBS``.
+    """
     return xr.DataArray(np.full(obs_da.shape, _NO_OBS), coords=obs_da.coords, dims=obs_da.dims)
 
 
 def _reference_year(table: pd.DataFrame, init_dates, obs_da: xr.DataArray, scored: np.ndarray, season: str) -> xr.Dataset:
-    """One year of a climatology reference from the table of its forecast functions (a row per init, lat, lon or unit)."""
+    """Return one year of a climatology reference from the table of its forecast functions.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        A row per init, lat and lon (or unit), with ``onset_date`` and ``onset_day``.
+    init_dates : sequence of datetime-like
+        The init dates of the year.
+    obs_da : xarray.DataArray
+        The year's observed onsets, whose grid is used.
+    scored : numpy.ndarray of bool
+        The scored cases (`_scored`).
+    season : str
+        The onset season label.
+
+    Returns
+    -------
+    xarray.Dataset
+        The onset variables over (init_time, season, lat, lon) or (init_time, season, unit).
+    """
     spatial = axes.spatial_dims(obs_da.dims)
     shape = (len(init_dates), 1, *(obs_da.sizes[d] for d in spatial))
     dims = ("init_time", "season", *spatial)
@@ -364,12 +607,22 @@ def _reference_year(table: pd.DataFrame, init_dates, obs_da: xr.DataArray, score
 
 
 def collect_climatology(rc: RunConfig) -> xr.Dataset:
-    """The traditional climatology: its onset per cell and, per init, the forecast HCWF scores from it.
+    """Collect the traditional climatology: its onset per cell and, per init, the forecast HCWF scores from it.
 
-    climatological_onset_doy and climatological_onset_date (season, lat, lon) come from
-    hcwf.references.climatology.climatological_onset (the rounded mean day of the climatology years);
-    the per-init onset_date, onset_doy, onset_lead, onset_day, status and scored (init_time, season, lat, lon)
-    from compute_climatology_as_forecast (a date within the lead window, else no onset).
+    ``climatological_onset_doy`` and ``climatological_onset_date`` (season, lat, lon) come from
+    `hcwf.references.climatology.climatological_onset` (the rounded mean day of the climatology years); the per-init
+    ``onset_date``, ``onset_doy``, ``onset_lead``, ``onset_day``, ``status`` and ``scored`` (init_time, season, lat, lon)
+    from `hcwf.references.climatology.compute_climatology_as_forecast` (a date within the lead window, else no onset).
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    xarray.Dataset
+        The climatology with the global attributes of `_provenance`.
     """
     case, thresholds, years = _reference_inputs(rc, CLIMATOLOGY)
     setup, ev = rc.onset, rc.evaluation
@@ -409,13 +662,23 @@ def collect_climatology(rc: RunConfig) -> xr.Dataset:
 
 
 def collect_conditional_climatology(rc: RunConfig) -> xr.Dataset:
-    """The conditional climatology: per init its median onset and its full onset probability by lead.
+    """Collect the conditional climatology: per init its median onset and its full onset probability by lead.
 
-    onset_date, onset_doy, onset_lead, onset_day, status and scored (init_time, season, lat, lon) come from
-    compute_conditional_climatology_as_forecast (the first lead whose conditional CDF reaches 0.5; no onset
-    when it does not or when the cell has no KDE). onset_probability
-    (init_time, season, lead, lat, lon) is that conditional CDF, P(onset on or before the lead | no onset by
-    the init), for leads 0 to max_forecast_day (0 at lead 0), NaN for cells without a KDE.
+    ``onset_date``, ``onset_doy``, ``onset_lead``, ``onset_day``, ``status`` and ``scored`` (init_time, season, lat, lon)
+    come from `hcwf.references.conditional.compute_conditional_climatology_as_forecast` (the first lead whose
+    conditional CDF reaches 0.5; no onset when it does not or when the cell has no KDE). ``onset_probability``
+    (init_time, season, lead, lat, lon) is that conditional CDF, P(onset on or before the lead | no onset by the init),
+    for leads 0 to ``max_forecast_day`` (0 at lead 0), NaN for cells without a KDE.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    xarray.Dataset
+        The conditional climatology with the global attributes of `_provenance`.
     """
     case, thresholds, years = _reference_inputs(rc, CONDITIONAL_CLIMATOLOGY)
     setup, ev = rc.onset, rc.evaluation
@@ -457,7 +720,20 @@ def collect_conditional_climatology(rc: RunConfig) -> xr.Dataset:
 # --- entry point --------------------------------------------------------------------------------------
 
 def _collect(rc: RunConfig, source: str) -> xr.Dataset:
-    """The Dataset of one source."""
+    """Collect the Dataset of one source.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+    source : str
+        ``observed``, ``climatology``, ``conditional_climatology`` or a model name.
+
+    Returns
+    -------
+    xarray.Dataset
+        The source's onsets.
+    """
     if source == OBSERVED:
         return collect_observed(rc)
     if source == CLIMATOLOGY:
@@ -468,15 +744,27 @@ def _collect(rc: RunConfig, source: str) -> xr.Dataset:
 
 
 def export_onsets(cfg, sources=None, out=None) -> dict:
-    """Write the onset dates of each requested source to NetCDF; return {source: path}.
+    """Write the onset dates of each requested source to NetCDF.
 
-    cfg is the path of a run YAML, a hcwf.config.Config, a mapping, a flat config dict (resolved, validated and
-    planned by hcwf.config.build.resolve) or a RunConfig.
-    sources is a list or comma-separated text of "observed", model names, "climatology" and
-    "conditional_climatology" (default: observed, every model, and the climatology reference the run uses).
-    out is the folder (default: the run's onsets folder, dir_out/onsets for an explicit dir_out). Files are named
-    onsets_<source>.nc, or <source>.nc inside a run folder. Only the detection is run, with the scoring's own
-    functions and settings; nothing is scored.
+    Files are named ``onsets_<source>.nc``, or ``<source>.nc`` inside a run folder. Only the detection is run, with the
+    scoring's own functions and settings; nothing is scored.
+
+    Parameters
+    ----------
+    cfg : str or pathlib.Path or hcwf.config.Config or dict or hcwf.config.model.RunConfig
+        The path of a run YAML, a `hcwf.config.Config`, a mapping, a flat config dict (resolved, validated and planned
+        by `hcwf.config.build.resolve`) or a run config.
+    sources : list of str or str, optional
+        A list or comma-separated text of ``"observed"``, model names, ``"climatology"`` and
+        ``"conditional_climatology"``; by default observed, every model, and the climatology reference the run uses.
+    out : str or pathlib.Path, optional
+        The folder; by default the run's onsets folder (``dir_out/onsets`` for an explicit ``dir_out``).
+
+    Returns
+    -------
+    dict of str to pathlib.Path
+        Maps each source to the file written. A `ValueError` is raised when a requested source cannot be exported or no
+        year of a source could be read.
     """
     from hcwf.config.build import resolve
 
