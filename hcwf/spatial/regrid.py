@@ -13,10 +13,11 @@ Where the weights come from:
 * another grid (`grid_weights`): conservative area-overlap weights between two regular lat/lon grids;
 * a one-for-one selection of cells (`selection`), or a weighted set of cells in one unit (a region).
 
-Cell areas are planar (degrees squared) by default; ``cell_area="cos_lat"`` multiplies by the cosine of the cell's
-latitude, so a unit's weights follow the area on the sphere to first order, and ``cell_area="sphere"`` uses the exact
-area on the sphere (proportional to the longitude width times the difference of the sines of the latitude edges; the
-evaluation grid of a run is regridded with it, see `hcwf.spatial.evalgrid`).
+Cell areas of polygon units are exact areas on the sphere by default (``cell_area="sphere"``: proportional to the
+longitude width times the difference of the sines of the latitude edges; the evaluation grid of a run is regridded
+with it too, see `hcwf.spatial.evalgrid`). ``cell_area="planar"`` uses degrees squared, which reproduces
+onset_blending's tables, and ``cell_area="cos_lat"`` multiplies the planar area by the cosine of the cell's latitude,
+so a unit's weights follow the area on the sphere to first order. `grid_weights` stays planar unless asked.
 
 Source cells are the cells of a grid in latitude-major order (latitude axis outer, longitude inner), the order
 of ``ravel`` on a (lat, lon) array. Coordinates match exactly (float equality) by default, which reproduces
@@ -769,13 +770,13 @@ def _check_options(cell_area, measure=None):
         raise ValueError(f"measure must be one of {MEASURES}, got {measure!r}")
 
 
-def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", measure: str = "area",
+def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "sphere", measure: str = "area",
                     min_share: float = 1e-9, clip_to=None) -> pd.DataFrame:
     """Compute the weights of the cells of a grid in each polygon: a table of (target_id, lat, lon, weight).
 
     The grid has centres ``lat``, ``lon`` (any order; longitudes are wrapped to -180..180 for the overlap, the
     table keeps the grid's own values). A cell's weight in a polygon is the area of their overlap (measure
-    ``"area"``, planar degrees squared, times cos(latitude) when ``cell_area`` is ``"cos_lat"``) or the share of the cell's
+    ``"area"``: the cell's area on the sphere, or planar degrees squared, or that times cos(latitude), by ``cell_area``) or the share of the cell's
     area inside the polygon (measure ``"share"``, onset_blending's legacy table: intersection / cell area). Cells
     with a share of at most ``min_share`` are left out. ``clip_to`` is a geometry each polygon is first cut to (for
     instance the area the observations cover, see `coverage_geometry`).
@@ -792,7 +793,7 @@ def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", mea
         The latitudes of the cell centres, in degrees.
     lon : array_like of float, shape (lon,)
         The longitudes of the cell centres, in degrees.
-    cell_area : {"planar", "cos_lat", "sphere"}, default "planar"
+    cell_area : {"planar", "cos_lat", "sphere"}, default "sphere"
         The cell-area convention.
     measure : {"area", "share"}, default "area"
         What a weight measures.

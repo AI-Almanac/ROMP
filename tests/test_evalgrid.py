@@ -244,8 +244,8 @@ def test_polygon_units_are_built_for_each_source_grid_from_its_native_resolution
     assert units.transform(FINE_LAT, FINE_LON) is fine and units.transform(COARSE_LAT, COARSE_LON) is coarse
     direct = regrid.polygon_weights([polygon], ["adm1"], FINE_LAT, FINE_LON)
     assert fine.weighted_matrix.nnz == len(direct) and fine.weighted_matrix.nnz > 20 * coarse.weighted_matrix.nnz
-    assert np.isclose(fine.weighted_matrix.sum(), polygon.area, rtol=1e-9)
-    assert np.isclose(coarse.weighted_matrix.sum(), polygon.area, rtol=1e-9)
+    assert np.isclose(fine.weighted_matrix.sum(), direct["weight"].sum(), rtol=1e-9)   # areas on the sphere by default
+    assert np.isclose(coarse.weighted_matrix.sum(), fine.weighted_matrix.sum(), rtol=1e-2)
     # a field with a gradient: the polygon mean from the fine cells is not the mean via the coarse cells
     field = (FINE_LAT[:, None] * 3.0 + FINE_LON[None, :] ** 2 * 0.1) * np.ones((FINE_LAT.size, FINE_LON.size))
     from_fine = fine.observed_mean(field.reshape(-1, 1))[0, 0]

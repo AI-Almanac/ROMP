@@ -60,7 +60,7 @@ The evaluation artifacts keep onset_blending's names: `summary_models_<tag>.csv`
 | `observations.variable`, `dims`, `missing_rain`, `date_marks` | `observations.variable`, `dims`, `onset.missing`, `observations.day_boundary` |
 | `models[].unit_scale` | `models[].unit_cvt` |
 | `models[].lead_days`, `rain_horizon`, `rain_predictors`, `max_member` | `blend.models.<name>.*` |
-| `domain` (grid ids, regrid, dissemination, centroids, area of interest) | `units:` (`id_digits`, `id_format`, `shapefile`, `weights`, `dissemination`, `centroids`, `box`, `outline`) and `region` |
+| `domain` (grid ids, regrid, dissemination, centroids, area of interest) | `units:` (`id_digits`, `id_format`, `shapefile` (converted with `cell_area: planar`, onset_blending's degrees-squared areas; HCWF's own default is `sphere`), `weights`, `dissemination`, `centroids`, `box`, `outline`) and `region` |
 | `onset.definition`, `onset.threshold` | `onset.rule` (inline definition), `onset.thresholds`, `threshold_table`, `threshold_scale`; or a registry id (`moron_robertson_blend`, `icpac_blend` are onset_blending's readings of the two papers) |
 | `onset.reference_onset`, `onset.fixed_cutoff` | `blend.reference_onset`, `blend.fixed_cutoff` |
 | `climatology` | `blend.climatology` |

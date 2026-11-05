@@ -14,7 +14,7 @@ A YAML config is a mapping whose keys are either the flat config keys (e.g.
                    percentage_threshold, explain_cells
     units:         mode, shapefile, unit_id_col, unit_name_col, parent_col, weights, centroids, centroid_id_col,
                    dissemination, dissemination_id_col, dissemination_scope, box, outline, boundary, id_digits,
-                   id_format (evaluation units instead of grid cells; extends the region's ``units:``)
+                   id_format, cell_area (evaluation units instead of grid cells; extends the region's ``units:``)
     blend:         years, cutoff_mode, cv_methods, cluster_var, formulas, final_formula, window_variants,
                    baselines, forecasts, mme, external_predictions, random_forest, fixed_cutoff, reference_onset,
                    bins, probability_days, trim_after_true_onset, rain_transform, climatology, models, outputs
@@ -1130,6 +1130,7 @@ def _fields() -> tuple[Field, ...]:
         Field("units_box", "any", "only units whose centroid is inside: a mapping of lat_min, lat_max, lon_min, lon_max", None, "units", "box", nullable=True, fill=False),
         Field("units_outline", "path", "only units whose centroid is inside this GeoJSON or shapefile", None, "units", "outline", nullable=True, fill=False),
         Field("units_boundary", "str", "a centroid on the outline's edge is 'contains' (left out) or 'intersects' (kept)", None, "units", "boundary", choices=("contains", "intersects"), nullable=True, fill=False),
+        Field("units_cell_area", "str", "how the weights of the shapefile's polygons measure a cell's area: 'sphere' (exact areas on the sphere), 'cos_lat' (degrees squared times cos(latitude)) or 'planar' (degrees squared, as onset_blending); null: sphere", None, "units", "cell_area", choices=("planar", "cos_lat", "sphere"), nullable=True, fill=False),
         Field("units_id_digits", "int", "decimal digits of grid unit ids (null: established or inferred)", None, "units", "id_digits", nullable=True, fill=False),
         Field("units_id_format", "str", "grid ids 'trimmed' of trailing zeros or 'fixed'", None, "units", "id_format", choices=("trimmed", "fixed"), nullable=True, fill=False),
     ]

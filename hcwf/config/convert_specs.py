@@ -796,6 +796,7 @@ class _Convert:
             if regrid.get("shapefile") is not None:
                 out["shapefile"] = self.path(regrid["shapefile"])
                 out["unit_id_col"] = regrid.get("unit_id_col", "adm3_name")
+                out["cell_area"] = "planar"   # onset_blending weighs cells by planar degrees squared
                 for key, label in (("unit_name_col", "unit_name_col"), ("parent_id_col", "parent_col")):
                     if regrid.get(key) is not None:
                         out[label] = regrid[key]

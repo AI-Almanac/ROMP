@@ -83,7 +83,7 @@ def test_grid_units_on_a_finer_model_grid_are_conservative_means():
 # -- polygon units ------------------------------------------------------------------------------------------
 
 def test_polygon_units_from_a_shapefile(tmp_path):
-    units = EvaluationUnits.from_shapefile(write_shapes(tmp_path), "code", "label", "region")
+    units = EvaluationUnits.from_shapefile(write_shapes(tmp_path), "code", "label", "region", cell_area="planar")
     assert units.kind == "polygon" and units.ids.tolist() == ["A1", "B2", "C3"]
     assert units.column("name").tolist() == ["Alpha", "Beta", "Gamma"] and units.column("parent").tolist() == ["R", "R", "S"]
     assert units.lat.tolist() == [1.0, 1.0, 3.0] and units.lon.tolist() == [1.0, 3.0, 2.0]
@@ -99,11 +99,15 @@ def test_polygon_units_from_a_shapefile(tmp_path):
 
 def test_polygon_weights_options_reach_the_transform(tmp_path):
     path = write_shapes(tmp_path)
-    plain = EvaluationUnits.from_shapefile(path, "code").transform(LAT[:2], LON)
+    plain = EvaluationUnits.from_shapefile(path, "code", cell_area="planar").transform(LAT[:2], LON)
     cos = EvaluationUnits.from_shapefile(path, "code", cell_area="cos_lat").transform(LAT[:2], LON)
     a1 = plain.weighted_matrix[0].toarray().ravel()
     np.testing.assert_allclose(cos.weighted_matrix[0].toarray().ravel(),
                                a1 * np.cos(np.deg2rad(np.repeat(LAT[:2], LON.size))))
+    default = EvaluationUnits.from_shapefile(path, "code").transform(LAT[:2], LON)   # the default is the sphere
+    sphere = EvaluationUnits.from_shapefile(path, "code", cell_area="sphere").transform(LAT[:2], LON)
+    np.testing.assert_array_equal(default.weighted_matrix.toarray(), sphere.weighted_matrix.toarray())
+    assert not np.allclose(default.weighted_matrix.toarray(), plain.weighted_matrix.toarray())
 
 
 def test_shapefile_in_another_crs_is_brought_to_degrees(tmp_path):

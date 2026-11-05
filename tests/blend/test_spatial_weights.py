@@ -13,6 +13,8 @@ LON = np.array([0.5, 1.5, 2.5, 3.5, 4.5])
 
 
 def table(geometries, ids, lat=LAT, lon=LON, **options):
+    """Build polygon weights, planar unless asked (the analytic areas and the onset_blending table are planar)."""
+    options.setdefault("cell_area", "planar")
     return regrid.polygon_weights(geometries, ids, lat, lon, **options)
 
 
@@ -41,6 +43,17 @@ def test_shares_and_cos_lat_variants():
     np.testing.assert_allclose(cos["weight"], area["weight"] * np.cos(np.deg2rad(area["lat"])))
     coarse = table([shape], ["a"], lat=np.array([1.0, 3.0]), lon=np.array([1.0, 3.0]), measure="share")
     assert weight(coarse, "a", 1.0, 1.0) == pytest.approx(shape.intersection(box(0, 0, 2, 2)).area / 4)
+
+
+def test_polygon_weights_default_to_areas_on_the_sphere():
+    shape = box(0.7, 0.25, 2.3, 1.5)
+    default = regrid.polygon_weights([shape], ["a"], LAT, LON)
+    sphere = regrid.polygon_weights([shape], ["a"], LAT, LON, cell_area="sphere")
+    planar = table([shape], ["a"])
+    np.testing.assert_array_equal(default["weight"], sphere["weight"])
+    assert not np.allclose(default["weight"], planar["weight"])
+    ratio = default["weight"].to_numpy() / planar["weight"].to_numpy()
+    assert (np.diff(ratio[np.argsort(default["lat"].to_numpy(), kind="stable")]) <= 1e-12).all()   # shrinks poleward
 
 
 def test_the_weights_hold_the_cells_values_in_the_table_exactly_as_given():

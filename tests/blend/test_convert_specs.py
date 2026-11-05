@@ -200,6 +200,13 @@ def test_units_domain_and_weights_per_source(tmp_path):
     assert (units["dissemination_scope"], units["dissemination_id_col"]) == ("training", "i")
 
 
+def test_a_shapefile_converts_with_the_planar_areas_onset_blending_weighs_by(tmp_path):
+    data = minimal(tmp_path)
+    data["domain"] = {"regrid": {"shapefile": "s.shp", "unit_id_col": "code"}}
+    units = C.convert_blend(data).mapping["units"]
+    assert units["shapefile"] == str(tmp_path / "s.shp") and units["cell_area"] == "planar"
+
+
 def test_what_is_not_carried_over_is_listed(tmp_path):
     data = minimal(tmp_path)
     data["domain"] = {"regrid": {"weights": "w.csv", "crs": "EPSG:3857", "grid_lat_var": "la"}}

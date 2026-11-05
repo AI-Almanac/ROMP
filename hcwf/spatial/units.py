@@ -464,7 +464,7 @@ class EvaluationUnits:
 
     @classmethod
     def from_shapefile(cls, path, unit_id_col: str, unit_name_col: str | None = None,
-                       parent_col: str | None = None, *, cell_area: str = "planar", measure: str = "area",
+                       parent_col: str | None = None, *, cell_area: str = "sphere", measure: str = "area",
                        min_share: float = 1e-9, clip_to=None) -> "EvaluationUnits":
         """Build polygon units from the features of a shapefile or GeoJSON.
 
@@ -481,7 +481,7 @@ class EvaluationUnits:
             The attribute that holds the unit name.
         parent_col : str, optional
             The attribute that holds the parent unit.
-        cell_area : str, default "planar"
+        cell_area : str, default "sphere"
             How the area of a cell is measured (see `hcwf.spatial.regrid.polygon_weights`).
         measure : str, default "area"
             What the overlap is measured in (see `hcwf.spatial.regrid.polygon_weights`).
@@ -909,7 +909,8 @@ class UnitsSpec:
     ``lon_min`` / ``lon_max``) or an ``outline`` (``boundary`` ``"contains"`` leaves out a centroid on the edge,
     ``"intersects"`` keeps it), the ``dissemination`` list (``dissemination_scope`` ``"inputs"`` restricts the units
     read to it, ``"training"`` only marks it as the subset ``dissemination``), and how grid ids are written
-    (``id_digits``, ``id_format``).
+    (``id_digits``, ``id_format``). ``cell_area`` is how the weights of a shapefile measure a cell's area (``"sphere"``
+    by default; ``"planar"`` reproduces onset_blending).
 
     Paths are as written; `resolve_path` expands ``${ENV}`` and ``~`` and anchors a relative one at ``base`` (the
     folder of the YAML that wrote it).
@@ -949,6 +950,8 @@ class UnitsSpec:
     """The number of decimals of the coordinates in grid ids."""
     id_format: str = "trimmed"
     """How grid ids are written (``"trimmed"`` or fixed width)."""
+    cell_area: str = "sphere"
+    """How a cell's area is measured for the weights of a shapefile, one of `hcwf.spatial.regrid.CELL_AREAS`."""
 
     def __post_init__(self):
         """Check the fields and turn a mapping `box` into sorted pairs.
@@ -961,6 +964,8 @@ class UnitsSpec:
         """
         if self.mode is not None and self.mode not in MODES:
             raise UnitsSpecError(f"units mode must be one of {MODES}, got {self.mode!r}")
+        if self.cell_area not in regrid.CELL_AREAS:
+            raise UnitsSpecError(f"units cell_area must be one of {regrid.CELL_AREAS}, got {self.cell_area!r}")
         if self.boundary not in BOUNDARIES:
             raise UnitsSpecError(f"units boundary must be one of {BOUNDARIES}, got {self.boundary!r}")
         if self.dissemination_scope not in DISSEMINATION_SCOPES:
@@ -1110,7 +1115,7 @@ class UnitsSpec:
             units = EvaluationUnits.from_grid(lat, lon, explicit=convention)
         elif self.shapefile:
             units = EvaluationUnits.from_shapefile(self.resolve_path(self.shapefile), self.unit_id_col,
-                                                   self.unit_name_col, self.parent_col)
+                                                   self.unit_name_col, self.parent_col, cell_area=self.cell_area)
         else:
             centroids = self.resolve_path(self.centroids) if self.centroids else None
             units = EvaluationUnits.from_weights(self.resolve_path(self.weights), centroids,
