@@ -17,6 +17,8 @@ __pycache__/
 
 # user specific input, output and figure
 data/
+/data
+# (also a symlink named data: "data/" alone matches only directories)
 !tests/data/
 #!/demo/data/
 #!/demo/data/**
