@@ -109,6 +109,9 @@ class Resolution:
     """Whether a data file was found and opened (only such a resolution is cached)."""
     region: str | None = None
     """The region the sample is taken in when the config names one (None: where the data are, see `load_sample`)."""
+    box: tuple | None = None
+    """The ``(south, north, west, east)`` of the run's area when it is a box (the config's ``box`` or a mask's bounds): the
+    sample is taken around its centre, in place of the region's."""
 
     def report(self) -> list[str]:
         """Return the printable lines: every key with its provenance, then warnings and problems.
@@ -345,8 +348,8 @@ _CENTRES = ((0.5, 0.5), (0.5, 0.35), (0.5, 0.65), (0.35, 0.5), (0.65, 0.5), (0.3
 """The places (as fractions along latitude and longitude) a sample is looked for, in order, when the first has no values."""
 
 
-def _region_centre(da: xr.DataArray, roles: dict, region: str | None) -> dict:
-    """Find the grid positions of the centre of a region's box along lat and lon.
+def _region_centre(da: xr.DataArray, roles: dict, region: str | None, box: tuple | None = None) -> dict:
+    """Find the grid positions of the centre of the area's box (a given box, else a region's) along lat and lon.
 
     Parameters
     ----------
@@ -356,6 +359,8 @@ def _region_centre(da: xr.DataArray, roles: dict, region: str | None) -> dict:
         The role to dim name map of ``da``.
     region : str or None
         The region name; None (or one that is unknown, or a grid without coordinates) gives no centre.
+    box : tuple of float, optional
+        The ``(south, north, west, east)`` of the run's area; it is used instead of the region's box.
 
     Returns
     -------
@@ -363,14 +368,17 @@ def _region_centre(da: xr.DataArray, roles: dict, region: str | None) -> dict:
         The position along each of the lat and lon dims; empty when there is no centre.
     """
     lat, lon = roles.get("lat"), roles.get("lon")
-    if region is None or lat not in da.coords or lon not in da.coords:
+    if (region is None and box is None) or lat not in da.coords or lon not in da.coords:
         return {}
-    from hcwf.onset.regions import box
+    if box is not None:
+        south, north, west, east = box
+    else:
+        from hcwf.onset.regions import box as region_domain
 
-    try:
-        south, north, west, east = box(region)
-    except Exception:  # noqa: BLE001 - an unknown region is reported by the region checks
-        return {}
+        try:
+            south, north, west, east = region_domain(region)
+        except Exception:  # noqa: BLE001 - an unknown region is reported by the region checks
+            return {}
     east = east + 360.0 if east < west else east
     lon_c = (west + east) / 2
     lons = np.asarray(da[lon].values, dtype=float)
@@ -379,7 +387,8 @@ def _region_centre(da: xr.DataArray, roles: dict, region: str | None) -> dict:
     return {lat: int(np.abs(lats - (south + north) / 2).argmin()), lon: int(np.abs(lons - lon_c).argmin())}
 
 
-def load_sample(da: xr.DataArray, roles: dict, key=None, region: str | None = None) -> xr.DataArray:
+def load_sample(da: xr.DataArray, roles: dict, key=None, region: str | None = None,
+                box: tuple | None = None) -> xr.DataArray:
     """Load a tiny in-memory copy of a variable: a few whole consecutive time steps from its start, middle and end.
 
     The grid is cut to a block around the centre of the ``region``'s box when one is given, else around the middle of
@@ -406,6 +415,8 @@ def load_sample(da: xr.DataArray, roles: dict, key=None, region: str | None = No
         A cache key, e.g. ``(path, mtime, variable)``; when given the result is kept in this process for the run.
     region : str, optional
         The region whose box centre the sample is taken at.
+    box : tuple of float, optional
+        The ``(south, north, west, east)`` of the run's area, whose centre the sample is taken at instead.
 
     Returns
     -------
@@ -415,7 +426,7 @@ def load_sample(da: xr.DataArray, roles: dict, key=None, region: str | None = No
     if key is not None and key in _SAMPLES:
         return _SAMPLES[key]
     grid = [roles.get("lat"), roles.get("lon")]
-    places = [_region_centre(da, roles, region)] if region else []
+    places = [_region_centre(da, roles, region, box)] if region or box else []
     if all(d in da.dims for d in grid):
         places += [{}] + [{d: int(f * (da.sizes[d] - 1)) for d, f in zip(grid, fractions)}
                           for fractions in _CENTRES[1:]]
@@ -754,7 +765,7 @@ def dataset_files(entry: dict) -> list[Path]:
 
 
 def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None,
-           region: str | None = None) -> dict | None:
+           region: str | None = None, box: tuple | None = None) -> dict | None:
     """Return what detection depends on: the user's keys, and the identity (path, size, mtime) of the dataset's files.
 
     Parameters
@@ -769,6 +780,8 @@ def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | Non
         Where a key came from if not the user.
     region : str, optional
         The region the sample is taken in (part of the fingerprint when given).
+    box : tuple of float, optional
+        The area's box the sample is taken in (part of the fingerprint when given): the sampled place depends on it.
 
     Returns
     -------
@@ -786,7 +799,11 @@ def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | Non
     parts = {"kind": kind, "lead_label_default": lead_label_default,
              "entry": {k: repr(v) for k, v in entry.items()}, "sources": {k: repr(v) for k, v in (sources or {}).items()},
              "files": identities}
-    return parts if region is None else {**parts, "region": region}
+    if region is not None:
+        parts["region"] = region
+    if box is not None:
+        parts["box"] = [float(v) for v in box]
+    return parts
 
 
 def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> str | None:
@@ -814,11 +831,12 @@ def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict
 
 def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: dict | None = None,
                   detect_lead_label: bool = True, lead_label_default: bool = False, use_cache: bool = True,
-                  region: str | None = None) -> Resolution:
+                  region: str | None = None, box: tuple | None = None) -> Resolution:
     """Resolve one dataset, from the on-disk cache when the dataset's files and keys are unchanged.
 
-    The cache key is a fingerprint of the user's keys and the file paths, sizes and mtimes; a hit reads no data and
-    marks every detected line "detected (cached)" with the same evidence. A resolution that ran the lead-label
+    The cache key is a fingerprint of the user's keys, the file paths, sizes and mtimes, and the place the data are
+    sampled (the region or area box); a hit reads no data and marks every detected line "detected (cached)" with the same
+    evidence. A resolution that ran the lead-label
     alignment (it depends on the observations) is not cached. See `resolve_entry_uncached` for the keys.
 
     Parameters
@@ -839,6 +857,9 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
         Whether to read and write the on-disk cache.
     region : str, optional
         The region the config names: the data are sampled around the centre of its box (see `load_sample`).
+    box : tuple of float, optional
+        The ``(south, north, west, east)`` of the run's area (a ``box`` or a mask's bounds): the sample is taken around
+        its centre, and it is part of the cache key.
 
     Returns
     -------
@@ -846,7 +867,7 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
         The completed values, report lines, problems and warnings.
     """
     runs_alignment = kind == "forecast" and detect_lead_label and "lead_label" not in entry
-    parts = _parts(entry, kind, lead_label_default, sources, region) if use_cache and not runs_alignment else None
+    parts = _parts(entry, kind, lead_label_default, sources, region, box) if use_cache and not runs_alignment else None
     if parts:
         hit = _store().get(parts, quiet=True)
         if isinstance(hit, Resolution):
@@ -856,7 +877,7 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
             hit.values = {**hit.values}
             return hit
     res = resolve_entry_uncached(entry, kind, sources=sources, obs=obs, detect_lead_label=detect_lead_label,
-                                 lead_label_default=lead_label_default, region=region)
+                                 lead_label_default=lead_label_default, region=region, box=box)
     if parts and res.checked:
         _store().put(parts, res)
     return res
@@ -864,7 +885,7 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
 
 def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = None, obs: dict | None = None,
                            detect_lead_label: bool = True, lead_label_default: bool = False,
-                           region: str | None = None) -> Resolution:
+                           region: str | None = None, box: tuple | None = None) -> Resolution:
     """Resolve one dataset: validate what is given, detect what is missing, report every key.
 
     Never raises for problems with the data: they are collected in `Resolution.problems`.
@@ -886,6 +907,8 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         the day boundary") instead of making it a problem.
     region : str, optional
         The region the config names: the data are sampled around the centre of its box (see `load_sample`).
+    box : tuple of float, optional
+        The ``(south, north, west, east)`` of the run's area, whose centre the data are sampled around instead.
 
     Returns
     -------
@@ -893,7 +916,8 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         The completed values, report lines, problems and warnings.
     """
     sources = sources or {}
-    res = Resolution(values={k: v for k, v in entry.items() if v is not None or k in _NULLABLE}, region=region)
+    res = Resolution(values={k: v for k, v in entry.items() if v is not None or k in _NULLABLE}, region=region,
+                     box=box)
     values, problems = res.values, res.problems
 
     def specified(key):
@@ -1188,8 +1212,8 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
     elif kind == "forecast" and "members" not in values:
         res.lines.append(Line("members", 1, "detected", f"no member dimension in {name}: deterministic"))
 
-    probe_da = load_sample(da, roles, key=(sample, _mtime(sample), str(values["variable"]), res.region),
-                           region=res.region)
+    probe_da = load_sample(da, roles, key=(sample, _mtime(sample), str(values["variable"]), res.region, res.box),
+                           region=res.region, box=res.box)
     guess = _forecast_accumulation(probe_da, values, res, specified, detected, roles) if kind == "forecast" else None
     _units(da, name, values, res, specified, detected, roles, guess, probe_da)
 
