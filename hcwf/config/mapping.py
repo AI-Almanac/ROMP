@@ -237,7 +237,8 @@ def _resolve_observations(config, given_block, datasets, errors):
         return None
     entry, entry_sources = _explicit_entry(given, given_block.get("dataset"), datasets, "observations",
                                            "observations", errors)
-    res = detect.resolve_entry(entry, "observations", sources=entry_sources, region=config.get("region"))
+    res = detect.resolve_entry(entry, "observations", sources=entry_sources, region=config.get("region"),
+                              box=_sample_box(config))
     return res
 
 
@@ -352,7 +353,7 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
         align = bool(config.get("check_alignment", False))
         res = detect.resolve_entry(entry, "forecast", sources=entry_sources, obs=obs_values,
                                    detect_lead_label=align, lead_label_default=not align,
-                                   region=config.get("region"))
+                                   region=config.get("region"), box=_sample_box(config))
         _problems(res, written, errors)
         detect.warn_all(res)
         report.append(f"{written} {entry.get('name', '')}:")
@@ -583,6 +584,75 @@ def _derive(config, sources, errors):
         config.setdefault("ref_model_unit_cvt", None)
 
 
+def _sample_box(config):
+    """Return the box of the run's area, where detection samples the data (None: the region's, or where the data are).
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built.
+
+    Returns
+    -------
+    tuple of float or None
+        ``(south, north, west, east)`` of a ``box`` or a mask's bounds (not a region's box, which detection reads from
+        the registry); None when the area is a region, the whole domain, or cannot be resolved (reported elsewhere).
+    """
+    from hcwf.spatial import area
+
+    if config.get("region") is not None and config.get("box") is None:
+        return None
+    try:
+        found = area.resolve(config.get("region"), config.get("box"), config.get("mask"))
+    except Exception:  # noqa: BLE001 - an unreadable mask is reported when the run is resolved
+        return None
+    return None if found is None else found.tuple
+
+
+def _check_area(config, errors):
+    """Require an area when the run has no region: a ``box`` or a ``mask`` with a country or a file.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config being built.
+    errors : list of str
+        Takes the message when ``region`` is null and nothing gives the run an area.
+    """
+    from hcwf.spatial import area
+
+    if "region" in config and config["region"] is None and area.needs_area(None, config.get("box"), config.get("mask")):
+        errors.append("'region' is null and the run has no area: without a region nothing says which part of the files "
+                      "to read. Fix: set region (see `hcwf-run onset regions`), or mask (a country or a file), or box "
+                      "(lat_min, lat_max, lon_min, lon_max; `box: all` reads the whole domain of the files)")
+
+
+def _check_clim_years(config, errors) -> tuple:
+    """Say with a Fix which climatology year is missing when the run has no region to supply them.
+
+    Parameters
+    ----------
+    config : dict
+        The flat config, after the climatology years were derived from the region or the threshold years.
+    errors : list of str
+        Takes one message for each of ``start_year_clim`` and ``end_year_clim`` that is missing.
+
+    Returns
+    -------
+    tuple of str
+        The keys whose message was written here (the generic missing-key message is then left out).
+    """
+    if "region" not in config or config["region"] is not None:
+        return ()
+    done = []
+    for key, path in (("start_year_clim", "evaluation.start_year_clim"), ("end_year_clim", "evaluation.end_year_clim")):
+        if key not in config:
+            errors.append(f"missing required key '{path}': without a region there are no region climatology years. "
+                          f"Fix: set {path} = <year> (the climatology spans start_year_clim to end_year_clim)")
+            done.append(key)
+    return tuple(done)
+
+
 def _detect_region(config, sources, res, report, errors):
     """Take the region from the data extent when it is not given; warn if a given region disagrees with it.
 
@@ -697,10 +767,13 @@ def build_config(raw, source="<config>") -> dict:
     if config.get("mask") and config.get("nc_mask"):
         errors.append("'mask' and 'nc_mask' are both set. Fix: use one; `nc_mask: file.nc` is the old flat key "
                       "(it also applies the land and country masks implicitly), `mask: {file: file.nc}` the new section")
+    _check_area(config, errors)
     _derive(config, sources, errors)
+    skip_years = _check_clim_years(config, errors)
     _resolve_reference_settings(config, sources, special["reference"].get("units"), report)
     _check_blend(config, errors)
     skip = _MODEL_LISTS if any(e.startswith(("'models", "missing required key 'models'")) for e in errors) else ()
+    skip = (*skip, *skip_years)
     filled = schema.apply_defaults(config, errors, skip=skip)
     for key in filled:
         sources.setdefault(key, "default")

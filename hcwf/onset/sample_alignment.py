@@ -129,6 +129,7 @@ def sample_spec(rc, model: str) -> dict:
             "model_var": source.var, "unit_cvt": source.unit_cvt, "model_dims": source.dims_map(),
             "accumulation": source.accumulation, "daily_boundary": source.daily_boundary,
             "probabilistic": ev.probabilistic, "members": ev.members, "region": rc.area.region,
+            "box": _area_tuple(rc.area),
             "start_date": ev.start_date, "end_date": ev.end_date, "init_days": ev.init_days, "years": ev.years,
             "date_filter_year": ev.date_filter_year}
 
@@ -198,6 +199,23 @@ def _box_indices(values: np.ndarray, lo: float, hi: float, wrap: bool = False) -
     v, lo, hi = values % 360, lo % 360, hi % 360
     keep = (v >= lo) & (v <= hi) if lo <= hi else (v >= lo) | (v <= hi)
     return np.nonzero(keep)[0]
+
+
+def _area_tuple(area):
+    """Return the box of the run's area as ``(south, north, west, east)``, or None for the whole domain.
+
+    Parameters
+    ----------
+    area : hcwf.config.model.AreaSpec
+        The area of the run.
+
+    Returns
+    -------
+    tuple of float or None
+        The box the readers cut to, or None.
+    """
+    bounds = area.bounds()
+    return None if bounds is None else bounds.tuple
 
 
 def _region_box(region):
@@ -407,7 +425,7 @@ def _shared_grid(obs_ds: xr.Dataset, fc_ds: xr.Dataset, kw: dict) -> tuple:
     """
     obs_lat, obs_lon = (np.asarray(obs_ds[c].values, float) for c in ("lat", "lon"))
     fc_lat, fc_lon = (np.asarray(fc_ds[c].values, float) for c in ("lat", "lon"))
-    box = _region_box(kw.get("region"))
+    box = kw["box"] if "box" in kw else _region_box(kw.get("region"))
     lat_in = _box_indices(obs_lat, box[0], box[1]) if box else np.arange(len(obs_lat))
     lon_in = _box_indices(obs_lon, box[2], box[3], wrap=True) if box else np.arange(len(obs_lon))
     ra, fa = _match_axis(obs_lat[lat_in], fc_lat)
@@ -773,7 +791,7 @@ def sample_report(sample: Sample, lead_label: str, *, obs_boundary: str = "", fo
 # --- the cache ---------------------------------------------------------------------------------------------------
 
 _KEYS = ("obs_dir", "obs_var", "obs_unit_cvt", "obs_paths", "obs_files_years", "model_dir", "model_var", "unit_cvt",
-         "model_paths", "model_files_years", "model_dims", "region", "probabilistic", "members", "accumulation",
+         "model_paths", "model_files_years", "model_dims", "region", "box", "probabilistic", "members", "accumulation",
          "daily_boundary", "start_date", "end_date", "init_days", "years", "date_filter_year")
 """The kwargs the verdict depends on, beside the files and file patterns."""
 

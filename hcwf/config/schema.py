@@ -45,6 +45,7 @@ from typing import Any, Callable
 from hcwf.errors import ConfigSchemaError, HCWFConfigError, UnitsError
 from hcwf.onset import units
 from hcwf.onset.model import DEFAULT_HORIZON, HORIZON_POLICIES, MISSING_POLICIES, RESOLUTIONS
+from hcwf.config.boxspec import parse_box, parse_units_box
 from hcwf.config.datasets import ALL_DIMS, expand_env, parse_year_list, suggest
 from hcwf.errors import DatasetError
 
@@ -871,6 +872,22 @@ def _unit_mode(value):
     raise ValueError
 
 
+def _box(value):
+    """Check the top-level ``box:`` (see `hcwf.config.boxspec.parse_box`).
+
+    Parameters
+    ----------
+    value : dict or str
+        The raw value.
+
+    Returns
+    -------
+    dict or str
+        The four bounds as floats, or ``"all"``.
+    """
+    return parse_box(value, allow_all=True)
+
+
 def _anything(value):
     """Accept any value.
 
@@ -940,6 +957,11 @@ KINDS: dict[str, tuple[str, Callable, str, str]] = {
         "dict", ""),
     "unit_mode": ("one of 'cells', 'regrid', 'cell_transform', or a mapping of source name to one of them", _unit_mode,
         "{'cells', 'regrid', 'cell_transform'} or dict of str to str", "A mapping gives one mode per source name."),
+    "box": ("a mapping of lat_min, lat_max, lon_min, lon_max in degrees, or 'all' (the whole domain of the files)", _box,
+        "dict or str", "Four bounds in degrees, or ``all``."),
+    "units_box": ("a mapping of lat_min, lat_max, lon_min, lon_max (a missing bound is open), or a region name",
+                  parse_units_box,
+        "dict or str", "Any of the four bounds (a missing one is open), or a region name."),
     "any": ("any value", _anything,
         "object", ""),
     "any_mapping": ("any value", _anything,
@@ -991,8 +1013,13 @@ def _fields() -> tuple[Field, ...]:
         Field("project_name", "str", "name shown in the run banner", "HCWF run"),
         Field("dataset_files", "paths", "YAML files describing your datasets, referenced by id with `dataset:`", ()),
         Field("catalog_dirs", "paths", "folders of <id>.yaml dataset files, referenced by id with `dataset:`", ()),
-        Field("region", "str", "target region id or alias, see `hcwf-run onset regions`; null: no region (no box, "
-              "no region defaults; what a converted onset_blending config uses)", REQUIRED, nullable=True),
+        Field("region", "str", "target region id or alias, see `hcwf-run onset regions`; null: no region (no region "
+              "defaults: then set the area with box or mask, and the onset definition, season and climatology years "
+              "yourself; what a converted onset_blending config uses)", REQUIRED, nullable=True),
+        Field("box", "box", "the area read, in degrees: a mapping of lat_min, lat_max, lon_min, lon_max, or 'all' (the "
+              "whole domain of the files). With a region it replaces the region's box; with region null and no mask "
+              "it is required; with region null and a mask (country or file) the area is the mask's bounds",
+              None, nullable=True, fill=False),
         Field("nc_mask", "path", "NetCDF mask of 1s and 0s limiting the evaluated cells", None, nullable=True),
         Field("mask", "mask", "cells to evaluate, built on the evaluation grid (see evaluation_grid); the parts given intersect: "
               + "; ".join(f"{k}: {h}" for k, (_, h, *_rest) in MASK_KEYS.items()), None, nullable=True, fill=False),
@@ -1127,7 +1154,7 @@ def _fields() -> tuple[Field, ...]:
         Field("units_dissemination", "path", "CSV list of the dissemination units", None, "units", "dissemination", nullable=True, fill=False),
         Field("units_dissemination_id_col", "str", "id column of the dissemination list", None, "units", "dissemination_id_col", nullable=True, fill=False),
         Field("units_dissemination_scope", "str", "'inputs' reads only the dissemination units, 'training' marks them as the subset 'dissemination'", None, "units", "dissemination_scope", choices=("inputs", "training"), nullable=True, fill=False),
-        Field("units_box", "any", "only units whose centroid is inside: a mapping of lat_min, lat_max, lon_min, lon_max", None, "units", "box", nullable=True, fill=False),
+        Field("units_box", "units_box", "only units whose centroid is inside: a mapping of lat_min, lat_max, lon_min, lon_max", None, "units", "box", nullable=True, fill=False),
         Field("units_outline", "path", "only units whose centroid is inside this GeoJSON or shapefile", None, "units", "outline", nullable=True, fill=False),
         Field("units_boundary", "str", "a centroid on the outline's edge is 'contains' (left out) or 'intersects' (kept)", None, "units", "boundary", choices=("contains", "intersects"), nullable=True, fill=False),
         Field("units_cell_area", "str", "how the weights of the shapefile's polygons measure a cell's area: 'sphere' (exact areas on the sphere), 'cos_lat' (degrees squared times cos(latitude)) or 'planar' (degrees squared, as onset_blending); null: sphere", None, "units", "cell_area", choices=("planar", "cos_lat", "sphere"), nullable=True, fill=False),
@@ -1446,7 +1473,7 @@ def normalise_value(field: Field, value, written: str, errors: list[str]):
         errors.append(f"'{written}': {exc}")
         return None
     except (ValueError, TypeError) as exc:
-        detail = f" ({exc})" if field.kind == "mask" and str(exc) else ""
+        detail = f" ({exc})" if field.kind in ("mask", "box", "units_box") and str(exc) else ""
         errors.append(f"'{written}': expected {field.expected}, got {value!r}{detail}")
         return None
     if field.choices and out not in field.choices:

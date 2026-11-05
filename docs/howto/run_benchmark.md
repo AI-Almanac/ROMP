@@ -18,7 +18,7 @@ run folder. `--quiet` shows only warnings; `--verbose` adds debug lines (`run.lo
 A minimal file (placeholders in angle brackets):
 
 ```yaml
-region: <region>                       # null: no region, the whole domain of the files
+region: <region>                       # null: no region; then give box (or mask) and the onset definition, season and climatology years
 observations: {path: <obs folder>, variable: <rain variable>, units: mm}
 models:
   - {name: <model>, path: <forecast folder>, variable: <rain variable>, units: m}

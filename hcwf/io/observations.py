@@ -38,8 +38,8 @@ from hcwf.spatial.evalgrid import OBSERVATIONS, region_read
 from hcwf.spatial.select import (
     implicit_keep,
     implicit_masks,
+    area_box,
     in_memory,
-    region_box,
     scale_in_place,
 )
 from hcwf.spatial.units import UnitsSpec
@@ -462,7 +462,7 @@ def _observation_box(year, read: ObsRead, keep=False):
     store, path = _locate(year, read)
     ds = _open_year(year, store, path[0] if isinstance(path, tuple) else path, read)
     try:
-        box = region_box(ds[[read.obs.var]], region=read.area.region)
+        box = area_box(ds[[read.obs.var]], read.area)
         dims = tuple(box[read.obs.var].dims)
         grid = read.area.evaluation_grid
         if grid is not None and grid.regrids(OBSERVATIONS):   # the cells read are the evaluation grid's
@@ -620,7 +620,7 @@ def _obs_key(year, store, path, read: ObsRead):
     except OSError:
         ident = None
     land, shp = implicit_masks(read.select)
-    return (year, str(source), ident, obs.var, obs.unit_cvt, str(area.region), land, shp, str(area.nc_mask),
+    return (year, str(source), ident, obs.var, obs.unit_cvt, str(area.region), str(area.box), land, shp, str(area.nc_mask),
             str(obs.name or "obs"), mask_text(area)) + _units_key(read)
 
 

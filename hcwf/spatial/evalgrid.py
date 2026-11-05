@@ -19,7 +19,7 @@ The result is gridded on the evaluation grid exactly like a native read: ``(lat,
 dimension where masks drop cells. `hcwf.io.grids` finds the sources' grids and decides, and the config's area carries the
 decision (`hcwf.config.model.AreaSpec.evaluation_grid`).
 
-Without a region the sources have no common box to cut to: the evaluation grid is then the chosen source's grid cut to
+Without an area (``box: all``, no region) the sources have no common box to cut to: the evaluation grid is then the chosen source's grid cut to
 the area every source covers (`overlap`: the intersection of the sources' extents, in the chosen source's longitude
 convention; the cells of the grid that lie wholly inside). Every source, the chosen one too, is then read from that
 area through `region_read`. Sources that do not overlap, or whose overlap crosses the longitude seam of one of the
@@ -81,6 +81,8 @@ class EvaluationGrid:
     """``(south, north, west, east)`` of the area every source covers, for a run without a region; None with a region."""
     lon_global: bool = False
     """Whether every source covers all longitudes (a run without a region): no longitude cut is made."""
+    where: str = "in the region box"
+    """What the grid is cut to when the run has an area (the check report's text, e.g. ``in the region box``)."""
 
     def regrids(self, source: str) -> bool:
         """Tell whether a source is averaged onto the grid.
@@ -117,7 +119,7 @@ class EvaluationGrid:
             The grid and its source, why it was chosen, and what is averaged onto it.
         """
         dlat, dlon = next((a, b) for name, a, b in self.steps if name == self.source)
-        where = "in the region box" if self.box is None else "in the area every source covers"
+        where = self.where if self.box is None else "in the area every source covers"
         out = [f"evaluation grid: the grid of {self.source} ({len(self.lat)} lats x {len(self.lon)} lons {where}, "
                f"{dlat:g} x {dlon:g} degrees); {self.reason}"]
         if self.box is not None:
@@ -264,7 +266,7 @@ def _no_overlap(why: str) -> str:
     str
         The text of the `~hcwf.errors.EvaluationGridError`, with its Fix.
     """
-    return (f"evaluation grid without a region: {why}. Fix: set region (it cuts every source to its box), "
+    return (f"evaluation grid without an area: {why}. Fix: set region, box or mask (they cut every source to an area), "
             "or evaluation_grid to the source that covers the area you want")
 
 
@@ -334,7 +336,8 @@ def overlap(grids: dict, source: str) -> tuple[tuple, bool, np.ndarray, np.ndarr
     return (south, north, west, east), lon_global, lat, lon
 
 
-def build(grids: dict, override: str | None = None, *, cut: bool = False) -> EvaluationGrid | None:
+def build(grids: dict, override: str | None = None, *, cut: bool = False,
+          where: str = "in the region box") -> EvaluationGrid | None:
     """Build the evaluation grid of the sources' grids, or None when they all are one grid.
 
     Parameters
@@ -345,8 +348,10 @@ def build(grids: dict, override: str | None = None, *, cut: bool = False) -> Eva
     override : str, optional
         The source the config asks for; None takes the coarsest.
     cut : bool, default False
-        The run has no region: cut the grid to the area every source covers (see `overlap`) and read every source
+        The run has no region and no area (``box: all``): cut the grid to the area every source covers (see `overlap`) and read every source
         from it.
+    where : str, default "in the region box"
+        What the grids are cut to, for the report (`EvaluationGrid.where`).
 
     Returns
     -------
@@ -369,7 +374,7 @@ def build(grids: dict, override: str | None = None, *, cut: bool = False) -> Eva
     if not regrid:
         return None
     sizes = tuple((n, *steps(*g)) for n, g in grids.items())
-    return EvaluationGrid(source, lat, lon, regrid, sizes, reason)
+    return EvaluationGrid(source, lat, lon, regrid, sizes, reason, where=where)
 
 
 def _skeleton(lat, lon) -> xr.DataArray:

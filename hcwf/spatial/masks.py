@@ -51,7 +51,7 @@ from hcwf.io.stores import open_data
 import logging
 
 __all__ = [
-    "MaskSpec", "absorb_records", "get_shp", "mask_attrs", "polygon_mask", "record_lines", "records", "reset",
+    "MaskSpec", "absorb_records", "get_shp", "mask_attrs", "mask_bounds", "mask_outline", "polygon_mask", "record_lines", "records", "reset",
     "shp_mask",
 ]
 
@@ -986,6 +986,84 @@ def build_mask(spec: MaskSpec, lat, lon, label="data") -> MaskResult:
     return MaskResult(keep=out, lines=summary, record=record, outline=outline, lat=lat, lon=lon)
 
 
+_BOUNDS = memo("spatial.masks.bounds", maxsize=16)
+"""The bounding box of each mask spec (by `MaskSpec.key`), for the run."""
+
+
+def _raster_bounds(kept, lat, lon):
+    """Return the bounding box of the kept cells of a mask raster, to the cell edges.
+
+    Parameters
+    ----------
+    kept : numpy.ndarray of bool, shape (lat, lon)
+        The kept cells.
+    lat : numpy.ndarray of float64, shape (lat,)
+        The latitudes of the cells.
+    lon : numpy.ndarray of float64, shape (lon,)
+        The longitudes of the cells.
+
+    Returns
+    -------
+    tuple of float or None
+        ``(south, north, west, east)``; None when no cell is kept.
+    """
+    rows, cols = np.flatnonzero(kept.any(axis=1)), np.flatnonzero(kept.any(axis=0))
+    if not rows.size:
+        return None
+    dlat, dlon = cell_size(lat) / 2, cell_size(lon) / 2
+    return (float(lat[rows].min() - dlat), float(lat[rows].max() + dlat),
+            float(lon[cols].min() - dlon), float(lon[cols].max() + dlon))
+
+
+def mask_bounds(spec: MaskSpec):
+    """Return the lat/lon box a mask lies in, from its country, shape file or NetCDF mask.
+
+    The parts that limit the area (``country``, a shape ``file``, a NetCDF ``file``, ``condition``) intersect, as the
+    mask does. ``land`` alone limits nothing. A part that spans all longitudes (a country across the antimeridian)
+    gives the whole longitude range.
+
+    Parameters
+    ----------
+    spec : MaskSpec
+        The mask.
+
+    Returns
+    -------
+    tuple of float or None
+        ``(south, north, west, east)`` in degrees, as the part stores longitudes; None when no part limits the area.
+
+    Raises
+    ------
+    MaskError
+        A source is unusable (an unknown country, an unreadable file) or a NetCDF mask keeps no cell.
+    """
+    key = spec.key()
+    if key in _BOUNDS:
+        return _BOUNDS[key]
+    boxes = []
+    if spec.country:
+        west, south, east, north = country_geometry(spec.country, spec.resolution)[0].bounds
+        boxes.append((south, north, west, east))
+    if spec.file:
+        if Path(spec.file).suffix.lower() in SHAPE_SUFFIXES:
+            west, south, east, north = shape_file_geometry(spec.file).bounds
+            boxes.append((south, north, west, east))
+        else:
+            boxes.append(_raster_bounds(*read_raster_mask(spec.file, spec.variable, spec.keep_value)[:3]))
+    if spec.condition:
+        cond = spec.condition
+        boxes.append(_raster_bounds(*read_raster_mask(cond["file"], cond.get("variable"), condition=cond)[:3]))
+    if any(b is None for b in boxes):
+        raise MaskError("the NetCDF mask keeps no cell, so it has no area to read")
+    out = None
+    if boxes:
+        out = (max(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), min(b[3] for b in boxes))
+        if out[0] >= out[1] or out[2] >= out[3]:
+            raise MaskError("the parts of the mask (country, file, condition) do not overlap, so it has no area to read")
+    _BOUNDS[key] = out
+    return out
+
+
 # ----------------------------------------------------------------------------------------------------------
 # picture
 # ----------------------------------------------------------------------------------------------------------
@@ -1309,21 +1387,56 @@ def _country_record(region, resolution="10m"):
             return country
 
 
-def get_shp(region, resolution='10m'):
-    """Return the Natural Earth country shape named ``region`` (``NAME``, or the registry title of the name).
+def mask_outline(spec: MaskSpec):
+    """Return the shape of a mask: the intersection of its country, land and shape-file parts.
+
+    A NetCDF mask or a condition has no shape, so it adds nothing.
 
     Parameters
     ----------
-    region : str
-        The region or country name.
-    resolution : {"10m", "50m", "110m"}, default "10m"
-        The Natural Earth resolution.
+    spec : MaskSpec
+        The mask.
 
     Returns
     -------
     shapely.Geometry or None
-        The country's shape, None if there is none.
+        The shape in longitude/latitude degrees; None when the mask has no shape part. A source that cannot be used
+        raises `MaskError`.
     """
+    import shapely
+
+    shapes = []
+    if spec.country:
+        shapes.append(country_geometry(spec.country, spec.resolution)[0])
+    if spec.file and Path(spec.file).suffix.lower() in SHAPE_SUFFIXES:
+        shapes.append(shape_file_geometry(spec.file))
+    if not shapes:
+        return None
+    out = shapes[0]
+    for other in shapes[1:]:
+        out = _make_valid(shapely.intersection(out, other))
+    return out
+
+
+def get_shp(region, resolution='10m', mask=None):
+    """Return the shape of the area of a run: the country named ``region``, else the shape of the ``mask``.
+
+    Parameters
+    ----------
+    region : str or None
+        The region or country name (``NAME``, or the registry title of the name); None for a run without a region.
+    resolution : {"10m", "50m", "110m"}, default "10m"
+        The Natural Earth resolution of a region's country.
+    mask : MaskSpec, optional
+        The run's mask: its country or shape file is the shape when there is no region.
+
+    Returns
+    -------
+    shapely.Geometry or None
+        The shape, None if there is none (no region and no mask with a shape).
+    """
+    if region is None:
+        return None if not mask else mask_outline(MaskSpec.from_mapping(mask))
     record = _country_record(region, resolution)
     return None if record is None else record.geometry
 
@@ -1492,23 +1605,33 @@ def mask_land(da, land=True):
     return _where_keep(da, keep if land else ~keep)
 
 
-def shp_mask(da, region):
-    """Set the cells of ``da`` whose centre is not strictly inside the country ``region`` to NaN.
+def shp_mask(da, region, mask=None):
+    """Set the cells of ``da`` outside the shape of the run's area to NaN.
 
-    This is the implicit ``shp_only`` mask. A region that is not a country of the shapefile leaves ``da`` as it is.
+    With a region this is the implicit ``shp_only`` mask: cells whose centre is not strictly inside the country. A
+    region that is not a country of the shapefile leaves ``da`` as it is. Without a region the run's ``mask`` is
+    applied as the run built it (`build_mask`); with no mask the data is left as it is.
 
     Parameters
     ----------
     da : xarray.DataArray
         The data, with ``lat`` and ``lon`` coordinates.
-    region : str
-        The country.
+    region : str or None
+        The country, or None for a run without a region.
+    mask : MaskSpec, optional
+        The run's mask, used when there is no region.
 
     Returns
     -------
     xarray.DataArray
-        The masked data, or ``da`` itself when the region is not a country.
+        The masked data, or ``da`` itself when there is nothing to mask by.
     """
+    if region is None:
+        if not mask:
+            return da
+        spec = MaskSpec.from_mapping(mask)
+        keep = build_mask(spec, da["lat"].values, da["lon"].values, label="figure").keep
+        return da.where(xr.DataArray(keep, dims=['lat', 'lon'], coords={'lat': da.lat, 'lon': da.lon}))
     spec = default_mask(region, False, True)
     if not spec.country:
         return da

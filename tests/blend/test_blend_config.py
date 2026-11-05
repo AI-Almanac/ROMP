@@ -93,7 +93,7 @@ def write_files(folder, years=(2001, 2002), name=lambda y: f"{y}.nc", forecast=F
 def run_mapping(tmp_path, **sections):
     write_files(tmp_path / "obs", (2001, 2002, 2003))
     write_files(tmp_path / "m", (2001, 2002, 2003), forecast=True)
-    raw = {"region": None, "observations": {"path": str(tmp_path / "obs"), "variable": "rain", "unit_cvt": 1.0,
+    raw = {"region": None, "box": "all", "observations": {"path": str(tmp_path / "obs"), "variable": "rain", "unit_cvt": 1.0,
                                             "day_boundary": "00 UTC, labelled by end"},
            "models": [{"name": "m", "path": str(tmp_path / "m"), "variable": "tp", "unit_cvt": 1000.0,
                        "lead_label": "end", "accumulation": "daily"}],
@@ -163,7 +163,7 @@ def test_check_says_which_box_a_region_name_selects():
     plain = _box_text({"region": "india"})
     assert _box_text({"region": "India"}) == plain   # the spelling does not matter
     assert "the domain of region india" in plain and "lat 6.5 to 38.5" in plain
-    assert "no region" in _box_text({"region": None}) and "not in the registry" in _box_text({"region": "nowhere"})
+    assert "whole domain" in _box_text({"region": None, "box": "all"}) and "not in the registry" in _box_text({"region": "nowhere"})
 
 
 def test_an_external_prediction_needs_a_name_and_a_file():

@@ -102,7 +102,7 @@ def test_the_init_blend_skeleton_checks_and_trains(tmp_path, data, monkeypatch, 
     assert "units" not in raw and "blend" in raw
     # what the skeleton asks for (TODOs) and the synthetic files do not declare; a region of its own
     raw["observations"].update(units="mm", day_boundary="00 UTC, labelled by end")
-    raw["region"] = None
+    raw["region"], raw["box"] = None, "all"
     raw["onset"] = yaml.safe_load(convert_blend(synthetic.configs(data)["plain"]).to_yaml())["onset"]
     path.write_text(yaml.safe_dump(raw))
     code, out = run_cli(["-p", str(path), "--check"], monkeypatch, capsys)

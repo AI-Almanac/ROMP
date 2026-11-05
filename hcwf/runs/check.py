@@ -223,14 +223,15 @@ def _settings(dic: dict, report: CheckReport) -> None:
     report.add(f"models          : {', '.join(dic['model_list'])}")
     for line in onset_setup(dic).lines():
         report.add(line)
-    report.add(f"region box      : {_box_text(dic)}")
+    report.add(f"{'area' if dic.get('region') is None or dic.get('box') is not None else 'region box':<16}: {_box_text(dic)}")
     mask = dic.get("mask")
     if mask:
         report.add("mask            : " + ", ".join(f"{k}={v}" for k, v in mask.items()) + f"  {_source(dic, 'mask')}")
     elif dic.get("nc_mask"):
         report.add(f"mask            : nc_mask {dic['nc_mask']} (old key; land and country masks also apply)")
     else:
-        report.add("mask            : none (the region's box with implicit land and region masks)")
+        report.add("mask            : none" + (" (the region's box with implicit land and region masks)"
+                                                 if dic.get("region") else " (no region: no implicit masks)"))
 
 
 def _box_text(dic: dict) -> str:
@@ -246,16 +247,26 @@ def _box_text(dic: dict) -> str:
     str
         A sentence: the lat and lon limits, or that there is no region or that it is unknown.
     """
+    from hcwf.errors import RegionError
     from hcwf.onset import regions
+    from hcwf.spatial import area
 
     name = dic.get("region")
-    if name is None:
-        return "none (no region: the whole domain of the data)"
-    box = _box(dic)
-    if box is None:
+    try:
+        found = area.resolve(name, dic.get("box"), dic.get("mask"))
+    except RegionError:
         return f"unknown (region {name!r} is not in the registry)"
-    return (f"lat {box[0]:g} to {box[1]:g}, lon {box[2]:g} to {box[3]:g}  "
-            f"[the domain of region {regions.load_region(str(name).strip()).id}]")
+    except Exception as exc:  # noqa: BLE001 - unreadable mask shapes are reported with the mask
+        return f"unknown ({exc})"
+    if found is None:
+        return area.describe(name, dic.get("box"), dic.get("mask"))
+    if name is None:
+        return found.text()
+    region_id = regions.load_region(str(name).strip()).id
+    if found.origin == "region box":
+        return (f"lat {found.south:g} to {found.north:g}, lon {found.west:g} to {found.east:g}  "
+                f"[the domain of region {region_id}]")
+    return found.text() + f"  [replaces the box of region {region_id}]"
 
 
 def _datasets(dic: dict, report: CheckReport) -> None:
@@ -450,12 +461,41 @@ def _box(dic: dict):
     tuple of (float, float, float, float) or None
         The south, north, west and east limits, or None.
     """
-    from hcwf.onset.regions import box
+    from hcwf.spatial import area
 
     try:
-        return box(dic["region"])
+        found = area.resolve(dic.get("region"), dic.get("box"), dic.get("mask"))
     except Exception:  # noqa: BLE001 - reported by the region checks
         return None
+    return None if found is None else found.tuple
+
+
+def _inside_text(dic: dict, box) -> str:
+    """Say what the grids are counted in: the region box, the area, or the whole domain.
+
+    Parameters
+    ----------
+    dic : dict
+        The flat config.
+    box : tuple of float or None
+        The area's box (`_box`).
+
+    Returns
+    -------
+    str
+        For example ``"inside the region box"`` or ``"inside the area (box: latitudes 3 to 15, ...)"``.
+    """
+    from hcwf.spatial import area
+
+    if box is None:
+        return "read whole (the whole domain of the files; no area cut)"
+    try:
+        found = area.resolve(dic.get("region"), dic.get("box"), dic.get("mask"))
+    except Exception:  # noqa: BLE001 - reported by the region checks
+        found = None
+    if found is None or found.origin == "region box":
+        return "inside the region box"
+    return f"inside the area ({found.text()})"
 
 
 def _in_box(lat, lon, box):
@@ -581,14 +621,15 @@ def _grids(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
     except Exception:  # noqa: BLE001 - observations on evaluation units (a "unit" dimension) have no grid
         report.add("(the observations are not on a lat/lon grid: evaluation units; see Units)")
         return
+    inside_text = _inside_text(dic, box)
     obs_in = _in_box(obs_lat, obs_lon, box)
     report.add(f"observations: {len(obs_lat)} lats x {len(obs_lon)} lons in the file, {len(obs_in[0])} x "
-               f"{len(obs_in[1])} inside the region box")
+               f"{len(obs_in[1])} {inside_text}")
     if len(obs_lat) > 1 and obs_lat[0] > obs_lat[-1]:
         report.hint("observations", "latitudes run north to south; HCWF flips them to south to north, nothing to set")
     if len(obs_in[0]) == 0 or len(obs_in[1]) == 0:
-        report.error(f"the observations have no cell inside the region box of '{dic['region']}'. "
-                     "Fix: set region, or check the longitude convention")
+        report.error(f"the observations have no cell {inside_text}. "
+                     "Fix: set region, box or mask, or check the longitude convention")
     differ = False
     for i, model in enumerate(dic["model_list"]):
         path = samples.get(model)
@@ -604,7 +645,7 @@ def _grids(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
             report.hint(model, "latitudes run north to south; HCWF flips them to south to north, nothing to set")
         inside = _in_box(lat, lon, box)
         report.add(f"{model}: {len(lat)} lats x {len(lon)} lons in the file, {len(inside[0])} x {len(inside[1])} "
-                   "inside the region box")
+                   f"{inside_text}")
         share = _matched(inside[0], obs_in[0]) * _matched(inside[1], obs_in[1])
         differ = differ or share < 1.0
     grid = None if rc is None else rc.area.evaluation_grid
@@ -615,7 +656,7 @@ def _grids(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
         report.hint("evaluation_grid", "the observations and models are on different grids, but no evaluation grid "
                                        "could be set (it needs gridded data and no units). Fix: check the files and units")
     else:
-        report.add("evaluation grid: the sources are on one grid inside the region box; nothing is regridded")
+        report.add(f"evaluation grid: the sources are on one grid {inside_text}; nothing is regridded")
 
 
 def _mask_summary(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
@@ -651,7 +692,7 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict, rc=None) -> Non
     mask_mod.reset()
     grid = None if rc is None else rc.area.evaluation_grid
     try:
-        area = AreaSpec(region=dic["region"], mask=mask_mod.MaskSpec.from_mapping(mask), nc_mask=dic.get("nc_mask"),
+        area = AreaSpec(region=dic["region"], box=dic.get("box"), mask=mask_mod.MaskSpec.from_mapping(mask), nc_mask=dic.get("nc_mask"),
                         shpfile_dir=None, polygon=False)
         if grid is not None:   # the mask is built on the evaluation grid
             from hcwf.spatial.evalgrid import keep_cells

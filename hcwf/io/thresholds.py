@@ -358,7 +358,8 @@ def _model_read_key(read: ForecastRead) -> dict:
         The settings, keyed by name, for the cache fingerprint.
     """
     model, ev, area, options, select = read.model, read.ev, read.area, read.options, read.select
-    return {"region": area.region, "mask": None if not area.mask else area.mask.key(), "land_only": select.land_only,
+    box = {} if area.box is None else {"box": area.box}   # a run without a box keeps its earlier key
+    return {**box, "region": area.region, "mask": None if not area.mask else area.mask.key(), "land_only": select.land_only,
             "shp_only": select.shp_only, "nc_mask": area.nc_mask, "model_var": model.var,
             "unit_cvt": model.unit_cvt, "accumulation": model.accumulation, "daily_boundary": model.daily_boundary,
             "model_dims": model.dims_map(), "file_pattern": model.file_pattern, "model_paths": select.model_paths,
@@ -646,7 +647,7 @@ def load_thresholds(onset, obs, area, options, ev, output, *, model=None,
     """
     key = (_setup_key(onset), str(None if model is None else model.name), str(ev.max_forecast_day),
            str(None if not ev.windows else [w.span for w in ev.windows]), str(output.data_dir), str(obs.dir),
-           str(obs.var), str(area.region), "" if area.evaluation_grid is None else area.evaluation_grid.key(),
+           str(obs.var), str(area.region), str(area.box), "" if area.evaluation_grid is None else area.evaluation_grid.key(),
            _thresholds_key(onset, obs, options, select, model))
     return _loaded_thresholds.get_or_make(key, lambda: load_onset_thresholds(
         onset, obs, area, options, ev, output, model=model, select=select, parallel=parallel, cache_dir=cache_dir))

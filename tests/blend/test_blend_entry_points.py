@@ -107,7 +107,7 @@ def test_check_describes_the_blend_and_the_units(tmp_path, data, monkeypatch, ca
     assert code == 0, text
     for expected in ("== Units ==", "observations: regrid; weights", "== Blend ==", "outcomes week1, week2, week3, week4, later",
                      "formula b (final): outcome ~ prob_clim_qx + diff_ens_qx", "years           : training 2010, 2011, 2012",
-                     "leads 1-40", "output tag '_fixed_cutoff_2010_2013'", "region box      : none"):
+                     "leads 1-40", "output tag '_fixed_cutoff_2010_2013'", "area            : the whole domain of the files (box: all)"):
         assert expected in text, expected
     assert "listed file(s) found" in text
 

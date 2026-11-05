@@ -30,7 +30,7 @@ from hcwf.onset.ingest import IngestInfo, ingest_forecast_info
 from hcwf.parallel import reader_count
 from hcwf.spatial.onto_units import declared_scale, read_units, select_units
 from hcwf.spatial.evalgrid import region_read
-from hcwf.spatial.select import implicit_keep, region_box, scale_in_place
+from hcwf.spatial.select import area_box, implicit_keep, scale_in_place
 from hcwf.spatial.units import UnitsSpec
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -401,7 +401,7 @@ def forecast_grid(year, model, area, select=NO_SELECTION, *, ensemble=False):
     ds, close = open_forecast(year, model.dir, model.file_pattern, ensemble, model.dims_map(), None, sources[0],
                               multi=len(sources) > 1)
     try:
-        box = region_box(ds[[model.var]], region=area.region)
+        box = area_box(ds[[model.var]], area)
         return {name: np.asarray(box[name].values) for name in ("lat", "lon")}
     finally:
         close()
@@ -453,7 +453,7 @@ def forecast_year_bytes(year, rc, model, *, ensemble, select=NO_SELECTION) -> in
                 ds = select_members(ds, rc.evaluation.members)
             da = ds[model.var]
             if model.units is None:
-                da = region_box(ds[[model.var]], region=rc.area.region)[model.var]
+                da = area_box(ds[[model.var]], rc.area)[model.var]
                 keep = implicit_keep(da, rc.area, select)
                 values = da.size * (1.0 if keep is None else float(keep.mean()))
             else:

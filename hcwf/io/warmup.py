@@ -49,13 +49,13 @@ def _warm_masks(lazy, var, dataset_name, area, select, dir_fig, source=None):
         ``"observations"`` or the model's name, which says whether it is averaged onto the evaluation grid.
     """
     from hcwf.spatial.evalgrid import keep_cells
-    from hcwf.spatial.select import mask_region_loaded, region_box
+    from hcwf.spatial.select import area_box, mask_region_loaded
 
     grid = area.evaluation_grid
     if grid is not None and source is not None and grid.regrids(source):
         keep_cells(grid, area, select, dataset_name, dir_fig)
     else:
-        box = region_box(lazy[[var]], region=area.region)
+        box = area_box(lazy[[var]], area)
         lat, lon = np.asarray(box["lat"].values), np.asarray(box["lon"].values)
         field = xr.DataArray(np.zeros((len(lat), len(lon)), dtype="float32"), dims=("lat", "lon"),
                              coords={"lat": lat, "lon": lon})

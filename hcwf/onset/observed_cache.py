@@ -431,7 +431,7 @@ def fingerprint_parts(rain, thresh, obs, area, onset, options, select, years) ->
     if spec is None:
         lat, lon = (np.asarray(rain.coords[name] if isinstance(rain.coords, dict) else rain[name].values)
                     for name in ("lat", "lon"))   # rain is a DataArray, or an ingested DailyRain
-        parts["cells"] = part_hash(area.region, json.dumps(_mask_mapping(area), sort_keys=True, default=str),
+        parts["cells"] = part_hash(area.region, *([] if area.box is None else [area.box]), json.dumps(_mask_mapping(area), sort_keys=True, default=str),
                                    _mask_files(area), bool(area.polygon), bool(select.grid_point),
                                    select.lat if select.grid_point else None,
                                    select.lon if select.grid_point else None, lat, lon)

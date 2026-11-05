@@ -63,7 +63,7 @@ Training a blend has no subcommand of its own: `hcwf-run -p run.yaml` trains whe
 
 ## The run file
 
-Sections: `observations`, `reference`, `models` (a list), `onset`, `units`, `blend`, `evaluation`, `metrics`, `output`, plus the top-level keys `project_name`, `region`, `mask`, `parallel`, `dataset_files` and `catalog_dirs`. `hcwf/config/schema.py` lists every key with its type, default and help line; unknown keys are errors with "did you mean" suggestions. Defaults are resolved at run time and never copied into your file. The region (`hcwf-run onset regions`) supplies the onset definition, day boundary, box and climatology years when it has them; `region: null` means no region (the whole domain of the files).
+Sections: `observations`, `reference`, `models` (a list), `onset`, `units`, `blend`, `evaluation`, `metrics`, `output`, plus the top-level keys `project_name`, `region`, `mask`, `parallel`, `dataset_files` and `catalog_dirs`. `hcwf/config/schema.py` lists every key with its type, default and help line; unknown keys are errors with "did you mean" suggestions. Defaults are resolved at run time and never copied into your file. The region (`hcwf-run onset regions`) supplies the onset definition, day boundary, box and climatology years when it has them; `region: null` means no region and no region defaults: then give the area with `box` (lat/lon bounds, or `box: all` for the whole domain of the files) or `mask` (a country or a file), and the onset definition, season and climatology years yourself. A `box` with a region replaces the region's box.
 
 ```yaml
 region: india

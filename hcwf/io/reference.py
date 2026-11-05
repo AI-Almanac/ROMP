@@ -61,7 +61,7 @@ def _reference_key(obs, area, select, boundary):
     """
     land, shp = implicit_masks(select)
     return (str(obs.dir), str(None if obs.file_pattern is None else list(obs.file_pattern)), str(obs.var),
-            str(obs.unit_cvt), str(area.region), land, shp, str(area.nc_mask), str(obs.name or "obs"),
+            str(obs.unit_cvt), str(area.region), str(area.box), land, shp, str(area.nc_mask), str(obs.name or "obs"),
             mask_text(area), bool(select.grid_point), str(select.lat), str(select.lon), str(boundary))
 
 

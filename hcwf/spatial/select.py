@@ -26,7 +26,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "chunk_runs", "cut_box", "implicit_keep", "implicit_masks", "in_memory", "load_blocks", "mask_region_loaded", "read_box",
-    "region_box", "region_select", "scale_in_place",
+    "region_box", "region_select", "scale_in_place", "area_box",
 ]
 
 log = logging.getLogger(__name__)
@@ -85,6 +85,30 @@ def lon_swap(ds_tag, *, region):
     return _conform(ds_tag, *box(region), what=f"region {region!r}")
 
 
+def _named(ds_tag):
+    """Rename the latitude and longitude coordinates to ``lat`` and ``lon`` when ``lon`` is not a coordinate.
+
+    Parameters
+    ----------
+    ds_tag : xarray.Dataset or xarray.DataArray
+        The data; its coordinates named like ``lat`` and ``lon`` are renamed.
+
+    Returns
+    -------
+    xarray.Dataset or xarray.DataArray
+        The data with ``lat`` and ``lon`` coordinates.
+    """
+    coord_list = list(ds_tag.coords.keys())
+
+    if "lon" not in coord_list:
+        log.debug("lon NOT in coords for model --> ")
+        lat_coords = [variable for variable in coord_list if "lat" in variable][0]
+        lon_coords = [variable for variable in coord_list if "lon" in variable][0]
+
+        ds_tag = ds_tag.rename({lat_coords: "lat", lon_coords: "lon"})
+    return ds_tag
+
+
 def _conform(ds_tag, lats, latn, lonw, lone, *, what, wrap=False):
     """Rename coords to lat/lon and put a box in the dataset's longitude convention (the body of `lon_swap`).
 
@@ -116,14 +140,7 @@ def _conform(ds_tag, lats, latn, lonw, lone, *, what, wrap=False):
     ValueError
         The longitude box crosses the longitude seam of the data.
     """
-    coord_list = list(ds_tag.coords.keys())
-
-    if "lon" not in coord_list:
-        log.debug("lon NOT in coords for model --> ")
-        lat_coords = [variable for variable in coord_list if "lat" in variable][0]
-        lon_coords = [variable for variable in coord_list if "lon" in variable][0]
-
-        ds_tag = ds_tag.rename({lat_coords: "lat", lon_coords: "lon"})
+    ds_tag = _named(ds_tag)
 
     if np.min(ds_tag.lon) < 0:
         lonw = ((lonw + 180) % 360) - 180
@@ -189,24 +206,25 @@ def coords_fmt(ds_tag, *, region):
     return lats, latn, lonw, lone, ds_tag
 
 
-def has_box(ds, region) -> bool:
-    """Tell whether ``ds`` is cut to a region's box.
+def has_box(ds, area) -> bool:
+    """Tell whether ``ds`` is cut to the box of an area.
 
-    That is the case when it has a lat/lon grid (not a ``"unit"`` dimension) and a region is named.
+    That is the case when it has a lat/lon grid (not a ``"unit"`` dimension) and the area is a box (the region's, the
+    config's ``box`` or a mask's bounds: `hcwf.config.model.AreaSpec.bounds`), not the whole domain of the files.
 
     Parameters
     ----------
     ds : xarray.Dataset or xarray.DataArray
         The data.
-    region : str or None
-        The region name, or None for none.
+    area : hcwf.config.model.AreaSpec
+        The area of the run.
 
     Returns
     -------
     bool
-        True when the data is cut to the region's box.
+        True when the data is cut to the area's box.
     """
-    return region is not None and "unit" not in ds.dims
+    return "unit" not in ds.dims and area.bounds() is not None
 
 
 def region_box(ds, *, region):
@@ -228,10 +246,66 @@ def region_box(ds, *, region):
     xarray.Dataset or xarray.DataArray
         The data inside the box, still lazy, with ascending ``lat``.
     """
-    if not has_box(ds, region):
+    if region is None or "unit" in ds.dims:
         return ds
     lats, latn, lonw, lone, ds = coords_fmt(ds, region=region)
     return ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
+
+
+def area_box(ds, area):
+    """Subset ``ds`` to the box of the run's area, lazily: nothing is read from file here.
+
+    The box is the region's, or the config's ``box`` (which replaces it), or the bounds of the mask without both
+    (`hcwf.spatial.area.resolve`). Longitude and latitude are put in HCWF's orientation, and a written box or mask
+    bounds are put in the data's longitude convention (0..360 or -180..180). A mask's bounds are padded by one cell of
+    the data. ``box: all``, no area at all, and data on a ``"unit"`` dimension are returned as they are, in the file's
+    own order. A longitude box that crosses the longitude seam of the data raises `ValueError`.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset or xarray.DataArray
+        The data.
+    area : hcwf.config.model.AreaSpec
+        The area of the run.
+
+    Returns
+    -------
+    xarray.Dataset or xarray.DataArray
+        The data inside the box, still lazy, with ascending ``lat``.
+    """
+    bounds = area.bounds()
+    if bounds is None or "unit" in ds.dims:
+        return ds
+    if not bounds.wrap:
+        return region_box(ds, region=area.region)
+    south, north, west, east = bounds.tuple
+    if bounds.pad:
+        ds = _named(ds)
+        dlat, dlon = _cell(ds)
+        south, north, west, east = south - dlat, north + dlat, west - dlon, east + dlon
+    if bounds.lon_all or east - west >= 360.0 - 1e-6:
+        return lat_swap(_named(ds)).sel(lat=slice(south, north))
+    return cut_box(ds, south, north, west, east, what=f"the {bounds.origin}")
+
+
+def _cell(ds) -> tuple[float, float]:
+    """Return the latitude and longitude step of the data's grid, in degrees (0 for an axis of one cell).
+
+    Parameters
+    ----------
+    ds : xarray.Dataset or xarray.DataArray
+        The data, with ``lat`` and ``lon``.
+
+    Returns
+    -------
+    tuple of (float, float)
+        The median steps.
+    """
+    out = []
+    for name in ("lat", "lon"):
+        axis = np.sort(np.asarray(ds[name].values, dtype=float))
+        out.append(float(np.median(np.diff(axis))) if axis.size > 1 else 0.0)
+    return out[0], out[1]
 
 
 def cut_box(ds, south, north, west, east, *, what="the box"):
@@ -1054,7 +1128,7 @@ def implicit_keep(obj, area: AreaSpec, select: Selection | None = None):
     numpy.ndarray of bool, shape (lat, lon) or None
         True for the cells kept, or None.
     """
-    if not has_box(obj, area.region) or area.mask or area.nc_mask:
+    if area.region is None or not has_box(obj, area) or area.mask or area.nc_mask:
         return None
     land_only, shp_only = implicit_masks(select)
     if not (land_only or shp_only):
@@ -1088,8 +1162,7 @@ def mask_region_loaded(obj, *, area: AreaSpec, select: Selection | None = None, 
     xarray.Dataset or xarray.DataArray
         The masked data.
     """
-    region = area.region
-    if not has_box(obj, region):
+    if not has_box(obj, area):
         return obj
     if area.mask or area.nc_mask:
         return region_select_masks(obj, area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)
@@ -1154,7 +1227,7 @@ def region_select_masks(ds_reg, *, area: AreaSpec, select: Selection | None = No
     MaskError
         Both ``mask`` and ``nc_mask`` are set.
     """
-    if not has_box(ds_reg, area.region):
+    if not has_box(ds_reg, area):
         return ds_reg
     if area.mask:
         if area.nc_mask:
@@ -1167,6 +1240,8 @@ def region_select_masks(ds_reg, *, area: AreaSpec, select: Selection | None = No
 
         return apply_region_mask(ds_reg, area.mask, dataset_name or "data", dir_fig)
 
+    if area.region is None:   # no region: no region defaults, so no implicit land or country mask
+        return apply_default_mask(ds_reg, None, False, False, area.nc_mask) if area.nc_mask else ds_reg
     land_only, shp_only = implicit_masks(select)
     return apply_default_mask(ds_reg, area.region, land_only, shp_only, area.nc_mask)
 
@@ -1192,7 +1267,7 @@ def region_select(ds, *, area: AreaSpec, select: Selection | None = None, datase
     read. With ``compact`` too, a selection that has masked cells comes back as only its kept cells (the dims without
     ``lat`` and ``lon``, then ``"cell"``, see `load_blocks`), nothing allocated for the others.
 
-    With no region, or on a ``"unit"`` dimension, there is no box and no cell mask: the data is read as it is. It
+    With ``box: all`` (or no area), or on a ``"unit"`` dimension, there is no box and no cell mask: the data is read as it is. It
     raises ``MaskError`` when both ``mask`` and ``nc_mask`` are set, and `ValueError` when the longitude box crosses
     the longitude seam of the data (see `lon_swap`).
 
@@ -1224,7 +1299,7 @@ def region_select(ds, *, area: AreaSpec, select: Selection | None = None, datase
     xarray.Dataset or xarray.DataArray
         The data inside the box, NaN outside the mask.
     """
-    ds_reg = region_box(ds, region=area.region)
+    ds_reg = area_box(ds, area)
     if read_by:
         if skip_masked and keep is None and _readable_by_cells(ds_reg, read_by):
             keep = implicit_keep(ds_reg, area, select)

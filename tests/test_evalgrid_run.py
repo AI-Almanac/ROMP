@@ -105,7 +105,7 @@ def test_sources_on_one_grid_have_no_evaluation_grid(world, tmp_path):
 def test_without_a_region_the_finer_model_is_averaged_onto_the_overlap_grid(world, tmp_path):
     """No region: the same grid and scores as with one (the files hold the same area), and --check shows the overlap."""
     raw = raw_config(world, ("DET", "DETF"))
-    raw["region"] = None
+    raw["region"], raw["box"] = None, "all"
     raw["onset"]["definition"] = "icpac"
     path = write_config(tmp_path, raw)
     rc, found = resolve(path, check=True, write=False)
@@ -126,12 +126,12 @@ def test_without_a_region_the_finer_model_is_averaged_onto_the_overlap_grid(worl
 def test_without_a_region_the_override_works_and_matching_grids_have_no_grid(world, tmp_path):
     """evaluation_grid names the finer model with no region; one grid gives none."""
     raw = raw_config(world, ("DET", "DETF"))
-    raw["region"] = None
+    raw["region"], raw["box"] = None, "all"
     raw["onset"]["definition"] = "icpac"
     raw["evaluation_grid"] = "DETF"
     grid = resolve(write_config(tmp_path, raw), write=False).area.evaluation_grid
     assert grid.source == "DETF" and len(grid.lat) == 6 and grid.box is not None
     raw = raw_config(world, ("DET",))
-    raw["region"] = None
+    raw["region"], raw["box"] = None, "all"
     raw["onset"]["definition"] = "icpac"
     assert resolve(write_config(tmp_path, raw, "one.yaml"), write=False).area.evaluation_grid is None

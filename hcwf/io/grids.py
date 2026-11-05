@@ -113,7 +113,10 @@ def attach(rc, select=NO_SELECTION):
     except Exception as exc:  # noqa: BLE001 - the reads raise and name the real problem
         log.debug(f"evaluation grid not looked at: {exc}")
         return rc
-    grid = evalgrid.build(grids, rc.area.grid_source, cut=rc.area.region is None)
+    bounds = rc.area.bounds()
+    where = "in the region box" if bounds is None or bounds.origin == "region box" \
+        else f"in the area ({bounds.text()})"
+    grid = evalgrid.build(grids, rc.area.grid_source, cut=rc.area.region is None and bounds is None, where=where)
     if grid is None:
         return rc
     return replace(rc, area=replace(rc.area, evaluation_grid=grid))

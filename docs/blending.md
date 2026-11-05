@@ -8,7 +8,8 @@ A blend is part of the normal run file: a `blend:` section next to the usual `ob
 
 ```yaml
 project_name: Blend of one model
-region: null                       # no region: the whole domain of the files; or a region id
+region: null                       # no region defaults; or a region id
+box: all                           # the area read: the whole domain of the files (or lat_min, lat_max, lon_min, lon_max)
 observations:
   paths: [/path/to/observations/*.nc]          # any number of files per year; names or globs
   variable: <rain variable>

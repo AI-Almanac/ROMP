@@ -458,6 +458,9 @@ class AreaSpec:
     """The folder of the boundary shapes of the maps, or None."""
     polygon: bool
     """Whether the maps draw polygons."""
+    box: dict | str | None = None
+    """The config's ``box``: a mapping of ``lat_min``, ``lat_max``, ``lon_min``, ``lon_max``, ``"all"`` (the whole
+    domain of the files), or None (the region's box, else the mask's bounds: see `bounds`)."""
     mask_given: dict | None = field(default=None, compare=False, hash=False)
     """The ``mask:`` mapping exactly as the config gave it (a key written with its default value stays): what the
     observed-onset cache key hashes. None: not given (a spec built by hand then falls back to its non-default keys)."""
@@ -467,6 +470,30 @@ class AreaSpec:
     evaluation_grid: EvaluationGrid | None = field(default=None, compare=False, hash=False)
     """The evaluation grid resolved from the files (`hcwf.io.grids.attach`), or None when every source is on one grid
     or has not been looked at: a source whose grid is another is averaged onto it as it is read."""
+
+    def bounds(self):
+        """Return the box every reader cuts to, resolved from the region, ``box`` and mask (`hcwf.spatial.area.resolve`).
+
+        Returns
+        -------
+        hcwf.spatial.area.Bounds or None
+            The box; None when the area is the whole domain of the files.
+        """
+        from hcwf.spatial import area
+
+        return area.resolve(self.region, self.box, self.mask)
+
+    def describe(self) -> str:
+        """Describe the area and its bounds for reports (`hcwf.spatial.area.describe`).
+
+        Returns
+        -------
+        str
+            The area: region box, ``box``, mask bounds or the whole domain.
+        """
+        from hcwf.spatial import area
+
+        return area.describe(self.region, self.box, self.mask)
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,6 +563,8 @@ class FigureSpec:
     """The longest lead, in days."""
     units: UnitsSpec | None
     """The observations' evaluation units: the maps draw a field over "unit" on their polygons or centroids."""
+    area: "AreaSpec | None" = None
+    """The run's area: without a region its mask or box gives the maps' outline and extent."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -975,7 +1004,7 @@ def _project_area(v) -> AreaSpec:
 
         mask = MaskSpec.from_mapping(mask)
     given = _get(v, "mask")
-    return AreaSpec(region=_get(v, "region"), mask=mask or None, nc_mask=_get(v, "nc_mask"),
+    return AreaSpec(region=_get(v, "region"), box=_get(v, "box"), mask=mask or None, nc_mask=_get(v, "nc_mask"),
                     shpfile_dir=_get(v, "shpfile_dir"), polygon=_get(v, "polygon"),
                     mask_given=dict(given) if isinstance(given, Mapping) else None,
                     grid_source=_get(v, "evaluation_grid"))
@@ -1255,4 +1284,5 @@ class RunConfig:
                           polygon=self.area.polygon, save_fig=self.output.save_fig, show_plot=self.output.show_plot,
                           show_panel=self.output.show_panel, date_filter_year=self.evaluation.date_filter_year,
                           short_names=self.short_names, models=tuple(m.name for m in self.models),
-                          max_forecast_day=self.evaluation.max_forecast_day, units=self.observations.units)
+                          max_forecast_day=self.evaluation.max_forecast_day, units=self.observations.units,
+                          area=self.area)
