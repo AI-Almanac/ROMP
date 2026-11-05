@@ -100,3 +100,38 @@ def test_sources_on_one_grid_have_no_evaluation_grid(world, tmp_path):
     assert rc.area.evaluation_grid is None
     assert "evaluation grid: the sources are on one grid inside the region box; nothing is regridded" in \
         check_mod.build_report(rc, found).text()
+
+
+def test_without_a_region_the_finer_model_is_averaged_onto_the_overlap_grid(world, tmp_path):
+    """No region: the same grid and scores as with one (the files hold the same area), and --check shows the overlap."""
+    raw = raw_config(world, ("DET", "DETF"))
+    raw["region"] = None
+    raw["onset"]["definition"] = "icpac"
+    path = write_config(tmp_path, raw)
+    rc, found = resolve(path, check=True, write=False)
+    grid = rc.area.evaluation_grid
+    assert grid is not None and grid.box is not None and grid.regrid == ("observations", "DET", "DETF")
+    np.testing.assert_allclose(grid.lat, LAT)
+    np.testing.assert_allclose(grid.lon, LON)
+    text = check_mod.build_report(rc, found).text()
+    assert "overlap of the sources (no region)" in text and "area every source covers" in text
+    spatial = hcwf.run(path, quiet=True).scores["spatial"]
+    det = spatial[next(k for k in spatial if k[0] == "DET")]
+    fine = spatial[next(k for k in spatial if k[0] == "DETF")]
+    assert det.sizes["lat"] == 3 and fine.sizes == det.sizes
+    for name in det.data_vars:
+        np.testing.assert_allclose(fine[name].values, det[name].values, rtol=1e-9, atol=1e-12, equal_nan=True)
+
+
+def test_without_a_region_the_override_works_and_matching_grids_have_no_grid(world, tmp_path):
+    """evaluation_grid names the finer model with no region; one grid gives none."""
+    raw = raw_config(world, ("DET", "DETF"))
+    raw["region"] = None
+    raw["onset"]["definition"] = "icpac"
+    raw["evaluation_grid"] = "DETF"
+    grid = resolve(write_config(tmp_path, raw), write=False).area.evaluation_grid
+    assert grid.source == "DETF" and len(grid.lat) == 6 and grid.box is not None
+    raw = raw_config(world, ("DET",))
+    raw["region"] = None
+    raw["onset"]["definition"] = "icpac"
+    assert resolve(write_config(tmp_path, raw, "one.yaml"), write=False).area.evaluation_grid is None

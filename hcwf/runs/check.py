@@ -570,7 +570,7 @@ def _grids(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
             report.add(line)
     elif differ:
         report.hint("evaluation_grid", "the observations and models are on different grids, but no evaluation grid "
-                                       "could be set (it needs a region, gridded data and no units). Fix: set region")
+                                       "could be set (it needs gridded data and no units). Fix: check the files and units")
     else:
         report.add("evaluation grid: the sources are on one grid inside the region box; nothing is regridded")
 

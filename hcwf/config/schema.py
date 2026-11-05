@@ -997,7 +997,7 @@ def _fields() -> tuple[Field, ...]:
         Field("mask", "mask", "cells to evaluate, built on the evaluation grid (see evaluation_grid); the parts given intersect: "
               + "; ".join(f"{k}: {h}" for k, (_, h, *_rest) in MASK_KEYS.items()), None, nullable=True, fill=False),
         Field("evaluation_grid", "str", "the grid the run is scored on when observations and models are on different "
-              "grids: 'observations' or a model's name, whose grid (cut to the region box, mask built on it) every "
+              "grids: 'observations' or a model's name, whose grid (cut to the region box, or without a region to the area every source covers; mask built on it) every "
               "source is averaged conservatively onto; null: the coarsest of all the sources", None, nullable=True,
               fill=False),
         Field("shpfile_dir", "path", "shapefile for the region boundary in maps", None, nullable=True),

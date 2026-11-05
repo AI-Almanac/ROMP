@@ -6,8 +6,11 @@ the sources, or the one the ``evaluation_grid`` key names. A run whose sources s
 it always was. The readers (`hcwf.io.observations`, `hcwf.io.forecasts`) then average any source on another grid onto
 it through `hcwf.spatial.evalgrid.region_read`.
 
-Runs on evaluation units (``units:``), without a region, or that do not read the grids have no evaluation grid: the
-units are built from each source's own grid (see `hcwf.spatial.units`).
+Without a region the evaluation grid is the chosen grid cut to the area every source covers (see
+`hcwf.spatial.evalgrid.overlap`); sources that do not overlap raise a `ValueError` with a Fix.
+
+Runs on evaluation units (``units:``) or that do not read the grids have no evaluation grid: the units are built from
+each source's own grid (see `hcwf.spatial.units`).
 """
 from __future__ import annotations
 
@@ -53,11 +56,13 @@ def source_grids(rc, select=NO_SELECTION) -> dict:
         models.append(rc.reference.as_model())
     ensemble = bool(rc.evaluation.probabilistic)
     error = None
+    listed = {m.name: replace(select, model_paths=m.paths) for m in models if m.paths}
     for year in rc.evaluation.years:
         try:
             grids = {evalgrid.OBSERVATIONS: _pair(observation_grid_of(year, rc, select))}
             for model in models:
-                grids[model.name] = _pair(forecast_grid(year, model, rc.area, select, ensemble=ensemble))
+                grids[model.name] = _pair(forecast_grid(year, model, rc.area, listed.get(model.name, select),
+                                                                 ensemble=ensemble))
             return grids
         except Exception as exc:  # noqa: BLE001 - try the next year; the last error is raised
             error = exc
@@ -83,8 +88,8 @@ def _pair(grid):
 def attach(rc, select=NO_SELECTION):
     """Return the run configuration with its evaluation grid, when its sources are not on one grid.
 
-    Nothing changes (``rc`` itself is returned) for a run without a region, on evaluation units, or whose files cannot
-    be looked at (the reads then raise the real error), and for sources that are all on one grid.
+    Nothing changes (``rc`` itself is returned) for a run on evaluation units, or whose files cannot be looked at (the
+    reads then raise the real error), and for sources that are all on one grid.
 
     Parameters
     ----------
@@ -98,16 +103,17 @@ def attach(rc, select=NO_SELECTION):
     hcwf.config.model.RunConfig
         ``rc``, with ``area.evaluation_grid`` set when a source is on another grid than the coarsest (or the named) one.
         A `ValueError` is raised (by `~hcwf.spatial.evalgrid.choose`) when ``evaluation_grid`` names a source the run
-        does not have.
+        does not have, and, without a region, when the sources do not overlap or the overlap crosses a longitude seam
+        (by `~hcwf.spatial.evalgrid.overlap`).
     """
-    if rc.area.region is None or rc.area.evaluation_grid is not None or _on_units(rc):
+    if rc.area.evaluation_grid is not None or _on_units(rc):
         return rc
     try:
         grids = source_grids(rc, select)
     except Exception as exc:  # noqa: BLE001 - the reads raise and name the real problem
         log.debug(f"evaluation grid not looked at: {exc}")
         return rc
-    grid = evalgrid.build(grids, rc.area.grid_source)
+    grid = evalgrid.build(grids, rc.area.grid_source, cut=rc.area.region is None)
     if grid is None:
         return rc
     return replace(rc, area=replace(rc.area, evaluation_grid=grid))

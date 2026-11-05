@@ -25,6 +25,7 @@ the folder): they are not configuration errors, so the CLI handles them on their
 
 __all__ = [
     "AreaError", "BlendFileError", "ConfigSchemaError", "ConvertError", "DatasetError", "DefinitionError",
+    "EvaluationGridError",
     "HCWFConfigError", "IncompatibleForecast", "MaskError", "OnsetConfigError", "RecipeError", "RegionError",
     "RunExistsError", "UnitsError", "UnitsSpecError",
 ]
@@ -133,3 +134,7 @@ class IncompatibleForecast(ValueError):
 
 class RunExistsError(FileExistsError):
     """The run folder of this config already holds a run; the message says how to re-run."""
+
+
+class EvaluationGridError(HCWFConfigError):
+    """The sources of a run without a region share no area to score on (they do not overlap, or the overlap crosses a seam)."""

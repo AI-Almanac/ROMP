@@ -19,6 +19,12 @@ The result is gridded on the evaluation grid exactly like a native read: ``(lat,
 dimension where masks drop cells. `hcwf.io.grids` finds the sources' grids and decides, and the config's area carries the
 decision (`hcwf.config.model.AreaSpec.evaluation_grid`).
 
+Without a region the sources have no common box to cut to: the evaluation grid is then the chosen source's grid cut to
+the area every source covers (`overlap`: the intersection of the sources' extents, in the chosen source's longitude
+convention; the cells of the grid that lie wholly inside). Every source, the chosen one too, is then read from that
+area through `region_read`. Sources that do not overlap, or whose overlap crosses the longitude seam of one of the
+files (`~hcwf.spatial.select.cut_box` refuses that), raise a `ValueError` with a Fix when the run is resolved.
+
 Polygon or admin units (the ``units:`` section) do not use this: each source is averaged directly from its own grid
 onto the polygons (`~hcwf.spatial.units.EvaluationUnits.transform` builds one transform per source grid).
 """
@@ -31,12 +37,13 @@ import numpy as np
 import xarray as xr
 
 from hcwf.cache import memo
-from hcwf.spatial.masks import cell_bounds
+from hcwf.errors import EvaluationGridError
+from hcwf.spatial.masks import apply_region_mask, cell_bounds
 from hcwf.spatial.onto_units import read_on_units
-from hcwf.spatial.select import cut_box, in_memory, mask_region_loaded, region_select
+from hcwf.spatial.select import cut_box, in_memory, lat_swap, mask_region_loaded, region_select
 from hcwf.spatial.units import EvaluationUnits
 
-__all__ = ["EvaluationGrid", "build", "choose", "keep_cells", "region_read", "same_grid", "steps"]
+__all__ = ["EvaluationGrid", "build", "choose", "cut_to_grid", "keep_cells", "overlap", "region_read", "same_grid", "steps"]
 
 TOLERANCE = 1e-3
 """How far (in degrees) two grids' cell centres may differ for the grids to be the same (as HCWF's onset matching)."""
@@ -70,6 +77,10 @@ class EvaluationGrid:
     """``(source, latitude step, longitude step)`` of every source, in degrees."""
     reason: str
     """Why this source's grid was chosen."""
+    box: tuple | None = None
+    """``(south, north, west, east)`` of the area every source covers, for a run without a region; None with a region."""
+    lon_global: bool = False
+    """Whether every source covers all longitudes (a run without a region): no longitude cut is made."""
 
     def regrids(self, source: str) -> bool:
         """Tell whether a source is averaged onto the grid.
@@ -106,10 +117,16 @@ class EvaluationGrid:
             The grid and its source, why it was chosen, and what is averaged onto it.
         """
         dlat, dlon = next((a, b) for name, a, b in self.steps if name == self.source)
-        out = [f"evaluation grid: the grid of {self.source} ({len(self.lat)} lats x {len(self.lon)} lons in the region "
-               f"box, {dlat:g} x {dlon:g} degrees); {self.reason}"]
+        where = "in the region box" if self.box is None else "in the area every source covers"
+        out = [f"evaluation grid: the grid of {self.source} ({len(self.lat)} lats x {len(self.lon)} lons {where}, "
+               f"{dlat:g} x {dlon:g} degrees); {self.reason}"]
+        if self.box is not None:
+            south, north, west, east = self.box
+            lon = "all longitudes" if self.lon_global else f"longitudes {west:g} to {east:g}"
+            out.append(f"overlap of the sources (no region): latitudes {south:g} to {north:g}, {lon}; only this area "
+                       "is read from each file")
         for name, a, b in self.steps:
-            if name in self.regrid:
+            if name in self.regrid and (name != self.source or self.box is None):
                 how = "finer, averaged" if a * b < dlat * dlon else "averaged"
                 out.append(f"{name}: {a:g} x {b:g} degrees, {how} conservatively onto it (cell areas on the sphere, "
                            "renormalised over the cells that have a value)")
@@ -215,29 +232,198 @@ def choose(grids: dict, override: str | None = None) -> tuple[str, str]:
     return best, "the coarsest of the sources (of equal cell size, the first listed)"
 
 
-def build(grids: dict, override: str | None = None) -> EvaluationGrid | None:
+def _interval(axis, step) -> tuple[float, float]:
+    """Return the edges of the extent of a coordinate axis.
+
+    Parameters
+    ----------
+    axis : array_like of float
+        The cell centres.
+    step : float
+        The cell size.
+
+    Returns
+    -------
+    tuple of (float, float)
+        The lowest and highest cell edge.
+    """
+    axis = np.asarray(axis, dtype=float)
+    return float(axis.min() - step / 2), float(axis.max() + step / 2)
+
+
+def _no_overlap(why: str) -> EvaluationGridError:
+    """Return the error for sources that cannot share an area, with its Fix.
+
+    Parameters
+    ----------
+    why : str
+        What is wrong.
+
+    Returns
+    -------
+    EvaluationGridError
+        The error to raise.
+    """
+    return EvaluationGridError(f"evaluation grid without a region: {why}. Fix: set region (it cuts every source to its "
+                               "box), "
+                               "or evaluation_grid to the source that covers the area you want")
+
+
+def overlap(grids: dict, source: str) -> tuple[tuple, bool, np.ndarray, np.ndarray]:
+    """Cut the grid of ``source`` to the area every source covers (a run without a region).
+
+    The area is the intersection of the extents of the sources: latitudes by the cell edges; longitudes by the cell
+    edges in the longitude convention of ``source`` (a source with all longitudes covers every convention). The
+    evaluation cells are the cells of ``source`` that lie wholly inside the area.
+
+    Parameters
+    ----------
+    grids : dict of str to tuple
+        Maps each source name to the ``(lat, lon)`` of its file.
+    source : str
+        The source whose grid is cut.
+
+    Returns
+    -------
+    box : tuple of float
+        ``(south, north, west, east)`` of the area.
+    lon_global : bool
+        True when every source covers all longitudes.
+    lat : numpy.ndarray of float64
+        The latitudes of the evaluation cells, ascending.
+    lon : numpy.ndarray of float64
+        Their longitudes, ascending, as ``source`` stores them.
+
+    Raises
+    ------
+    ValueError
+        The sources do not overlap, or the overlap crosses the longitude seam of ``source`` (which
+        `~hcwf.spatial.select.cut_box` does not support). The message has a Fix.
+    """
+    own = {name: tuple(np.sort(np.asarray(a, dtype=float)) for a in grid) for name, grid in grids.items()}
+    step = {name: steps(*grid) for name, grid in own.items()}
+    south = max(_interval(g[0], step[n][0])[0] for n, g in own.items())
+    north = min(_interval(g[0], step[n][0])[1] for n, g in own.items())
+    if south >= north - TOLERANCE:
+        raise _no_overlap(f"the latitudes of the sources do not overlap (the common band would be {south:g} to "
+                          f"{north:g})")
+    west, east = _interval(own[source][1], step[source][1])
+    lon_global = (east - west) >= 360.0 - TOLERANCE
+    for name, (_, lon) in own.items():
+        if name == source:
+            continue
+        low, high = _interval(lon, step[name][1])
+        if high - low >= 360.0 - TOLERANCE:
+            continue
+        lon_global = False
+        shifted = [(max(west, low + k * 360.0), min(east, high + k * 360.0)) for k in (-1, 0, 1)]
+        found = [s for s in shifted if s[1] - s[0] > TOLERANCE]
+        if not found:
+            raise _no_overlap(f"{name} and {source} have no longitudes in common")
+        if len(found) > 1:
+            raise _no_overlap(f"the longitudes {name} and {source} share cross the longitude seam of {source} "
+                              "(a box across the seam of a file is not supported)")
+        west, east = found[0]
+    dlat, dlon = step[source]
+    lat, lon = own[source]
+    lat = lat[(lat - dlat / 2 >= south - TOLERANCE) & (lat + dlat / 2 <= north + TOLERANCE)]
+    if not lon_global:
+        lon = lon[(lon - dlon / 2 >= west - TOLERANCE) & (lon + dlon / 2 <= east + TOLERANCE)]
+    if not lat.size or not lon.size:
+        raise _no_overlap(f"no cell of {source} lies wholly inside the area the sources share "
+                          f"(latitudes {south:g} to {north:g}, longitudes {west:g} to {east:g})")
+    return (south, north, west, east), lon_global, lat, lon
+
+
+def build(grids: dict, override: str | None = None, *, cut: bool = False) -> EvaluationGrid | None:
     """Build the evaluation grid of the sources' grids, or None when they all are one grid.
 
     Parameters
     ----------
     grids : dict of str to tuple
-        Maps each source name to its ``(lat, lon)`` grid in the region's box (see `choose`).
+        Maps each source name to its ``(lat, lon)`` grid in the region's box (see `choose`), or, with ``cut``, to the
+        grid of its file.
     override : str, optional
         The source the config asks for; None takes the coarsest.
+    cut : bool, default False
+        The run has no region: cut the grid to the area every source covers (see `overlap`) and read every source
+        from it.
 
     Returns
     -------
     EvaluationGrid or None
         The evaluation grid; None when the sources' grids are the same (nothing is averaged, every source is read as it
-        is). A `ValueError` is raised (by `choose`) when ``override`` is not one of the sources.
+        is). A `ValueError` is raised (by `choose`) when ``override`` is not one of the sources, and (by `overlap`) when
+        the sources do not overlap or a file's longitude seam is crossed.
     """
     source, reason = choose(grids, override)
+    if cut:
+        if all(same_grid(*g, *grids[source]) for g in grids.values()):
+            return None
+        box, lon_global, lat, lon = overlap(grids, source)
+        for name, (glat, glon) in grids.items():
+            cut_to_grid(_skeleton(glat, glon), lat, lon, lon_global, f"the evaluation grid ({name})")
+        sizes = tuple((n, *steps(*g)) for n, g in grids.items())
+        return EvaluationGrid(source, lat, lon, tuple(grids), sizes, reason, box, lon_global)
     lat, lon = (np.asarray(a, dtype=float) for a in grids[source])
     regrid = tuple(n for n, g in grids.items() if n != source and not same_grid(*g, lat, lon))
     if not regrid:
         return None
     sizes = tuple((n, *steps(*g)) for n, g in grids.items())
     return EvaluationGrid(source, lat, lon, regrid, sizes, reason)
+
+
+def _skeleton(lat, lon) -> xr.DataArray:
+    """Return an array of the grid's shape that holds no data (nothing is allocated), to test a cut on.
+
+    Parameters
+    ----------
+    lat : array_like of float, shape (lat,)
+        The latitudes.
+    lon : array_like of float, shape (lon,)
+        The longitudes.
+
+    Returns
+    -------
+    xarray.DataArray
+        A boolean ``(lat, lon)`` array of zeros that shares one element.
+    """
+    lat, lon = np.asarray(lat, dtype=float), np.asarray(lon, dtype=float)
+    return xr.DataArray(np.broadcast_to(np.zeros((), dtype=bool), (lat.size, lon.size)), dims=("lat", "lon"),
+                        coords={"lat": lat, "lon": lon})
+
+
+def cut_to_grid(da, lat, lon, lon_global: bool = False, what: str = "the evaluation grid") -> xr.DataArray:
+    """Cut a source's array to the extent of the evaluation grid, padded by one of the source's own cells.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The lazy source array, with ``lat`` and ``lon``.
+    lat : array_like of float, shape (lat,)
+        The latitudes of the evaluation cells.
+    lon : array_like of float, shape (lon,)
+        The longitudes of the evaluation cells.
+    lon_global : bool, default False
+        Cut latitudes only (every source covers all longitudes).
+    what : str, default "the evaluation grid"
+        What the box is, for an error message.
+
+    Returns
+    -------
+    xarray.DataArray
+        The array inside the padded box, with ascending ``lat``.
+
+    Raises
+    ------
+    ValueError
+        The longitude box crosses the longitude seam of the source (see `~hcwf.spatial.select.cut_box`).
+    """
+    dlat, dlon = steps(da["lat"].values, da["lon"].values)
+    lat_edges, lon_edges = cell_bounds(lat, lon)
+    if lon_global:
+        return lat_swap(da).sel(lat=slice(lat_edges[0] - dlat, lat_edges[-1] + dlat))
+    return cut_box(da, lat_edges[0] - dlat, lat_edges[-1] + dlat, lon_edges[0] - dlon, lon_edges[-1] + dlon, what=what)
 
 
 def keep_cells(grid: EvaluationGrid, area, select, dataset_name, dir_fig) -> np.ndarray:
@@ -263,7 +449,10 @@ def keep_cells(grid: EvaluationGrid, area, select, dataset_name, dir_fig) -> np.
     """
     field = xr.DataArray(np.zeros((len(grid.lat), len(grid.lon)), dtype="float32"), dims=("lat", "lon"),
                          coords={"lat": grid.lat, "lon": grid.lon})
-    masked = mask_region_loaded(field, area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)
+    if area.region is None:   # no region: the mask section alone, built on the evaluation grid
+        masked = apply_region_mask(field, area.mask, dataset_name, dir_fig) if area.mask else field
+    else:
+        masked = mask_region_loaded(field, area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)
     return np.isfinite(np.asarray(masked.values))
 
 
@@ -358,10 +547,7 @@ def region_read(ds, var, *, area, select, source, read_by, dataset_name, dir_fig
                                        dataset_name=dataset_name, dir_fig=dir_fig, skip_masked=skip_masked,
                                        compact=compact)[var])
     da = ds[var]
-    dlat, dlon = steps(da["lat"].values, da["lon"].values)
-    lat_edges, lon_edges = cell_bounds(grid.lat, grid.lon)
-    cut = cut_box(da, lat_edges[0] - dlat, lat_edges[-1] + dlat, lon_edges[0] - dlon, lon_edges[-1] + dlon,
-                  what=f"the evaluation grid ({source})")
+    cut = cut_to_grid(da, grid.lat, grid.lon, grid.lon_global, f"the evaluation grid ({source})")
     if not cut.sizes["lat"] or not cut.sizes["lon"]:
         raise ValueError(f"{dataset_name} has no cell near the evaluation grid (the grid of {grid.source}, "
                          f"latitudes {grid.lat[0]:g} to {grid.lat[-1]:g}, longitudes {grid.lon[0]:g} to {grid.lon[-1]:g})")

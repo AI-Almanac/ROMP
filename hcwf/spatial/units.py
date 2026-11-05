@@ -1153,9 +1153,15 @@ class UnitsSpec:
                              boundary=self.boundary)
         if self.dissemination and self.dissemination_scope == "inputs":
             keep = keep & units.subsets["dissemination"]
+        within = keep
         if keep_ids is not None:
             keep = keep & np.isin(units.ids, np.asarray(sorted(keep_ids), dtype=str))
         positions = np.flatnonzero(keep)
+        if not len(positions) and within.any():
+            raise ValueError("No unit of the file is one of the units of the other sources: the sources are on "
+                             "different grids and units read each source's own cells. Fix: give units a shapefile or "
+                             "weights table (each source is then averaged from its own grid onto the units), or "
+                             "put the sources on one grid")
         if not len(positions):
             raise ValueError("No unit of the file is kept")
         return positions[np.argsort(units.ids[positions], kind="stable")]
