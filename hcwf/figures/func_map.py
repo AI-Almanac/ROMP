@@ -156,7 +156,7 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
         ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
 
     # set map extent, country boundary, gridline
-    ax, gl = set_basemap(ax, spec)
+    ax, gl = set_basemap(ax, spec, da)
 
     # Define Core Monsoon Zone bounding polygon coordinates based on resolution 
 
@@ -174,7 +174,7 @@ def spatial_metrics_map(da, model_name, spec, *, window=None,
 
     # mask data inside country boundary
     if domain_mask and units is None:
-        da = shp_mask(da, region=region)
+        da = shp_mask(da, region=region, mask=getattr(getattr(spec, "area", None), "mask", None))
 
     if polygon_only and units is None:
         da = polygon_mask(da)

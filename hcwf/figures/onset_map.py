@@ -88,7 +88,7 @@ def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=
     ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
 
     # set map extent, country boundary, gridline
-    set_basemap(ax, spec)
+    set_basemap(ax, spec, climatological_onset_doy)
 
     # Define Core Monsoon Zone bounding polygon coordinates based on resolution 
     polygon_defined = False
@@ -112,7 +112,8 @@ def plot_spatial_climatology_onset(onset_da_dict, spec, years_clim, *, cbar_ssn=
 
     # mask data inside country boundary
     if domain_mask and units is None:
-        climatological_onset_doy = shp_mask(climatological_onset_doy, region=region)
+        climatological_onset_doy = shp_mask(climatological_onset_doy, region=region,
+                                            mask=getattr(getattr(spec, "area", None), "mask", None))
 
     # Plot discrete values at each grid point using pcolormesh with custom colormap
     im = draw_field(ax, climatological_onset_doy, units, cmap=cmap_jjas, norm=norm_jjas, transform=ccrs.PlateCarree())

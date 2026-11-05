@@ -73,7 +73,7 @@ def cbar_season():
     return cmap_jjas, norm_jjas, bounds
 
 
-def set_basemap(ax, spec):
+def set_basemap(ax, spec, field=None):
     """Draw the region outline, set the map extent and add the gridlines of a Cartopy axis.
 
     Parameters
@@ -82,7 +82,9 @@ def set_basemap(ax, spec):
         The axes to draw on.
     spec : object
         The run's `~hcwf.config.model.FigureSpec`: its ``region`` gives the extent (and the outline), and ``shpfile_dir`` (a
-        shapefile path) the outline when set.
+        shapefile path) the outline when set. Without a region its ``area`` (box or mask) gives both.
+    field : xarray.DataArray, optional
+        The field to draw; the extent is its extent when the area is the whole domain of the files.
 
     Returns
     -------
@@ -91,17 +93,18 @@ def set_basemap(ax, spec):
     gl : cartopy.mpl.gridliner.Gridliner
         The gridliner, with labels on the left and bottom, every 5 degrees.
     """
-    region, shpfile_dir = spec.region, spec.shpfile_dir
-    from hcwf.onset.regions import box
+    region, shpfile_dir, area = spec.region, spec.shpfile_dir, getattr(spec, "area", None)
     import cartopy.crs as ccrs
     import matplotlib.ticker as mticker
 
-    # Add the region outline
-    draw_region_outline(ax, shapefile_outline(shpfile_dir) if shpfile_dir else None, region, 1.5)
+    # Add the region outline (the area's: the mask's shapes, else its box)
+    draw_region_outline(ax, shapefile_outline(shpfile_dir) if shpfile_dir else None, region, 1.5, area=area)
 
-    # Set the map extent to the region's box
-    lats, latn, lonw, lone = box(region)
-    ax.set_extent([lonw, lone, lats, latn], crs=ccrs.PlateCarree())
+    # Set the map extent to the area's bounds (the region's box, the written box or the mask's bounds)
+    bounds = _area_extent(spec, field)
+    if bounds is not None:
+        lats, latn, lonw, lone = bounds
+        ax.set_extent([lonw, lone, lats, latn], crs=ccrs.PlateCarree())
 
     gl = ax.gridlines(draw_labels=True, dms=False, x_inline=False, y_inline=False,
                       linewidth=0, linestyle='', color='none', alpha=0)
@@ -115,6 +118,39 @@ def set_basemap(ax, spec):
     gl.ylocator = mticker.MultipleLocator(5)   # every 5°
 
     return ax, gl
+
+def _area_extent(spec, field=None):
+    """Return the map extent of a run: its area's bounds, else the extent of the field.
+
+    Parameters
+    ----------
+    spec : object
+        The run's `~hcwf.config.model.FigureSpec`.
+    field : xarray.DataArray, optional
+        The field to draw, for ``box: all``.
+
+    Returns
+    -------
+    tuple of float or None
+        ``(south, north, west, east)``; None when there is no area and no gridded field to take it from.
+    """
+    area = getattr(spec, "area", None)
+    if area is not None:
+        bounds = area.bounds()
+        if bounds is not None:
+            return bounds.tuple
+    elif spec.region is not None:
+        from hcwf.onset.regions import box
+
+        return box(spec.region)
+    if field is not None and "lat" in field.coords and "lon" in field.coords:
+        lat, lon = np.asarray(field["lat"].values, dtype=float), np.asarray(field["lon"].values, dtype=float)
+        if lat.size and lon.size:
+            dlat = abs(lat[1] - lat[0]) / 2 if lat.size > 1 else 0.0
+            dlon = abs(lon[1] - lon[0]) / 2 if lon.size > 1 else 0.0
+            return (float(lat.min() - dlat), float(lat.max() + dlat), float(lon.min() - dlon), float(lon.max() + dlon))
+    return None
+
 
 def box_boundary(rect_boundary, ax, *, edgecolor='black', linewidth=2,
                     linestyle='-', fill=False, alpha=1.0,
@@ -838,42 +874,84 @@ def shapefile_outline(shpfile_path):
     return boundaries
 
 
-def draw_region_outline(ax, boundaries, region, linewidth):
-    """Draw the region outline on ``ax``: the given boundary lines, or else the region's country outline.
+def _box_outline(ax, area):
+    """Draw the rectangle of a run's box, with coastlines, for an area that has no shape.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    area : hcwf.config.model.AreaSpec or None
+        The run's area; nothing is drawn for the whole domain of the files.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        ``ax``.
+    """
+    import matplotlib.patches as mpatches
+
+    bounds = None if area is None else area.bounds()
+    if hasattr(ax, "add_feature"):
+        import cartopy.feature as cfeature
+
+        ax.add_feature(cfeature.COASTLINE)
+        ax.add_feature(cfeature.BORDERS, linestyle=":")
+    if bounds is None:
+        return ax
+    south, north, west, east = bounds.tuple
+    transform = ax.transData
+    if hasattr(ax, "add_feature"):
+        import cartopy.crs as ccrs
+
+        transform = ccrs.PlateCarree()
+    ax.add_patch(mpatches.Rectangle((west, south), east - west, north - south, fill=False, edgecolor="black",
+                                    linewidth=1.5, zorder=10, transform=transform))
+    return ax
+
+
+def draw_region_outline(ax, boundaries, region, linewidth, area=None):
+    """Draw the region outline on ``ax``: the given boundary lines, or else the area's outline.
 
     Parameters
     ----------
     ax : matplotlib.axes.Axes
         The axes to draw on.
     boundaries : list of tuple or None
-        The ``(lon, lat)`` boundary lines from `shapefile_outline`; None draws the outline of ``region`` with
-        `shp_outline` instead.
-    region : str
+        The ``(lon, lat)`` boundary lines from `shapefile_outline`; None draws the outline of ``region`` (or of
+        ``area`` without a region) with `shp_outline` instead.
+    region : str or None
         The region name, for `shp_outline`.
     linewidth : float
         The width of the boundary lines.
+    area : hcwf.config.model.AreaSpec, optional
+        The run's area, for a run without a region.
     """
     if boundaries is None:
-        shp_outline(ax, region=region)
+        shp_outline(ax, region=region, area=area)
     else:
         for lon, lat in boundaries:
             ax.plot(lon, lat, color='black', linewidth=linewidth)
 
 
-def shp_outline(ax, region, resolution='10m'):
-    """Add the country boundary of a region to a plot.
+def shp_outline(ax, region, resolution='10m', area=None):
+    """Add the outline of the run's area to a plot.
 
-    On a Cartopy axes the geometry is added with coastlines and borders; on a plain axes its exterior is plotted
-    as lines. A region that is not found is logged as a warning and nothing is drawn.
+    With a region that is its country boundary; without one, the shapes of the mask (a country or a shape file), else
+    the rectangle of the box (`hcwf.config.model.AreaSpec.bounds`) with coastlines. On a Cartopy axes the geometry is
+    added with coastlines and borders; on a plain axes its exterior is plotted as lines. A region that is not found
+    is logged as a warning and nothing is drawn.
 
     Parameters
     ----------
     ax : matplotlib.axes.Axes
         The axes to draw on.
-    region : str
-        The region (country) name, looked up with `hcwf.spatial.masks.get_shp`.
+    region : str or None
+        The region (country) name, looked up with `hcwf.spatial.masks.get_shp`; None for a run without a region.
     resolution : str, default "10m"
         The Natural Earth resolution.
+    area : hcwf.config.model.AreaSpec, optional
+        The run's area: its mask is the outline of a run without a region, else its box.
 
     Returns
     -------
@@ -886,8 +964,10 @@ def shp_outline(ax, region, resolution='10m'):
     # get region boundary
     from hcwf.spatial.masks import get_shp
 
-    region_geom = get_shp(region=region, resolution=resolution)
+    region_geom = get_shp(region=region, resolution=resolution, mask=None if area is None else area.mask)
 
+    if region_geom is None and region is None:
+        return _box_outline(ax, area)
     if region_geom is None:
         log.warning("specified region is not in cartopy.io.shapereader")
         return ax
@@ -906,8 +986,9 @@ def shp_outline(ax, region, resolution='10m'):
         # Regular matplotlib Axes — handle both Polygon and MultiPolygon
         geoms = [region_geom] if region_geom.geom_type == 'Polygon' else list(region_geom.geoms)
         for geom in geoms:
-            x, y = geom.exterior.xy
-            ax.plot(x, y, color="black", linewidth=1.5, zorder=10)
+            if hasattr(geom, "exterior"):
+                x, y = geom.exterior.xy
+                ax.plot(x, y, color="black", linewidth=1.5, zorder=10)
 
     # Optional: background
     if hasattr(ax, "add_feature"):

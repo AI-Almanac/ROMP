@@ -213,7 +213,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
 
     # Add the region outline
     boundaries = shapefile_outline(shpfile_dir) if shpfile_dir else None
-    draw_region_outline(axes[0], boundaries, region, map_lw)
+    draw_region_outline(axes[0], boundaries, region, map_lw, area=getattr(spec, "area", None))
 
     # Add CMZ polygon only if defined
     if polygon_defined:
@@ -253,7 +253,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
     im2 = draw_field(axes[1], far, units, shading='flat', cmap='Reds', vmin=0, vmax=100)
 
     # Add the region outline
-    draw_region_outline(axes[1], boundaries, region, map_lw)
+    draw_region_outline(axes[1], boundaries, region, map_lw, area=getattr(spec, "area", None))
 
     # Add CMZ polygon only if defined
     if polygon_defined:
@@ -288,7 +288,7 @@ def plot_spatial_metrics(spatial_metrics, case, spec, *, figsize=(18, 6), rect_b
     im3 = draw_field(axes[2], miss_rate, units, shading='flat', cmap='Blues', vmin=0, vmax=100)
 
     # Add the region outline
-    draw_region_outline(axes[2], boundaries, region, map_lw)
+    draw_region_outline(axes[2], boundaries, region, map_lw, area=getattr(spec, "area", None))
 
     # Add CMZ polygon only if defined
     if polygon_defined:
