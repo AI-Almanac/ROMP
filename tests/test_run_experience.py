@@ -659,7 +659,7 @@ def test_hint_lat_order_and_grid_mismatch(tmp_path):
     check_mod._grids(dic, report, samples)
     assert any(h.startswith("[observations] latitudes run north to south") for h in report.warnings)
     assert any(h.startswith("[evaluation_grid] the observations and models are on different grids")
-               and "Fix: set region" in h for h in report.warnings)
+               and "Fix: check the files and units" in h for h in report.warnings)
     assert not any("cdo remapcon" in h or "never regridded" in h for h in report.warnings)
 
 
