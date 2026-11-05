@@ -228,16 +228,70 @@ def test_a_threshold_cache_key_does_not_load_the_lazy_reference_rain():
 
 
 def test_store_adds_the_code_version_of_its_kind(monkeypatch):
-    """A kind in SCHEMA gets its version as a part, so bumping it makes every older entry miss; other kinds carry none."""
+    """A kind in CODE_MODULES gets its code version as a part, so a changed module makes every older entry miss."""
     parts = {"x": 1}
     store = Store("thresholds")
     before = store.fingerprint(parts)
-    monkeypatch.setitem(cache.SCHEMA, "thresholds", cache.SCHEMA["thresholds"] + 1)
+    monkeypatch.setattr(cache, "_SOURCE_HASHES", {})
+    monkeypatch.setattr(cache, "_read_source", lambda name: b"changed " + name.encode())
     assert store.fingerprint(parts) != before
     other = Store("not_versioned")
     assert "code_version" not in other._hashes(parts) and "code_version" in store._hashes(parts)
-    for kind in ("observed_onsets", "thresholds", "harmonic_seasons", "model_thresholds"):
-        assert kind in cache.SCHEMA
+    assert cache.code_version("not_versioned") is None
+
+
+def test_every_store_kind_of_hcwf_has_its_code_modules():
+    """Each Store kind written in the package is listed, and every module listed exists as a file."""
+    import ast
+
+    root = Path(cache.__file__).resolve().parent
+    kinds = set()
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        constants = {t.id: n.value.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
+                     and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)
+                     for t in n.targets if isinstance(t, ast.Name)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Store" and node.args:
+                arg = node.args[0]
+                kind = arg.value if isinstance(arg, ast.Constant) else constants.get(getattr(arg, "id", None))
+                if isinstance(kind, str):
+                    kinds.add(kind)
+    assert kinds >= {"observed_onsets", "thresholds", "harmonic_seasons", "model_thresholds", "detect", "alignment"}
+    assert kinds - {"oracle"} <= set(cache.CODE_MODULES), kinds - set(cache.CODE_MODULES)
+    assert "oracle" in cache.CODE_MODULES   # the oracle's Store is made under tests/blend
+    for kind, modules in cache.CODE_MODULES.items():
+        assert len(set(modules)) == len(modules), kind
+        for name in modules:
+            assert name.startswith("hcwf.") and cache._module_path(name).is_file(), (kind, name)
+
+
+def test_the_code_version_follows_the_source_of_a_listed_module_only(monkeypatch):
+    """Changing the source of a listed module changes the version of its kinds; another module changes nothing."""
+    monkeypatch.setattr(cache, "_SOURCE_HASHES", {})
+    texts = {}
+    monkeypatch.setattr(cache, "_read_source", lambda name: texts.get(name, b"same"))
+    base = {kind: cache.code_version(kind) for kind in cache.CODE_MODULES}
+    monkeypatch.setattr(cache, "_SOURCE_HASHES", {})
+    texts["hcwf.onset.engine"] = b"a changed engine"
+    changed = {kind: cache.code_version(kind) for kind in cache.CODE_MODULES}
+    for kind, modules in cache.CODE_MODULES.items():
+        assert (changed[kind] != base[kind]) == ("hcwf.onset.engine" in modules), kind
+    monkeypatch.setattr(cache, "_SOURCE_HASHES", {})
+    texts["hcwf.onset.engine"] = b"same"
+    texts["hcwf.cli.parser"] = b"not computing a result"
+    assert {kind: cache.code_version(kind) for kind in cache.CODE_MODULES} == base
+    assert changed["detect"] == base["detect"] and changed["observed_onsets"] != base["observed_onsets"]
+
+
+def test_the_code_version_is_read_from_files_without_importing_the_modules():
+    """A module's source is found by path: the version of the real files is stable and imports nothing."""
+    import sys
+
+    before = set(sys.modules)
+    first = cache.code_version("observed_onsets")
+    assert isinstance(first, str) and first == cache.code_version("observed_onsets")
+    assert set(sys.modules) == before
 
 
 # --- listing and pruning the folder ------------------------------------------------------------------------------

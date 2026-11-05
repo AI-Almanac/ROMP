@@ -39,8 +39,8 @@ import numpy as np
 import xarray as xr
 
 __all__ = [
-    "Codec", "NETCDF", "NETCDF_GROUPS", "Store", "atomic_write", "file_identity", "global_root", "memo",
-    "on_run_end", "parse_duration", "part_hash", "run_scope", "store_kinds",
+    "CODE_MODULES", "Codec", "NETCDF", "NETCDF_GROUPS", "Store", "atomic_write", "code_version", "file_identity",
+    "global_root", "memo", "on_run_end", "parse_duration", "part_hash", "run_scope", "store_kinds",
 ]
 
 
@@ -805,10 +805,107 @@ def store_kinds(root, kinds=None) -> list[Store]:
     return [Store(kind, root) for kind in Store.kinds(root) if not kinds or kind in kinds]
 
 
-SCHEMA = {"observed_onsets": 1, "thresholds": 1, "harmonic_seasons": 1, "model_thresholds": 1, "detect": 2, "alignment": 2, "oracle": 1}
-"""The code version of each kind of result. Bump a kind's number in the same commit as any change to how that result is
-computed (onset engine and backends, threshold computation, harmonic seasons, detection): `Store` adds it to the parts of
-every entry of the kind, so older entries, in any shared cache folder, simply miss once. Kinds not listed carry none."""
+_ONSET_ENGINE = ("hcwf.onset.engine", "hcwf.onset.plan", "hcwf.onset.calendar", "hcwf.onset.model", "hcwf.onset.units",
+                 "hcwf.onset.tenths_kernel", "hcwf.onset.thresholds", "hcwf.onset.definition", "hcwf.onset.ingest",
+                 "hcwf.onset.backends", "hcwf.onset.backends.numba_cpu", "hcwf.onset.backends.gpu",
+                 "hcwf.onset.backends.reference", "hcwf.onset.backends.windowed")
+"""The modules that turn rain into onsets: the engine, its plan and backends, the definition and the ingest into tenths."""
+_READERS = ("hcwf.io.observations", "hcwf.io.reference", "hcwf.io.forecasts", "hcwf.io.stores", "hcwf.io.dims",
+            "hcwf.spatial.select", "hcwf.spatial.masks", "hcwf.spatial.area", "hcwf.spatial.evalgrid",
+            "hcwf.spatial.onto_units", "hcwf.spatial.units", "hcwf.spatial.regrid", "hcwf.spatial.ids",
+            "hcwf.spatial.axes")
+"""The modules that read the rain and decide which cells and values reach the engine: readers, box, masks, grids, units."""
+_THRESHOLDS = ("hcwf.onset.climatology", "hcwf.io.thresholds", "hcwf.onset.observed_cache", "hcwf.config.onset")
+"""The modules that compute and hold the thresholds and the observed onsets."""
+_ALIGNMENT = ("hcwf.onset.sample_alignment", "hcwf.onset.alignment", "hcwf.onset.ingest", "hcwf.onset.units",
+              "hcwf.onset.calendar", "hcwf.io.dims", "hcwf.io.stores", "hcwf.io.forecasts", "hcwf.spatial.select")
+"""The modules of the lead-label alignment check."""
+
+CODE_MODULES = {
+    "observed_onsets": _ONSET_ENGINE + _READERS + _THRESHOLDS,
+    "thresholds": _ONSET_ENGINE + _READERS + _THRESHOLDS,
+    "harmonic_seasons": _ONSET_ENGINE + _READERS + _THRESHOLDS,
+    "model_thresholds": _ONSET_ENGINE + _READERS + _THRESHOLDS,
+    "detect": ("hcwf.config.detect", "hcwf.config.datasets", "hcwf.onset.ingest", "hcwf.onset.units",
+               "hcwf.onset.regions", "hcwf.onset.sample_alignment", "hcwf.onset.alignment", "hcwf.io.dims",
+               "hcwf.io.stores", "hcwf.spatial.select"),
+    "alignment": _ALIGNMENT,
+    "oracle": (),
+}
+"""The modules each kind of result is computed by. `Store` adds a hash of their source text to the parts of every entry of
+the kind (`code_version`), so a change to any of them makes the older entries, in any shared cache folder, miss once; nothing
+is bumped by hand. A module too many costs only an extra miss, a module too few serves stale results: list what computes
+the result. Kinds not listed carry no code version."""
+MANUAL_VERSION = {"oracle": 1}
+"""A number for a kind whose code is outside the `hcwf` package (``oracle``: onset_blending's outputs, which depend on
+onset_blending's own sources, keyed by the oracle's runner under ``tests/blend``, and on the way that runner stores
+them). Bump it with a change to that storage; it is part of the code version next to the modules."""
+
+_SOURCE_HASHES: dict = {}
+"""The hash of each listed module's source, read once per process."""
+
+
+def _module_path(name: str) -> Path:
+    """Return the source file of an ``hcwf`` module, without importing it.
+
+    Parameters
+    ----------
+    name : str
+        The dotted module name, starting with ``hcwf``.
+
+    Returns
+    -------
+    pathlib.Path
+        ``<package>/a/b.py``, or ``<package>/a/b/__init__.py`` for a package; the first one is returned even when it does
+        not exist when neither does.
+    """
+    base = Path(__file__).resolve().parent.joinpath(*name.split(".")[1:])
+    package = base / "__init__.py"
+    return package if package.exists() else base.with_suffix(".py")
+
+
+def _read_source(name: str) -> bytes:
+    """Return the source text of an ``hcwf`` module, as bytes.
+
+    Parameters
+    ----------
+    name : str
+        The dotted module name.
+
+    Returns
+    -------
+    bytes
+        The file's content; empty when it cannot be read (the code version then still differs from a readable one).
+    """
+    try:
+        return _module_path(name).read_bytes()
+    except OSError:
+        return b""
+
+
+def code_version(kind: str) -> str | None:
+    """Return the code version of a kind of result: a hash of the source text of the modules that compute it.
+
+    Each module's source is read once per process, from its file, without importing the module.
+
+    Parameters
+    ----------
+    kind : str
+        The kind of result (a key of `CODE_MODULES`).
+
+    Returns
+    -------
+    str or None
+        The hash; None for a kind that is not listed.
+    """
+    if kind not in CODE_MODULES:
+        return None
+    hashes = []
+    for name in CODE_MODULES[kind]:
+        if name not in _SOURCE_HASHES:
+            _SOURCE_HASHES[name] = hashlib.sha1(_read_source(name)).hexdigest()
+        hashes.append((name, _SOURCE_HASHES[name]))
+    return part_hash((tuple(hashes), MANUAL_VERSION.get(kind, 0)))
 
 
 class Store:
@@ -867,7 +964,7 @@ class Store:
         return {name: part_hash(value) for name, value in parts.items()}
 
     def _hashes(self, parts: Mapping) -> dict:
-        """Return the hash of each part, and of the code version of this store's kind (see `SCHEMA`) when it has one.
+        """Return the hash of each part, and of the code version of this store's kind (see `code_version`) when it has one.
 
         Parameters
         ----------
@@ -880,8 +977,9 @@ class Store:
             The hashes by part name, plus ``code_version`` for a versioned kind.
         """
         hashes = self.hash_parts(parts)
-        if self.kind in SCHEMA:
-            hashes["code_version"] = part_hash(SCHEMA[self.kind])
+        version = code_version(self.kind)
+        if version is not None:
+            hashes["code_version"] = version
         return hashes
 
     def fingerprint(self, parts: Mapping) -> str:

@@ -6,7 +6,7 @@ the ``oracle`` kind of the shared hcwf cache (`hcwf.cache.Store`; listed and del
 --kind oracle``) and runs the oracle again only when the key changes. The hcwf side is never cached here: it always runs
 cold, in its own temporary cache folder.
 
-The key of an entry is made of these parts (any change is a miss; `hcwf.cache.SCHEMA` versions this logic):
+The key of an entry is made of these parts (any change is a miss; `hcwf.cache.MANUAL_VERSION` versions this logic):
 
 * ``commit``: the git commit of the onset_blending checkout that the oracle interpreter imports. A tree with
   uncommitted changes (or untracked files) is *dirty* and disables reuse altogether (nothing is read or stored).
@@ -154,7 +154,7 @@ def _imported_files(script: Path) -> set[Path]:
                 continue
             for name in names:
                 if name == "_oracle_cache":
-                    continue  # how outputs are stored (hcwf.cache.SCHEMA) is not an input of the oracle
+                    continue  # how outputs are stored (hcwf.cache.MANUAL_VERSION) is not an input of the oracle
                 parts = name.split(".")
                 bases = [ROOT / Path(*parts)] if parts[0] == "tests" else [HERE / Path(*parts), TESTS / Path(*parts)]
                 for base in bases:
