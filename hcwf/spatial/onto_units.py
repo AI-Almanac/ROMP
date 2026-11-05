@@ -254,7 +254,7 @@ def unit_series(da, transform, *, missing="flag", post_scale=None, support=False
 
 
 def read_on_units(da, units, *, block_dim, region=None, positions=None, tolerance=None, wrap_longitude=False,
-                  convention=None, scale=None, post_scale=None, missing="flag", support=False, dtype=None):
+                  convention=None, scale=None, post_scale=None, missing="flag", support=False, dtype=None, readers=None):
     """Read a lazy DataArray (dims named as HCWF's, lat and lon among them) onto ``units``, reading only what feeds them.
 
     The transform of ``units`` from the array's own cells is compiled (`unit_transform`; the array's lat and lon are
@@ -296,6 +296,9 @@ def read_on_units(da, units, *, block_dim, region=None, positions=None, toleranc
         Also return which units have a source each year, and the years (see `unit_series`).
     dtype : numpy.dtype or type, optional
         The dtype of the result where that changes nothing but the storage.
+    readers : int, optional
+        The most processes the blocks may be decoded by (see `~hcwf.spatial.select.load_blocks`); None reads in this
+        process.
 
     Returns
     -------
@@ -309,7 +312,8 @@ def read_on_units(da, units, *, block_dim, region=None, positions=None, toleranc
                                convention=convention)
     if scale and da.variable._in_memory:
         da = da.copy(deep=True)  # the caller's array is not scaled in place
-    loaded = scale_in_place(load_blocks(da, block_dim, keep=feeding_cells(transform, lat, lon), compact=True), scale)
+    loaded = scale_in_place(load_blocks(da, block_dim, keep=feeding_cells(transform, lat, lon), compact=True,
+                                       readers=readers), scale)
     return unit_series(loaded, transform, missing=missing, post_scale=post_scale, support=support, dtype=dtype)
 
 

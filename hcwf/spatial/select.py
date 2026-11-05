@@ -25,7 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from hcwf.config.model import AreaSpec, Selection
 
 __all__ = [
-    "chunk_runs", "implicit_keep", "implicit_masks", "in_memory", "load_blocks", "mask_region_loaded", "read_box",
+    "chunk_runs", "cut_box", "implicit_keep", "implicit_masks", "in_memory", "load_blocks", "mask_region_loaded", "read_box",
     "region_box", "region_select", "scale_in_place",
 ]
 
@@ -79,13 +79,43 @@ def lon_swap(ds_tag, *, region):
     ds_tag : xarray.Dataset or xarray.DataArray
         The data with ``lat`` and ``lon`` coordinates.
 
+    A `ValueError` is raised (by `_conform`) when the longitude box crosses the longitude seam of the data, which is
+    not supported.
+    """
+    return _conform(ds_tag, *box(region), what=f"region {region!r}")
+
+
+def _conform(ds_tag, lats, latn, lonw, lone, *, what, wrap=False):
+    """Rename coords to lat/lon and put a box in the dataset's longitude convention (the body of `lon_swap`).
+
+    Parameters
+    ----------
+    ds_tag : xarray.Dataset or xarray.DataArray
+        The data (see `lon_swap`).
+    lats : float
+        The southern bound in degrees.
+    latn : float
+        The northern bound in degrees.
+    lonw : float
+        The western bound in degrees.
+    lone : float
+        The eastern bound in degrees.
+    what : str
+        What the box is, for the error message.
+    wrap : bool, default False
+        Also put a box written with negative longitudes in the 0 to 360 convention of the data (a region's box is
+        left as `lon_swap` always left it).
+
+    Returns
+    -------
+    tuple
+        ``(lats, latn, lonw, lone, ds_tag)`` as `lon_swap` returns them.
+
     Raises
     ------
     ValueError
-        The longitude box crosses the longitude seam of the data, which is not supported.
+        The longitude box crosses the longitude seam of the data.
     """
-    lats, latn, lonw, lone = box(region)
-
     coord_list = list(ds_tag.coords.keys())
 
     if "lon" not in coord_list:
@@ -98,10 +128,12 @@ def lon_swap(ds_tag, *, region):
     if np.min(ds_tag.lon) < 0:
         lonw = ((lonw + 180) % 360) - 180
         lone = ((lone + 180) % 360) - 180
+    elif wrap:
+        lonw, lone = lonw % 360, lone % 360 if lone != 360 else 360
 
     if lonw > lone:
         # a box across the dataset's longitude seam: the swap that would conform the data was never implemented
-        raise ValueError(f"region {region!r}: its longitude box {lonw}..{lone} crosses the longitude seam of the data, "
+        raise ValueError(f"{what}: its longitude box {lonw}..{lone} crosses the longitude seam of the data, "
                          "which is not supported")
 
     return lats, latn, lonw, lone, ds_tag
@@ -200,6 +232,39 @@ def region_box(ds, *, region):
         return ds
     lats, latn, lonw, lone, ds = coords_fmt(ds, region=region)
     return ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
+
+
+def cut_box(ds, south, north, west, east, *, what="the box"):
+    """Subset ``ds`` to a lat/lon box given in degrees, lazily, as `region_box` does for a region.
+
+    Latitude is put ascending and the longitude bounds are conformed to the data's convention (-180 to 180 when it
+    has a negative longitude, else 0 to 360), so a box written in one convention cuts data in the other.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset or xarray.DataArray
+        The data, with ``lat`` and ``lon`` (or names containing them).
+    south : float
+        The southern bound in degrees.
+    north : float
+        The northern bound in degrees.
+    west : float
+        The western bound in degrees.
+    east : float
+        The eastern bound in degrees.
+    what : str, default "the box"
+        What the box is, for the error message.
+
+    Returns
+    -------
+    xarray.Dataset or xarray.DataArray
+        The data inside the box, still lazy, with ascending ``lat``.
+
+    A `ValueError` is raised (by `_conform`) when the longitude box crosses the longitude seam of the data, which is
+    not supported.
+    """
+    lats, latn, lonw, lone, ds = _conform(ds, south, north, west, east, what=what, wrap=True)
+    return lat_swap(ds).sel(lat=slice(lats, latn), lon=slice(lonw, lone))
 
 
 def _keep_cells(lat, lon, region, land_only, shp_only):

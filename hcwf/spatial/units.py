@@ -192,6 +192,32 @@ def read_shapes(path, unit_id_col: str, unit_name_col: str | None = None, parent
     return table, list(frame.geometry)
 
 
+def _same_steps(lat, lon, other_lat, other_lon) -> bool:
+    """Tell whether two grids have the same cell size (the median step of each axis, to one part in a million).
+
+    Parameters
+    ----------
+    lat : numpy.ndarray of float64, shape (lat,)
+        The latitudes of the first grid.
+    lon : numpy.ndarray of float64, shape (lon,)
+        The longitudes of the first grid.
+    other_lat : numpy.ndarray of float64, shape (other_lat,)
+        The latitudes of the second grid.
+    other_lon : numpy.ndarray of float64, shape (other_lon,)
+        The longitudes of the second grid.
+
+    Returns
+    -------
+    bool
+        True when both axes have the same step (a one-cell axis has none to compare and agrees).
+    """
+    for a, b in ((lat, other_lat), (lon, other_lon)):
+        if len(a) > 1 and len(b) > 1 and not np.isclose(abs(np.median(np.diff(np.sort(a)))),
+                                                         abs(np.median(np.diff(np.sort(b)))), rtol=1e-6, atol=0):
+            return False
+    return True
+
+
 class _Cells:
     """The grid a grid or region unit lives on.
 
@@ -355,11 +381,15 @@ class EvaluationUnits:
 
     @classmethod
     def from_grid(cls, lat, lon, keep=None, *, convention: unit_ids.GridIdConvention | None = None,
-                  explicit: unit_ids.GridIdConvention | None = None, mask_record=None) -> "EvaluationUnits":
+                  explicit: unit_ids.GridIdConvention | None = None, mask_record=None,
+                  cell_area: str | None = None) -> "EvaluationUnits":
         """Build grid units from the cells of a (lat, lon) grid where ``keep`` is True.
 
         The units are in latitude-major order. Ids are ``<lat>_<lon>`` under ``convention``, else the explicit or
-        inferred one.
+        inferred one. A source grid that lacks some of the cells is averaged onto them with conservative overlap
+        weights (see `hcwf.spatial.regrid.grid_weights`); with ``cell_area`` given, so is every source grid whose cells
+        are not of the units' size, even one that holds the units' cell centres (a finer grid is averaged, never
+        sampled).
 
         Parameters
         ----------
@@ -375,6 +405,9 @@ class EvaluationUnits:
             A convention set by the configuration, used when ``convention`` is None.
         mask_record : object, optional
             The record of the mask that gave ``keep``, stored on the units.
+        cell_area : {"planar", "cos_lat", "sphere"}, optional
+            The cell-area convention of the overlap weights of a source grid that is not this grid; None keeps the
+            planar areas and takes a source that holds the cells' centres cell by cell.
 
         Returns
         -------
@@ -397,7 +430,8 @@ class EvaluationUnits:
         convention = convention or unit_ids.resolve(explicit, lat=cell_lat, lon=cell_lon, context="grid units")
         ids = unit_ids.format_grid_ids(cell_lat, cell_lon, convention)
         table = pd.DataFrame({"id": ids, "lat": cell_lat, "lon": cell_lon})
-        return cls(table, "grid", cells=_Cells(lat, lon, flat), mask_record=mask_record)
+        return cls(table, "grid", cells=_Cells(lat, lon, flat), mask_record=mask_record,
+                   weight_options={} if cell_area is None else {"cell_area": cell_area})
 
     @classmethod
     def from_mask(cls, mask, lat, lon, *, label: str = "data", **kwargs) -> "EvaluationUnits":
@@ -830,10 +864,12 @@ class EvaluationUnits:
         else:
             lat_pos = regrid.match_axis(cells.lat[cells.flat // cells.lon.size], lat, tol)
             lon_pos = regrid.match_axis(cells.lon[cells.flat % cells.lon.size], lon, tol)
-            if (lat_pos >= 0).all() and (lon_pos >= 0).all():
+            same_size = "cell_area" not in self._weight_options or _same_steps(lat, lon, cells.lat, cells.lon)
+            if (lat_pos >= 0).all() and (lon_pos >= 0).all() and same_size:
                 matrix = regrid.selection(lat_pos * lon.size + lon_pos, n_cells, cells.weights)
             else:
-                to_cells = regrid.grid_weights(lat, lon, cells.lat, cells.lon)[cells.flat]
+                area = self._weight_options.get("cell_area", "planar")
+                to_cells = regrid.grid_weights(lat, lon, cells.lat, cells.lon, cell_area=area)[cells.flat]
                 if cells.weights is not None:
                     to_cells = sparse.diags(cells.weights) @ to_cells
                 matrix = to_cells.tocsr()

@@ -14,7 +14,9 @@ Where the weights come from:
 * a one-for-one selection of cells (`selection`), or a weighted set of cells in one unit (a region).
 
 Cell areas are planar (degrees squared) by default; ``cell_area="cos_lat"`` multiplies by the cosine of the cell's
-latitude, so a unit's weights follow the area on the sphere to first order.
+latitude, so a unit's weights follow the area on the sphere to first order, and ``cell_area="sphere"`` uses the exact
+area on the sphere (proportional to the longitude width times the difference of the sines of the latitude edges; the
+evaluation grid of a run is regridded with it, see `hcwf.spatial.evalgrid`).
 
 Source cells are the cells of a grid in latitude-major order (latitude axis outer, longitude inner), the order
 of ``ravel`` on a (lat, lon) array. Coordinates match exactly (float equality) by default, which reproduces
@@ -39,8 +41,8 @@ from . import ids as unit_ids
 
 __all__ = ["SparseTransform", "read_weights"]
 
-CELL_AREAS = ("planar", "cos_lat")
-"""The cell-area conventions: planar degrees squared, or weighted by the cosine of the latitude."""
+CELL_AREAS = ("planar", "cos_lat", "sphere")
+"""The cell-area conventions: planar degrees squared, weighted by the cosine of the latitude, or exact on the sphere."""
 MEASURES = ("area", "share")
 """What a polygon weight measures: the overlap ``"area"``, or the ``"share"`` of the cell inside the polygon."""
 _WEIGHT_TYPES = {"target_id": str, "adm3_name": str, "source_id": str}
@@ -790,7 +792,7 @@ def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", mea
         The latitudes of the cell centres, in degrees.
     lon : array_like of float, shape (lon,)
         The longitudes of the cell centres, in degrees.
-    cell_area : {"planar", "cos_lat"}, default "planar"
+    cell_area : {"planar", "cos_lat", "sphere"}, default "planar"
         The cell-area convention.
     measure : {"area", "share"}, default "area"
         What a weight measures.
@@ -816,6 +818,7 @@ def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", mea
     lat_edges, lon_edges = cell_bounds(slat, slon)
     dlat, dlon = np.diff(lat_edges), np.diff(lon_edges)
     cos = np.cos(np.deg2rad(slat))
+    dsin = np.diff(np.sin(np.deg2rad(np.clip(lat_edges, -90.0, 90.0))))
     parts = []
     for target, geom in zip(ids, geometries):
         if geom is None or geom.is_empty:
@@ -830,6 +833,8 @@ def polygon_weights(geometries, ids, lat, lon, *, cell_area: str = "planar", mea
             weight *= dlat[rows][:, None] * dlon[cols][None, :]
         if cell_area == "cos_lat":
             weight *= cos[rows][:, None]
+        elif cell_area == "sphere":   # the cell's area on the sphere, in place of its degrees squared
+            weight = share * (dsin[rows][:, None] * dlon[cols][None, :] if measure == "area" else 1.0)
         i, j = np.nonzero(share > min_share)
         if i.size:
             parts.append(pd.DataFrame({
@@ -939,7 +944,10 @@ def grid_weights(source_lat, source_lon, lat, lon, *, cell_area: str = "planar")
     A matrix in latitude-major order (``(len(lat) * len(lon), len(source_lat) * len(source_lon))``), the area each
     target cell shares with each source cell (the separable overlaps `hcwf.spatial.masks.align_raster_mask` uses).
     Source longitudes are first shifted by whole turns to the target's convention. ``cell_area="cos_lat"``
-    multiplies by the cosine of the source cell's latitude.
+    multiplies by the cosine of the source cell's latitude; ``cell_area="sphere"`` measures the overlaps as areas on
+    the sphere, ``(longitude overlap) x (overlap of the sines of the latitude edges)``, so that the area-weighted total
+    of a target cell equals that of the source cells it covers exactly. The default stays planar, which the weight
+    tables and polygon parity of existing runs rely on.
 
     A `ValueError` is raised (by `_check_options`) when ``cell_area`` is not one of `CELL_AREAS`.
 
@@ -953,13 +961,14 @@ def grid_weights(source_lat, source_lon, lat, lon, *, cell_area: str = "planar")
         The latitudes of the target cell centres, in degrees.
     lon : array_like of float, shape (lon,)
         The longitudes of the target cell centres, in degrees.
-    cell_area : {"planar", "cos_lat"}, default "planar"
+    cell_area : {"planar", "cos_lat", "sphere"}, default "planar"
         The cell-area convention.
 
     Returns
     -------
     scipy.sparse.csr_matrix of float64, shape (target_cell, source_cell)
-        The shared area (degrees squared) of each target and source cell.
+        The shared area of each target and source cell (degrees squared; for ``"sphere"`` degrees times the
+        difference of sines).
     """
     _check_options(cell_area)
     source_lat, source_lon = np.asarray(source_lat, float), np.asarray(source_lon, float)
@@ -968,6 +977,8 @@ def grid_weights(source_lat, source_lon, lat, lon, *, cell_area: str = "planar")
     source_lon = ((source_lon - start) % 360.0) + start
     s_lat, s_lon = _axis_intervals(source_lat, source_lon), _axis_intervals(source_lon, source_lat)
     t_lat, t_lon = _axis_intervals(lat, lon), _axis_intervals(lon, lat)
+    if cell_area == "sphere":   # overlaps of the latitude bands as differences of sin(latitude)
+        s_lat, t_lat = (tuple(np.sin(np.deg2rad(np.clip(edge, -90.0, 90.0))) for edge in pair) for pair in (s_lat, t_lat))
     matrix = sparse.kron(_axis_overlaps(*t_lat, *s_lat), _axis_overlaps(*t_lon, *s_lon), format="csr")
     if cell_area == "cos_lat":
         scale = np.repeat(np.cos(np.deg2rad(source_lat)), source_lon.size)
