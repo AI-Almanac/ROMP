@@ -92,24 +92,51 @@ def _align(rolled: xr.DataArray, dim: str, window: int, start: int) -> xr.DataAr
     return rolled.shift({dim: -(window - 1 + start)})
 
 
-def lead_sum(rain: xr.DataArray, dim: str, days: int, start: int = 0) -> xr.DataArray:
-    """Sum of ``rain[d+start : d+start+days]``. NaN if the window overruns or contains NaN."""
+def _lead_window_days(values: np.ndarray, days: int, start: int) -> tuple[list[np.ndarray], int]:
+    """Each day of the window ``[d+start, d+start+days)`` for every candidate ``d`` that fits.
+
+    ``values`` has the day axis last. Returns one slice per window day, each
+    holding that day for the first ``n_fit`` candidates, and ``n_fit``. Slicing
+    instead of an xarray rolling window keeps this a handful of array ops on
+    large ensembles.
+    """
     if days < 1:
         raise ValueError(f"days must be >= 1, got {days}")
-    rolled = rain.rolling({dim: days}, min_periods=days).sum()
-    return _align(rolled, dim, days, start)
+    if start < 0:
+        raise ValueError(f"start must be >= 0, got {start}")
+    n_fit = max(values.shape[-1] - start - days + 1, 0)
+    return [values[..., start + k : start + k + n_fit] for k in range(days)], n_fit
+
+
+def _with_day_axis_last(da: xr.DataArray, dim: str) -> np.ndarray:
+    return np.moveaxis(da.values, da.get_axis_num(dim), -1)
+
+
+def _like(da: xr.DataArray, dim: str, values_day_last: np.ndarray) -> xr.DataArray:
+    return da.copy(data=np.moveaxis(values_day_last, -1, da.get_axis_num(dim)))
+
+
+def lead_sum(rain: xr.DataArray, dim: str, days: int, start: int = 0) -> xr.DataArray:
+    """Sum of ``rain[d+start : d+start+days]``. NaN if the window overruns or contains NaN."""
+    values = _with_day_axis_last(rain, dim)
+    window, n_fit = _lead_window_days(values, days, start)
+    dtype = values.dtype if np.issubdtype(values.dtype, np.floating) else np.float64
+    total = np.full(values.shape, np.nan, dtype=dtype)
+    total[..., :n_fit] = sum(window[1:], window[0].astype(dtype))
+    return _like(rain, dim, total)
 
 
 def lead_all(cond: xr.DataArray, dim: str, days: int, start: int = 0) -> xr.DataArray:
     """``cond`` holds on every day of ``[d+start, d+start+days)``. False if the window overruns.
 
     ``cond`` is normally a comparison on rain (``rain >= x``); NaN rain compares
-    False, so missing data fails closed.
+    False, so missing data fails closed. A NaN in a non-bool ``cond`` also fails.
     """
-    if days < 1:
-        raise ValueError(f"days must be >= 1, got {days}")
-    count = cond.astype(float).rolling({dim: days}, min_periods=days).sum()
-    return (_align(count, dim, days, start) == days).fillna(False)
+    holds = _with_day_axis_last(cond, dim) == 1
+    window, n_fit = _lead_window_days(holds, days, start)
+    every_day = np.zeros(holds.shape, dtype=bool)
+    every_day[..., :n_fit] = np.logical_and.reduce(window)
+    return _like(cond, dim, every_day)
 
 
 def has_dry_run(
