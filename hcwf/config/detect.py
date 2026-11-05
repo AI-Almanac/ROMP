@@ -106,7 +106,7 @@ class Resolution:
     extent: tuple | None = None
     """``(lat0, lat1, lon0, lon1)`` of the sampled file's coordinates (floats), or None when not read."""
     checked: bool = False
-    """Whether a data file was found and opened (only such a resolution is cached)."""
+    """Whether a data file was found and opened (only such a resolution, without problems, is cached)."""
     region: str | None = None
     """The region the sample is taken in when the config names one (None: where the data are, see `load_sample`)."""
     box: tuple | None = None
@@ -836,8 +836,9 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
 
     The cache key is a fingerprint of the user's keys, the file paths, sizes and mtimes, and the place the data are
     sampled (the region or area box); a hit reads no data and marks every detected line "detected (cached)" with the same
-    evidence. A resolution that ran the lead-label
-    alignment (it depends on the observations) is not cached. See `resolve_entry_uncached` for the keys.
+    evidence. Only a resolution without problems is stored (its warnings are kept with it): a failed or partial detection
+    is recomputed the next time. A resolution that ran the lead-label alignment (it depends on the observations) is not
+    cached. See `resolve_entry_uncached` for the keys.
 
     Parameters
     ----------
@@ -878,7 +879,7 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
             return hit
     res = resolve_entry_uncached(entry, kind, sources=sources, obs=obs, detect_lead_label=detect_lead_label,
                                  lead_label_default=lead_label_default, region=region, box=box)
-    if parts and res.checked:
+    if parts and res.checked and not res.problems:   # a failed or partial detection is recomputed, never served again
         _store().put(parts, res)
     return res
 
