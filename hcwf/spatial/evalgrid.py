@@ -295,7 +295,7 @@ def overlap(grids: dict, source: str) -> tuple[tuple, bool, np.ndarray, np.ndarr
 
     Raises
     ------
-    ValueError
+    EvaluationGridError
         The sources do not overlap, or the overlap crosses the longitude seam of ``source`` (which
         `~hcwf.spatial.select.cut_box` does not support). The message has a Fix.
     """
