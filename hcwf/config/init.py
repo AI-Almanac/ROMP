@@ -70,6 +70,30 @@ def _season_bounds(region_name: str | None):
     return (5, 1), (7, 31), None
 
 
+def _box_lines(extent) -> list[str]:
+    """Return the ``box:`` line of a config whose files match no registered region.
+
+    The files' extent is written as the box, except for files that cover all longitudes: reading the globe is not what a
+    run should do by default, so those get a placeholder to fill in (``box: all`` is the explicit whole domain).
+
+    Parameters
+    ----------
+    extent : tuple of (float, float, float, float)
+        The observations' extent ``(lat0, lat1, lon0, lon1)`` in degrees.
+
+    Returns
+    -------
+    list of str
+        The YAML lines.
+    """
+    la0, la1, lo0, lo1 = (round(float(v), 4) for v in extent)
+    if lo1 - lo0 >= 359.0:
+        return ["box: {lat_min: <south>, lat_max: <north>, lon_min: <west>, lon_max: <east>}  # TODO: the area to read; "
+                f"the files are global (lat {la0:g}..{la1:g}); `box: all` reads the whole files"]
+    return [f"box: {{lat_min: {la0:g}, lat_max: {la1:g}, lon_min: {lo0:g}, lon_max: {lo1:g}}}  # [the files' extent]; "
+            "narrow it to the area you want"]
+
+
 def _entry_lines(res: detect.Resolution, placeholders, indent: str) -> list[str]:
     """Return the YAML lines of one dataset: detected or specified values with evidence, TODOs for what cannot be detected.
 
@@ -190,16 +214,21 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         obs_lines = ["  path: /path/to/observations  # TODO: folder of the yearly observation files"] + [
             f"  # {k}: {example}  # {text}" for k, example, text in _OBS_PLACEHOLDERS]
     region_line = None
+    area_lines: list[str] = []
     if region:
         region_line = f"region: {regions.load_region(region).title}"
     elif obs_res is not None and obs_res.extent:
         found, evidence = detect.detect_region(obs_res.extent)
         if found != "unknown":
             region_line = f"region: {regions.load_region(found).title}  # [detected: {evidence}]"
+        else:   # no registered region fits the files: no region, and the area stated by a box
+            region_line = f"region: null  # [no registered region matches: {evidence}]"
+            area_lines = _box_lines(obs_res.extent)
     region_line = region_line or "region: <region>  # TODO: your region, see `hcwf-run onset regions`"
-    region_name = region_line.split(":")[1].split("#")[0].strip()
+    no_region = region_line.startswith("region: null")
+    region_name = None if no_region else region_line.split(":")[1].split("#")[0].strip()
     try:
-        regions.load_region(region_name)
+        regions.load_region(region_name) if region_name else None
     except RegionError:
         region_name = None
     start, end, default = _season_bounds(region_name)
@@ -228,9 +257,18 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
            "# Only what you must decide is here. The region supplies the onset definition, day boundary and",
            "# climatology years; unset keys take their defaults. Each run writes resolved_config.yaml (every value",
            "# and where it came from) next to its outputs. Keys: see hcwf/config/schema.py.",
-           "", region_line, ""]
+           "", region_line] + area_lines + [""]
+    if no_region:
+        out[1:4] = ["# Only what you must decide is here. Without a region nothing is defaulted: set the area (box), the",
+                    "# onset definition, the season and the climatology years yourself (the TODO lines). Each run writes",
+                    "# resolved_config.yaml (every value and where it came from) next to its outputs. Keys: see hcwf/config/schema.py."]
     if definition:
         out += ["onset:", f"  definition: {definition}", ""]
+    elif no_region:
+        out += ["onset:",
+                "  # definition: <registry id or path>  # TODO: no region, so no default definition; see `hcwf-run onset list`",
+                "  # season: <season name>  # TODO: needed when the definition has several seasons",
+                ""]
     else:
         out += [f"# onset:  # the region's definition is used (default here: {default or 'none'});",
                 "#   definition: <registry id or path>  # choose another, see `hcwf-run onset list`",
@@ -240,6 +278,9 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         "", "evaluation:",
         f"  start_date: [{years[0]}, {start[0]}, {start[1]}]  # the years evaluated; month/day bound the init dates",
         f"  end_date: [{years[1]}, {end[0]}, {end[1]}]"]
+    if no_region:
+        out += [f"  # start_year_clim: {years[0]}  # TODO: the climatology years (a region would supply them)",
+                f"  # end_year_clim: {years[1]}"]
     if probabilistic:
         out.append("  probabilistic: true  # ensemble forecasts detected")
     if blend:

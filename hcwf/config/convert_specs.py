@@ -1044,6 +1044,8 @@ class _Convert:
         models = [m for m in data.get("models") or [] if isinstance(m, dict)]
         onset, years, rule = self._onset_with_windows()
         mapping: dict = {"project_name": str(data["name"]), "region": self.region}
+        if self.region is None:   # no region needs an explicit area; onset_blending reads the files whole
+            mapping["box"] = "all"
         mapping["observations"] = self.observations()
         mapping["models"] = [self.model_entry(m, i) for i, m in enumerate(models)]
         mapping["onset"] = onset
@@ -1057,8 +1059,9 @@ class _Convert:
         if self.problems:
             raise ConvertError(self.problems)
         self.comments.update({
-            ("region",): "no region: the whole domain of the data, as onset_blending reads it; name a region to use its box "
-                         "and defaults",
+            ("region",): "no region: no region defaults; name a region to use its box and defaults",
+            ("box",): "the whole domain of the files, as onset_blending reads it (its own area_of_interest box, if any, is "
+                      "units.box, applied by unit centroid as onset_blending does)",
             ("observations", "unit_cvt"): "onset_blending reads observations as millimetres (declared units still win)",
             ("onset", "rule"): "onset_blending's onset.definition as an HCWF definition; registry ids moron_robertson_blend "
                                "and icpac_blend are its readings of the two papers",

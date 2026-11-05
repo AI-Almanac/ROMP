@@ -83,7 +83,8 @@ def test_the_parity_options_and_sources_are_written_out(tmp_path):
         rain_resolution="exact", missing="keep", negatives="keep", gaps="refuse", horizon="truncate", lead_label="end",
         forecast_history="none")
     assert onset["thresholds"] == {"thr": 20.0} and "threshold_max_missing" not in onset
-    assert run["region"] is None and run["observations"]["unit_cvt"] == 1.0
+    assert run["region"] is None and run["box"] == "all" and run["observations"]["unit_cvt"] == 1.0
+    assert "box" not in C.convert_blend(minimal(tmp_path), region="India").mapping   # a region brings its own box
     assert run["observations"]["day_boundary"] == "00 UTC, labelled by end"
     [model] = run["models"]
     assert (model["unit_cvt"], model["accumulation"]) == (1000.0, "daily") and model["paths"][0].endswith("m/*.nc")
