@@ -251,8 +251,8 @@ def _interval(axis, step) -> tuple[float, float]:
     return float(axis.min() - step / 2), float(axis.max() + step / 2)
 
 
-def _no_overlap(why: str) -> EvaluationGridError:
-    """Return the error for sources that cannot share an area, with its Fix.
+def _no_overlap(why: str) -> str:
+    """Return the message for sources that cannot share an area, with its Fix.
 
     Parameters
     ----------
@@ -261,12 +261,11 @@ def _no_overlap(why: str) -> EvaluationGridError:
 
     Returns
     -------
-    EvaluationGridError
-        The error to raise.
+    str
+        The text of the `~hcwf.errors.EvaluationGridError`, with its Fix.
     """
-    return EvaluationGridError(f"evaluation grid without a region: {why}. Fix: set region (it cuts every source to its "
-                               "box), "
-                               "or evaluation_grid to the source that covers the area you want")
+    return (f"evaluation grid without a region: {why}. Fix: set region (it cuts every source to its box), "
+            "or evaluation_grid to the source that covers the area you want")
 
 
 def overlap(grids: dict, source: str) -> tuple[tuple, bool, np.ndarray, np.ndarray]:
@@ -305,8 +304,8 @@ def overlap(grids: dict, source: str) -> tuple[tuple, bool, np.ndarray, np.ndarr
     south = max(_interval(g[0], step[n][0])[0] for n, g in own.items())
     north = min(_interval(g[0], step[n][0])[1] for n, g in own.items())
     if south >= north - TOLERANCE:
-        raise _no_overlap(f"the latitudes of the sources do not overlap (the common band would be {south:g} to "
-                          f"{north:g})")
+        raise EvaluationGridError(_no_overlap(f"the latitudes of the sources do not overlap (the common band would be "
+                                              f"{south:g} to {north:g})"))
     west, east = _interval(own[source][1], step[source][1])
     lon_global = (east - west) >= 360.0 - TOLERANCE
     for name, (_, lon) in own.items():
@@ -319,10 +318,10 @@ def overlap(grids: dict, source: str) -> tuple[tuple, bool, np.ndarray, np.ndarr
         shifted = [(max(west, low + k * 360.0), min(east, high + k * 360.0)) for k in (-1, 0, 1)]
         found = [s for s in shifted if s[1] - s[0] > TOLERANCE]
         if not found:
-            raise _no_overlap(f"{name} and {source} have no longitudes in common")
+            raise EvaluationGridError(_no_overlap(f"{name} and {source} have no longitudes in common"))
         if len(found) > 1:
-            raise _no_overlap(f"the longitudes {name} and {source} share cross the longitude seam of {source} "
-                              "(a box across the seam of a file is not supported)")
+            raise EvaluationGridError(_no_overlap(f"the longitudes {name} and {source} share cross the longitude seam "
+                                                  f"of {source} (a box across the seam of a file is not supported)"))
         west, east = found[0]
     dlat, dlon = step[source]
     lat, lon = own[source]
@@ -330,8 +329,8 @@ def overlap(grids: dict, source: str) -> tuple[tuple, bool, np.ndarray, np.ndarr
     if not lon_global:
         lon = lon[(lon - dlon / 2 >= west - TOLERANCE) & (lon + dlon / 2 <= east + TOLERANCE)]
     if not lat.size or not lon.size:
-        raise _no_overlap(f"no cell of {source} lies wholly inside the area the sources share "
-                          f"(latitudes {south:g} to {north:g}, longitudes {west:g} to {east:g})")
+        raise EvaluationGridError(_no_overlap(f"no cell of {source} lies wholly inside the area the sources share "
+                                              f"(latitudes {south:g} to {north:g}, longitudes {west:g} to {east:g})"))
     return (south, north, west, east), lon_global, lat, lon
 
 
@@ -396,6 +395,9 @@ def _skeleton(lat, lon) -> xr.DataArray:
 def cut_to_grid(da, lat, lon, lon_global: bool = False, what: str = "the evaluation grid") -> xr.DataArray:
     """Cut a source's array to the extent of the evaluation grid, padded by one of the source's own cells.
 
+    A `ValueError` is raised (by `~hcwf.spatial.select.cut_box`) when the longitude box crosses the longitude seam of the
+    source.
+
     Parameters
     ----------
     da : xarray.DataArray
@@ -414,10 +416,6 @@ def cut_to_grid(da, lat, lon, lon_global: bool = False, what: str = "the evaluat
     xarray.DataArray
         The array inside the padded box, with ascending ``lat``.
 
-    Raises
-    ------
-    ValueError
-        The longitude box crosses the longitude seam of the source (see `~hcwf.spatial.select.cut_box`).
     """
     dlat, dlon = steps(da["lat"].values, da["lon"].values)
     lat_edges, lon_edges = cell_bounds(lat, lon)
