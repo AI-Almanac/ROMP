@@ -107,6 +107,8 @@ class Resolution:
     """``(lat0, lat1, lon0, lon1)`` of the sampled file's coordinates (floats), or None when not read."""
     checked: bool = False
     """Whether a data file was found and opened (only such a resolution is cached)."""
+    region: str | None = None
+    """The region the sample is taken in when the config names one (None: where the data are, see `load_sample`)."""
 
     def report(self) -> list[str]:
         """Return the printable lines: every key with its provenance, then warnings and problems.
@@ -246,13 +248,13 @@ def _block_indices(n: int, per_index: int) -> list[np.ndarray]:
     return [np.arange(s0, s0 + length) for s0 in starts]
 
 
-def _cell_positions(n: int, runs) -> np.ndarray:
+def _cell_positions(n: int, runs, centre: int | None = None) -> np.ndarray:
     """Return the positions of the block a sample reads along a lat or lon axis.
 
     A chunked axis (any length) is cut to the stored chunk that holds its centre, joined with neighbouring chunks until
     it holds ``_SAMPLE_MIN_CELLS`` cells and cut to the ``_SAMPLE_CELLS`` nearest the centre if that is longer. An axis
     stored contiguously is read whole when it has at most ``_SAMPLE_CELLS`` cells, else cut to a centred block of
-    ``_SAMPLE_CELLS``.
+    ``_SAMPLE_CELLS``. The block is centred on ``centre`` (the middle of the axis when None).
 
     Parameters
     ----------
@@ -260,17 +262,19 @@ def _cell_positions(n: int, runs) -> np.ndarray:
         The length of the axis.
     runs : list of tuple of (int, int) or None
         The stored chunks along the axis (see `hcwf.spatial.select.chunk_runs`); None when it is not chunked.
+    centre : int, optional
+        The position the block is taken around; the middle of the axis when None.
 
     Returns
     -------
     numpy.ndarray of int64
         The positions, consecutive and increasing.
     """
-    centre = n // 2
+    centre = n // 2 if centre is None else int(min(max(centre, 0), n - 1))
     if runs is None:
         if n <= _SAMPLE_CELLS:
             return np.arange(n)
-        start = (n - _SAMPLE_CELLS) // 2
+        start = min(max(centre - _SAMPLE_CELLS // 2, 0), n - _SAMPLE_CELLS)
         return np.arange(start, start + _SAMPLE_CELLS)
     first = next(i for i, (lo, hi) in enumerate(runs) if lo <= centre < hi)
     lo = hi = first
@@ -356,12 +360,56 @@ def _sample_plan(da, wanted: dict, runs: dict, dim: str) -> list[list[np.ndarray
     return plan
 
 
-def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
+_CENTRES = ((0.5, 0.5), (0.5, 0.35), (0.5, 0.65), (0.35, 0.5), (0.65, 0.5), (0.35, 0.35), (0.35, 0.65), (0.65, 0.35),
+            (0.65, 0.65), (0.5, 0.2), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5), (0.2, 0.2), (0.2, 0.8), (0.8, 0.2),
+            (0.8, 0.8))
+"""The places (as fractions along latitude and longitude) a sample is looked for, in order, when the first has no values."""
+
+
+def _region_centre(da: xr.DataArray, roles: dict, region: str | None) -> dict:
+    """Find the grid positions of the centre of a region's box along lat and lon.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The variable, with its ``lat`` and ``lon`` coordinates.
+    roles : dict of str to str
+        The role to dim name map of ``da``.
+    region : str or None
+        The region name; None (or one that is unknown, or a grid without coordinates) gives no centre.
+
+    Returns
+    -------
+    dict of str to int
+        The position along each of the lat and lon dims; empty when there is no centre.
+    """
+    lat, lon = roles.get("lat"), roles.get("lon")
+    if region is None or lat not in da.coords or lon not in da.coords:
+        return {}
+    from hcwf.onset.regions import box
+
+    try:
+        south, north, west, east = box(region)
+    except Exception:  # noqa: BLE001 - an unknown region is reported by the region checks
+        return {}
+    east = east + 360.0 if east < west else east
+    lon_c = (west + east) / 2
+    lons = np.asarray(da[lon].values, dtype=float)
+    lon_c = lon_c % 360 if lons.min() >= 0 else ((lon_c + 180) % 360) - 180
+    lats = np.asarray(da[lat].values, dtype=float)
+    return {lat: int(np.abs(lats - (south + north) / 2).argmin()), lon: int(np.abs(lons - lon_c).argmin())}
+
+
+def load_sample(da: xr.DataArray, roles: dict, key=None, region: str | None = None) -> xr.DataArray:
     """Load a tiny in-memory copy of a variable: a few whole consecutive time steps from its start, middle and end.
+
+    The grid is cut to a block around the centre of the ``region``'s box when one is given, else around the middle of
+    the grid. A block with no finite value (the ocean of a land-only product, a global grid's centre) is not a sample:
+    the next places of `_CENTRES` are tried, up to the first with values.
 
     The time-like dim is the ``init_time`` (forecasts) or ``time`` (observations) role, else the first dim. Lead is
     read in full (accumulation needs the whole lead series); the member dim is cut to its first member and a grid
-    larger than ``_SAMPLE_CELLS`` is cut to a centred block (`_cell_positions`), so the read stays within
+    larger than ``_SAMPLE_CELLS`` is cut to a block (`_cell_positions`), so the read stays within
     ``_SAMPLE_BUDGET`` values (a few MB).
 
     The read follows the file's chunk grid (`hcwf.spatial.select.chunk_runs`): the block is one stored chunk of lat and
@@ -377,6 +425,8 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
         The role to dim name map of ``da`` (see ``_roles``).
     key : hashable, optional
         A cache key, e.g. ``(path, mtime, variable)``; when given the result is kept in this process for the run.
+    region : str, optional
+        The region whose box centre the sample is taken at.
 
     Returns
     -------
@@ -385,6 +435,40 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
     """
     if key is not None and key in _SAMPLES:
         return _SAMPLES[key]
+    grid = [roles.get("lat"), roles.get("lon")]
+    places = [_region_centre(da, roles, region)] if region else []
+    if all(d in da.dims for d in grid):
+        places += [{}] + [{d: int(f * (da.sizes[d] - 1)) for d, f in zip(grid, fractions)}
+                          for fractions in _CENTRES[1:]]
+    out = None
+    for centre in places or [{}]:
+        candidate = _load_sample_at(da, roles, centre)
+        out = candidate if out is None else out
+        if not np.issubdtype(candidate.dtype, np.floating) or np.isfinite(candidate.values).any():
+            out = candidate
+            break
+    if key is not None:
+        _SAMPLES[key] = out
+    return out
+
+
+def _load_sample_at(da: xr.DataArray, roles: dict, centre: dict) -> xr.DataArray:
+    """Load the sample of `load_sample` with the grid block around the given positions.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The (lazy) variable.
+    roles : dict of str to str
+        The role to dim name map of ``da``.
+    centre : dict of str to int
+        The position along the lat and lon dims the block is centred on; a dim that is left out is centred in the middle.
+
+    Returns
+    -------
+    xarray.DataArray
+        The loaded sample, with the attributes of ``da``.
+    """
     from hcwf.spatial import select
 
     dim = next((roles[r] for r in ("init_time", "time") if roles.get(r) in da.dims), None) or da.dims[0]
@@ -395,7 +479,7 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
         if d == roles.get("member"):
             wanted[d] = np.arange(1)
         elif d in (roles.get("lat"), roles.get("lon")):
-            wanted[d] = _cell_positions(n, runs[d])
+            wanted[d] = _cell_positions(n, runs[d], centre.get(d))
         elif d != dim:
             wanted[d] = np.arange(n)
         if d != dim:
@@ -415,8 +499,6 @@ def load_sample(da: xr.DataArray, roles: dict, key=None) -> xr.DataArray:
     template = da.isel({d: wanted[d] for d in da.dims})
     out = xr.DataArray(data, dims=da.dims, coords=template.coords, name=da.name, attrs=dict(da.attrs))
     out.encoding = dict(da.encoding)
-    if key is not None:
-        _SAMPLES[key] = out
     return out
 
 
@@ -692,7 +774,8 @@ def dataset_files(entry: dict) -> list[Path]:
     return [folder] if is_zarr(folder) else data_files(folder)
 
 
-def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> dict | None:
+def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None,
+           region: str | None = None) -> dict | None:
     """Return what detection depends on: the user's keys, and the identity (path, size, mtime) of the dataset's files.
 
     Parameters
@@ -705,6 +788,8 @@ def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | Non
         Whether an unset ``lead_label`` is left to be derived from the day boundary.
     sources : dict, optional
         Where a key came from if not the user.
+    region : str, optional
+        The region the sample is taken in (part of the fingerprint when given).
 
     Returns
     -------
@@ -719,9 +804,10 @@ def _parts(entry: dict, kind: str, lead_label_default: bool, sources: dict | Non
     identities = [file_identity(path) for path in files]
     if not identities or any(i[1] is None for i in identities):
         return None
-    return {"kind": kind, "lead_label_default": lead_label_default,
-            "entry": {k: repr(v) for k, v in entry.items()}, "sources": {k: repr(v) for k, v in (sources or {}).items()},
-            "files": identities}
+    parts = {"kind": kind, "lead_label_default": lead_label_default,
+             "entry": {k: repr(v) for k, v in entry.items()}, "sources": {k: repr(v) for k, v in (sources or {}).items()},
+             "files": identities}
+    return parts if region is None else {**parts, "region": region}
 
 
 def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict | None = None) -> str | None:
@@ -748,7 +834,8 @@ def _fingerprint(entry: dict, kind: str, lead_label_default: bool, sources: dict
 
 
 def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: dict | None = None,
-                  detect_lead_label: bool = True, lead_label_default: bool = False, use_cache: bool = True) -> Resolution:
+                  detect_lead_label: bool = True, lead_label_default: bool = False, use_cache: bool = True,
+                  region: str | None = None) -> Resolution:
     """Resolve one dataset, from the on-disk cache when the dataset's files and keys are unchanged.
 
     The cache key is a fingerprint of the user's keys and the file paths, sizes and mtimes; a hit reads no data and
@@ -771,6 +858,8 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
         Leave an unset ``lead_label`` to be derived from the day boundary instead of making it a problem.
     use_cache : bool, default True
         Whether to read and write the on-disk cache.
+    region : str, optional
+        The region the config names: the data are sampled around the centre of its box (see `load_sample`).
 
     Returns
     -------
@@ -778,7 +867,7 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
         The completed values, report lines, problems and warnings.
     """
     runs_alignment = kind == "forecast" and detect_lead_label and "lead_label" not in entry
-    parts = _parts(entry, kind, lead_label_default, sources) if use_cache and not runs_alignment else None
+    parts = _parts(entry, kind, lead_label_default, sources, region) if use_cache and not runs_alignment else None
     if parts:
         hit = _store().get(parts, quiet=True)
         if isinstance(hit, Resolution):
@@ -788,14 +877,15 @@ def resolve_entry(entry: dict, kind: str, *, sources: dict | None = None, obs: d
             hit.values = {**hit.values}
             return hit
     res = resolve_entry_uncached(entry, kind, sources=sources, obs=obs, detect_lead_label=detect_lead_label,
-                                 lead_label_default=lead_label_default)
+                                 lead_label_default=lead_label_default, region=region)
     if parts and res.checked:
         _store().put(parts, res)
     return res
 
 
 def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = None, obs: dict | None = None,
-                           detect_lead_label: bool = True, lead_label_default: bool = False) -> Resolution:
+                           detect_lead_label: bool = True, lead_label_default: bool = False,
+                           region: str | None = None) -> Resolution:
     """Resolve one dataset: validate what is given, detect what is missing, report every key.
 
     Never raises for problems with the data: they are collected in `Resolution.problems`.
@@ -815,6 +905,8 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
     lead_label_default : bool, default False
         When ``lead_label`` is not given and not detected (``detect_lead_label`` false), leave it unset ("derived from
         the day boundary") instead of making it a problem.
+    region : str, optional
+        The region the config names: the data are sampled around the centre of its box (see `load_sample`).
 
     Returns
     -------
@@ -822,7 +914,7 @@ def resolve_entry_uncached(entry: dict, kind: str, *, sources: dict | None = Non
         The completed values, report lines, problems and warnings.
     """
     sources = sources or {}
-    res = Resolution(values={k: v for k, v in entry.items() if v is not None or k in _NULLABLE})
+    res = Resolution(values={k: v for k, v in entry.items() if v is not None or k in _NULLABLE}, region=region)
     values, problems = res.values, res.problems
 
     def specified(key):
@@ -1117,7 +1209,8 @@ def _resolve_from_file(ds, name, sample, kind, res, specified, detected, obs, de
     elif kind == "forecast" and "members" not in values:
         res.lines.append(Line("members", 1, "detected", f"no member dimension in {name}: deterministic"))
 
-    probe_da = load_sample(da, roles, key=(sample, _mtime(sample), str(values["variable"])))
+    probe_da = load_sample(da, roles, key=(sample, _mtime(sample), str(values["variable"]), res.region),
+                           region=res.region)
     guess = _forecast_accumulation(probe_da, values, res, specified, detected, roles) if kind == "forecast" else None
     _units(da, name, values, res, specified, detected, roles, guess, probe_da)
 
@@ -1296,7 +1389,9 @@ def _units(da, name, values, res, specified, detected, roles, guess=None, loaded
         res.problems["units"] = f"cannot be detected: {why}.{hint} Fix: set units to mm or m"
         return
     message = _check_magnitude(sampled, implied)
-    if message:
+    if message and not sampled.size:   # nothing to check against: the units are given or declared, so only a warning
+        res.warnings.append(message + f"; units are taken as {implied} (as given or declared in the file)")
+    elif message:
         res.problems["units"] = message + ". Fix: set the right units"
     elif guess and guess[0] != implied:
         res.warnings.append(f"units are {implied} but the daily totals look like {guess[0]} ({guess[1]}); "

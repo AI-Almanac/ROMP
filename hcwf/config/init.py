@@ -9,6 +9,7 @@ and writes it.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -130,7 +131,31 @@ def _blend_lines(names, years) -> list[str]:
     return lines
 
 
-def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None, blend=False) -> str:
+def _anchored(path, base) -> str:
+    """Return a folder path as the written config must spell it: relative to the config file's folder.
+
+    A config resolves its relative paths from its own folder, so a path given relative to the working directory is
+    rewritten when the config is written elsewhere. Absolute paths, ``~`` and ``${ENV}`` paths stay as they are.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The path as the user gave it (relative to the working directory).
+    base : str or os.PathLike or None
+        The folder the config is written to; None leaves the path as it is.
+
+    Returns
+    -------
+    str
+        The path, relative to ``base`` when it was relative to the working directory.
+    """
+    text = str(path)
+    if base is None or "$" in text or text.startswith("~") or os.path.isabs(text):
+        return text
+    return os.path.relpath(os.path.abspath(text), base)
+
+
+def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None, blend=False, base=None) -> str:
     """Return the text of a starting run config.
 
     Parameters
@@ -147,6 +172,9 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         An onset definition (registry id or path) to write; None writes a comment saying the region's is used.
     blend : bool, default False
         Add a ``blend:`` section skeleton.
+    base : str or os.PathLike, optional
+        The folder the config is written to. Folders given relative to the working directory are written relative to
+        it (a config resolves its relative paths from its own folder); None writes them as given.
 
     Returns
     -------
@@ -157,7 +185,7 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
     obs_lines: list[str]
     if obs:
         obs_res = detect.resolve_entry({"path": obs}, "observations")
-        obs_lines = [f"  path: {_flow(obs)}"] + _entry_lines(obs_res, _OBS_PLACEHOLDERS, "  ")
+        obs_lines = [f"  path: {_flow(_anchored(obs, base))}"] + _entry_lines(obs_res, _OBS_PLACEHOLDERS, "  ")
     else:
         obs_lines = ["  path: /path/to/observations  # TODO: folder of the yearly observation files"] + [
             f"  # {k}: {example}  # {text}" for k, example, text in _OBS_PLACEHOLDERS]
@@ -189,7 +217,7 @@ def render(region=None, obs=None, models=(), years=(2019, 2024), definition=None
         if path:
             res = detect.resolve_entry({"path": path}, "forecast", obs=obs_for_labels)
             name = Path(expand_path(path)).name or f"MODEL{i + 1}"
-            block = [f"  - name: {_flow(name)}", f"    path: {_flow(path)}"] + _entry_lines(res, _MODEL_PLACEHOLDERS, "    ")
+            block = [f"  - name: {_flow(name)}", f"    path: {_flow(_anchored(path, base))}"] + _entry_lines(res, _MODEL_PLACEHOLDERS, "    ")
             probabilistic = probabilistic or (res.values.get("members") or 1) > 1
         else:
             block = ["  - name: MODEL  # TODO: model name used in output files (no spaces)",
@@ -245,7 +273,8 @@ def write_init(target, force=False, **kwargs) -> Path:
     """
     from hcwf.config import Config
 
-    text = render(**kwargs)
+    base = None if str(target) == "-" else os.path.dirname(os.path.abspath(target))
+    text = render(**kwargs, base=base)
     Config.from_mapping(yaml.safe_load(text))
     if str(target) == "-":
         print(text, end="")

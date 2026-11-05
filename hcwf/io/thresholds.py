@@ -299,6 +299,7 @@ def load_onset_thresholds(onset, obs, area, options, ev, output, *, model=None, 
         pending = []
         if not onset.derived_seasons:
             return thresholds
+    check_threshold_years(obs, select, years)
     read = ObsRead(obs, area, options, select, onset, tuple(ev.years), output.figure_dir, parallel)
     probe = reference_probe(onset, years[0], read)
     full = LazyRain(probe, lambda: reference_rain(onset, years, read, probe=probe))
@@ -312,6 +313,40 @@ def load_onset_thresholds(onset, obs, area, options, ev, output, *, model=None, 
     if onset.derived_seasons:
         thresholds.season_climatology = _harmonic_cached(cache_dir, full, years, files)
     return thresholds
+
+
+def check_threshold_years(obs, select, years) -> None:
+    """Raise when observation files of the threshold years are missing, saying how to fix it.
+
+    The thresholds computed from the observations (`load_thresholds`) read every year from the first to the last
+    threshold year; a year without a file would otherwise stop the run deep inside the reading.
+
+    Parameters
+    ----------
+    obs : hcwf.config.model.ObsSpec
+        The observation settings.
+    select : hcwf.config.model.Selection
+        The run's selection settings (``obs_files_years``).
+    years : tuple of (int, int)
+        The first and last threshold year.
+
+    Raises
+    ------
+    FileNotFoundError
+        Some threshold years have no observation file.
+    """
+    wanted = list(range(years[0], years[1] + 1))
+    found = observed_cache.observation_files(obs, select.obs_files_years, wanted)
+    if len(found) != len(wanted):   # a zarr store: one entry for all years
+        return
+    gone = [y for y, entry in zip(wanted, found) if entry == [f"missing {y}"]]
+    if gone:
+        shown = ", ".join(str(y) for y in gone[:6]) + (f", ... ({len(gone)} in all)" if len(gone) > 6 else "")
+        raise FileNotFoundError(
+            f"the onset definition's thresholds are computed from the observations of the threshold years "
+            f"{years[0]}-{years[1]}, but there is no observation file for {shown} in {obs.dir}. Fix: set "
+            "onset.threshold_years to years the observations cover, give precomputed thresholds with "
+            "onset.thresholds, or add the files")
 
 
 _loaded_thresholds = memo("io.thresholds.loaded", maxsize=32, share=True)

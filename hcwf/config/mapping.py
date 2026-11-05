@@ -237,7 +237,7 @@ def _resolve_observations(config, given_block, datasets, errors):
         return None
     entry, entry_sources = _explicit_entry(given, given_block.get("dataset"), datasets, "observations",
                                            "observations", errors)
-    res = detect.resolve_entry(entry, "observations", sources=entry_sources)
+    res = detect.resolve_entry(entry, "observations", sources=entry_sources, region=config.get("region"))
     return res
 
 
@@ -351,7 +351,8 @@ def _resolve_models(config, sources, models, obs_values, datasets, report, error
                           "no spaces)")
         align = bool(config.get("check_alignment", False))
         res = detect.resolve_entry(entry, "forecast", sources=entry_sources, obs=obs_values,
-                                   detect_lead_label=align, lead_label_default=not align)
+                                   detect_lead_label=align, lead_label_default=not align,
+                                   region=config.get("region"))
         _problems(res, written, errors)
         detect.warn_all(res)
         report.append(f"{written} {entry.get('name', '')}:")
