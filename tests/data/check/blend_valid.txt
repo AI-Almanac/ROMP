@@ -60,6 +60,7 @@ ens: cells; grid ids fixed with 2 decimals
 == Grids ==
 observations: 3 lats x 2 lons in the file, 3 x 2 inside the region box
 ens: 3 lats x 2 lons in the file, 3 x 2 inside the region box
+evaluation grid: the sources are on one grid inside the region box; nothing is regridded
 
 == Lead windows ==
 windows ((1, 15), (16, 30)) with tolerances (3, 5) days; max forecast day 30; day bins ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30))

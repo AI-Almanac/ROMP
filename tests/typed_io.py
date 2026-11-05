@@ -94,7 +94,9 @@ def selection_kwargs(selection: Selection) -> dict:
 
 def skip_region_cut(monkeypatch):
     """Read the fixtures whole: `region_select` (the region's box and cell mask) does nothing in every reader."""
-    for module in (observations_io, forecasts_io, thresholds_io):
+    from hcwf.spatial import evalgrid
+
+    for module in (evalgrid, thresholds_io):   # evalgrid.region_read is how the observation and forecast readers cut
         monkeypatch.setattr(module, "region_select", lambda ds, **kwargs: ds)
 
 

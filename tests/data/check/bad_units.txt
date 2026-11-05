@@ -58,6 +58,7 @@ ERROR: units: units mode must be one of ('cells', 'regrid', 'cell_transform'), g
 == Grids ==
 observations: 3 lats x 3 lons in the file, 3 x 3 inside the region box
 DET: 3 lats x 3 lons in the file, 3 x 3 inside the region box
+evaluation grid: the sources are on one grid inside the region box; nothing is regridded
 
 == Lead windows ==
 Lead window      : 1-10 for DET (icpac reads 3 days from the onset day; forecasts have 14 leads)  [max_forecast_day]
