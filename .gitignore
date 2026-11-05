@@ -30,6 +30,7 @@ output/
 #!/demo/output/.gitkeep
 #!/demo/output/
 #!/demo/output/**
+research/
 
 # .DS_Store
 .DS_Store
