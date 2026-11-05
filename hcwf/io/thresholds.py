@@ -10,17 +10,21 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import numpy as np
+import xarray as xr
 
 from hcwf.cache import NETCDF, NETCDF_GROUPS, Store, file_identity, memo
 from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import Thresholds
 from hcwf.io.forecasts import ForecastRead, ingest_forecast, load_forecast
-from hcwf.io.observations import ObsRead
+from hcwf.io.observations import ObsRead, observation_grid
 from hcwf.io.reference import LazyRain, reference_probe, reference_rain
-from hcwf.io.stores import forecast_sources
+from hcwf.io.stores import forecast_sources, open_data
 from hcwf.onset import definition as definition_mod
 from hcwf.onset import observed_cache
 from hcwf.onset.climatology import (
@@ -34,6 +38,7 @@ from hcwf.onset.thresholds import (
     read_threshold_table,
     scale_values,
 )
+from hcwf.spatial import evalgrid
 from hcwf.spatial.onto_units import units_files
 from hcwf.spatial.select import region_select
 from hcwf.spatial.units import UNITS_KEYS
@@ -41,10 +46,208 @@ from hcwf.spatial.units import UNITS_KEYS
 if TYPE_CHECKING:  # pragma: no cover
     from hcwf.onset.model import ForecastRain
 
-__all__ = ["thresholds_of"]
+__all__ = ["ThresholdGrid", "threshold_grids", "thresholds_of"]
 
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ThresholdGrid:
+    """What a threshold grid file is read as: its grid and how it meets the run's grid (see `threshold_grids`)."""
+
+    name: str
+    """The name of the threshold in the onset definition."""
+    path: str
+    """The file."""
+    lat: int
+    """The number of latitudes of the file (cut to the region box)."""
+    lon: int
+    """The number of longitudes of the file (cut to the region box)."""
+    step: tuple
+    """The latitude and longitude step of the file, in degrees."""
+    how: str
+    """``"as is"`` (on the evaluation grid), ``"averaged"`` (onto it), ``"units"`` (onto the units) or ``"unknown"``."""
+    uncovered: int = 0
+    """The evaluation cells outside the file's extent (NaN when averaged)."""
+
+
+def _run_grid(obs, area, options, select, ev, output, parallel):
+    """Return the grid the run is scored on: the evaluation grid, or the one grid its sources share.
+
+    Parameters
+    ----------
+    obs : hcwf.config.model.ObsSpec
+        The observation dataset settings.
+    area : hcwf.config.model.AreaSpec
+        The region, mask and evaluation grid.
+    options : hcwf.config.model.OnsetOptions
+        The onset options.
+    select : hcwf.config.model.Selection
+        The run's selection settings.
+    ev : hcwf.config.model.EvaluationSpec
+        The evaluation settings.
+    output : hcwf.config.model.OutputSpec
+        The output settings.
+    parallel : hcwf.config.model.ParallelSpec or None
+        The parallel settings.
+
+    Returns
+    -------
+    hcwf.spatial.evalgrid.EvaluationGrid or None
+        The evaluation grid; without one, the observations' grid in the region box (every source is on it); None when
+        the observations are on units or their grid cannot be looked at.
+    """
+    if area.evaluation_grid is not None:
+        return area.evaluation_grid
+    if obs.units is not None:
+        return None
+    read = ObsRead(obs, area, options, select, None, tuple(ev.years), output.figure_dir, parallel)
+    for year in ev.years:
+        try:
+            found = observation_grid(year, read)
+        except Exception:  # noqa: BLE001 - try the next year; the reads raise the real error
+            continue
+        lat, lon = (np.sort(np.asarray(found[k], dtype=float)) for k in ("lat", "lon"))
+        return evalgrid.EvaluationGrid("observations", lat, lon, (), (), "the grid every source shares")
+    return None
+
+
+def _grid_threshold(field, name, grid, spec):
+    """Put a threshold grid on the run's grid, or on its units.
+
+    Parameters
+    ----------
+    field : xarray.DataArray
+        The threshold as read (cut to the region box), dims ``lat`` and ``lon`` or names containing them.
+    name : str
+        The name of the threshold, for the warning.
+    grid : hcwf.spatial.evalgrid.EvaluationGrid or None
+        The grid the run is scored on (None: leave the field alone).
+    spec : hcwf.spatial.units.UnitsSpec or None
+        The observation units: the field is averaged onto them from its own grid.
+
+    Returns
+    -------
+    xarray.DataArray
+        ``field`` itself when it is on the grid; the field averaged onto the grid; or, on units, the values over a
+        ``unit`` dimension.
+    """
+    if spec is not None:
+        return _threshold_on_units(field, spec)
+    if grid is None:
+        return field
+    lat, lon = (np.asarray(field[d].values, dtype=float) for d in _lat_lon(field))
+    if evalgrid.same_grid(lat, lon, grid.lat, grid.lon):
+        return field
+    averaged, uncovered = evalgrid.onto_grid(field, grid)
+    if uncovered:
+        log.warning(f"threshold {name}: its grid does not cover {uncovered} of the {averaged.size} evaluation cells; "
+                    "they have no threshold (NaN, not scored)")
+    return averaged
+
+
+def _lat_lon(field) -> tuple[str, str]:
+    """Return the names of the latitude and longitude dims of a field.
+
+    Parameters
+    ----------
+    field : xarray.DataArray
+        The field.
+
+    Returns
+    -------
+    tuple of (str, str)
+        The dims whose names contain ``lat`` and ``lon``.
+
+    Raises
+    ------
+    ValueError
+        The field has no such dim.
+    """
+    lat = next((d for d in field.dims if "lat" in str(d).lower()), None)
+    lon = next((d for d in field.dims if "lon" in str(d).lower()), None)
+    if lat is None or lon is None:
+        raise ValueError(f"a threshold grid needs latitude and longitude dimensions, got {tuple(field.dims)}. "
+                         "Fix: name them lat and lon in the file")
+    return lat, lon
+
+
+def _threshold_on_units(field, spec):
+    """Average a threshold grid onto the evaluation units from its own grid, as the rain is.
+
+    Parameters
+    ----------
+    field : xarray.DataArray
+        The threshold on its grid.
+    spec : hcwf.spatial.units.UnitsSpec
+        The units of the observations.
+
+    Returns
+    -------
+    xarray.DataArray
+        The threshold of each kept unit, over a ``unit`` dimension.
+    """
+    dlat, dlon = _lat_lon(field)
+    field = field.transpose(dlat, dlon)
+    lat, lon = np.asarray(field[dlat].values, dtype=float), np.asarray(field[dlon].values, dtype=float)
+    units, positions = spec.select(lat=lat, lon=lon)
+    values = units.transform(lat, lon).observed_mean(np.asarray(field.values, dtype=float).reshape(-1, 1))[:, 0]
+    return xr.DataArray(values[positions], dims="unit", coords={"unit": units.ids[positions]}, name=field.name)
+
+
+def threshold_grids(onset, obs, area, options, ev, output, select=NO_SELECTION, parallel=None) -> list[ThresholdGrid]:
+    """Describe how each threshold grid file meets the run's grid, reading only coordinates.
+
+    Parameters
+    ----------
+    onset : hcwf.config.onset.OnsetSetup
+        The onset setup (its threshold files).
+    obs : hcwf.config.model.ObsSpec
+        The observation dataset settings.
+    area : hcwf.config.model.AreaSpec
+        The region, mask and evaluation grid.
+    options : hcwf.config.model.OnsetOptions
+        The onset options.
+    ev : hcwf.config.model.EvaluationSpec
+        The evaluation settings.
+    output : hcwf.config.model.OutputSpec
+        The output settings.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings.
+    parallel : hcwf.config.model.ParallelSpec, optional
+        The parallel settings.
+
+    Returns
+    -------
+    list of ThresholdGrid
+        One per threshold file that is a grid (tables and constants have no grid), in the order of the config.
+    """
+    out = []
+    grid = None
+    for name, path, var in onset.threshold_files:
+        if var is None:
+            continue
+        with open_data(path) as ds:
+            field = region_select(ds[var], area=replace(area, mask=None), select=select)
+            dlat, dlon = _lat_lon(field)
+            lat, lon = (np.asarray(field[d].values, dtype=float) for d in (dlat, dlon))
+        step = evalgrid.steps(lat, lon)
+        if obs.units is not None:
+            out.append(ThresholdGrid(name, str(path), len(lat), len(lon), step, "units"))
+            continue
+        if grid is None:
+            grid = _run_grid(obs, area, options, select, ev, output, parallel)
+        if grid is None:
+            out.append(ThresholdGrid(name, str(path), len(lat), len(lon), step, "unknown"))
+        elif evalgrid.same_grid(lat, lon, grid.lat, grid.lon):
+            out.append(ThresholdGrid(name, str(path), len(lat), len(lon), step, "as is"))
+        else:
+            probe = xr.DataArray(np.broadcast_to(np.float64(1.0), (len(lat), len(lon))), dims=("lat", "lon"),
+                                 coords={"lat": lat, "lon": lon})
+            out.append(ThresholdGrid(name, str(path), len(lat), len(lon), step, "averaged",
+                                     evalgrid.onto_grid(probe, grid)[1]))
+    return out
 
 
 def _harmonic_cached(cache_dir, rain, years, files=()):
@@ -278,14 +481,18 @@ def load_onset_thresholds(onset, obs, area, options, ev, output, *, model=None, 
     if not onset.uses_thresholds:
         return thresholds
     scale = ThresholdScale(**options.threshold_scale) if options.threshold_scale else None
+    run_grid = None   # the grid the threshold grids are put on, looked up for the first of them
     for name, path, var in onset.threshold_files:
         if var is None:   # a table by unit id
             table_options = {k: v for k, v in (options.threshold_table or {}).items() if v is not None}
             thresholds[name] = read_threshold_table(path, scale=scale, **table_options)
         else:
-            thresholds[name] = read_threshold_grid(
+            field = read_threshold_grid(
                 path, var, select=lambda da: region_select(da, area=replace(area, mask=None), select=select),
                 scale=scale)
+            if run_grid is None:
+                run_grid = (_run_grid(obs, area, options, select, ev, output, parallel),)
+            thresholds[name] = _grid_threshold(field, name, run_grid[0], obs.units)
     for name, mm in onset.threshold_constants:
         thresholds[name] = mm
     pending = [(name, spec) for name, spec in onset.definition.thresholds if name not in thresholds]
@@ -439,7 +646,8 @@ def load_thresholds(onset, obs, area, options, ev, output, *, model=None,
     """
     key = (_setup_key(onset), str(None if model is None else model.name), str(ev.max_forecast_day),
            str(None if not ev.windows else [w.span for w in ev.windows]), str(output.data_dir), str(obs.dir),
-           str(obs.var), str(area.region), _thresholds_key(onset, obs, options, select, model))
+           str(obs.var), str(area.region), "" if area.evaluation_grid is None else area.evaluation_grid.key(),
+           _thresholds_key(onset, obs, options, select, model))
     return _loaded_thresholds.get_or_make(key, lambda: load_onset_thresholds(
         onset, obs, area, options, ev, output, model=model, select=select, parallel=parallel, cache_dir=cache_dir))
 

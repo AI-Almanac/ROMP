@@ -42,7 +42,7 @@ Every key can stay unset. Order of use: the config value, then the region's defa
 | `override` / `rule` | none | Changes merged into the definition, or a complete inline definition (`rule` and `definition` are not combined). |
 | `season` | first | Season name for definitions with several; `"1"` or `"2"` for derived seasons (`dunning`). |
 | `threshold_years` | region default | `[first, last]` years of observations that thresholds are computed from. |
-| `thresholds` | none | `{name: "path.nc:variable"}`: precomputed thresholds instead of computing them. |
+| `thresholds` | none | `{name: "path.nc:variable"}`: precomputed thresholds instead of computing them. A grid on another grid than the evaluation grid is averaged onto it conservatively as the rain is (onto the units from its own grid on admin units); cells it does not cover are NaN and `--check` says how many. An averaged threshold (a percentile, say) is not the threshold of the averaged rain: `onset.threshold_years` with the observations recomputes it on the evaluation grid. |
 | `threshold_source` | `observations` | `observations` or `model` (see below). |
 | `threshold_scale`, `threshold_table`, `threshold_max_missing`, `threshold_partial_years` | none | How thresholds are scaled (`clip(t * factor + offset, min, max)`), how a threshold table is read, the share of missing reference days above which a series has no threshold, and whether a year only partly in the data counts. For matching onset_blending; see `hcwf/config/schema.py`. |
 | `lead_label` | from the day boundary | `start`: lead k is dated init + k - 1. `end`: init + k. |

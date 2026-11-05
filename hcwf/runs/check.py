@@ -510,6 +510,49 @@ def _matched(values, targets) -> float:
     return float((nearest <= _GRID_TOLERANCE).mean())
 
 
+def _threshold_grids(report: CheckReport, rc) -> None:
+    """Add one line per threshold grid file: its grid, and whether it is used as is or averaged onto the run's grid.
+
+    Parameters
+    ----------
+    report : CheckReport
+        The report to add to; a grid that does not cover the evaluation grid is a warning.
+    rc : hcwf.config.model.RunConfig or None
+        The run configuration; nothing is added without one or without threshold grids.
+    """
+    if rc is None or not rc.onset.uses_thresholds or not rc.onset.threshold_files:
+        return
+    from hcwf.io.thresholds import threshold_grids
+
+    try:
+        found = threshold_grids(rc.onset, rc.observations, rc.area, rc.onset_options, rc.evaluation, rc.output,
+                                parallel=rc.parallel)
+    except Exception as exc:  # noqa: BLE001 - the run would meet the same file
+        report.error(f"a threshold grid could not be read: {exc}")
+        return
+    averaged = False
+    for item in found:
+        size = f"{item.lat} lats x {item.lon} lons, {item.step[0]:g} x {item.step[1]:g} degrees"
+        name = Path(item.path).name
+        if item.how == "as is":
+            report.add(f"threshold {item.name} ({name}): {size}; on the evaluation grid, used as is")
+        elif item.how == "units":
+            report.add(f"threshold {item.name} ({name}): {size}; averaged onto the evaluation units from its own grid "
+                       "(cell areas as for the rain)")
+        elif item.how == "averaged":
+            averaged = True
+            report.add(f"threshold {item.name} ({name}): {size}; not the evaluation grid, averaged conservatively onto "
+                       "it (cell areas on the sphere, renormalised over the cells that have a value)")
+            if item.uncovered:
+                report.hint("onset.thresholds", f"threshold {item.name} does not cover {item.uncovered} cells of the "
+                                                "evaluation grid: they have no threshold and are not scored")
+        else:
+            report.add(f"threshold {item.name} ({name}): {size}; the run's grid could not be looked at")
+    if averaged:
+        report.add("note: an averaged threshold (a percentile, say) is not the threshold of the averaged rain; setting "
+                   "onset.threshold_years with the observations recomputes it on the evaluation grid")
+
+
 def _grids(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
     """Add the grids: latitude order, the cells inside the region box, and the evaluation grid with why it was chosen.
 
@@ -955,6 +998,7 @@ def build_report(rc, found=None, overwrite: bool = False, alignment: bool = Fals
     samples = _files(dic, report)
     _units(report, found)
     _grids(dic, report, samples, rc)
+    _threshold_grids(report, rc)
     _mask_summary(dic, report, samples, rc)
     _leads(dic, report, samples)
     _alignment(dic, report)

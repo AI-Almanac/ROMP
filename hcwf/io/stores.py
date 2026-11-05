@@ -54,7 +54,7 @@ def open_store(path):
 
 
 def open_data(path, **kwargs) -> xr.Dataset:
-    """Open an input data file lazily, or a zarr store (a ``.zarr`` directory) through `open_store`.
+    """Open an input data file lazily, or a zarr store (a ``.zarr`` directory) through `~hcwf.io.stores.open_store`.
 
     This is the one opener of the data files a run reads. It asks explicitly for ``decode_timedelta=True``: a variable
     with a time-like ``units`` attribute (the forecast ``lead``) stays a timedelta as it always was, and xarray does not

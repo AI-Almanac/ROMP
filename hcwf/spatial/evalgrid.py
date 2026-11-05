@@ -43,7 +43,7 @@ from hcwf.spatial.onto_units import read_on_units
 from hcwf.spatial.select import cut_box, in_memory, lat_swap, mask_region_loaded, region_select
 from hcwf.spatial.units import EvaluationUnits
 
-__all__ = ["EvaluationGrid", "build", "choose", "cut_to_grid", "keep_cells", "overlap", "region_read", "same_grid", "steps"]
+__all__ = ["EvaluationGrid", "build", "choose", "cut_to_grid", "keep_cells", "onto_grid", "overlap", "region_read", "same_grid", "steps"]
 
 TOLERANCE = 1e-3
 """How far (in degrees) two grids' cell centres may differ for the grids to be the same (as HCWF's onset matching)."""
@@ -491,6 +491,46 @@ def _scatter(series, keep, grid, dims, cells):
     coords.update({"lat": grid.lat, "lon": grid.lon})
     out = xr.DataArray(full, dims=tuple(others) + ("lat", "lon"), coords=coords, attrs=series.attrs, name=series.name)
     return out.transpose(*[d for d in dims if d in out.dims])
+
+
+def onto_grid(field, grid) -> tuple[xr.DataArray, int]:
+    """Average a loaded two-dimensional field onto the cells of the evaluation grid, as rain is.
+
+    Each evaluation cell takes the mean of the field's cells weighted by the area they share with it on the sphere,
+    renormalised over the field's cells that have a value; where no cell of the field lies under an evaluation cell the
+    result is NaN. A finer or a coarser field is averaged alike. No mask is applied.
+
+    Parameters
+    ----------
+    field : xarray.DataArray
+        The field, dims ``lat`` and ``lon`` (or names containing them), in memory.
+    grid : EvaluationGrid
+        The evaluation grid.
+
+    Returns
+    -------
+    averaged : xarray.DataArray
+        The field on the grid's ``lat`` and ``lon``, with the attributes and name of ``field``.
+    uncovered : int
+        How many evaluation cells lie outside the extent of the field (they are NaN).
+    """
+    rename = {d: ("lat" if "lat" in d.lower() else "lon") for d in field.dims if "lat" in d.lower() or "lon" in d.lower()}
+    field = field.rename({k: v for k, v in rename.items() if k != v})
+    field = cut_to_grid(field.transpose("lat", "lon"), grid.lat, grid.lon, grid.lon_global, "the threshold grid")
+    shape = (len(grid.lat), len(grid.lon))
+    keep = np.ones(shape, dtype=bool)
+    key = (grid.key(), "all")
+    units = _units.get(key)
+    if units is None:
+        units = _units.setdefault(key, EvaluationUnits.from_grid(grid.lat, grid.lon, keep, cell_area=_AVERAGE))
+    lat, lon = np.asarray(field["lat"].values, dtype=float), np.asarray(field["lon"].values, dtype=float)
+    transform = units.transform(lat, lon)
+    values = np.asarray(field.values, dtype=float).reshape(-1, 1)
+    out = transform.observed_mean(values)[:, 0].reshape(shape)
+    covered = transform.observed_mean(np.ones_like(values))[:, 0].reshape(shape)
+    averaged = xr.DataArray(out, dims=("lat", "lon"), coords={"lat": grid.lat, "lon": grid.lon}, attrs=field.attrs,
+                            name=field.name)
+    return averaged, int(np.isnan(covered).sum())
 
 
 def region_read(ds, var, *, area, select, source, read_by, dataset_name, dir_fig, readers=None, skip_masked=False,
