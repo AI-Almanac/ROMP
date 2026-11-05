@@ -41,7 +41,7 @@ import xarray as xr
 from hcwf.cache import Store, file_identity
 from hcwf.io.forecasts import init_dates
 from hcwf.io.stores import forecast_sources as _year_sources
-from hcwf.io.stores import data_files, dataset_years, observation_source, open_store
+from hcwf.io.stores import data_files, dataset_years, observation_source, open_data, open_store
 from hcwf.config.datasets import is_zarr
 from hcwf.spatial.select import load_blocks
 from hcwf.onset import ingest as ing
@@ -292,7 +292,7 @@ def forecast_sources(kw: dict) -> list:
         except FileNotFoundError:
             continue
         for path in paths:
-            raw = xr.open_dataset(path)
+            raw = open_data(path)
             out.append((year, _standardise(raw, kw), raw.close))
     return out
 
@@ -578,7 +578,7 @@ def _obs_segments(kw: dict, years) -> list:
         except FileNotFoundError:
             continue
         for path in (found if isinstance(found, tuple) else (found,)):
-            raw = xr.open_dataset(path)
+            raw = open_data(path)
             out.append((dim_fmt(raw), raw.close))
     return out
 

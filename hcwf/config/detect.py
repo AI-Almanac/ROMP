@@ -48,7 +48,7 @@ from hcwf.cache import Store, file_identity, global_root, memo
 from hcwf.config.datasets import expand_path, file_year, is_zarr, resolve_paths, year_match
 from hcwf.onset import ingest
 from hcwf.io.dims import matches
-from hcwf.io.stores import data_files, pattern_files
+from hcwf.io.stores import data_files, open_data, pattern_files
 from hcwf.errors import DatasetError
 
 __all__ = ["cache_dir", "forecast_signature", "open_data", "read_forecast_file", "signature_differences"]
@@ -200,27 +200,6 @@ _SAMPLE_MIN_CELLS = 32
 """Fewest lat or lon cells of the block a chunked file's sample reads: smaller stored chunks are joined to reach it."""
 _SAMPLES = memo("config.detect.samples", maxsize=32)
 """Loaded detection samples, per (file, modification time, variable), for the run."""
-
-
-def open_data(path: str) -> xr.Dataset:
-    """Open a NetCDF file lazily, or a zarr store (a ``.zarr`` directory) through `hcwf.io.stores.open_store`.
-
-    Parameters
-    ----------
-    path : str
-        The NetCDF file or zarr directory.
-
-    Returns
-    -------
-    xarray.Dataset
-        The lazily opened dataset. The caller closes it; a zarr store is the run's shared handle (opened unchunked), so
-        this returns a view of it whose ``close`` does nothing and the run's state reset closes the store.
-    """
-    if is_zarr(path):
-        from hcwf.io.stores import open_store
-
-        return open_store(path).copy()
-    return xr.open_dataset(path)
 
 
 def _block_indices(n: int, per_index: int) -> list[np.ndarray]:

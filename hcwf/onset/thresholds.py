@@ -23,6 +23,7 @@ import pandas as pd
 import xarray as xr
 
 from hcwf.cache import memo
+from hcwf.io.stores import open_data
 from hcwf.spatial import ids
 
 __all__ = ["ThresholdScale", "read_threshold_grid", "read_threshold_table", "scale_values", "unit_thresholds"]
@@ -115,7 +116,7 @@ def read_threshold_grid(path, var: str, *, select=None, scale: ThresholdScale | 
     xarray.DataArray
         The loaded, scaled field.
     """
-    with xr.open_dataset(path) as ds:
+    with open_data(path) as ds:
         field = ds[var]
         if select is not None:
             field = select(field)

@@ -47,6 +47,7 @@ from hcwf.config.datasets import suggest
 from hcwf.config.maskspec import MaskSpec
 from hcwf.errors import MaskError
 from hcwf.io.dims import ROLE_ALIASES, find_dim
+from hcwf.io.stores import open_data
 import logging
 
 __all__ = [
@@ -626,7 +627,7 @@ def read_raster_mask(path, variable=None, keep_value=1, condition=None):
         axes that are not 1-D.
     """
     try:
-        ds = xr.open_dataset(path, decode_times=False)
+        ds = open_data(path, decode_times=False)
     except Exception as exc:
         raise MaskError(f"cannot open the mask file {path}: {type(exc).__name__}: {exc}") from exc
     with ds:

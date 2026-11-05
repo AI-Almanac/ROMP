@@ -23,7 +23,7 @@ from hcwf.errors import DatasetError
 
 __all__ = [
     "data_files", "dataset_years", "forecast_sources", "is_data_file", "model_sources", "observation_source",
-    "open_store", "pattern_files", "store_years", "year_files", "years_in_folder",
+    "open_data", "open_store", "pattern_files", "store_years", "year_files", "years_in_folder",
 ]
 
 
@@ -50,7 +50,34 @@ def open_store(path):
         The lazy dataset of the store, shared by every caller with the same path.
     """
     key = str(path)
-    return _stores.get_or_make(key, lambda: xr.open_zarr(key, chunks=None))
+    return _stores.get_or_make(key, lambda: xr.open_zarr(key, chunks=None, decode_timedelta=True))
+
+
+def open_data(path, **kwargs) -> xr.Dataset:
+    """Open an input data file lazily, or a zarr store (a ``.zarr`` directory) through `open_store`.
+
+    This is the one opener of the data files a run reads. It asks explicitly for ``decode_timedelta=True``: a variable
+    with a time-like ``units`` attribute (the forecast ``lead``) stays a timedelta as it always was, and xarray does not
+    warn that its default will change.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The NetCDF file or zarr directory.
+    **kwargs : dict
+        Options of `xarray.open_dataset` for a NetCDF file (for instance ``decode_times``); ``decode_timedelta`` is True
+        unless given.
+
+    Returns
+    -------
+    xarray.Dataset
+        The lazily opened dataset. The caller closes it; a zarr store is the run's shared handle (opened unchunked), so
+        this returns a view of it whose ``close`` does nothing and the run's state reset closes the store.
+    """
+    if is_zarr(path):
+        return open_store(path).copy()
+    kwargs.setdefault("decode_timedelta", True)
+    return xr.open_dataset(path, **kwargs)
 
 
 def year_files(paths, base, years_filter, year) -> list[str]:
@@ -475,7 +502,7 @@ def open_forecast(year, model_dir, file_pattern, ensemble, model_dims, filtered_
         file_path = file_path or os.path.join(model_dir, file_pattern.format(year))
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
-        ds = fix(xr.open_dataset(file_path), model_dims)
+        ds = fix(open_data(file_path), model_dims)
         close = ds.close
     if filtered_dates_yr is None:
         return ds, close

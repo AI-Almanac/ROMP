@@ -25,7 +25,7 @@ from hcwf.cache import memo
 from hcwf.config.model import NO_SELECTION
 from hcwf.config.onset import history_needs_previous_year
 from hcwf.io.dims import dim_fmt, rename_model_dims
-from hcwf.io.stores import observation_source, open_store
+from hcwf.io.stores import observation_source, open_data, open_store
 from hcwf.onset.ingest import observation_shift_days
 from hcwf.parallel import ordered_prefetch, worker_count
 from hcwf.spatial.onto_units import (
@@ -436,7 +436,7 @@ def _open_year(year, store, path, read: ObsRead):
         if ds.sizes["time"] == 0:
             raise FileNotFoundError(f"No observations for year {year} in {store}")
         return ds
-    return dim_fmt(rename_model_dims(xr.open_dataset(path), read.obs.dims_map()))
+    return dim_fmt(rename_model_dims(open_data(path), read.obs.dims_map()))
 
 
 def _observation_box(year, read: ObsRead, keep=False):

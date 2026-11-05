@@ -15,7 +15,7 @@ import xarray as xr
 from hcwf.config.datasets import is_zarr
 from hcwf.config.model import NO_SELECTION
 from hcwf.io.dims import dim_fmt, dim_fmt_model, dim_fmt_model_ensemble
-from hcwf.io.stores import observation_source, open_store, year_files
+from hcwf.io.stores import observation_source, open_data, open_store, year_files
 from hcwf.io.thresholds import load_thresholds
 
 __all__ = ["warm_up_of"]
@@ -110,7 +110,7 @@ def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION
     try:
         store, path = observation_source(year, obs.dir, obs.file_pattern, obs.paths, select.obs_files_years)
         path = path[0] if isinstance(path, tuple) else path
-        lazy = dim_fmt(open_store(store) if store is not None else xr.open_dataset(path))
+        lazy = dim_fmt(open_store(store) if store is not None else open_data(path))
         try:
             _warm_masks(lazy, obs.var, str(obs.name or "obs"), area, select, dir_fig, "observations")
         finally:
@@ -122,13 +122,13 @@ def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION
         fix = dim_fmt_model_ensemble if ev.probabilistic else dim_fmt_model
         if select.model_paths:
             path = year_files(select.model_paths, model.dir, select.model_files_years, year)[0]
-            lazy = fix(xr.open_dataset(path), model.dims_map())
+            lazy = fix(open_data(path), model.dims_map())
         elif is_zarr(model.dir):
             lazy = fix(open_store(model.dir), model.dims_map())
             path = None
         else:
             path = os.path.join(model.dir, model.file_pattern.format(year))
-            lazy = fix(xr.open_dataset(path), model.dims_map())
+            lazy = fix(open_data(path), model.dims_map())
         try:
             _warm_masks(lazy, model.var, str(model.name or "model"), area, select, dir_fig, model.name)
         finally:
