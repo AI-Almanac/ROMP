@@ -97,6 +97,16 @@ plan = hcwf.check("run.yaml")                        # what --check prints
 
 `hcwf.run` writes no files unless `write=True` (then it behaves like `hcwf-run`; `overwrite=True` re-runs an existing run folder). Overrides use the flat key names of the schema (`verification_window_list`, `max_forecast_day`, ...). `hcwf.config.Config(...).to_flat()` gives the validated flat dict and `.to_yaml(path)` writes the file. For a run file with a `blend:` section `result.blend` is the training result. `from hcwf.api import forecast` gives the function that applies a trained blend (see docs/blending.md).
 
+## Grids
+
+Observations and models are often on different grids. HCWF scores on one grid per run, the evaluation grid: the coarsest grid among the observations and all models (one grid for the whole run, so scores stay comparable and the observed onsets, thresholds and climatology are computed once). Finer data are averaged up onto it by conservative area-overlap weights on the sphere (the weight of a source cell in a target cell is their shared area, longitude overlap times the overlap of the sines of the latitude edges), renormalised over the source cells that have a value, so a land-only product's missing ocean cells do not pull a mean towards zero. Nothing is sampled by nearest cell or interpolated. The evaluation grid is that source's grid cut to the region's box, and the mask is built on it. To score on another source's grid, name it:
+
+```yaml
+evaluation_grid: observations    # or a model's name; null (default): the coarsest of all the sources
+```
+
+Sources that already share a grid inside the box are read as they are. Global files are read only inside the box, each stored chunk once, with latitudes either way round and longitudes in 0-360 or -180-180 (a box that crosses the longitude seam of a file is not supported). `--check` reports the evaluation grid and why it was chosen. Evaluation units (`units:`, below) do not use it: each source is averaged directly from its own grid onto the units.
+
 ## Evaluation units
 
 By default HCWF works on the grid cells of the data inside the region's box. The `units:` section evaluates on other units instead:
@@ -186,7 +196,7 @@ mask:
   resolution: 50m            # Natural Earth resolution: 10m, 50m or 110m
 ```
 
-The mask is built on each dataset's own grid (the observations and every model separately); rainfall is never regridded. A shape is rasterised by the cell rule. A mask file is aligned first (latitude order, 0-360 or -180-180 longitudes, axis names); on the same grid it is used as it is, otherwise the mask (not the rainfall) is regridded: a finer mask keeps a cell when kept mask cells cover at least `overlap_fraction` of it, a coarser one gives the nearest mask cell, and a mask that does not cover the data is an error naming both extents. The run prints the sources, rule, alignment actions and kept cell count per dataset, saves `mask_<dataset>.png` in the figure folder, and records the sources with content hashes in the resolved config and the NetCDF outputs. The flat `nc_mask` key (a 0/1 NetCDF; it also applies the land and country masks implicitly) still works and cannot be combined with `mask`. Natural Earth data downloads on first use; `scripts/prefetch_cartopy_data.py` fetches it for offline machines. See `docs/onset_in_hcwf.md`.
+The mask is built on the evaluation grid (see Grids above; the sources' own grid when they share one). A shape is rasterised by the cell rule. A mask file is aligned first (latitude order, 0-360 or -180-180 longitudes, axis names); on the same grid it is used as it is, otherwise the mask (not the rainfall) is regridded: a finer mask keeps a cell when kept mask cells cover at least `overlap_fraction` of it, a coarser one gives the nearest mask cell, and a mask that does not cover the data is an error naming both extents. The run prints the sources, rule, alignment actions and kept cell count per dataset, saves `mask_<dataset>.png` in the figure folder, and records the sources with content hashes in the resolved config and the NetCDF outputs. The flat `nc_mask` key (a 0/1 NetCDF; it also applies the land and country masks implicitly) still works and cannot be combined with `mask`. Natural Earth data downloads on first use; `scripts/prefetch_cartopy_data.py` fetches it for offline machines. See `docs/onset_in_hcwf.md`.
 
 ## Container
 

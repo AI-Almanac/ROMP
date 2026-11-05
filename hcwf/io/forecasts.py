@@ -29,7 +29,8 @@ from hcwf.io.stores import forecast_sources, open_forecast
 from hcwf.onset.ingest import IngestInfo, ingest_forecast_info
 from hcwf.parallel import reader_count
 from hcwf.spatial.onto_units import declared_scale, read_units, select_units
-from hcwf.spatial.select import implicit_keep, in_memory, region_box, region_select, scale_in_place
+from hcwf.spatial.evalgrid import region_read
+from hcwf.spatial.select import implicit_keep, region_box, scale_in_place
 from hcwf.spatial.units import UnitsSpec
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -285,10 +286,10 @@ def _load_forecast(year, read: ForecastRead):
             if spec is not None:   # evaluation units: the rain is averaged onto them as it is read
                 parts.append(_forecast_on_units(ds[model.var], spec, select.keep_unit_ids, model.unit_cvt))
                 continue
-            da = region_select(ds[[model.var]], area=read.area, select=select, read_by="init_time",
-                               dataset_name=str(model.name or "model"), dir_fig=read.dir_fig,
-                               readers=read.readers, skip_masked=True, compact=read.cells)[model.var]
-            parts.append(in_memory(da))
+            parts.append(region_read(ds, model.var, area=read.area, select=select, source=model.name,
+                                     read_by="init_time", dataset_name=str(model.name or "model"),
+                                     dir_fig=read.dir_fig, readers=read.readers, skip_masked=True,
+                                     compact=read.cells))
         finally:
             close()
     if not parts:
@@ -371,6 +372,39 @@ def forecast_of(year, rc, model, *, ensemble, select=NO_SELECTION, cells=False):
     steps = rc.onset if isinstance(rc.evaluation.max_forecast_day, int) else None
     return load_forecast(year, model, rc.evaluation, rc.area, rc.onset_options, steps, ensemble=ensemble,
                          select=select, dir_fig=rc.output.figure_dir, readers=reader_count(rc.parallel), cells=cells)
+
+
+def forecast_grid(year, model, area, select=NO_SELECTION, *, ensemble=False):
+    """Return the cells of the model's files inside the region's box, from the file's coordinates alone.
+
+    Nothing of the rainfall is read.
+
+    Parameters
+    ----------
+    year : int
+        The year whose file is looked at.
+    model : hcwf.config.model.ModelSpec
+        The forecast source.
+    area : hcwf.config.model.AreaSpec
+        The region.
+    select : hcwf.config.model.Selection, default NO_SELECTION
+        The run's selection settings (the files).
+    ensemble : bool, default False
+        Whether the forecasts have a member dimension.
+
+    Returns
+    -------
+    dict of str to numpy.ndarray
+        The ``lat`` (ascending) and ``lon`` coordinate values of the box.
+    """
+    sources = forecast_sources(year, model.dir, model.file_pattern, select.model_paths, select.model_files_years)
+    ds, close = open_forecast(year, model.dir, model.file_pattern, ensemble, model.dims_map(), None, sources[0],
+                              multi=len(sources) > 1)
+    try:
+        box = region_box(ds[[model.var]], region=area.region)
+        return {name: np.asarray(box[name].values) for name in ("lat", "lon")}
+    finally:
+        close()
 
 
 _YEAR_FACTOR = 4

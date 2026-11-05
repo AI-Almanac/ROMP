@@ -34,12 +34,12 @@ from hcwf.spatial.onto_units import (
     select_units,
     units_files,
 )
+from hcwf.spatial.evalgrid import OBSERVATIONS, region_read
 from hcwf.spatial.select import (
     implicit_keep,
     implicit_masks,
     in_memory,
     region_box,
-    region_select,
     scale_in_place,
 )
 from hcwf.spatial.units import UnitsSpec
@@ -98,9 +98,11 @@ def mask_text(area) -> str:
     Returns
     -------
     str
-        ``"null"`` without a mask, else the mask's key.
+        ``"null"`` without a mask, else the mask's key; followed by the evaluation grid's key when the run has one
+        (the cells read are then the evaluation grid's).
     """
-    return "null" if not area.mask else area.mask.key()
+    grid = "" if area.evaluation_grid is None else f"|grid:{area.evaluation_grid.key()}"
+    return ("null" if not area.mask else area.mask.key()) + grid
 
 
 def years_held(run_years):
@@ -173,9 +175,8 @@ def _read_obs_range(first, last, store, read: ObsRead, cells=False):
     obs = read.obs
     ds = dim_fmt(open_store(store))
     ds = ds[[obs.var]].sel(time=slice(f"{first}-01-01", f"{last}-12-31"))
-    da = region_select(ds[[obs.var]], area=read.area, select=read.select, read_by="time",
-                       dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig, skip_masked=cells,
-                       compact=cells)[obs.var]
+    da = region_read(ds, obs.var, area=read.area, select=read.select, source=OBSERVATIONS, read_by="time",
+                     dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig, skip_masked=cells, compact=cells)
     return scale_in_place(in_memory(da), obs.unit_cvt)
 
 
@@ -463,6 +464,11 @@ def _observation_box(year, read: ObsRead, keep=False):
     try:
         box = region_box(ds[[read.obs.var]], region=read.area.region)
         dims = tuple(box[read.obs.var].dims)
+        grid = read.area.evaluation_grid
+        if grid is not None and grid.regrids(OBSERVATIONS):   # the cells read are the evaluation grid's
+            field = xr.DataArray(np.zeros((len(grid.lat), len(grid.lon)), dtype="float32"), dims=("lat", "lon"),
+                                 coords={"lat": grid.lat, "lon": grid.lon})
+            box = xr.Dataset({read.obs.var: field})
         box = _at_grid_point(box, read.select)
         kept = implicit_keep(box, read.area, read.select) if keep else None
         return {name: np.asarray(box[name].values) for name in ("lat", "lon")}, dims, kept
@@ -557,9 +563,8 @@ def _read_obs_year(year, store, path, read: ObsRead, cells=False):
         finally:
             if path is not None:
                 ds.close()
-    da = region_select(ds[[obs.var]], area=read.area, select=read.select, read_by="time",
-                       dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig, skip_masked=cells,
-                       compact=cells)[obs.var]
+    da = region_read(ds, obs.var, area=read.area, select=read.select, source=OBSERVATIONS, read_by="time",
+                     dataset_name=str(obs.name or "obs"), dir_fig=read.dir_fig, skip_masked=cells, compact=cells)
     da = in_memory(da)
     if path is not None:
         ds.close()

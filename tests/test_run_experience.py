@@ -649,7 +649,7 @@ def _dic(world, tmp_path):
 
 
 def test_hint_lat_order_and_grid_mismatch(tmp_path):
-    """Descending latitudes are noted; forecast cells without an observation cell nearby are a warning with the fix."""
+    """Descending latitudes are noted; grids that differ without a usable evaluation grid are a warning with the fix."""
     base = tmp_path
     write_obs(base / "obs", lat=[10.0, 8.0, 6.0])
     write_forecast(base / "DET", lat=[6.5, 8.5, 10.5])
@@ -658,8 +658,9 @@ def test_hint_lat_order_and_grid_mismatch(tmp_path):
     samples = {"observations": base / "obs" / "2019.nc", "DET": base / "DET" / "2019.nc"}
     check_mod._grids(dic, report, samples)
     assert any(h.startswith("[observations] latitudes run north to south") for h in report.warnings)
-    assert any(h.startswith("[DET] only 0% of the model's cells have an observation cell") and "cdo remapcon" in h
-               for h in report.warnings)
+    assert any(h.startswith("[evaluation_grid] the observations and models are on different grids")
+               and "Fix: set region" in h for h in report.warnings)
+    assert not any("cdo remapcon" in h or "never regridded" in h for h in report.warnings)
 
 
 def test_hint_leads_not_whole_days_and_units_and_accumulation_lines(tmp_path):

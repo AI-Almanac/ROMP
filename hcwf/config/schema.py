@@ -994,8 +994,12 @@ def _fields() -> tuple[Field, ...]:
         Field("region", "str", "target region id or alias, see `hcwf-run onset regions`; null: no region (no box, "
               "no region defaults; what a converted onset_blending config uses)", REQUIRED, nullable=True),
         Field("nc_mask", "path", "NetCDF mask of 1s and 0s limiting the evaluated cells", None, nullable=True),
-        Field("mask", "mask", "cells to evaluate, on each dataset's own grid; the parts given intersect: "
+        Field("mask", "mask", "cells to evaluate, built on the evaluation grid (see evaluation_grid); the parts given intersect: "
               + "; ".join(f"{k}: {h}" for k, (_, h, *_rest) in MASK_KEYS.items()), None, nullable=True, fill=False),
+        Field("evaluation_grid", "str", "the grid the run is scored on when observations and models are on different "
+              "grids: 'observations' or a model's name, whose grid (cut to the region box, mask built on it) every "
+              "source is averaged conservatively onto; null: the coarsest of all the sources", None, nullable=True,
+              fill=False),
         Field("shpfile_dir", "path", "shapefile for the region boundary in maps", None, nullable=True),
         Field("polygon", "bool", "mask and boundary from region polygons (hcwf.onset.regions.polygon_boundary)", False),
         Field("parallel", "bool", "compute years in several worker processes (false: one process); "

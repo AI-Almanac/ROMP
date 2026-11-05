@@ -341,6 +341,9 @@ def _execute_benchmark(rc: RunConfig, *, write: bool, overwrite: bool, verbosity
             log.info(f"  {line}")
         for line in definition_lines(rc.onset):
             log.info(f"  {line}")
+        if rc.area.evaluation_grid is not None:
+            for line in rc.area.evaluation_grid.lines():
+                log.info(f"  {line}")
         if write:
             log.info(f"  Run folder       : {paths.root}")
             try:

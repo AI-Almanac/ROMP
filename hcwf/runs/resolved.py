@@ -4,6 +4,7 @@
 
 ``resolved_config.yaml`` holds every value after defaults, region defaults, auto-detection and overrides, each
 with a comment saying where it came from; running ``hcwf-run -p resolved_config.yaml`` reproduces the run.
+When the sources are on different grids, comments at the top say which evaluation grid they are scored on and why.
 When a region mask is in use, comments at the top record per dataset the mask sources with content hashes, the
 cell rule, the alignment actions and the kept cell counts (known once each dataset's grid has been read).
 ``resolved_definition.yaml`` holds the onset definition as used (after any override), with its hash.
@@ -88,15 +89,18 @@ def resolved_mapping(cfg: dict) -> tuple[dict, dict, object]:
     return flat, sources, setup
 
 
-def resolved_config_text(cfg: dict) -> str:
+def resolved_config_text(cfg: dict, grid_lines=()) -> str:
     """Return the text of ``resolved_config.yaml`` for a flat config dict: a header, the values and their sources.
 
-    The header also records, per dataset, the mask sources the run has loaded so far.
+    The header also records the evaluation grid (``grid_lines``) and, per dataset, the mask sources the run has loaded
+    so far.
 
     Parameters
     ----------
     cfg : dict
         The flat config.
+    grid_lines : iterable of str, default ()
+        The lines describing the evaluation grid (`hcwf.spatial.evalgrid.EvaluationGrid.lines`), written as comments.
 
     Returns
     -------
@@ -113,9 +117,27 @@ def resolved_config_text(cfg: dict) -> str:
               f"{definition_mod.definition_hash(setup.definition)}\n")
     from hcwf.spatial.masks import record_lines, records
 
+    header += "".join(f"# {line}\n" for line in grid_lines)
     for record in records().values():
         header += "".join(f"# {line}\n" for line in record_lines(record))
     return render_yaml(mapping, comments, header=header)
+
+
+def _grid_lines(rc) -> list[str]:
+    """Return the lines that describe the evaluation grid of a run config, none when its sources share a grid.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The resolved run config.
+
+    Returns
+    -------
+    list of str
+        The lines of `hcwf.spatial.evalgrid.EvaluationGrid.lines`, or an empty list.
+    """
+    grid = rc.area.evaluation_grid
+    return [] if grid is None else grid.lines()
 
 
 def resolved_config_text_of(rc) -> str:
@@ -131,7 +153,7 @@ def resolved_config_text_of(rc) -> str:
     str
         The YAML text.
     """
-    return resolved_config_text(dict(rc.values))
+    return resolved_config_text(dict(rc.values), _grid_lines(rc))
 
 
 def write_resolved(rc, directory=None) -> tuple[Path, Path]:
@@ -160,7 +182,7 @@ def write_resolved(rc, directory=None) -> tuple[Path, Path]:
     directory.mkdir(parents=True, exist_ok=True)
     setup = onset_setup(cfg)
     config_path = directory / (paths.config_name if paths is not None else "resolved_config.yaml")
-    config_path.write_text(resolved_config_text(cfg))
+    config_path.write_text(resolved_config_text(cfg, _grid_lines(rc)))
     definition_path = directory / (paths.definition_name if paths is not None else "resolved_definition.yaml")
     definition_path.write_text(
         f"# Onset definition as used by this run"

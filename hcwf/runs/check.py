@@ -341,8 +341,19 @@ def _files(dic: dict, report: CheckReport) -> dict:
     report.add(f"observations: {len(found) - len(missing)} of {len(found)} yearly files found in {dic['obs_dir']} "
                f"(years {min(found)}-{max(found)})")
     if missing:
-        report.error(f"observation files missing for {_short(missing)} in {dic['obs_dir']} "
-                     f"(pattern {', '.join(patterns)})")
+        used = set(years) | (set(clim) if needs_clim else set())
+        thresholds = [y for y in missing if y not in used]
+        scored = [y for y in missing if y in used]
+        if scored:
+            report.error(f"observation files missing for {_short(scored)} in {dic['obs_dir']} "
+                         f"(pattern {', '.join(patterns)}). Fix: add the files, or change the years evaluated "
+                         "(start_date, end_date) or the climatology years")
+        if thresholds:
+            report.error(f"observation files missing for the threshold years {_short(thresholds)} in "
+                         f"{dic['obs_dir']} (pattern {', '.join(patterns)}): the onset definition's thresholds are "
+                         f"computed from the observations of onset.threshold_years {setup.threshold_years[0]}-"
+                         f"{setup.threshold_years[1]}. Fix: set onset.threshold_years to years the observations "
+                         "cover, give precomputed thresholds with onset.thresholds, or add the files")
     for i, model in enumerate(dic["model_list"]):
         folder, pattern = dic["model_dir_list"][i], dic["file_pattern_list"][i]
         got = look(folder, (pattern,), years, forecast=True, dims=(dic.get("model_dims_list") or [None] * (i + 1))[i])
@@ -499,8 +510,11 @@ def _matched(values, targets) -> float:
     return float((nearest <= _GRID_TOLERANCE).mean())
 
 
-def _grids(dic: dict, report: CheckReport, samples: dict) -> None:
-    """Add the grid hints: latitude order and obs/model grid mismatches inside the region box.
+def _grids(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
+    """Add the grids: latitude order, the cells inside the region box, and the evaluation grid with why it was chosen.
+
+    Sources on different grids are averaged conservatively onto the evaluation grid (`hcwf.spatial.evalgrid`); the
+    report says which grid that is, why, and which sources are averaged onto it.
 
     Parameters
     ----------
@@ -510,6 +524,8 @@ def _grids(dic: dict, report: CheckReport, samples: dict) -> None:
         The report to add to.
     samples : dict
         The sample file of each dataset (`_files`).
+    rc : hcwf.config.model.RunConfig, optional
+        The run configuration, which holds the evaluation grid; None reports only the grids of the files.
     """
     report.section("Grids")
     box = _box(dic)
@@ -530,6 +546,7 @@ def _grids(dic: dict, report: CheckReport, samples: dict) -> None:
     if len(obs_in[0]) == 0 or len(obs_in[1]) == 0:
         report.error(f"the observations have no cell inside the region box of '{dic['region']}'. "
                      "Fix: set region, or check the longitude convention")
+    differ = False
     for i, model in enumerate(dic["model_list"]):
         path = samples.get(model)
         if path is None:
@@ -546,13 +563,19 @@ def _grids(dic: dict, report: CheckReport, samples: dict) -> None:
         report.add(f"{model}: {len(lat)} lats x {len(lon)} lons in the file, {len(inside[0])} x {len(inside[1])} "
                    "inside the region box")
         share = _matched(inside[0], obs_in[0]) * _matched(inside[1], obs_in[1])
-        if share < 1.0:
-            report.hint(model, f"only {share:.0%} of the model's cells have an observation cell within "
-                               f"{_GRID_TOLERANCE:g} degrees, so the others are not scored (the data are never "
-                               "regridded). Fix: put forecasts and observations on one grid, e.g. with cdo remapcon")
+        differ = differ or share < 1.0
+    grid = None if rc is None else rc.area.evaluation_grid
+    if grid is not None:
+        for line in grid.lines():
+            report.add(line)
+    elif differ:
+        report.hint("evaluation_grid", "the observations and models are on different grids, but no evaluation grid "
+                                       "could be set (it needs a region, gridded data and no units). Fix: set region")
+    else:
+        report.add("evaluation grid: the sources are on one grid inside the region box; nothing is regridded")
 
 
-def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
+def _mask_summary(dic: dict, report: CheckReport, samples: dict, rc=None) -> None:
     """Add the mask section: the cells kept on the observations' grid (the mask is built on a sample file).
 
     Nothing is added when the run has no ``mask`` or there is no observation sample.
@@ -565,6 +588,8 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
         The report to add to; a mask that cannot be built is an error.
     samples : dict
         The sample file of each dataset (`_files`).
+    rc : hcwf.config.model.RunConfig, optional
+        The run configuration; with an evaluation grid the mask is built on that grid, as the run does.
 
     Returns
     -------
@@ -581,12 +606,17 @@ def _mask_summary(dic: dict, report: CheckReport, samples: dict) -> None:
     from hcwf.io.dims import dim_fmt
 
     mask_mod.reset()
+    grid = None if rc is None else rc.area.evaluation_grid
     try:
-        with _open(path) as ds:
-            ds = dim_fmt(ds).isel(time=slice(0, 1))
-            area = AreaSpec(region=dic["region"], mask=mask_mod.MaskSpec.from_mapping(mask), nc_mask=dic.get("nc_mask"),
-                            shpfile_dir=None, polygon=False)
-            region_select(ds, area=area, dataset_name="obs", dir_fig=None)
+        area = AreaSpec(region=dic["region"], mask=mask_mod.MaskSpec.from_mapping(mask), nc_mask=dic.get("nc_mask"),
+                        shpfile_dir=None, polygon=False)
+        if grid is not None:   # the mask is built on the evaluation grid
+            from hcwf.spatial.evalgrid import keep_cells
+
+            keep_cells(grid, area, None, grid.source, None)
+        else:
+            with _open(path) as ds:
+                region_select(dim_fmt(ds).isel(time=slice(0, 1)), area=area, dataset_name="obs", dir_fig=None)
         for record in mask_mod.records().values():
             for line in mask_mod.record_lines(record):
                 report.add(line)
@@ -924,8 +954,8 @@ def build_report(rc, found=None, overwrite: bool = False, alignment: bool = Fals
     _datasets(dic, report)
     samples = _files(dic, report)
     _units(report, found)
-    _grids(dic, report, samples)
-    _mask_summary(dic, report, samples)
+    _grids(dic, report, samples, rc)
+    _mask_summary(dic, report, samples, rc)
     _leads(dic, report, samples)
     _alignment(dic, report)
     _short_climatology(dic, report)

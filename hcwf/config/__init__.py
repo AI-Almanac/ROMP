@@ -348,9 +348,10 @@ class Dataset:
 
 @dataclasses.dataclass
 class Mask:
-    """The ``mask:`` of a run config: the cells to evaluate, built on each dataset's own grid.
+    """The ``mask:`` of a run config: the cells to evaluate, built on the evaluation grid.
 
-    Rainfall is never regridded. Parts given intersect: ``land`` (Natural Earth land), ``country`` (a name or list of
+    The evaluation grid is the grid every source is scored on (``evaluation_grid``: the coarsest of the sources unless
+    one is named; a source on another grid is averaged onto it conservatively). Parts given intersect: ``land`` (Natural Earth land), ``country`` (a name or list of
     names), ``file`` (0/1 NetCDF with ``variable`` and ``keep_value``, or a shapefile / GeoJSON) and ``condition``
     (``{file, variable, above, below}``). ``cell_rule`` is ``"centre"`` or ``"overlap_fraction"`` (with
     ``overlap_fraction``); ``resolution`` is the Natural Earth resolution (``"10m"``, ``"50m"`` or ``"110m"``). Unset keys are `UNSET`. See `hcwf.spatial.masks`.

@@ -24,11 +24,12 @@ __all__ = ["warm_up_of"]
 log = logging.getLogger(__name__)
 
 
-def _warm_masks(lazy, var, dataset_name, area, select, dir_fig):
+def _warm_masks(lazy, var, dataset_name, area, select, dir_fig, source=None):
     """Build the cell masks of a lazily opened dataset's grid (what its first read would build), without reading data.
 
     A zero field on the dataset's region box is masked in place with the run's settings, which fills the same mask
-    caches (and logs the same mask text) as the real read.
+    caches (and logs the same mask text) as the real read. A source that is averaged onto the evaluation grid is read on
+    that grid, so the mask of that grid is built instead (`hcwf.spatial.evalgrid.keep_cells`).
 
     Parameters
     ----------
@@ -44,14 +45,22 @@ def _warm_masks(lazy, var, dataset_name, area, select, dir_fig):
         The run's selection settings (``NO_SELECTION`` when none).
     dir_fig : str or pathlib.Path
         The folder where mask figures are written.
+    source : str, optional
+        ``"observations"`` or the model's name, which says whether it is averaged onto the evaluation grid.
     """
+    from hcwf.spatial.evalgrid import keep_cells
     from hcwf.spatial.select import mask_region_loaded, region_box
 
-    box = region_box(lazy[[var]], region=area.region)
-    lat, lon = np.asarray(box["lat"].values), np.asarray(box["lon"].values)
-    field = xr.DataArray(np.zeros((len(lat), len(lon)), dtype="float32"), dims=("lat", "lon"),
-                         coords={"lat": lat, "lon": lon})
-    mask_region_loaded(xr.Dataset({var: field}), area=area, select=select, dataset_name=dataset_name, dir_fig=dir_fig)
+    grid = area.evaluation_grid
+    if grid is not None and source is not None and grid.regrids(source):
+        keep_cells(grid, area, select, dataset_name, dir_fig)
+    else:
+        box = region_box(lazy[[var]], region=area.region)
+        lat, lon = np.asarray(box["lat"].values), np.asarray(box["lon"].values)
+        field = xr.DataArray(np.zeros((len(lat), len(lon)), dtype="float32"), dims=("lat", "lon"),
+                             coords={"lat": lat, "lon": lon})
+        mask_region_loaded(xr.Dataset({var: field}), area=area, select=select, dataset_name=dataset_name,
+                           dir_fig=dir_fig)
 
 
 def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION, parallel=None,
@@ -103,7 +112,7 @@ def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION
         path = path[0] if isinstance(path, tuple) else path
         lazy = dim_fmt(open_store(store) if store is not None else xr.open_dataset(path))
         try:
-            _warm_masks(lazy, obs.var, str(obs.name or "obs"), area, select, dir_fig)
+            _warm_masks(lazy, obs.var, str(obs.name or "obs"), area, select, dir_fig, "observations")
         finally:
             if path is not None:
                 lazy.close()
@@ -121,7 +130,7 @@ def warm_up(onset, obs, area, options, ev, output, *, model, select=NO_SELECTION
             path = os.path.join(model.dir, model.file_pattern.format(year))
             lazy = fix(xr.open_dataset(path), model.dims_map())
         try:
-            _warm_masks(lazy, model.var, str(model.name or "model"), area, select, dir_fig)
+            _warm_masks(lazy, model.var, str(model.name or "model"), area, select, dir_fig, model.name)
         finally:
             if path is not None:
                 lazy.close()

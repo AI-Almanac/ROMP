@@ -105,7 +105,8 @@ def problems(values: Mapping[str, Any]) -> Problems:
     """
     cfg = SimpleNamespace(**values)
     fatal = [*_temporal(cfg), *_list_lengths(cfg), *_model_names(cfg), *_tuple_ranges(cfg), *_forecast_limits(cfg),
-             *_probabilistic(cfg), *_onset(cfg), *_explain_cells(cfg), *_mask(cfg)]
+             *_probabilistic(cfg), *_onset(cfg), *_explain_cells(cfg), *_mask(cfg),
+             *_evaluation_grid(cfg)]
     if fatal:
         return Problems(tuple(fatal))
     specs, units = _units(values)
@@ -368,6 +369,28 @@ def _mask(cfg) -> list[str]:
     except (HCWFConfigError, TypeError, ValueError) as exc:
         return [f"mask: {exc}"]
     return []
+
+
+def _evaluation_grid(cfg) -> list[str]:
+    """Check that ``evaluation_grid`` names a source of the run.
+
+    Parameters
+    ----------
+    cfg : types.SimpleNamespace
+        The flat config as attributes.
+
+    Returns
+    -------
+    list of str
+        One message, with the sources to choose from, when the value is neither ``observations`` nor a model of the
+        run; else empty.
+    """
+    source = getattr(cfg, "evaluation_grid", None)
+    models = list(getattr(cfg, "model_list", None) or ())
+    if source is None or source == "observations" or source in models:
+        return []
+    return [f"evaluation_grid: {source!r} is not a source of the run. Fix: use 'observations'"
+            + "".join(f", '{m}'" for m in models) + ", or leave it out for the coarsest grid"]
 
 
 def _units(values) -> tuple[dict, tuple[str, ...]]:

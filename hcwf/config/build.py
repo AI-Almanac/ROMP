@@ -78,11 +78,13 @@ def resolve(source, overrides: Mapping[str, Any] | None = None, *, write: bool =
 
             return source, validate.problems(source.values)
         return source
+    from hcwf.io.grids import attach
+
     out = _resolve_values(source, overrides, write=write, tmp=tmp, override_source=override_source, check=check)
     if not check:
-        return RunConfig.from_flat(out)
+        return attach(RunConfig.from_flat(out))
     values, found = out
-    return (None if values is None else RunConfig.from_flat(values, lenient=True)), found
+    return (None if values is None else attach(RunConfig.from_flat(values, lenient=True))), found
 
 
 def resolve_command_line(cli_args=None, **kwargs):

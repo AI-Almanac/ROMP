@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from hcwf.config.onset import OnsetSetup
     from hcwf.runs.folder import RunPaths
     from hcwf.spatial.units import UnitsSpec
+    from hcwf.spatial.evalgrid import EvaluationGrid
     from hcwf.spatial.masks import MaskSpec
 
 __all__ = [
@@ -460,6 +461,12 @@ class AreaSpec:
     mask_given: dict | None = field(default=None, compare=False, hash=False)
     """The ``mask:`` mapping exactly as the config gave it (a key written with its default value stays): what the
     observed-onset cache key hashes. None: not given (a spec built by hand then falls back to its non-default keys)."""
+    grid_source: str | None = field(default=None, compare=False, hash=False)
+    """The source whose grid the run is evaluated on (``"observations"`` or a model's name), or None for the coarsest
+    of the sources (the config's ``evaluation_grid``)."""
+    evaluation_grid: EvaluationGrid | None = field(default=None, compare=False, hash=False)
+    """The evaluation grid resolved from the files (`hcwf.io.grids.attach`), or None when every source is on one grid
+    or has not been looked at: a source whose grid is another is averaged onto it as it is read."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -970,7 +977,8 @@ def _project_area(v) -> AreaSpec:
     given = _get(v, "mask")
     return AreaSpec(region=_get(v, "region"), mask=mask or None, nc_mask=_get(v, "nc_mask"),
                     shpfile_dir=_get(v, "shpfile_dir"), polygon=_get(v, "polygon"),
-                    mask_given=dict(given) if isinstance(given, Mapping) else None)
+                    mask_given=dict(given) if isinstance(given, Mapping) else None,
+                    grid_source=_get(v, "evaluation_grid"))
 
 
 def _project_parallel(v) -> ParallelSpec:

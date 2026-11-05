@@ -1,4 +1,4 @@
-"""Build region masks on each dataset's own grid, never by regridding rainfall.
+"""Build region masks on the grid the run is evaluated on (each dataset's own grid when they all are one).
 
 A run config's ``mask:`` section (see `MaskSpec`) names the cells to evaluate by one or more of
 
@@ -6,15 +6,16 @@ A run config's ``mask:`` section (see `MaskSpec`) names the cells to evaluate by
 * ``file``: a 0/1 NetCDF mask, or a shapefile / GeoJSON;
 * ``condition``: a threshold on a field (``above`` / ``below``), for example an elevation file.
 
-All parts given intersect. The final mask is built separately for the observations and for each model,
-on that dataset's own latitude/longitude grid:
+All parts given intersect. The final mask is built for the grid the data are scored on: the evaluation grid
+(`hcwf.spatial.evalgrid`; sources on other grids are averaged onto it as they are read, so rainfall is never
+sampled by nearest cell), which is each dataset's own latitude/longitude grid when the sources share one:
 
 * A shape is rasterised by the cell rule: ``centre`` keeps the cells whose centre is inside it,
   ``overlap_fraction`` keeps the cells with at least that share of their area (planar, in degrees squared)
   inside it. Longitudes of the cells are wrapped to -180..180 for the test.
 * A mask file is first brought to the data's conventions (latitude order, longitude convention, axis
   names). If its coordinates then match the data grid within a tolerance (one hundredth of a cell) it is used
-  directly. Otherwise the MASK (never the rainfall) is regridded onto the data grid: a mask with finer cells
+  directly. Otherwise the MASK is regridded onto the data grid: a mask with finer cells
   keeps a data cell when the area share of kept mask cells inside it is at least ``overlap_fraction``; a mask
   with coarser (or equal) cells gives each data cell the value of the nearest mask cell. A mask that does not
   cover the data extent is an error that names both extents.
@@ -1130,7 +1131,8 @@ def region_mask(lat, lon, mask, dataset="data", dir_fig=None) -> np.ndarray:
 def apply_region_mask(ds, mask, dataset="data", dir_fig=None):
     """Set the cells of ``ds`` outside the mask to NaN.
 
-    The mask is built on this dataset's own grid, so the data are never regridded. Variables without both
+    The mask is built on the grid of ``ds`` (a run's evaluation grid), so ``ds`` itself is not regridded here.
+    Variables without both
     ``lat`` and ``lon`` dimensions are left as they are.
 
     Parameters
