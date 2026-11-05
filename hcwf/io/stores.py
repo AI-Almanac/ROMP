@@ -53,7 +53,7 @@ def open_store(path):
     return _stores.get_or_make(key, lambda: xr.open_zarr(key, chunks=None, decode_timedelta=True))
 
 
-def open_data(path, **kwargs) -> xr.Dataset:
+def open_data(path, *, decode_times: bool = True) -> xr.Dataset:
     """Open an input data file lazily, or a zarr store (a ``.zarr`` directory) through `~hcwf.io.stores.open_store`.
 
     This is the one opener of the data files a run reads. It asks explicitly for ``decode_timedelta=True``: a variable
@@ -64,9 +64,8 @@ def open_data(path, **kwargs) -> xr.Dataset:
     ----------
     path : str or pathlib.Path
         The NetCDF file or zarr directory.
-    **kwargs : dict
-        Options of `xarray.open_dataset` for a NetCDF file (for instance ``decode_times``); ``decode_timedelta`` is True
-        unless given.
+    decode_times : bool, default True
+        Whether a NetCDF file's times are decoded (`xarray.open_dataset`'s option); a zarr store is always decoded.
 
     Returns
     -------
@@ -76,8 +75,7 @@ def open_data(path, **kwargs) -> xr.Dataset:
     """
     if is_zarr(path):
         return open_store(path).copy()
-    kwargs.setdefault("decode_timedelta", True)
-    return xr.open_dataset(path, **kwargs)
+    return xr.open_dataset(path, decode_times=decode_times, decode_timedelta=True)
 
 
 def year_files(paths, base, years_filter, year) -> list[str]:
