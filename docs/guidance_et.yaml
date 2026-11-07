@@ -1,0 +1,36 @@
+# Config of docs/package_run_guidance_et.ipynb: Ethiopia, one season, a deterministic and an ensemble AIFS.
+# Paths start at the folder of this file; ${HCWF_DEMO_DATA} is the data root (the notebook sets it to the repository's
+# data/ folder when it is not set). Copy this file and edit it for your own run.
+project_name: Ethiopia guidance run
+
+region: ethiopia
+
+observations:
+  path: ${HCWF_DEMO_DATA}/ethiopia/obs.zarr
+
+models:
+  - name: AIFS
+    path: ${HCWF_DEMO_DATA}/ethiopia/models/AIFS_v2.zarr
+    lead_label: start
+  - name: AIFS_ENS
+    path: ${HCWF_DEMO_DATA}/ethiopia/models/AIFS_ENS_v2.zarr
+    lead_label: start
+
+evaluation:
+  start_date: [2020, 5, 1]       # forecasts issued 1 May - 31 Aug 2020
+  end_date: [2020, 8, 31]
+  verification_windows: [[1, 15]]
+  tolerances: [3]
+  max_forecast_day: 15
+  day_bins: [[1, 5], [6, 10], [11, 15]]
+  probabilistic: false           # true: the models' members give onset probabilities (the notebook runs AIFS_ENS this way)
+
+output:                          # run folder: runs/<name>/ next to this file (data_dir and figure_dir left out)
+  plot_spatial_far_mr_mae: true
+  plot_heatmap_bss_auc: true
+  plot_reliability: true
+  plot_climatology_onset: false
+  plot_panel_heatmap_error: false
+  plot_panel_heatmap_skill: true
+  plot_bar_bss_rpss_auc: true
+  show_panel: false

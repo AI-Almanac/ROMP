@@ -244,3 +244,6 @@ docs/_api/
 # demo notebooks: run folders and the NetCDF slices the blend notebooks export
 demo/*/runs/
 demo/*/blend_data/
+
+# notebook run outputs
+docs/runs/
