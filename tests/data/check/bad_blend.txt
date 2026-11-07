@@ -28,8 +28,8 @@ Dry-spell check  : on  [config dry_spell_check]
 Forecast history : none  [config forecast_history]
 Threshold source : observations  [default]
 Backend          : numba  [config onset_backend]
-region box      : none (no region: the whole domain of the data)
-mask            : none (the region's box with implicit land and region masks)
+area            : the whole domain of the files (box: all)
+mask            : none (no region: no implicit masks)
 
 == Datasets ==
 observations:
@@ -58,9 +58,9 @@ observations: cells; grid ids fixed with 2 decimals
 ens: cells; grid ids fixed with 2 decimals
 
 == Grids ==
-observations: 3 lats x 2 lons in the file, 3 x 2 inside the region box
-ens: 3 lats x 2 lons in the file, 3 x 2 inside the region box
-evaluation grid: the sources are on one grid inside the region box; nothing is regridded
+observations: 3 lats x 2 lons in the file, 3 x 2 read whole (the whole domain of the files; no area cut)
+ens: 3 lats x 2 lons in the file, 3 x 2 read whole (the whole domain of the files; no area cut)
+evaluation grid: the sources are on one grid read whole (the whole domain of the files; no area cut); nothing is regridded
 
 == Lead windows ==
 windows ((1, 15), (16, 30)) with tolerances (3, 5) days; max forecast day 30; day bins ((1, 5), (6, 10), (11, 15), (16, 20), (21, 25), (26, 30))
