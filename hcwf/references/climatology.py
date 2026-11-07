@@ -209,7 +209,7 @@ def climatological_onset(rc, case, select=Selection()):
     log.debug(f"Climatological onset computed from {len(all_onset_days)} valid years")
 
     if grid_point:
-        rainfall_stack = xr.concat(rainfall_all_years, dim='year')
+        rainfall_stack = xr.concat(rainfall_all_years, dim='year', join='outer')   # the years' dates differ: keep them all
 
         # 29 February is left out and every other date takes its day of the 365-day year (1 March is day 60 every year)
         doy = _doy_index(rainfall_stack['time'].dt.month.values, rainfall_stack['time'].dt.day.values) + 1
