@@ -1642,7 +1642,7 @@ def forecast_signature(path, entry: dict, **options) -> dict:
     return read_forecast_file(path, entry, **options)[0]
 
 
-def signature_differences(trained: dict, live: dict, *, fewer_members: bool = False) -> list[str]:
+def signature_differences(trained: dict, live: dict, *, fewer_members: bool = False, grid: bool = True) -> list[str]:
     """Describe how a live file fails to cover the trained signature, one reason each (empty when it covers it).
 
     It may hold more (longer leads, more members, a larger domain such as the globe): a blend reads only what it was
@@ -1658,6 +1658,10 @@ def signature_differences(trained: dict, live: dict, *, fewer_members: bool = Fa
     fewer_members : bool, default False
         A live ensemble may hold only some of the trained members (any one will do); its onset probabilities are then
         shares of those.
+    grid : bool, default True
+        Compare the grids' latitudes and longitudes. A blend that stored the grid it was trained on leaves this to
+        `hcwf.blend.trained.TrainedGrid.problems`, which lets a finer live grid be averaged onto the stored one; the
+        presence of a grid is still compared.
 
     Returns
     -------
@@ -1688,6 +1692,8 @@ def signature_differences(trained: dict, live: dict, *, fewer_members: bool = Fa
         have, need = live.get(key), trained.get(key)
         if (have is None) != (need is None):
             out.append(f"{label} {_brief(have)}, trained on {_brief(need)}")
+        elif need is not None and not grid:
+            continue
         elif need is not None:
             have_step, need_step = _grid_step(have), _grid_step(need)
             if None not in (have_step, need_step) and have_step != need_step:

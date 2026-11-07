@@ -29,6 +29,7 @@ from hcwf.metrics.probabilistic import later_probability
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, blend_season_start
 from hcwf.config import detect as dataset_detect
 from hcwf.errors import IncompatibleForecast
+from hcwf.spatial import evalgrid
 
 __all__ = ["Forecast", "parse_forecast_arguments", "run"]
 
@@ -272,8 +273,9 @@ def check_files(blend, forecasts: dict[str, list[Path]], *, fewer_members: bool 
                 problems.append(f"{name}: {Path(path).name}: {exc}")
                 continue
             dates += issued
-            differences = dataset_detect.signature_differences(blend.signatures[name], live,
-                                                               fewer_members=fewer_members)
+            differences = dataset_detect.signature_differences(
+                blend.signatures[name], live, fewer_members=fewer_members,
+                grid=_compare_grids(blend, name, f"{name}: {Path(path).name}", live, problems))
             if differences:
                 problems.append(f"{name}: {Path(path).name}: " + "; ".join(differences))
         if held is not None:
@@ -281,6 +283,46 @@ def check_files(blend, forecasts: dict[str, list[Path]], *, fewer_members: bool 
             if not held[name]:
                 problems.append(f"{name}: the live files hold no issue dates")
     return problems
+
+
+def _compare_grids(blend, name: str, label: str, live: dict, problems: list[str]) -> bool:
+    """Check a live file's grid against the grid the blend stored, adding what is wrong to ``problems``.
+
+    A file on the stored grid, or on a finer grid that covers the cells the blend uses (it is averaged onto them), is
+    accepted. Any other is refused: with the stored grid and the file's named in a Fix, or, when the model was trained
+    on the stored grid itself, in the words of the signature check (onset_blending's), which does the same for it.
+
+    Parameters
+    ----------
+    blend : hcwf.blend.trained.TrainedBlend
+        The trained blend.
+    name : str
+        The model the file belongs to.
+    label : str
+        What the problem is about, for its message (the model and the file).
+    live : dict
+        The live file's signature (its ``lat`` and ``lon``).
+    problems : list of str
+        Filled with the problems found here.
+
+    Returns
+    -------
+    bool
+        Whether `hcwf.config.detect.signature_differences` should still compare the grids itself (the blend has no
+        stored grid, or the file is refused and the model was trained on the stored grid).
+    """
+    stored = blend.grid
+    if stored is None or stored.grid is None or blend.frozen_units[name].grid is None:
+        return True   # saved before the grid was stored: the file's own cells must be the training files'
+    refused = stored.problems(label, live.get("lat"), live.get("lon"))
+    if not refused:
+        return False
+    trained = blend.signatures[name]
+    if trained.get("lat") is not None and trained.get("lon") is not None and evalgrid.on_grid(
+            stored.grid, trained["lat"], trained["lon"]):
+        return True
+    problems += refused
+    return False
 
 
 def _issue_problems(blend, issue_date: dt.date | None, held: dict[str, list[dt.date]]):

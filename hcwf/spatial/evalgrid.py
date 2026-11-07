@@ -43,7 +43,7 @@ from hcwf.spatial.onto_units import read_on_units
 from hcwf.spatial.select import cut_box, in_memory, lat_swap, mask_region_loaded, region_select
 from hcwf.spatial.units import EvaluationUnits
 
-__all__ = ["EvaluationGrid", "build", "choose", "cut_to_grid", "keep_cells", "onto_grid", "overlap", "region_read", "same_grid", "steps"]
+__all__ = ["EvaluationGrid", "build", "choose", "cut_cells", "cut_to_grid", "describe", "grid_units", "source_problem", "keep_cells", "on_grid", "onto_grid", "overlap", "region_read", "same_grid", "steps"]
 
 TOLERANCE = 1e-3
 """How far (in degrees) two grids' cell centres may differ for the grids to be the same (as HCWF's onset matching)."""
@@ -602,3 +602,206 @@ def region_read(ds, var, *, area, select, source, read_by, dataset_name, dir_fig
     floating = np.issubdtype(cut.dtype, np.floating)
     series = read_on_units(cut, units, block_dim=read_by, readers=readers, dtype=cut.dtype if floating else None)
     return _scatter(series, keep, grid, tuple(da.dims), compact and skip_masked)
+
+
+def grid_units(grid, convention=None) -> EvaluationUnits:
+    """Return the cells of an evaluation grid as units that average any source grid onto them (conservatively).
+
+    This is what a source whose units are its own cells (``units:`` with mode ``cells``) reads onto when the run has an
+    evaluation grid, and what a trained blend reads a live forecast onto: the same cells and the same overlap
+    weights as `region_read`. A source on the grid itself is taken cell by cell.
+
+    Parameters
+    ----------
+    grid : EvaluationGrid
+        The evaluation grid (or the one a trained blend stored).
+    convention : hcwf.spatial.ids.GridIdConvention, optional
+        The grid-id convention set by the configuration; None resolves one from the coordinates.
+
+    Returns
+    -------
+    hcwf.spatial.units.EvaluationUnits
+        Every cell of the grid, in latitude-major order, holding the transform compiled for each source grid.
+    """
+    key = (grid.key(), "cells", repr(convention))
+    units = _units.get(key)
+    if units is None:
+        units = _units.setdefault(key, EvaluationUnits.from_grid(grid.lat, grid.lon, explicit=convention,
+                                                                  cell_area=_AVERAGE))
+    return units
+
+
+def cut_cells(da, grid, what: str = "the evaluation grid") -> xr.DataArray:
+    """Cut a lazy source array to the extent of an evaluation grid, ready to be averaged onto its cells.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The lazy source array, with ``lat`` and ``lon``.
+    grid : EvaluationGrid
+        The evaluation grid.
+    what : str, default "the evaluation grid"
+        What the grid is, for an error message.
+
+    Returns
+    -------
+    xarray.DataArray
+        The array inside the grid's extent padded by one of its own cells, with ascending ``lat``.
+
+    Raises
+    ------
+    ValueError
+        The source has no cell near the grid, or the grid's box crosses the source's longitude seam.
+    """
+    cut = cut_to_grid(da, grid.lat, grid.lon, grid.lon_global, what)
+    if not cut.sizes["lat"] or not cut.sizes["lon"]:
+        raise ValueError(f"the source has no cell near {what} (latitudes {grid.lat[0]:g} to {grid.lat[-1]:g}, "
+                         f"longitudes {grid.lon[0]:g} to {grid.lon[-1]:g})")
+    return cut
+
+
+def describe(lat, lon) -> str:
+    """Describe a grid in a few words for a message.
+
+    Parameters
+    ----------
+    lat : array_like of float, shape (lat,)
+        The latitudes of the cell centres.
+    lon : array_like of float, shape (lon,)
+        The longitudes of the cell centres.
+
+    Returns
+    -------
+    str
+        The cell counts, the extent of the centres and the cell size.
+    """
+    lat, lon = np.asarray(lat, dtype=float), np.asarray(lon, dtype=float)
+    dlat, dlon = steps(lat, lon)
+    return (f"{lat.size} lats {lat.min():g} to {lat.max():g} x {lon.size} lons {lon.min():g} to {lon.max():g}, "
+            f"{dlat:g} x {dlon:g} degrees")
+
+
+def _nearest(values, axis, wrap: bool) -> np.ndarray:
+    """Return how far each value is from the nearest coordinate of an axis, in degrees.
+
+    Parameters
+    ----------
+    values : numpy.ndarray of float, shape (n,)
+        The values.
+    axis : numpy.ndarray of float, shape (m,)
+        The coordinates.
+    wrap : bool
+        Compare longitudes: a difference of 360 degrees is none.
+
+    Returns
+    -------
+    numpy.ndarray of float, shape (n,)
+        The distance to the nearest coordinate.
+    """
+    diff = np.abs(values[:, None] - axis[None, :])
+    if wrap:
+        diff = np.abs((diff + 180.0) % 360.0 - 180.0)
+    return diff.min(axis=1)
+
+
+def _covered(values, half, axis, step, wrap: bool) -> np.ndarray:
+    """Tell whether the cells (centre, half a cell size) lie inside the extent of an axis.
+
+    Parameters
+    ----------
+    values : numpy.ndarray of float, shape (n,)
+        The centres of the cells.
+    half : float
+        Half the cell size.
+    axis : numpy.ndarray of float, shape (m,)
+        The coordinates of the axis being covered with.
+    step : float
+        The cell size of that axis.
+    wrap : bool
+        Longitudes: the cell may be inside the extent a whole number of turns away.
+
+    Returns
+    -------
+    numpy.ndarray of bool, shape (n,)
+        True where the cell is inside the extent.
+    """
+    low, high = float(axis.min() - step / 2), float(axis.max() + step / 2)
+    if wrap and high - low >= 360.0 - TOLERANCE:
+        return np.ones(values.shape, dtype=bool)
+    turns = (-360.0, 0.0, 360.0) if wrap else (0.0,)
+    inside = np.zeros(values.shape, dtype=bool)
+    for turn in turns:
+        inside |= (values - half + turn >= low - TOLERANCE) & (values + half + turn <= high + TOLERANCE)
+    return inside
+
+
+def source_problem(grid, cell_lat, cell_lon, lat, lon) -> str | None:
+    """Say why a source's grid cannot be put on a trained evaluation grid, or None when it can.
+
+    A source can be read when it holds the cells of the grid (same cell size, every centre within `TOLERANCE`), or when it
+    is on a finer grid that covers them, where it is averaged onto them as `region_read` does. A coarser grid, one
+    of the same size but shifted, and one that does not cover the cells cannot.
+
+    Parameters
+    ----------
+    grid : EvaluationGrid
+        The grid the blend was trained on.
+    cell_lat : array_like of float, shape (cell,)
+        The latitudes of the cells the blend uses.
+    cell_lon : array_like of float, shape (cell,)
+        The longitudes of the cells the blend uses.
+    lat : array_like of float, shape (lat,)
+        The latitudes of the source's grid.
+    lon : array_like of float, shape (lon,)
+        The longitudes of the source's grid.
+
+    Returns
+    -------
+    str or None
+        What is wrong, in a clause; None when the source can be read onto the grid.
+    """
+    cell_lat, cell_lon = np.asarray(cell_lat, dtype=float), np.asarray(cell_lon, dtype=float)
+    lat, lon = np.sort(np.asarray(lat, dtype=float)), np.asarray(lon, dtype=float)
+    glat, glon = steps(grid.lat, grid.lon)
+    slat, slon = steps(lat, lon)
+    same_size = bool(np.isclose(slat, glat, rtol=1e-3, atol=1e-9) and np.isclose(slon, glon, rtol=1e-3, atol=1e-9))
+    finer = slat <= glat * (1 + 1e-3) and slon <= glon * (1 + 1e-3) and slat * slon < glat * glon / _FINER
+    if same_size:
+        missing = ((_nearest(np.unique(cell_lat), lat, False) > TOLERANCE).sum()
+                   + (_nearest(np.unique(cell_lon), lon, True) > TOLERANCE).sum())
+        if not missing:
+            return None
+        return (f"its cells are the size of the trained cells but not the trained cells ({missing} trained latitudes "
+                f"or longitudes have no cell of the file within {TOLERANCE:g} degrees: the grid is shifted or does not "
+                "cover them)")
+    if not finer:
+        return "it is coarser than the trained grid (or finer along one axis only), so it cannot be put on it"
+    ok = _covered(cell_lat, glat / 2, lat, slat, False) & _covered(cell_lon, glon / 2, lon, slon, True)
+    if not ok.all():
+        return f"it does not cover {int((~ok).sum())} of the {ok.size} trained cells"
+    return None
+
+
+def on_grid(grid, lat, lon) -> bool:
+    """Tell whether a source grid holds every cell of an evaluation grid, at the same cell size.
+
+    Such a source is read by its own cells (nothing is averaged). Any other, finer or coarser or shifted, is averaged
+    onto the grid's cells.
+
+    Parameters
+    ----------
+    grid : EvaluationGrid
+        The evaluation grid.
+    lat : array_like of float, shape (lat,)
+        The latitudes of the source grid.
+    lon : array_like of float, shape (lon,)
+        The longitudes of the source grid.
+
+    Returns
+    -------
+    bool
+        True when the source has the same cell size and a cell centre within `TOLERANCE` of each of the grid's.
+    """
+    lat, lon = np.sort(np.asarray(lat, dtype=float)), np.asarray(lon, dtype=float)
+    return source_problem(grid, grid.lat, grid.lon, lat, lon) is None and bool(
+        np.isclose(steps(lat, lon), steps(grid.lat, grid.lon), rtol=1e-3, atol=1e-9).all())

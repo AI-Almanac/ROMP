@@ -48,6 +48,7 @@ from hcwf.cache import atomic_write, file_identity
 from hcwf.config import detect as dataset_detect
 from hcwf.config.datasets import is_zarr, resolve_paths
 from hcwf.io import stores
+from hcwf.spatial import evalgrid
 
 __all__ = ["TrainedBlend"]
 
@@ -316,6 +317,10 @@ class FrozenUnits:
     ``source_id``, and ``weight``; None when the units need no weights. Excluded from comparison."""
     convention: object = None
     """The unit convention (the ``units.convention`` of the run), passed on to the unit builders."""
+    grid: object = field(default=None, compare=False, repr=False)
+    """The `~hcwf.spatial.evalgrid.EvaluationGrid` training put the model's cells on (``"cells"`` units); a live file
+    is averaged onto it. None for a blend saved before the grid was stored (the live file's own cells are used) and for
+    units that are not cells."""
 
     def __post_init__(self):
         """Put a given weights table in its one canonical form (legacy column names renamed)."""
@@ -350,6 +355,7 @@ class FrozenUnits:
         ValueError
             No unit of the file is kept.
         """
+        from hcwf.spatial import evalgrid
         from hcwf.spatial.units import EvaluationUnits
 
         if ids is not None:
@@ -357,6 +363,8 @@ class FrozenUnits:
         elif self.weights is not None:
             targets = sorted(self.weights["target_id"].astype(str).unique())
             units = EvaluationUnits(pd.DataFrame({"id": targets}), "polygon", weights=self.weights)
+        elif self.grid is not None and not evalgrid.on_grid(self.grid, lat, lon):   # averaged onto the trained grid
+            units = evalgrid.grid_units(self.grid, self.convention)
         else:
             units = EvaluationUnits.from_grid(lat, lon, explicit=self.convention)
         keep = np.ones(len(units), dtype=bool) if keep_ids is None else np.isin(
@@ -365,6 +373,198 @@ class FrozenUnits:
         if not len(positions):
             raise ValueError("No unit of the file is kept")
         return units, positions[np.argsort(units.ids[positions], kind="stable")]
+
+
+@dataclass(frozen=True)
+class TrainedGrid:
+    """The grid (or the units) the blend's features are indexed by, stored with it.
+
+    For a blend on grid cells it is the evaluation grid training used: the cell centres, which source's grid it is, how
+    finer sources were averaged onto it (cell areas on the sphere), the area it was cut to and the cells the blend uses.
+    A live forecast is put on this grid, not on the grid of whatever files arrive. For a blend on polygon or admin
+    units there is no grid: the units' ids and a digest of the weights (and the shapefile) that put each model's grid on
+    them are kept instead, as the identity of the units.
+    """
+
+    kind: str
+    """``"cells"`` or ``"units"``."""
+    ids: tuple[str, ...]
+    """The unit ids the blend was trained on (the cells' grid ids, or the polygons' ids)."""
+    grid: object = None
+    """The `~hcwf.spatial.evalgrid.EvaluationGrid` (cells only)."""
+    kept: np.ndarray | None = field(default=None, compare=False)
+    """The positions of the used cells in the grid, latitude-major (cells only)."""
+    region: str | None = None
+    """The region the run was cut to, if any."""
+    models: dict = field(default_factory=dict, compare=False)
+    """What each model's rain was put on the units with: ``how``, and for weights a ``weights_sha1`` (and the
+    ``shapefile``'s name and ``sha1`` when there is one)."""
+
+    @property
+    def cell_lat_lon(self) -> tuple[np.ndarray, np.ndarray]:
+        """The centres of the cells the blend uses.
+
+        Returns
+        -------
+        lat : numpy.ndarray of float64, shape (cell,)
+            The latitudes.
+        lon : numpy.ndarray of float64, shape (cell,)
+            The longitudes.
+        """
+        width = len(self.grid.lon)
+        return self.grid.lat[self.kept // width], self.grid.lon[self.kept % width]
+
+    def to_json(self) -> dict:
+        """Return the stored form: plain JSON, floats written exactly.
+
+        Returns
+        -------
+        dict
+            The grid, the cells and ids, and the identity of the units.
+        """
+        out = {"version": 1, "kind": self.kind, "ids": list(self.ids), "region": self.region,
+               "models": self.models}
+        grid = self.grid
+        if grid is None:
+            return out
+
+        def axis(values):
+            """Describe an axis by its start, step and count."""
+            step = float(np.median(np.diff(values))) if len(values) > 1 else 0.0
+            return {"start": float(values[0]), "step": step, "count": int(len(values))}
+
+        out.update({
+            "source": grid.source, "lat": grid.lat.tolist(), "lon": grid.lon.tolist(),
+            "lat_axis": axis(grid.lat), "lon_axis": axis(grid.lon),
+            "lon_convention": "0 to 360" if float(grid.lon.max()) > 180.0 else "-180 to 180",
+            "cell_area": evalgrid._AVERAGE, "regrid": list(grid.regrid),
+            "steps": [[name, a, b] for name, a, b in grid.steps], "reason": grid.reason,
+            "box": None if grid.box is None else list(grid.box), "lon_global": bool(grid.lon_global),
+            "where": grid.where, "kept": [int(k) for k in self.kept]})
+        return out
+
+    @classmethod
+    def from_json(cls, stored: dict) -> "TrainedGrid":
+        """Rebuild a stored grid.
+
+        Parameters
+        ----------
+        stored : dict
+            What `to_json` returned.
+
+        Returns
+        -------
+        TrainedGrid
+            The stored grid.
+        """
+        if stored["kind"] != "cells":
+            return cls("units", tuple(stored["ids"]), region=stored.get("region"), models=stored.get("models", {}))
+        grid = evalgrid.EvaluationGrid(
+            stored["source"], np.asarray(stored["lat"], dtype=float), np.asarray(stored["lon"], dtype=float),
+            tuple(stored["regrid"]), tuple((n, a, b) for n, a, b in stored["steps"]), stored["reason"],
+            None if stored["box"] is None else tuple(stored["box"]), bool(stored["lon_global"]), stored["where"])
+        return cls("cells", tuple(stored["ids"]), grid, np.asarray(stored["kept"], dtype=np.int64),
+                   stored.get("region"), stored.get("models", {}))
+
+    def problems(self, name: str, lat, lon) -> list[str]:
+        """Say how a live file's grid cannot be put on the stored grid.
+
+        Parameters
+        ----------
+        name : str
+            The model the file belongs to.
+        lat : array_like of float, shape (lat,)
+            The latitudes of the live file's grid.
+        lon : array_like of float, shape (lon,)
+            The longitudes of the live file's grid.
+
+        Returns
+        -------
+        list of str
+            One message with a Fix naming both grids, or none when the file can be read onto the stored grid.
+        """
+        if self.grid is None or lat is None or lon is None:
+            return []
+        why = evalgrid.source_problem(self.grid, *self.cell_lat_lon, lat, lon)
+        if why is None:
+            return []
+        return [f"{name}: the live file's grid ({evalgrid.describe(lat, lon)}) cannot be put on the grid the blend "
+                f"was trained on ({evalgrid.describe(self.grid.lat, self.grid.lon)}, the grid of {self.grid.source}): "
+                f"{why}. Fix: forecast from files on the trained grid, or on a finer grid that covers it (it is "
+                "averaged onto the trained grid conservatively); otherwise retrain the blend on this grid"]
+
+
+def _digest(table: pd.DataFrame) -> str:
+    """Return a digest of a weights table, whatever the order of its rows.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        The weights table.
+
+    Returns
+    -------
+    str
+        The hex SHA-1 of its rows, sorted, with their values.
+    """
+    ordered = table.sort_values(list(table.columns), kind="stable").reset_index(drop=True)
+    return hashlib.sha1(ordered.to_csv(index=False).encode()).hexdigest()
+
+
+def _freeze_grid(rc, ids, frozen: dict) -> "TrainedGrid | None":
+    """Return the grid, or the units, the blend was trained on, as `TrainedGrid`.
+
+    The cells' grid is the run's evaluation grid; when every source is on one grid (the run has none) it is the
+    observations' grid in the region's box. A run on polygon or admin units keeps the units' identity instead.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run config of training.
+    ids : tuple of str
+        The unit ids the blend was trained on.
+    frozen : dict of str to FrozenUnits
+        Each model's frozen units.
+
+    Returns
+    -------
+    TrainedGrid or None
+        None when the observations' grid cannot be read (the blend is then stored without a grid, as older ones were).
+    """
+    from hcwf.io import grids as grids_io
+
+    spec = rc.observations.units
+    region = rc.area.region
+    models = {name: {"how": units.how} for name, units in frozen.items()}
+    if spec.how != "cells":
+        for name, units in frozen.items():
+            if units.weights is not None:
+                models[name]["weights_sha1"] = _digest(units.weights)
+        for key in ("shapefile", "weights"):
+            if getattr(spec, key):
+                path = spec.resolve_path(getattr(spec, key))
+                if path.is_file():
+                    models["observations"] = {"how": spec.how, key: path.name,
+                                              "sha1": hashlib.sha1(path.read_bytes()).hexdigest()}
+        return TrainedGrid("units", tuple(ids), region=region, models=models)
+    grid = rc.area.evaluation_grid
+    if grid is None:
+        try:
+            lat, lon = grids_io.source_grids(rc)[evalgrid.OBSERVATIONS]
+        except Exception as exc:  # noqa: BLE001 - a blend without its grid still works as older ones did
+            log.warning("the grid of the observations could not be read, so the blend is stored without its grid: %s",
+                        exc)
+            return None
+        lat, lon = np.sort(np.asarray(lat, dtype=float)), np.sort(np.asarray(lon, dtype=float))
+        sizes = ((evalgrid.OBSERVATIONS, *evalgrid.steps(lat, lon)),)
+        grid = evalgrid.EvaluationGrid(evalgrid.OBSERVATIONS, lat, lon, (), sizes, "every source is on one grid")
+    cells = evalgrid.grid_units(grid, spec.convention).ids
+    kept = pd.Index(cells).get_indexer(np.asarray(ids, dtype=str))
+    if (kept < 0).any():
+        log.warning("%d trained units are not cells of the grid, so the blend is stored without its grid",
+                    int((kept < 0).sum()))
+        return None
+    return TrainedGrid("cells", tuple(ids), grid, kept.astype(np.int64), region, models)
 
 
 def _weights_frame(transform) -> pd.DataFrame:
@@ -670,6 +870,9 @@ class TrainedBlend:
     """When and from which files the blend was trained."""
     forest: object = None
     """The fitted `hcwf.blend.random_forest.FittedForest`, when one is configured."""
+    grid: TrainedGrid | None = None
+    """The grid (or the units' identity) the features are indexed by; None for a blend saved before it was stored: its
+    live files are checked against the training files' own grid (the signatures) instead."""
     format: str = FORMAT
     """The format the blend was loaded from (`FORMAT`, or `OLD_FORMAT`, which is not written again)."""
 
@@ -751,6 +954,10 @@ class TrainedBlend:
             units[model.name] = _freeze_units(rc, recipe, model.name, ids)
         if problems:
             raise BlendFileError("cannot make a trained blend:\n" + "\n".join(f"  - {p}" for p in problems))
+        stored_grid = _freeze_grid(rc, ids, units)
+        if stored_grid is not None and stored_grid.grid is not None:   # the models' cells are put on the stored grid
+            units = {name: dataclasses.replace(u, grid=stored_grid.grid) if u.how == "cells" else u
+                     for name, u in units.items()}
         identities = {"observations": [file_identity(p) for p in _observation_sources(rc)],
                       "models": {m.name: [file_identity(p) for p in _model_sources(rc, m.name)] for m in recipe.models}}
         return cls(
@@ -758,7 +965,7 @@ class TrainedBlend:
             recipe=recipe, rc=frozen, model=result.model, observed=inputs.observed, units=ids,
             thresholds=_freeze_thresholds(inputs.thresholds, ids, convention),
             reference=_thaw_reference(_freeze_reference(inputs.reference)), frozen_units=units,
-            signatures=signatures, unit_table=onto_units.unit_table(rc.observations, ids).table,
+            signatures=signatures, unit_table=onto_units.unit_table(rc.observations, ids).table, grid=stored_grid,
             provenance={"trained_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                         "training_years": list(recipe.evaluation.years.training), "training_files": identities},
             forest=result.forest)
@@ -823,6 +1030,8 @@ class TrainedBlend:
         members["reference.json"] = json.dumps(meta).encode()
         members["reference.npz"] = _npz_bytes(arrays)
         members["signatures.json"] = json.dumps(self.signatures, indent=1).encode()
+        if self.grid is not None:
+            members["grid.json"] = json.dumps(self.grid.to_json()).encode()
         manifest = {
             "format": FORMAT, "format_version": FORMAT_VERSION, "features_version": FEATURES_VERSION,
             "hcwf_version": _hcwf_version(), "git_commit": _git_commit(), "provenance": self.provenance,
@@ -963,6 +1172,10 @@ class TrainedBlend:
         for name, item in json.loads(members["weights.json"]).items():
             frozen_units[name] = FrozenUnits(
                 item["how"], None if item["weights"] is None else _get(weights_arrays, item["weights"]), convention)
+        stored_grid = TrainedGrid.from_json(json.loads(members["grid.json"])) if "grid.json" in members else None
+        if stored_grid is not None and stored_grid.grid is not None:
+            frozen_units = {name: dataclasses.replace(u, grid=stored_grid.grid) if u.how == "cells" else u
+                            for name, u in frozen_units.items()}
         reference_meta = json.loads(members["reference.json"])
         reference_arrays = _npz_load(members["reference.npz"])
         thresholds = {name: value if not isinstance(value, dict) else _get(reference_arrays, value)
@@ -975,7 +1188,7 @@ class TrainedBlend:
                    units=tuple(units["ids"]), thresholds=thresholds, reference=_thaw_reference(stored_reference),
                    frozen_units=frozen_units, signatures=json.loads(members["signatures.json"]),
                    unit_table=None if units["table"] is None else pd.DataFrame(units["table"]),
-                   provenance=manifest.get("provenance", {}), format=FORMAT, **common)
+                   provenance=manifest.get("provenance", {}), format=FORMAT, grid=stored_grid, **common)
 
     @classmethod
     def _load_old(cls, manifest: dict, members: dict) -> "TrainedBlend":

@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -336,6 +336,17 @@ class EvaluationUnits:
         self._transforms: dict = {}
 
     # -- the table -----------------------------------------------------------------------------------------
+
+    @property
+    def averaging(self) -> bool:
+        """Tell whether these grid units average a source grid onto their cells (they were made with a cell-area convention).
+
+        Returns
+        -------
+        bool
+            True for the cells of an evaluation grid (`~hcwf.spatial.evalgrid.grid_units`), False for the file's own cells.
+        """
+        return self.kind == "grid" and "cell_area" in self._weight_options
 
     def __len__(self) -> int:
         """Return the number of units.
@@ -878,6 +889,28 @@ class EvaluationUnits:
         return SparseTransform(matrix, None, targets, keys="coordinate", grid=(lat, lon))
 
 
+def _on_grid(grid, lat, lon) -> bool:
+    """Tell whether a source grid holds every cell of an evaluation grid (see `~hcwf.spatial.evalgrid.on_grid`).
+
+    Parameters
+    ----------
+    grid : hcwf.spatial.evalgrid.EvaluationGrid
+        The evaluation grid.
+    lat : array_like of float, shape (lat,), optional
+        The latitudes of the source grid.
+    lon : array_like of float, shape (lon,), optional
+        The longitudes of the source grid.
+
+    Returns
+    -------
+    bool
+        True when the source's own cells are the grid's (nothing is averaged).
+    """
+    from hcwf.spatial import evalgrid
+
+    return lat is not None and evalgrid.on_grid(grid, lat, lon)
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Where the units come from: one specification for a region's `units:` block and a run's `units:` section
 # ---------------------------------------------------------------------------------------------------------------
@@ -952,6 +985,12 @@ class UnitsSpec:
     """How grid ids are written (``"trimmed"`` or fixed width)."""
     cell_area: str = "sphere"
     """How a cell's area is measured for the weights of a shapefile, one of `hcwf.spatial.regrid.CELL_AREAS`."""
+    grid: object = field(default=None, repr=False, compare=False, hash=False)
+    """The `~hcwf.spatial.evalgrid.EvaluationGrid` the cells of a ``"cells"`` source are averaged onto (set by
+    `with_grid` when the sources are on different grids); None reads the file's own cells."""
+    grid_key: str = ""
+    """The key of `grid` (`~hcwf.spatial.evalgrid.EvaluationGrid.key`), so that a repr of the specification, and the
+    cache keys made from it, tell the grids apart."""
 
     def __post_init__(self):
         """Check the fields and turn a mapping `box` into sorted pairs.
@@ -1008,17 +1047,17 @@ class UnitsSpec:
             used).
         """
         given = {}
-        for key, field in UNITS_KEYS.items():
+        for key, attribute in UNITS_KEYS.items():
             value = values.get(key)
             if isinstance(value, dict) and key in _PER_SOURCE:
                 value = value.get(source, value.get("*"))
             if value is not None:
-                given[field] = value
+                given[attribute] = value
         if not given:
             return None
         if "weights" in given:   # a source with its own weights table does not use the shared shapefile
-            for field in ("shapefile", "unit_id_col", "unit_name_col", "parent_col"):
-                given.pop(field, None)
+            for attribute in ("shapefile", "unit_id_col", "unit_name_col", "parent_col"):
+                given.pop(attribute, None)
         base = None
         if values.get("region"):
             from hcwf.onset import regions
@@ -1034,6 +1073,25 @@ class UnitsSpec:
         elif "shapefile" in given:
             base = replace(base, weights=None)
         return replace(base, **given)
+
+    def with_grid(self, grid) -> "UnitsSpec":
+        """Return the specification reading its cells onto an evaluation grid.
+
+        Parameters
+        ----------
+        grid : hcwf.spatial.evalgrid.EvaluationGrid
+            The grid the source's cells are averaged onto (conservatively, as `~hcwf.spatial.evalgrid.region_read`
+            does).
+
+        Returns
+        -------
+        UnitsSpec
+            This specification with the grid; unchanged for units that are not the cells of the file (polygons,
+            weights).
+        """
+        if self.how != "cells":
+            return self
+        return replace(self, grid=grid, grid_key=grid.key())
 
     @property
     def how(self) -> str:
@@ -1111,6 +1169,10 @@ class UnitsSpec:
                 table = table.merge(read_centroids(self.resolve_path(self.centroids), self.centroid_id_col),
                                     on="id", how="left")
             units = EvaluationUnits(table, "polygon")
+        elif self.how == "cells" and self.grid is not None and not _on_grid(self.grid, lat, lon):
+            from hcwf.spatial import evalgrid
+
+            units = evalgrid.grid_units(self.grid, convention)
         elif self.how == "cells":
             units = EvaluationUnits.from_grid(lat, lon, explicit=convention)
         elif self.shapefile:
@@ -1187,5 +1249,10 @@ class UnitsSpec:
         positions : numpy.ndarray of int64, shape (kept,)
             The positions of those used, sorted by id.
         """
+        if self.grid is not None and self.how == "cells" and ids is None:   # only the cells of the grid are used
+            from hcwf.spatial import evalgrid
+
+            inside = evalgrid.grid_units(self.grid, self.convention).ids
+            keep_ids = inside if keep_ids is None else sorted(set(keep_ids) & set(inside))
         units = self.build(lat, lon, ids)
         return units, self.kept(units, keep_ids)

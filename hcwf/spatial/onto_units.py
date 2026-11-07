@@ -513,7 +513,8 @@ def select_units(da, spec: UnitsSpec, keep_ids=None):
 def read_units(da, spec: UnitsSpec, units, positions, *, block_dim, scale=None, missing="flag", support=False):
     """Read the array's rain on the used units, dims (the others, ``unit``).
 
-    The result is float64 for averaged units and the file's dtype for its own cells or units. A regrid scales after
+    The result is float64 for averaged units and the file's dtype for its own cells or units (and for the cells of an
+    evaluation grid, which are averaged from a source on another grid, see `~hcwf.spatial.units.UnitsSpec.with_grid`). A regrid scales after
     averaging, a cell transform before (see `~hcwf.spatial.units.UnitsSpec`); with ``support`` a cell transform also returns which units
     have a source each year and the years.
 
@@ -543,6 +544,11 @@ def read_units(da, spec: UnitsSpec, units, positions, *, block_dim, scale=None, 
     """
     if "unit" in da.dims:
         return read_unit_dim(da, block_dim=block_dim, ids=units.ids[positions], scale=scale)
+    grid = getattr(spec, "grid", None)
+    if grid is not None and spec.how == "cells" and units.averaging:   # the cells of an evaluation grid, averaged
+        from hcwf.spatial import evalgrid
+
+        da = evalgrid.cut_cells(da, grid)
     common = dict(block_dim=block_dim, positions=positions, convention=spec.convention, missing=missing,
                   support=support)
     if spec.how == "regrid":

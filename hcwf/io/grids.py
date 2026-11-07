@@ -9,8 +9,10 @@ it through `hcwf.spatial.evalgrid.region_read`.
 Without a region the evaluation grid is the chosen grid cut to the area every source covers (see
 `hcwf.spatial.evalgrid.overlap`); sources that do not overlap raise a `ValueError` with a Fix.
 
-Runs on evaluation units (``units:``) or that do not read the grids have no evaluation grid: the units are built from
-each source's own grid (see `hcwf.spatial.units`).
+Sources whose units are the file's own cells (``units:`` with mode ``cells``, which a blend always uses) are put on the
+grid too: their `~hcwf.spatial.units.UnitsSpec` gets the grid (`~hcwf.spatial.units.UnitsSpec.with_grid`), and the cells of
+the units are the grid's. Runs on polygon or admin units (a shapefile or weights) have no evaluation grid: each source is
+averaged from its own grid onto the units (see `hcwf.spatial.units`).
 """
 from __future__ import annotations
 
@@ -88,7 +90,7 @@ def _pair(grid):
 def attach(rc, select=NO_SELECTION):
     """Return the run configuration with its evaluation grid, when its sources are not on one grid.
 
-    Nothing changes (``rc`` itself is returned) for a run on evaluation units, or whose files cannot be looked at (the
+    Nothing changes (``rc`` itself is returned) for a run on polygon or admin units, or whose files cannot be looked at (the
     reads then raise the real error), and for sources that are all on one grid.
 
     Parameters
@@ -119,11 +121,38 @@ def attach(rc, select=NO_SELECTION):
     grid = evalgrid.build(grids, rc.area.grid_source, cut=rc.area.region is None and bounds is None, where=where)
     if grid is None:
         return rc
-    return replace(rc, area=replace(rc.area, evaluation_grid=grid))
+    return _with_units_on(replace(rc, area=replace(rc.area, evaluation_grid=grid)), grid)
+
+
+def _with_units_on(rc, grid):
+    """Return the run with the cell units of every source that is averaged onto the grid reading it.
+
+    Parameters
+    ----------
+    rc : hcwf.config.model.RunConfig
+        The run configuration, with its evaluation grid.
+    grid : hcwf.spatial.evalgrid.EvaluationGrid
+        The evaluation grid.
+
+    Returns
+    -------
+    hcwf.config.model.RunConfig
+        ``rc``; each source in ``grid.regrid`` that has cell units has them on the grid (sources without a ``units:``
+        section are read onto the grid by `~hcwf.spatial.evalgrid.region_read`).
+    """
+    def on(name, units):
+        """Return the units of a source, on the grid when it is averaged onto it."""
+        return units if units is None or not grid.regrids(name) else units.with_grid(grid)
+
+    reference = rc.reference
+    if reference.kind == "model":
+        reference = replace(reference, units=on(reference.model, reference.units))
+    return replace(rc, observations=replace(rc.observations, units=on(evalgrid.OBSERVATIONS, rc.observations.units)),
+                   models=tuple(replace(m, units=on(m.name, m.units)) for m in rc.models), reference=reference)
 
 
 def _on_units(rc) -> bool:
-    """Tell whether any source of the run is read onto evaluation units.
+    """Tell whether any source of the run is read onto polygon or admin units.
 
     Parameters
     ----------
@@ -133,6 +162,8 @@ def _on_units(rc) -> bool:
     Returns
     -------
     bool
-        True when the observations, a model or the reference has a ``units:`` specification.
+        True when the observations, a model or the reference has a ``units:`` specification that is not the file's own
+        cells (a shapefile or weights table).
     """
-    return any(spec is not None for spec in (rc.observations.units, rc.reference.units, *(m.units for m in rc.models)))
+    return any(spec is not None and spec.how != "cells"
+               for spec in (rc.observations.units, rc.reference.units, *(m.units for m in rc.models)))
