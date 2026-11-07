@@ -105,3 +105,20 @@ def test_masked_cells_are_not_read_and_the_array_is_the_masked_one(source):
     for k, (la, lo) in enumerate(zip(compact["lat"].values, compact["lon"].values)):
         on_grid[:, :, lat_at[la], lon_at[lo], :] = compact.values[..., k]   # (init, member, step)
     np.testing.assert_array_equal(np.nan_to_num(on_grid, nan=-9), np.nan_to_num(full.values, nan=-9))
+
+
+def test_a_small_box_of_big_chunks_is_read_by_processes_for_what_is_decoded(source, monkeypatch):
+    """The box is a few values, but each stored chunk it touches is decoded whole: that size decides; the values are the plain read's."""
+    box = source.isel(lat=slice(1, 3), lon=slice(2, 4)).sel(init_time=source.init_time.values[INITS])["tp"]
+    assert select._decoded_bytes(box) > 10 * box.size * box.dtype.itemsize
+    expected = select.load_blocks(box, "init_time").values   # the plain read: the box is below every threshold
+    assert select._read_workers(box, 2) == 1
+    monkeypatch.setattr(select, "_PARALLEL_READ_BYTES", select._decoded_bytes(box))
+    monkeypatch.setattr(select, "_READ_BYTES_EACH", 1)
+    assert box.size * box.dtype.itemsize < select._PARALLEL_READ_BYTES
+    assert select._read_workers(box, 2) == 2
+    try:
+        got = select.load_blocks(box, "init_time", readers=2).values
+    finally:
+        parallel.shutdown_readers()
+    np.testing.assert_array_equal(got, expected)

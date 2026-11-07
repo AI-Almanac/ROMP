@@ -681,7 +681,8 @@ def _read_slices(da, index, axis):
 
 
 _PARALLEL_READ_BYTES = 256 * 1024 * 1024
-"""A read smaller than this is made in this process: starting reader processes would cost more than they save."""
+"""A read that decodes less than this (see `_decoded_bytes`) is made in this process: starting reader processes would
+cost more than they save."""
 _READ_BYTES_EACH = 32 * 1024 * 1024
 """The selection each reader process is given at least (a read of 740 MB uses 20 of them)."""
 
@@ -783,9 +784,34 @@ def _read_workers(da, readers) -> int:
     int
         The number of processes, at least 1.
     """
-    nbytes = int(da.size) * da.dtype.itemsize
+    nbytes = _decoded_bytes(da)
     workers = min(int(readers or 1), nbytes // _READ_BYTES_EACH)
     return workers if workers >= 2 and nbytes >= _PARALLEL_READ_BYTES and _picked_rows(da) is not None else 1
+
+
+def _decoded_bytes(da) -> int:
+    """Return about how many bytes reading ``da`` decodes: the whole of every stored chunk the selection touches.
+
+    A box cut from a file of global fields is a few values of each field, but every field is decoded whole, and the
+    decoding is what the reader processes share, so it is this size, not the selection's, that says whether they pay.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The lazy array.
+
+    Returns
+    -------
+    int
+        The bytes of the touched chunks (the selection's own bytes when the storage is not chunked).
+    """
+    chunks = da.encoding.get("chunks") or da.encoding.get("chunksizes")
+    if not chunks or len(chunks) != da.ndim:
+        return int(da.size) * da.dtype.itemsize
+    touched = 1
+    for n, c in zip(da.shape, chunks):
+        touched *= -(-int(n) // int(c)) * int(c)
+    return max(touched, int(da.size)) * da.dtype.itemsize
 
 
 def _read_ahead(da, indexes, axis, readers) -> Iterator[np.ndarray]:
