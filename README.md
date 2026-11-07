@@ -236,7 +236,6 @@ tests/
 * [docs/migrating_from_onset_blending.md](docs/migrating_from_onset_blending.md): for users of `onset_blending` and `momp`.
 * `docs/package_configuration.ipynb`: the config, section by section.
 * `docs/package_run_guidance_et.ipynb`: running HCWF and reading the results.
-* `demo/et/`: Ethiopia demo notebooks and [companion guidance](https://docs.google.com/document/d/15_evi1VI4GcCeSoiI6DcrfidwjEE4g-UPiiOY5kF2Zo/edit?usp=sharing).
 * `docs/blend_merge.md`, `docs/review/`: the plan and reviews of the merge and restructuring (historical).
 
 ## Development

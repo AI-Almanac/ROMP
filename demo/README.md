@@ -9,7 +9,7 @@ Four notebooks walk through the workflow and interface of `hcwf`: config, `hcwf.
 | `india/india_benchmarking.ipynb` | The same for India (default definition `moron_robertson_mok`, day boundary 03 UTC labelled by end) |
 | `india/india_blending.ipynb` | The same for India (blend over central and north India) |
 
-Each runs in under a minute on a many-core machine (20-50 s measured). The older notebooks in `et/` are unchanged.
+Each runs in under a minute on a many-core machine (20-50 s measured).
 
 ## Data
 
