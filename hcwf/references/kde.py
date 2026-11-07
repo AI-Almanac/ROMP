@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-__all__ = ["Climatology", "build_climatology", "climatology_years", "plan_issues", "season_days"]
+__all__ = ["Climatology", "build_climatology", "climatology_years", "plan_issues", "season_days", "season_years"]
 
 MIN_PROB = 5e-7
 """The floor of every probability."""
@@ -749,6 +749,38 @@ def season_days(dates, season_start: tuple[int, int] = (1, 1), leap_shift: bool 
             leap = (year % 4 == 0) & ((year % 100 != 0) | (year % 400 == 0))
             days = days - (leap & valid & (date >= _month_day_of(year, 3, 1)))
     return np.where(valid, days, np.nan)
+
+
+def season_years(dates, season_start: str, issue_end: str) -> np.ndarray:
+    """Return the season's year (the year the season starts) of each date.
+
+    A season that crosses New Year (its issue window ends before the season start, for example 1 October to 31 January)
+    holds the January dates in the year before: with start ``"10-01"`` and end ``"01-31"``, 5 January 2021 is in the
+    season of 2020. A season inside one calendar year gives each date's own year. This is the one place a blend turns a
+    date into the year it is labelled with (`~hcwf.references.kde.issue_grid` and `_season_date` build the dates of a
+    season year the other way round).
+
+    Parameters
+    ----------
+    dates : array_like of datetime64 or datetime.date
+        The dates, any shape; none may be ``NaT``.
+    season_start : str
+        The season start, ``"MM-DD"``.
+    issue_end : str
+        The last issue date of the season, ``"MM-DD"``.
+
+    Returns
+    -------
+    numpy.ndarray of int64
+        The season year of each date, in the shape of ``dates``.
+    """
+    dates = np.asarray(dates, dtype="datetime64[ns]") if not isinstance(dates, np.ndarray) else dates
+    index = pd.DatetimeIndex(dates.ravel())
+    years = index.year.to_numpy(dtype=np.int64)
+    if issue_end < season_start:   # a season crossing New Year: the dates up to its end are in the year before
+        end_month, end_day = (int(part) for part in issue_end.split("-"))
+        years = years - (index.month.to_numpy() * 100 + index.day.to_numpy() <= end_month * 100 + end_day)
+    return years.reshape(dates.shape)
 
 
 def climatology_years(observed_years: Sequence[int], forecast_years: Sequence[int], *,

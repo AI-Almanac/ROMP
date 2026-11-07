@@ -249,7 +249,8 @@ SERIES = {"base": "base", "fixed_cutoff": "fixed_cutoff", "ref_onset": "ref"}
 """The count series a probability variant is binned from (``count_<series>`` in a forecast's data)."""
 
 
-def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids, series=("fixed_cutoff", "ref")) -> dict:
+def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids, series=("fixed_cutoff", "ref"),
+                    season: tuple[str, str] | None = None) -> dict:
     """Return the search starts after the base series, for the ``series`` asked for.
 
     The starts are the fixed cutoff date, and the reference onset (``"MM-DD"``, or dates over ``init_time`` and
@@ -267,6 +268,9 @@ def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids,
         The unit ids.
     series : tuple of str, default ("fixed_cutoff", "ref")
         The series to give starts for.
+    season : tuple of (str, str), optional
+        The season start and the end of its issue window, ``"MM-DD"``; the reference onset of a table is looked up by
+        the season's year of each issue (`~hcwf.references.kde.season_years`). None takes each issue's calendar year.
 
     Returns
     -------
@@ -279,7 +283,8 @@ def forecast_starts(fixed_cutoff, reference: ReferenceOnset | None, issues, ids,
         if reference.month_day is not None:
             starts["ref"] = reference.month_day
         else:
-            years = pd.DatetimeIndex(issues).year.to_numpy(dtype=int)
+            years = (pd.DatetimeIndex(issues).year.to_numpy(dtype=int) if season is None
+                     else kde.season_years(np.asarray(issues, dtype="datetime64[ns]"), *season))
             dates = reference.dates(np.tile(np.asarray(ids).astype(str), len(issues)), np.repeat(years, len(ids)))
             starts["ref"] = xr.DataArray(dates.reshape(len(issues), len(ids)), dims=("init_time", "unit"))
     return starts
@@ -346,7 +351,7 @@ def _forecast_file_info(path, case, select, spec):
                 "values": len(file.issues) * file.n_member * len(file.ids) * len(file.days)}
 
 
-def _forecast_runs(item, rc, case, select, spec, thresholds, fixed_cutoff, reference, series, keep_days):
+def _forecast_runs(item, rc, case, select, spec, thresholds, fixed_cutoff, reference, series, keep_days, season=None):
     """Count the members with their onset on each lead day, for some runs of issues of one forecast file.
 
     The counts come from the search starting at lead 1, at the fixed cutoff date and at the reference onset.
@@ -373,6 +378,8 @@ def _forecast_runs(item, rc, case, select, spec, thresholds, fixed_cutoff, refer
         The count series to keep.
     keep_days : int or None
         The lead days to keep; None for all.
+    season : tuple of (str, str), optional
+        The season start and issue end, for the year a reference onset is looked up by (see `forecast_starts`).
 
     Returns
     -------
@@ -397,7 +404,8 @@ def _forecast_runs(item, rc, case, select, spec, thresholds, fixed_cutoff, refer
                 last = min(stop - start, first + step)
                 found, order, _ = detect.count_members(
                     rain.isel(init_time=slice(first, last)), thresholds, run, case, select,
-                    search_start=forecast_starts(fixed_cutoff, reference, issues[start + first:start + last], ids, series))
+                    search_start=forecast_starts(fixed_cutoff, reference, issues[start + first:start + last], ids, series,
+                                                 season))
                 found = found.sel(lead=slice(1, None))
                 for v in series:
                     counts[v][first:last] = found.isel(start=order.index(v) if v in order else 0).values[..., :days]
@@ -472,6 +480,7 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
         issue_dates=None if issue_dates is None else tuple(issue_dates),
         model_files_years=None if not years else tuple(sorted(years)))
     series, keep_days = _forecast_needs(recipe, spec, needed_only)
+    season = (blend_season_start(setup), recipe.climatology.issue_end)   # the year of an issue is its season's year
     infos = [_forecast_file_info(path, case, select, units) for path in sources]
     files = [(path, info) for path, info in zip(sources, infos) if info is not None]
     if not files:
@@ -525,14 +534,14 @@ def forecast(rc, recipe: Recipe, model: str, thresholds, reference, *, keep_ids=
             held["rain"][rows] = rain
 
     map_items(_forecast_runs, [item for _, item in tasks],
-              (run, case, select, units, thresholds, recipe.onset.fixed_cutoff, reference, series, keep_days),
+              (run, case, select, units, thresholds, recipe.onset.fixed_cutoff, reference, series, keep_days, season),
               workers=count, sink=place)
     order = None if stamps.is_monotonic_increasing else np.argsort(issues, kind="stable")
     take = (lambda a: a) if order is None else (lambda a: a[order])
     issues = take(issues)
     threshold = unit_thresholds(thresholds.get(name), ids, units.convention)
     variables = {"members": (("issue",), take(held["members"])), "onset_threshold": (("unit",), threshold),
-                 "year": (("issue",), pd.DatetimeIndex(issues).year.to_numpy(dtype=np.int64)),
+                 "year": (("issue",), kde.season_years(np.asarray(issues, dtype="datetime64[ns]"), *season)),
                  **{f"count_{v}": (("issue", "unit", "day"), take(held["counts"][v])) for v in series},
                  "rain_mean": (("issue", "unit", "day"), take(held["rain"]))}
     data = xr.Dataset(variables, coords={"issue": issues, "unit": ids.astype(object), "day": days[:n_day]})
@@ -774,7 +783,7 @@ def weekly(recipe: Recipe, definition, climatology: Climatology, observed_onsets
     codes = bins.codes(_lead_days(r), earlier=False)
     variables: dict[str, tuple] = {
         "sample_unit": ("sample", sample_unit.astype(np.int32)), "time": ("sample", r.times),
-        "year": ("sample", pd.DatetimeIndex(r.times).year.to_numpy()), "lat": ("unit", lat), "lon": ("unit", lon),
+        "year": ("sample", np.asarray(r.years).astype(np.int32)), "lat": ("unit", lat), "lon": ("unit", lon),
         "onset_threshold": ("unit", unit_threshold), "outcome": ("sample", codes, {"labels": labels})}
     attrs = {"rain_horizons": {}, "unavailable_rain_predictors": {}}
     features: dict[str, np.ndarray] = {}

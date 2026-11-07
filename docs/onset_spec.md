@@ -428,7 +428,9 @@ cv_years=None)` returns (cell, [year,] issue, lead) for leads 1..horizon;
 is refitted without its own onset. HCWF trains on the observed onsets of
 `start_year_clim..end_year_clim` (the evaluation's own detection), with days
 counted from 1 January of the season's year (an onset in January of the following year counts on past
-31 December, so seasons crossing New Year work) with 29 February sharing 1 March. Probabilistic pairs hold the
+31 December, so seasons crossing New Year work) with 29 February sharing 1 March. A blend labels every issue, sample and
+fold with the season's year (`hcwf.references.kde.season_years`: the year the season starts, so 5 January 2021 of a season
+starting 1 October is in 2020), the same label the KDE counts days by. Probabilistic pairs hold the
 bin probabilities (Before is zero when the bins start at lead 1) with infinite
 member counts, so the fair corrections vanish; the deterministic forecast is
 the first lead whose conditional CDF reaches 0.5 within `max_forecast_day`.

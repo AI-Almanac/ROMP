@@ -29,6 +29,7 @@ from hcwf.metrics.probabilistic import later_probability
 from hcwf.blend.recipe import CLIMATOLOGY_FEATURE, blend_season_start
 from hcwf.config import detect as dataset_detect
 from hcwf.errors import IncompatibleForecast
+from hcwf.references import kde
 from hcwf.spatial import evalgrid
 
 __all__ = ["Forecast", "parse_forecast_arguments", "run"]
@@ -358,7 +359,7 @@ def _issue_problems(blend, issue_date: dt.date | None, held: dict[str, list[dt.d
     if issue_date is not None:
         first, issue_end = blend_season_start(blend.setup), blend.recipe.climatology.issue_end
         # a season crossing New Year (the end before the start) holds a January issue in the year before
-        year = issue_date.year - int(issue_end < first and f"{issue_date.month:02d}-{issue_date.day:02d}" <= issue_end)
+        year = int(kde.season_years(np.array([issue_date], dtype="datetime64[ns]"), first, issue_end)[0])
         start = dt.date.fromisoformat(f"{year}-{first}")
         end = dt.date.fromisoformat(f"{year + int(issue_end < first)}-{issue_end}")
         if not start <= issue_date <= end:
@@ -369,7 +370,9 @@ def _issue_problems(blend, issue_date: dt.date | None, held: dict[str, list[dt.d
                 problems.append(f"{name}: the live files have no {issue_date} issue"
                                 + (f" (nearby: {', '.join(nearby)})" if nearby else ""))
         return issue_date, year, problems
-    years = {d.year for dates in held.values() for d in dates}
+    first, issue_end = blend_season_start(blend.setup), blend.recipe.climatology.issue_end
+    years = {int(y) for dates in held.values()
+             for y in kde.season_years(np.array(dates, dtype="datetime64[ns]"), first, issue_end)}
     if len(years) != 1:
         return None, None, ["the live files must hold one initialisation per model, or one season (or give "
                             "issue_date)"]
