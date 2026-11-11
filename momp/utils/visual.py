@@ -67,7 +67,7 @@ def set_basemap(ax, region, shpfile_dir, polygon, linewidth=1.25, grid=True, lin
         shp_outline(ax, region=region)
 
     # Set map extent to Ethiopia
-    lats, latn, lonw, lone = domain(region)
+    lats, latn, lonw, lone = domain(region, **kwargs)
     ax.set_extent([lonw, lone, lats, latn], crs=ccrs.PlateCarree())
 
     if not grid:

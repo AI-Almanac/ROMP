@@ -29,6 +29,17 @@ def domain(region, **kwargs):
         lonw = 38
         lone = 42
 
+    if region not in ("Ethiopia", "Sub_Ethiopia", "India", "rect_boundary"):
+        # A region with no built-in definition (AI Almanac's "custom" ones): its bounds come with it,
+        # as the config's lat_min, lat_max, lon_min and lon_max.
+        try:
+            lats, latn = float(kwargs["lat_min"]), float(kwargs["lat_max"])
+            lonw, lone = float(kwargs["lon_min"]), float(kwargs["lon_max"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(
+                f"region {region!r} has no built-in bounds: set lat_min, lat_max, lon_min and lon_max"
+            ) from None
+
     return lats, latn, lonw, lone
 
 

@@ -130,7 +130,7 @@ def coords_fmt(ds_tag, *, region, **kwargs):
 
 def region_select(ds, *, region, nc_mask, land_only=True, shp_only=True, **kwargs):
     """Subset `ds` to the region's lat/lon box, optionally applying a NetCDF mask, land mask and country-shapefile mask."""
-    lats, latn, lonw, lone, ds = coords_fmt(ds, region=region)
+    lats, latn, lonw, lone, ds = coords_fmt(ds, region=region, **kwargs)
 
     ds_reg = ds.sel(lat=slice(lats, latn), lon=slice(lonw, lone))
 
