@@ -93,6 +93,17 @@ class Setting:
     shpfile_dir: Optional[str] = field(default=None)
     nc_mask: Optional[str] = field(default=None)
 
+    # A region with no built-in definition (AI Almanac's custom ones): its bounds, which
+    # domain() reads. Fields, so they reach it: settings that aren't fields are dropped.
+    lat_min: Optional[float] = field(default=None)
+    lat_max: Optional[float] = field(default=None)
+    lon_min: Optional[float] = field(default=None)
+    lon_max: Optional[float] = field(default=None)
+    # Masks region_select applies (its own defaults: a config that leaves them out, as built-in
+    # regions' may, keeps today's behaviour; AI Almanac's custom regions set both False).
+    land_only: bool = field(default=True)
+    shp_only: bool = field(default=True)
+
     obs_file_pattern: str = field(default="{}.nc")
     ref_model_file_pattern: Optional[str] = field(default="{}.nc")
 
