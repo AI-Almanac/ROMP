@@ -48,10 +48,11 @@ def get_initialization_dates(year, *, date_filter_year, init_days, start_date, e
 
     filtered_dates = date_range[date_range.weekday.isin(init_days)]
 
-    # Convert to the requested year
-    filtered_dates_yr = pd.to_datetime(filtered_dates.strftime(f'{year}-%m-%d'))
+    # Convert to the requested year. A window that takes in 29 February of a leap date_filter_year
+    # (a whole-year one, say) has no such day in the other years: it's left out there.
+    filtered_dates_yr = pd.to_datetime(filtered_dates.strftime(f'{year}-%m-%d'), errors="coerce")
 
-    return filtered_dates_yr
+    return filtered_dates_yr.dropna()
 
 
 def load_imd_rainfall(year, *, obs_dir, obs_file_pattern, obs_var, obs_unit_cvt, region,
