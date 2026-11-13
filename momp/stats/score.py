@@ -172,6 +172,26 @@ def calculate_auc(forecast_obs_df):
     return auc_results
 
 
+FORECAST_KEYS = ['init_time', 'lat', 'lon']
+
+
+def _rps_per_forecast(forecast_obs_df):
+    """RPS and fair RPS of each forecast, summed over its bins in bin_index order."""
+    ordered = forecast_obs_df.sort_values([*FORECAST_KEYS, 'bin_index'])
+    forecasts = ordered.groupby(FORECAST_KEYS, sort=False)
+    cum_p = forecasts['predicted_prob'].cumsum()
+    cum_y = forecasts['observed_onset'].cumsum()
+    total_members = forecasts['total_members'].transform('first')
+    rps = (cum_y - cum_p) ** 2
+    fair_rps = rps - cum_p * (1 - cum_p) / (total_members - 1)
+    return (
+        ordered[FORECAST_KEYS]
+        .assign(rps=rps, fair_rps=fair_rps)
+        .groupby(FORECAST_KEYS, sort=False)[['rps', 'fair_rps']]
+        .sum()
+    )
+
+
 # Function to calculate Ranked Probability Score (RPS) and Fair RPS for the model forecasts for (either 15 day or 30 day forecast)
 def calculate_rps(forecast_obs_df):
     """
@@ -208,56 +228,12 @@ def calculate_rps(forecast_obs_df):
             "'probabilistic' parameters are configured correctly."
         )
 
-    # Group by forecast (init_time, lat, lon) to get all bins for each forecast
-    forecast_groups = forecast_obs_df.groupby(['init_time', 'lat', 'lon'])
-    
-    rps_values = []
-    fair_rps_values = []
-    
-    for (init_time, lat, lon), group in forecast_groups:
-        # Sort by bin_index to ensure proper ordering
-        group_sorted = group.sort_values('bin_index')
-        
-        # Get predicted probabilities and observations for this forecast
-        p_ij = group_sorted['predicted_prob'].values
-        y_ij = group_sorted['observed_onset'].values
-        total_members = group_sorted['total_members'].iloc[0]  # Same for all bins in forecast
-        
-        m = len(p_ij)  # Number of bins
-        
-        # Calculate RPS for this forecast
-        rps_forecast = 0
-        fair_rps_forecast = 0
-        
-        for k in range(1, m + 1):  # k from 1 to m
-            # Cumulative sum up to bin k
-            cum_p = np.sum(p_ij[:k])
-            cum_y = np.sum(y_ij[:k])
-            
-            # RPS component
-            diff_cum = cum_y - cum_p
-            rps_component = diff_cum**2
-            rps_forecast += rps_component
-            
-            # Fair RPS correction term
-            fair_correction = (cum_p * (1 - cum_p)) / (total_members - 1)
-            fair_rps_component = rps_component - fair_correction
-            fair_rps_forecast += fair_rps_component
-        
-        rps_values.append(rps_forecast)
-        fair_rps_values.append(fair_rps_forecast)
-    
-    # Calculate overall RPS (average over all forecasts)
-    rps = np.mean(rps_values)
-    fair_rps = np.mean(fair_rps_values)
-    
+    per_forecast = _rps_per_forecast(forecast_obs_df)
 
-    
     rps_results = {
-        'rps': rps,
-        'fair_rps': fair_rps,
-        'n_forecasts': len(forecast_groups),
-
+        'rps': per_forecast['rps'].mean(),
+        'fair_rps': per_forecast['fair_rps'].mean(),
+        'n_forecasts': len(per_forecast),
     }
 
     print(f"RPS: {rps_results['rps']:.4f}")
