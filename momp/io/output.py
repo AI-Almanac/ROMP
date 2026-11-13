@@ -6,6 +6,7 @@ import xarray as xr
 import pickle
 from momp.stats.bins import get_target_bins
 from momp.utils.printing import tuple_to_str
+from momp.stats.onset_rule import resolve_rule
 #from momp.utils.printing import tuple_to_str
 
 #def file_path(directory, filename):
@@ -152,6 +153,7 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
             clean_attrs[key] = val
 
     ds.attrs.update(clean_attrs)
+    ds.attrs.update(onset_rule_attrs(attrs_dict))
 
     if desc_dict is not None:
         ds.attrs.update(desc_dict)
@@ -159,6 +161,25 @@ def save_metrics_to_netcdf(spatial_metrics, attrs_dict, desc_dict=None, fname='s
     ds.to_netcdf(fout)
 
     print(f"{fname} saved to: {fout}")
+
+
+
+def onset_rule_attrs(cfg):
+    """Identify the onset definition that produced a result, so it can be checked downstream."""
+    import json
+    from importlib.metadata import version
+
+    rule = resolve_rule(
+        cfg.get("onset_rule"),
+        cfg.get("onset_rule_params"),
+        **{k: cfg.get(k) for k in ("wet_init", "wet_spell", "dry_spell", "dry_extent")},
+    )
+    return {
+        "onset_rule": rule.name,
+        "onset_rule_params": json.dumps(rule.params(), sort_keys=True, default=str),
+        "onset_rule_fingerprint": rule.fingerprint(),
+        "momp_version": version("momp"),
+    }
 
 
 

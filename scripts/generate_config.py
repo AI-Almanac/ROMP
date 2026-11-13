@@ -30,6 +30,8 @@ Optional env vars (with defaults matching the demo config):
   ROMP_WET_SPELL        - wet spell length days (default: 3)
   ROMP_DRY_SPELL        - dry spell length days (default: 7)
   ROMP_DRY_EXTENT       - dry spell search window days (default: 0)
+  ROMP_ONSET_RULE       - onset definition name from momp.stats.onset_rule (default: legacy)
+  ROMP_ONSET_RULE_PARAMS- JSON dict of parameters for ROMP_ONSET_RULE (default: rule defaults)
   ROMP_START_DATE       - evaluation start as YYYY-MM-DD (default: 2019-05-01)
   ROMP_END_DATE         - evaluation end as YYYY-MM-DD (default: 2024-07-31)
   ROMP_START_YEAR_CLIM  - climatology start year (default: 1998)
@@ -121,12 +123,19 @@ def optional_number(val: str) -> int | float | None:
 MODEL_DIM_NAMES = frozenset({"init_time", "step", "member", "lat", "lon"})
 
 
-def parse_model_dims(val: str) -> dict | None:
+def optional_json_object(val: str) -> dict | None:
     if not val:
         return None
-    dims = json.loads(val)
-    if not isinstance(dims, dict):
+    parsed = json.loads(val)
+    if not isinstance(parsed, dict):
         raise ValueError("must be a JSON object")
+    return parsed
+
+
+def parse_model_dims(val: str) -> dict | None:
+    dims = optional_json_object(val)
+    if dims is None:
+        return None
     unknown = sorted(set(dims) - MODEL_DIM_NAMES)
     if unknown:
         raise ValueError(f"unknown dims {unknown}; expected some of {sorted(MODEL_DIM_NAMES)}")
@@ -182,6 +191,8 @@ def config_values() -> dict:
         "thresh_file": _parsed("ROMP_THRESH_FILE", "", optional_path),
         "thresh_var": None,
         "onset_percentage_threshold": 0.5,
+        "onset_rule": opt("ROMP_ONSET_RULE", "legacy"),
+        "onset_rule_params": _parsed("ROMP_ONSET_RULE_PARAMS", "", optional_json_object),
         "start_date": start_date,
         "end_date": end_date,
         "start_year_clim": _parsed("ROMP_START_YEAR_CLIM", "1998", int),

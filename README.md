@@ -5,7 +5,7 @@
 
 ## Key Capabilities
 
-- rainy season onset detection with user specified criteria
+- rainy season onset detection with pluggable, parameterised definitions (`legacy`, `two_stage`, `moron_robertson`, or your own — see [docs/onset_rules.md](docs/onset_rules.md))
 - deterministic and probabilistic benchmarking metrics
 - Skill Scores (overall and binned)
 - Spatial metrics (MAE, False Alarm Rate, Miss Rate)

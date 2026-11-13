@@ -117,6 +117,20 @@ thresh_var = None
 # Probability threshold (0.0 - 1.0) for determining onset in ensemble members.
 onset_percentage_threshold = 0.5
 
+# Onset definition. A name registered in momp.stats.onset_rule:
+#   "legacy"          - the criterion above (wet_init/wet_spell/dry_spell/dry_extent)
+#   "two_stage"       - X mm over N days, then Y mm over the next M days (e.g. NiMet)
+#   "moron_robertson" - modified Moron-Robertson / MOK-style definition
+# Run `python -c "from momp.stats.onset_rule import *; print(list_rules())"` or see
+# docs/onset_rules.md for parameters. The same rule is applied to observations and
+# forecasts.
+onset_rule = "legacy"
+
+# Parameters for onset_rule as a dict, e.g.
+#   {"stage1_days": 10, "stage1_mm": 10, "stage2_days": 20, "stage2_mm": 20}
+# None = the rule's defaults (for "legacy": the wet_*/dry_* values above).
+onset_rule_params = None
+
 # ------------------------------------------------------------------------------
 # 7. TEMPORAL SETTINGS (Dates & Years)
 # ------------------------------------------------------------------------------

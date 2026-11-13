@@ -78,7 +78,14 @@ def test_job_settings_are_parsed_into_typed_values(tmp_path):
 
 @pytest.mark.parametrize(
     "name",
-    ["ROMP_OBS_VAR", "ROMP_MODEL_NAME", "ROMP_FILE_PATTERN", "ROMP_NC_MASK", "ROMP_REGION"],
+    [
+        "ROMP_OBS_VAR",
+        "ROMP_MODEL_NAME",
+        "ROMP_FILE_PATTERN",
+        "ROMP_NC_MASK",
+        "ROMP_REGION",
+        "ROMP_ONSET_RULE",
+    ],
 )
 def test_text_settings_stay_inert_strings(tmp_path, name):
     marker = tmp_path / "executed"
@@ -103,6 +110,7 @@ def test_text_settings_stay_inert_strings(tmp_path, name):
         "ROMP_PARALLEL",
         "ROMP_UNIT_CVT",
         "ROMP_MODEL_DIMS",
+        "ROMP_ONSET_RULE_PARAMS",
     ],
 )
 def test_non_text_settings_that_are_not_values_are_rejected(tmp_path, name):
@@ -140,6 +148,29 @@ def test_model_dims_default_to_name_inference(tmp_path):
 
     assert config["unit_cvt_list"] == (None,)
     assert config["model_dims_list"] == (None,)
+
+
+def test_onset_rule_and_params_reach_the_config(tmp_path):
+    result = _generate(
+        tmp_path,
+        ROMP_ONSET_RULE="two_stage",
+        ROMP_ONSET_RULE_PARAMS='{"stage1_mm": 12, "inclusive": false}',
+    )
+    assert result.returncode == 0
+
+    config = _exec_config(tmp_path)
+
+    assert config["onset_rule"] == "two_stage"
+    assert config["onset_rule_params"] == {"stage1_mm": 12, "inclusive": False}
+
+
+def test_onset_rule_defaults_to_legacy_at_rule_defaults(tmp_path):
+    assert _generate(tmp_path).returncode == 0
+
+    config = _exec_config(tmp_path)
+
+    assert config["onset_rule"] == "legacy"
+    assert config["onset_rule_params"] is None
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,6 @@
 import argparse
 import ast
+import json
 #from datetime import datetime
 from pathlib import Path
 from importlib import resources
@@ -92,6 +93,20 @@ def create_parser(config, cli_args=None):
         type=float,
         default=config['onset_percentage_threshold'],
         help=f"Probability threshold (0.0-1.0) for ensemble onset (default: {config['onset_percentage_threshold']})"
+    )
+
+    parser.add_argument(
+        "--onset_rule",
+        type=str,
+        default=config.get('onset_rule', 'legacy'),
+        help=f"Onset definition registered in momp.stats.onset_rule (default: {config.get('onset_rule', 'legacy')})"
+    )
+
+    parser.add_argument(
+        "--onset_rule_params",
+        type=parse_dict,
+        default=config.get('onset_rule_params'),
+        help='Onset rule parameters as a dict/JSON literal, e.g. \'{"stage1_mm": 10}\' (default: rule defaults)'
     )
 
     # Allowed error margin (in days)
@@ -266,6 +281,28 @@ def parse_window_list(string):
         return tuple(pairs)
     except Exception:
         raise argparse.ArgumentTypeError("Window list must be in format 'start,end start,end' (e.g., '1,15 16,20')")
+
+
+def parse_dict(value):
+    """
+    Parses a dict from a JSON or Python literal string; passes dicts/None through.
+    Example: '{"stage1_mm": 10, "inclusive": true}' -> {"stage1_mm": 10, "inclusive": True}
+    """
+    if value is None or isinstance(value, dict):
+        return value
+    text = str(value).strip()
+    if not text or text.lower() in ("none", "null"):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            raise argparse.ArgumentTypeError(f"Expected a dict literal, got: {value!r}")
+    if not isinstance(parsed, dict):
+        raise argparse.ArgumentTypeError(f"Expected a dict, got {type(parsed).__name__}: {value!r}")
+    return parsed
 
 
 def str2bool(v):

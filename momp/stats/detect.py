@@ -1,969 +1,281 @@
+"""Onset detection for observations and forecasts.
+
+All detection is delegated to an :class:`~momp.stats.onset_rule.OnsetRule`
+(resolved from the run configuration via :func:`resolve_rule`), so the observed
+and forecast sides of a benchmark always apply the identical definition. This
+module owns everything *around* the rule: search-window subsetting, MOK
+date filtering, valid-case selection (forecasts initialised before the observed
+onset), ensemble aggregation, and DataFrame assembly.
+"""
+
+from datetime import datetime, timedelta
+
 import numpy as np
 import pandas as pd
 import xarray as xr
-from datetime import datetime, timedelta
+
+from momp.stats.onset_rule import OnsetRule, first_onset_index, resolve_rule
 from momp.utils.practical import restore_args
-from itertools import product
-import sys
+
+_LEGACY_KEYS = ("wet_init", "wet_spell", "dry_spell", "dry_extent")
 
 
-#def find_first_true(arr):
-#    """
-#    Find first occurrence of onset condition for each grid point
-#    """
-#    if arr.any():
-#        return int(np.argmax(arr))
-#    else:
-#        return -1
-
+def _rule(onset_rule, onset_rule_params, kwargs) -> OnsetRule:
+    """Resolve the rule for a call from explicit args + the flat ROMP config in kwargs."""
+    flat = {k: kwargs[k] for k in _LEGACY_KEYS if kwargs.get(k) is not None}
+    return resolve_rule(onset_rule, onset_rule_params, **flat)
 
 
 def find_first_true(arr):
+    """Index of the first truthy value along a 1-D array (NaN counts as False), or -1."""
+    arr_bool = np.nan_to_num(np.asarray(arr, dtype=float), nan=0.0).astype(bool)
+    return int(np.argmax(arr_bool)) if arr_bool.any() else -1
+
+
+# --------------------------------------------------------------------------- #
+# Scalar compatibility shim
+# --------------------------------------------------------------------------- #
+def detect_onset(day, forecast_series, thresh, *, onset_rule=None, onset_rule_params=None, **kwargs):
+    """Is forecast day ``day`` (1-based) an onset for this single series?
+
+    Kept for backward compatibility with the original per-day API; new code
+    should apply the rule to a whole array and use :func:`first_onset_index`.
     """
-    Find first occurrence of onset condition for each grid point.
+    rule = _rule(onset_rule, onset_rule_params, kwargs)
+    series = xr.DataArray(np.asarray(forecast_series, dtype=float), dims=("step",))
+    mask = rule(series, thresh, dim="step").values
+    idx = day - 1
+    return bool(mask[idx]) if 0 <= idx < len(mask) else False
 
-    Works if arr contains floats, integers, or NaNs.
-    Returns the index of the first True value, or -1 if none.
+
+# --------------------------------------------------------------------------- #
+# Observed onset
+# --------------------------------------------------------------------------- #
+def detect_observed_onset(
+    rain_slice,
+    thresh_slice,
+    year,
+    *,
+    start_date,
+    end_date,
+    fallback_date,
+    mok,
+    extend_end_day=47,
+    onset_rule=None,
+    onset_rule_params=None,
+    **kwargs,
+):
+    """Observed onset date per grid cell for ``year``.
+
+    The search window starts at ``mok`` (MM, DD) if given, else ``start_date``'s
+    month/day, and ends ``extend_end_day`` days after ``end_date``'s month/day
+    (extended further if the rule's lookahead needs it). Returns a
+    ``datetime64`` DataArray over the non-time dims of ``rain_slice`` (NaT where
+    no onset).
     """
-    # Convert to boolean, treat NaN as False
-    arr_bool = np.asarray(arr, dtype=float)  # ensure numeric
-    arr_bool = np.nan_to_num(arr_bool, nan=0.0)  # NaN -> 0
-    arr_bool = arr_bool.astype(bool)  # convert to boolean
-
-    if arr_bool.any():
-        return int(np.argmax(arr_bool))  # first True index
-    else:
-        return -1
-
-
-
-def detect_onset(day, forecast_series, thresh, *, wet_init, wet_spell, dry_spell, dry_threshold, dry_extent, **kwargs):
-    """
-    detect onset for model forecast
-    ---
-    forecast_series: grid point xarray time series
-    """
-
-    #dry_threshold = wet_init # default
-
-    # !!! day start from index 1 in data as step
-    start_idx = day - 1
-
-    if dry_extent <= wet_spell:
-        end_idx = start_idx + wet_spell
-
-        if end_idx <= len(forecast_series):
-            window_series = forecast_series[start_idx:end_idx]
-    
-            # Check basic onset condition
-            #if window_series[0] > wet_init and np.nansum(window_series) > thresh:
-            if np.all(window_series >=  wet_init) and np.nansum(window_series) > thresh:
-                return True
-
-
-            # check if followed by dry spell
-    else:
-        end_idx = start_idx + wet_spell
-        end_idx_dry = start_idx + dry_extent
-
-        if end_idx_dry <= len(forecast_series):
-            window_series = forecast_series[start_idx:end_idx]
-            dry_series = forecast_series[start_idx:end_idx_dry]
-
-            if np.all(window_series >=  wet_init) and np.nansum(window_series) > thresh:
-
-                dry_bool = dry_series < wet_init
-                consec_dry = np.convolve(dry_bool, np.ones(dry_spell, dtype=int), 'valid')
-                has_dry_spell = np.any(consec_dry == dry_spell)
-
-                if not has_dry_spell:
-                    return True
-
-
-#    start_idx = day - 1
-#    end_idx = start_idx + wet_spell
-#
-#    if end_idx <= len(forecast_series) - dry_extent:
-#        window_series = forecast_series[start_idx:end_idx]
-#
-#        # Check basic onset condition
-#        #if window_series[0] > wet_init and np.nansum(window_series) > wet_threshold:
-#        if window_series[0] > wet_init and np.nansum(window_series) > thresh:
-#
-#            # check if followed by dry spell
-#            if dry_extent > 0:
-#                extended_series = forecast_series[end_idx:end_idx+dry_extent]
-#                rolling_sum = extended_series.rolling(dry_spell).sum()
-#                has_dry_spell = (rolling_sum < dry_threshold).any()
-#
-#                if not has_dry_spell:
-#                    return True
-#
-#            else:
-#                return True
-
-
-
-#def detect_onset_mok(day, forecast_series, wet_init, wet_spell, wet_threshold, dry_spell, dry_threshold, dry_extent,
-
-#def detect_onset_mok(day, forecast_series, wet_init, wet_spell, wet_threshold, dry_spell, dry_threshold, dry_extent,
-#                     init_date, mok_date):#, **kwargs):
-#
-#    isonset = detect_onset(day, forecast_series, wet_init, wet_spell, wet_threshold, dry_spell, dry_threshold, dry_extent)
-#
-#    if isonset:
-#        forecast_date = init_date + pd.Timedelta(days=day)
-#
-#        if mok_date:
-#
-#            if forecast_date.date() > mok_date.date():
-#                return day
-#        else:
-#            return day
-
-
-
-# Function to detect observed onset dates based on rainfall threshold file
-def detect_observed_onset(rain_slice, thresh_slice, year, *, wet_init, wet_spell, 
-                          dry_spell, dry_threshold, dry_extent, start_date, end_date, fallback_date, mok, 
-                          extend_end_day=47, **kwargs):
-    """Detect observed onset dates for a given year."""
-
-    #window = 5 # 5-day wet spell window
-
-    #mok = kwargs["mok"]
-    #wet_spell = kwargs["wet_spell"]
-    #wet_init = kwargs["wet_init"]
-    #dry_spell = kwargs["dry_spell"]
-    #dry_extent = kwargs["dry_extent"]
-    #dry_threshold = kwargs["dry_threshold"]
-    #start_MMDD = kwargs["start_date"][1:]
-    #fallback_MMDD = kwargs["fallback_date"]
+    rule = _rule(onset_rule, onset_rule_params, kwargs)
 
     start_MMDD = start_date[1:]
     end_MMDD = end_date[1:]
-    fallback_MMDD = fallback_date
 
-    end_date = datetime(year, *end_MMDD)
+    search_end = datetime(year, *end_MMDD)
     if extend_end_day:
-        end_date = end_date + timedelta(days=extend_end_day)
+        search_end = search_end + timedelta(days=max(int(extend_end_day), rule.lookahead + 1))
 
-    # Set start date based on mok flag
     if mok:
-#        print("YESYESYES")
-        start_date = datetime(year, *mok)  # MOK date: June 2nd
+        search_start = datetime(year, *mok)
         date_label = f"{mok[0]:02d}-{mok[1]:02d}"
-
     else:
-        start_date = datetime(year, *start_MMDD)  # default start_date 
+        search_start = datetime(year, *start_MMDD)
         date_label = f"{start_MMDD[0]:02d}-{start_MMDD[1]:02d}"
 
-#    start_date = datetime(year, *start_MMDD)  # default start_date 
-#    date_label = f"{start_MMDD[0]:02d}-{start_MMDD[1]:02d}"
-
-    # Find start date index
     time_dates = pd.to_datetime(rain_slice.time.values)
-    #start_idx_candidates = np.where(time_dates > start_date)[0]
-    start_idx_candidates = np.where(time_dates >= start_date)[0]
-
-#    print("time_dates ", time_dates)
-#    print("start_dates ", start_date)
-#    print("start_idx_candidates = ", start_idx_candidates)
-
+    start_idx_candidates = np.where(time_dates >= search_start)[0]
     if len(start_idx_candidates) == 0 and fallback_date:
         print(f"Warning: {date_label} not found in data for year {year}")
-        fallback_date = datetime(year, *fallback_MMDD)
-        start_idx = np.where(time_dates >= fallback_date)[0][0]
-        print(f"Using fallback date: April 1st")
+        fb = datetime(year, *fallback_date)
+        start_idx = np.where(time_dates >= fb)[0][0]
+        print(f"Using fallback date: {fb:%m-%d}")
     else:
         start_idx = start_idx_candidates[0]
-        #print(f"Using {date_label} as start date for onset detection")
 
-    # Subset rain_slice from start date onward
-    #rain_subset = rain_slice.isel(time=slice(start_idx, None))#.sel(time=slice(None,end_date))
-    rain_subset = rain_slice.isel(time=slice(start_idx, None)).sel(time=slice(None,end_date))
-#    print("XXX", rain_subset.time)
-#    import sys
-#    sys.exit()
+    rain_subset = rain_slice.isel(time=slice(start_idx, None)).sel(time=slice(None, search_end))
 
-    # Create rolling 5-day sums
-    rolling_sum = rain_subset.rolling(time=wet_spell, min_periods=wet_spell, center=False).sum()
-    rolling_sum_aligned = rolling_sum.shift(time=-(wet_spell-1))
+    mask = rule(rain_subset, thresh_slice, dim="time")
+    idx = first_onset_index(mask, "time")
 
-    # Create onset condition
-    wet_day_condition = rain_subset >= wet_init
-    wet_day_spell = (wet_day_condition.rolling(time=wet_spell,
-                                                       min_periods=wet_spell, center=False).reduce(np.all))
-    
-    #wet_day_spell = (wet_day_condition.rolling(time=wet_spell, min_periods=wet_spell)
-    #                 .sum()== wet_spell) # this method make sure return bool type, no need .fillna(False) line
-
-    first_day_condition = wet_day_spell.shift(time=-(wet_spell-1))
-    first_day_condition = first_day_condition.fillna(False).astype(bool) # convert nans to bool
-
-
-    sum_condition = rolling_sum_aligned > thresh_slice
-
-    # check false onset
-    #print("first_day_condition = ", first_day_condition[100,...])
-    #print("sum_condition = " , sum_condition[100,...] )
-
-    #if dry_extent > 0:
-    if dry_extent >= dry_spell and dry_extent > wet_spell:
-        #dry_rolling = rain_subset.rolling(time=dry_spell, min_periods=dry_spell).sum() < dry_threshold
-        #dry_rolling_start_aligned = dry_rolling.shift(time=-(dry_spell-1))  # align to start of each 10-day window
-        #dry_rolling_after_onset = dry_rolling_start_aligned.shift(time=-(wet_spell))
-
-        #dry_search_window = dry_extent - dry_spell + 1  # 30 - 10 + 1 = 21
-        #dry_in_extent = dry_rolling_after_onset.rolling(time=dry_search_window, min_periods=1).reduce(np.any)
-        #no_dry_after = (~dry_in_extent.astype(bool))
-        ##no_dry_after = ~dry_in_extent
-
-        dry_day_condition = rain_subset < wet_init
-
-        #dry_day_spell = (dry_day_condition.rolling(time=dry_spell,
-        #                                                   min_periods=dry_spell, center=False).reduce(np.all))
-
-        dry_day_spell = (dry_day_condition.rolling(time=dry_spell, min_periods=dry_spell)
-                         .sum() == dry_spell)
-
-        #print("dry_day_condition = ", dry_day_condition)
-        #print("dry_day_spell = ", dry_day_spell)
-
-        #no_dry_after = ~(dry_day_spell.rolling(time=dry_extent+1, min_periods=1)
-        #                 .reduce(np.any).shift(time=-dry_extent))
-
-        has_dry_after = (dry_day_spell.rolling(time=dry_extent+1, min_periods=1)
-                         .sum() > 0 ).shift(time=-dry_extent).fillna(False).astype(bool)
-
-        #print("has_dry_after = ", has_dry_after)
-
-        no_dry_after = xr.apply_ufunc(np.logical_not, has_dry_after)
-        #no_dry_after = has_dry_after == False
-        #no_dry_after = ~has_dry_after
-
-        #print("no_dry_after =  ", no_dry_after)
-        onset_condition = first_day_condition & sum_condition & no_dry_after
-
-    else:
-        onset_condition = first_day_condition & sum_condition
-
-#    print("rain_slice = ", rain_slice[100,...] )
-    #print("rain_subset = ", rain_subset[100,...] )
-#    print("\nrolling_sum_aligned = ", rolling_sum_aligned[100,...])
-#    print("\nfirst_day_condition = ", first_day_condition[100,...])
-#    print("\nsum_condition = ", sum_condition[100,...])
-#    print("find_first_true = ", find_first_true)
-#    print("\nonset_condition = ", onset_condition[100,...] )
-#    print("onset_condition = ", onset_condition )
-#    #print(" input_core_dims = ", [['time']])
-#    import sys
-#    sys.exit()
-
-    onset_indices = xr.apply_ufunc(
-        find_first_true,
-        onset_condition,
-        input_core_dims=[['time']],
-        output_dtypes=[int],
-        vectorize=True
-    )
-
-    # Convert indices to actual dates
-    valid_mask = onset_indices.values >= 0
-    time_coords = rain_subset.time.values
-    onset_dates_array = np.full(onset_indices.shape, np.datetime64('NaT'), dtype='datetime64[ns]')
-
-    for i in range(onset_indices.shape[0]):
-        for j in range(onset_indices.shape[1]):
-            if valid_mask[i, j]:
-                idx = int(onset_indices[i, j].values)
-                if 0 <= idx < len(time_coords):
-                    onset_dates_array[i, j] = time_coords[idx]
-
-    # Create final onset date DataArray
-    onset_da = xr.DataArray(
-        onset_dates_array,
-        coords=[('lat', rain_slice.lat.values), ('lon', rain_slice.lon.values)],
-        name='onset_date'
-    )
-
-#    print("onset_condition = ", onset_condition)
-#    print("onset_indices = ", onset_indices)
-#    print("onset_da  = ", onset_da)
+    time_coords = rain_subset.time.values.astype("datetime64[ns]")
+    dates = np.where(idx.values >= 0, time_coords[np.clip(idx.values, 0, None)], np.datetime64("NaT"))
+    onset_da = xr.DataArray(dates.astype("datetime64[ns]"), dims=idx.dims, coords=idx.coords, name="onset_date")
     return onset_da
 
 
-# wet_spell, dry_spell, mok, prob=True, threshold,
-def compute_onset_for_deterministic_model(p_model, thresh_slice, onset_da, *,
-                                          wet_init, wet_spell, dry_spell, dry_threshold, dry_extent,
-                                          max_forecast_day, mok, end_date, **kwargs):
-
-    kwargs = restore_args(compute_onset_for_deterministic_model, kwargs, locals())
-
-    #if t_idx % 5 == 0:
-    """Compute onset dates for deterministic model forecast."""
-    #window = 5 # well spell
-    #mok = kwargs["mok"]
-    #window = kwargs["wet_spell"]
-    #wet_init = kwargs["wet_init"]
-    #dry_spell = kwargs["dry_spell"]
-    #dry_extent = kwargs["dry_extent"]
-    #dry_threshold = kwargs["dry_threshold"]
-    #max_forecast_day = kwargs['max_forecast_day']
-    #start_MMDD = kwargs["start_date"][1:]
-    #end_MMDD = kwargs["end_date"][1:]
-    #forecast_bin_end = kwargs["forecast_bin"][1]
-    #forecast_bin_start = kwargs["forecast_bin"][0]
-
-
-    results_list = []
-
-    init_times = p_model.init_time.values
-    lats = p_model.lat.values
-    lons = p_model.lon.values
-
-    #date_method = "MOK (June 2nd filter)" if mok else "no date filter"
-    print(f"Processing {len(init_times)} init times x {len(lats)} lats x {len(lons)} lons...")
-    #print(f"Using {date_method} for onset detection")
-    #print(f"Only processing forecasts initialized before observed onset dates")
-
-    #max_steps_needed = forecast_bin_end + window + dry_extent - forecast_bin_start  #to add dry spell option
-    #max_steps_needed = max_forecast_day + wet_spell + dry_extent - 1
-
-    if dry_extent <= wet_spell:
-        max_steps_needed = max_forecast_day + wet_spell - 1
-    else:
-        max_steps_needed = max_forecast_day + dry_extent
-
-    full_steps = p_model.sizes['step']
-    if full_steps < max_steps_needed:
-        raise ValueError(f"Not enough forecast time steps: model steps {full_steps} \
-                < min steps required {max_steps_needed}, consider decrese dry_extent value")
-
-    total_potential_inits = 0
-    valid_inits = 0
-    skipped_no_obs = 0
-    skipped_late_init = 0
-    onsets_found = 0
-
-    for t_idx, init_time in enumerate(init_times):
-        #if t_idx % 5 == 0:
-        #    print(f"Processing init time {t_idx+1}/{len(init_times)}: {pd.to_datetime(init_time).strftime('%Y-%m-%d')}")
-
-        init_date = pd.to_datetime(init_time)
-        year = init_date.year
-
-        #end_date = datetime(year, *end_MMDD)
-
-        #diff = end_date - init_date
-
-        #if diff.days + 1 < full_steps:
-        #    #print(f"\n index= {t_idx} init_date {init_date}  YYYYooooYYYY diff.days = {diff.days}")
-        #    #sys.exit()
-        #    p_model_steps = p_model.isel(init_time=t_idx, step=slice(None, diff.days+2))
-        #else:
-        #    #print(p_model)
-        #    p_model_steps = p_model.isel(init_time=t_idx)
-
-        if mok:
-            mok_date = datetime(year, *mok) 
-        else:
-            mok_date = None
-
-        for i, lat in enumerate(lats):
-            for j, lon in enumerate(lons):
-
-                total_potential_inits += 1
-
-                try:
-                    obs_onset = onset_da.isel(lat=i, lon=j).values
-                except:
-                    skipped_no_obs += 1
-                    continue
-
-#                if lat==14.25 and lon==39.75:
-#                    print(f"init= {init_date}, obs_onset= {obs_onset}")
-
-                #if pd.to_datetime(obs_onset) > end_date:
-#               #     print("YYYYY")
-#               #     print(f"i = {i}, j = {j}")
-#               #     print(pd.to_datetime(obs_onset))
-                #    skipped_no_obs += 1
-                #    continue
-
-                if pd.isna(obs_onset):
-                    skipped_no_obs += 1
-                    continue
-
-                obs_onset_dt = pd.to_datetime(obs_onset)
-
-#                if mok:
-#                    print(type(obs_onset_dt ))
-#                    print(type(mok_date))
-#                    if obs_onset_dt < pd.Timestamp(mok_date):
-#                        print(obs_onset_dt)
-#                        print(pd.Timestamp(mok_date))
-#                        obs_onset_dt = pd.Timestamp(mok_date)
-#                        print(obs_onset_dt)
-#                        print(obs_onset_dt.strftime('%Y-%m-%d'))
-#                        import sys
-#                        sys.exit()
-
-                if init_date >= obs_onset_dt:
-                    skipped_late_init += 1
-                    continue
-
-                valid_inits += 1
-#                
-#               # check if thres is a 2-D array or scalar 
-                if not np.isscalar(thresh_slice):
-                    thresh = thresh_slice.isel(lat=i, lon=j).values
-                else:
-                    thresh = thresh_slice
-
-                try:
-                    forecast_series = p_model.isel(
-                        init_time=t_idx,
-                    #forecast_series = p_model_steps.isel(
-                        lat=i,
-                        lon=j,
-                    #).sel(step=slice(forecast_bin_start, forecast_bin_start + max_steps_needed)).values
-                    ).sel(step=slice(1, max_steps_needed)).values
-
-                    if len(forecast_series) < max_steps_needed:
-                        onset_day = None
-                    else:
-                        onset_day = None
-
-                        #for day in range(forecast_bin_start, forecast_bin_end + 1):
-                        for day in range(1, max_forecast_day + 1):
-    
-                            #isonset = detect_onset(day, forecast_series, thresh, wet_init,
-                            #                       wet_spell, dry_spell, dry_threshold, dry_extent)
-                            isonset = detect_onset(day, forecast_series, thresh, **kwargs)
-
-                            if isonset:
-                                # Calculate the actual date this forecast day represents
-                                forecast_date = init_date + pd.Timedelta(days=day)
-
-                                #print(f"lon = {lon}, lat=={lat}")
-#                                if lon == 38.5 and lat==9.75 and init_date == pd.to_datetime("2019-05-02"):
-#                                    print(f"XXXXXXX forecast date = {forecast_date}, isonset {isonset}")
-#                                    print(f"onset_day = {onset_day}")
-#                                    print(f"mok = {mok_date.date()}")
-    
-                                # If MOK flag is True, only count onset if it's on or after June 2nd
-                                if mok:
-                                    if forecast_date.date() >= mok_date.date():
-                                        onset_day = day
-                                        break
-                                else:
-                                    onset_day = day
-                                    break
-
-
-                except Exception as e:
-                    print(f"Error at init_time {t_idx}, lat {i}, lon {j}: {e}")
-                    onset_day = None
-
-                onset_date = None
-                if onset_day is not None:
-                    onsets_found += 1
-                    onset_date = init_date + pd.Timedelta(days=onset_day)
-
-                result = {
-                    'init_time': init_time,
-                    'lat': lat,
-                    'lon': lon,
-                    'onset_day': onset_day,
-                    'onset_date': onset_date.strftime('%Y-%m-%d') if onset_date is not None else None,
-                    'obs_onset_date': obs_onset_dt.strftime('%Y-%m-%d')
-                }
-                results_list.append(result)
-    
-    onset_df = pd.DataFrame(results_list)
-                
-    print(f"\nProcessing Summary:")
-    print(f"Total potential initializations: {total_potential_inits}")
-    print(f"Skipped (no observed onset): {skipped_no_obs}")
-    print(f"Skipped (initialized after observed onset): {skipped_late_init}")
-    print(f"Valid initializations processed: {valid_inits}")
-    print(f"Onsets found: {onsets_found}")
-    print(f"Onset rate: {onsets_found/valid_inits:.3f}" if valid_inits > 0 else "Onset rate: 0.000")
-                        
-    return onset_df     
-
-
-# Function to compute onset dates for all ensemble members and save it as DataFrame
-# in binned_skill_score_cmz.py
-def _compute_onset_for_all_members_loop(p_model, thresh_slice, onset_da, *, wet_init, wet_spell,
-                                        dry_spell, dry_threshold, dry_extent, members, onset_percentage_threshold,
-                                        max_forecast_day, mok, end_date, **kwargs):
-
-    kwargs = restore_args(_compute_onset_for_all_members_loop, kwargs, locals())
-
-    """Compute onset dates for each ensemble member, initialization time, and grid point."""
-    #window = 5
-    #mok = kwargs["mok"]
-    #window = kwargs["wet_spell"]
-    #wet_init = kwargs["wet_init"]
-    #dry_spell = kwargs["dry_spell"]
-    #dry_extent = kwargs["dry_extent"]
-    #dry_threshold = kwargs["dry_threshold"]
-    #max_forecast_day = kwargs['max_forecast_day']
-    #members = kwargs["members"]
-    #start_MMDD = kwargs["start_date"][1:]
-    #end_MMDD = kwargs["end_date"][1:]
-    #forecast_bin_end = kwargs["forecast_bin"][1]
-    #forecast_bin_start = kwargs["forecast_bin"][0]
-    #onset_percentage_threshold = kwargs["onset_percentage_threshold"]
-
-
-    results_list = []
-    results_mean_list = []
-
-    # Get dimensions
-    init_times = p_model.init_time.values
-
-    if not members:
-        members = p_model.member.values
-
-    # Get the actual lat/lon coordinates from the data
-    lats = p_model.lat.values
-    lons = p_model.lon.values
-#    print("XXXXXX lats = ", lats)
-#    print("YYYYYYYY lons = ", lons)
-#    print("len lats  ", len(lats))
-#    print("len lons  ", len(lons))
-
-    # Create unique lat-lon pairs (no repetition)
-    #unique_pairs = list(zip(lons, lats))
-    unique_pairs = list(product(lons, lats))
-#    print("ZZZZZZ = ", unique_pairs)
-
-    date_method = "MOK {mok}(MM-DD) filter" if mok else "no date filter"
-    print(f"Processing {len(init_times)} init times x {len(unique_pairs)} unique locations x {len(members)} members...")
-    #print(f"Unique lat-lon pairs: {unique_pairs}")
-    #print(f"Using {date_method} for onset detection")
-
-    #max_steps_needed = forecast_bin_end + window + dry_extent - forecast_bin_start
-    #max_steps_needed = max_forecast_day + wet_spell - 1
-
-    if dry_extent <= wet_spell:
-        max_steps_needed = max_forecast_day + wet_spell - 1
-    else:
-        max_steps_needed = max_forecast_day + dry_extent
-
-    full_steps = p_model.sizes['step']
-    if full_steps < max_steps_needed:
-        raise ValueError(f"Not enough forecast time steps: model steps {full_steps} \
-                < min steps required {max_steps_needed}, consider decrese dry_extent value")
-
-    # Track statistics
-    total_potential_forecasts = 0
-    valid_inits = 0
-    valid_forecasts = 0
-    skipped_no_obs = 0
-    skipped_late_init = 0
-    ensemble_onsets_found = 0
-
-    # Loop over all combinations
-    for t_idx, init_time in enumerate(init_times):
-        if t_idx % 5 == 0:
-            print(f"Processing init time {t_idx+1}/{len(init_times)}: {pd.to_datetime(init_time).strftime('%Y-%m-%d')}")
-
-        init_date = pd.to_datetime(init_time)
-        year = init_date.year
-
-        #end_date = datetime(year, *end_MMDD)
-
-        #diff = end_date - init_date
-
-        #if diff.days + 1 < full_steps:
-        #    p_model_steps = p_model.isel(init_time=t_idx, step=slice(None, diff.days+2))
-        #else:
-        #    p_model_steps = p_model.isel(init_time=t_idx)
-
-        if mok:
-            mok_date = datetime(year, *mok)
-
-        # Loop over unique lat-lon pairs only
-        #for loc_idx, (lon, lat) in enumerate(unique_pairs):
-        for lon_idx, lat_idx in product(range(len(lons)), range(len(lats))):
-            lon = lons[lon_idx]
-            lat = lats[lat_idx]
-
-            total_potential_forecasts += len(members)
-
-            # Get observed onset date for this location
-            try:
-                obs_onset = onset_da.isel(lat=lat_idx, lon=lon_idx).values
-#                print("obs_onset = ", obs_onset)
-            except:
-                skipped_no_obs += len(members)
-                continue
-
-            #if pd.to_datetime(obs_onset) > end_date:
-            #    skipped_no_obs += 1
-            #    continue
-
-            # Skip if no observed onset
-            if pd.isna(obs_onset):
-                skipped_no_obs += len(members)
-                continue
-
-            # Convert observed onset to datetime
-            obs_onset_dt = pd.to_datetime(obs_onset)
-
-            # Only process if forecast was initialized before observed onset
-            if init_date >= obs_onset_dt:
-                skipped_late_init += len(members)
-                continue
-
-            valid_inits +=1
-
-            # Get threshold for this location
-            if not np.isscalar(thresh_slice):
-                thresh = thresh_slice.isel(lat=lat_idx, lon=lon_idx).values
-            else:
-                thresh = thresh_slice
-
-#            print("QQQQQ  thresh = ", thresh)
-            # Collect onset days for all members at this init/location
-            member_onset_days = []
-
-            for m_idx, member in enumerate(members):
-
-                valid_forecasts += 1
-
-                try:
-                    # Extract forecast time series for this member and location
-                    forecast_series = p_model.isel(
-                    #forecast_series = p_model_steps.isel(
-                        init_time=t_idx,
-                        lat=lat_idx,
-                        lon=lon_idx,
-                        #member=m_idx,
-                        #step=slice(forecast_bin_start, forecast_bin_start + max_steps_needed)
-                        ).sel(step=slice(1, max_steps_needed)).sel(member=member).values
-#                        step=slice(1, max_steps_needed)
-#                    ).values
-
-#                    print("max_steps_needed = ", max_steps_needed)
-#                    print("len(forecast_series) = ", len(forecast_series))
-#                    print("forecast_series = ", forecast_series)
-                    if len(forecast_series) < max_steps_needed:
-                        member_onset_days.append(None)
-                        continue
-
-#                    print("zzzz forecast_series = ", forecast_series)
-                    # Check for onset on each possible day
-                    onset_day = None
-
-#                    if forecast_bin_start == 1:
-
-                    #for day in range(forecast_bin_start, forecast_bin_end + 1):
-                    for day in range(1, max_forecast_day + 1):
-
-                        #isonset = detect_onset(day, forecast_series, thresh, wet_init, wet_spell,
-                        #                       dry_spell, dry_threshold, dry_extent)
-                        isonset = detect_onset(day, forecast_series, thresh, **kwargs)
-
-#                        print("day = ", day, "  isonset = ", isonset)
-
-                        if isonset:
-                            # Calculate the actual date this forecast day represents
-                            forecast_date = init_date + pd.Timedelta(days=day)
-
-
-#                            print(f"lon = {lon}, lat=={lat}")
-#                            if lon == 38.5 and lat==9.75:# and init_date == pd.to_datetime("2019-05-02"):
-#                                print(f"XXXXXXX forecast date = {forecast_date}, isonset {isonset}")
-#                                print(f"onset_day = {onset_day}")
-#                                print(f"mok = {mok_date.date()}")
-
-
-                            # If MOK flag is True, only count onset if it's on or after June 2nd
-                            if mok:
-                                if forecast_date.date() >= mok_date.date():
-                                    onset_day = day
-                                    break
-                            else:
-                                onset_day = day
-                                break
-
-#                        start_idx = day - 1
-#                        end_idx = start_idx + window
-#
-#                        if end_idx <= len(forecast_series):
-#                            window_series = forecast_series[start_idx:end_idx]
-#
-#                            # Check basic onset condition
-#                            #if window_series[0] > 1 and np.nansum(window_series) > thresh: 
-#                            if window_series[0] > wet_init and np.nansum(window_series) > thresh: 
-#
-#                                # Calculate the actual date this forecast day represents
-#                                forecast_date = init_date + pd.Timedelta(days=day)
-#
-#                                # If MOK flag is True, only count onset if it's on or after June 2nd
-#                                if mok:
-#                                    if forecast_date.date() > mok_date.date():
-#                                        onset_day = day
-#                                        break
-#                                else:
-#                                    onset_day = day
-#                                    break
-#
-#                    else: # for forecast window not starting from 1 e.g.16-30
-#
-#                        early_onset = False
-#
-#                        for day in range(1, forecast_bin_start + 1):
-#                            start_idx = day - 1
-#                            end_idx = start_idx + window
-#    
-#                            if end_idx <= len(forecast_series):
-#                                window_series = forecast_series[start_idx:end_idx]
-#    
-#                                # Check basic onset condition
-#                                if window_series[0] > wet_init and np.nansum(window_series) > thresh: 
-#                                    early_onset = True
-#                                    break
-#    
-#                        if not early_onset:
-#                            for day in range(forecast_bin_start, forecast_bin_end + 1):
-#                                start_idx = day - 1
-#                                end_idx = start_idx + window
-#        
-#                                if end_idx <= len(forecast_series):
-#                                    window_series = forecast_series[start_idx:end_idx]
-#        
-#                                    # Check basic onset condition
-#                                    if window_series[0] > wet_init and np.nansum(window_series) > thresh: 
-#        
-#                                        # Calculate the actual date this forecast day represents
-#                                        forecast_date = init_date + pd.Timedelta(days=day)
-#        
-#                                        # If MOK flag is True, only count onset if it's on or after June 2nd
-#                                        if mok:
-#                                            if forecast_date.date() > mok_date.date():
-#                                                onset_day = day
-#                                                break
-#                                        else:
-#                                            onset_day = day
-#                                        break
-
-                    member_onset_days.append(onset_day)
-
-
-                    # Store result
-                    result = {
-                        'init_time': init_time,
-                        'lat': lat,
-                        'lon': lon,
-                        'member': member,
-                        'onset_day': onset_day,
-                        'obs_onset_date': obs_onset_dt.strftime('%Y-%m-%d')
-                    }
-                    results_list.append(result)
-
-#                    print("\n\n\nXXXXX result  = ", result)
-
-                except Exception as e:
-                    print(f"Error at init_time {t_idx}, location ({lon}, {lat}), member {member}: {e}")
-                    raise
-                    continue
-
-
-            # Now check if at least 50% of members have onset
-            valid_onsets = [day for day in member_onset_days if day is not None]
-            onset_count = len(valid_onsets)
-            total_members = len(member_onset_days)
-            onset_percentage = onset_count / total_members if total_members > 0 else 0
-
-            # Determine ensemble onset day
-            ensemble_onset_day = None
-            ensemble_onset_date = None
-            if onset_percentage >= onset_percentage_threshold:  # At least 50% of members have onset
-                # Use rounding of mean onset day
-                mean_onset = np.mean(valid_onsets)
-                ensemble_onset_day = int(round(mean_onset))
-                ensemble_onsets_found += 1
-                ensemble_onset_date = init_date + pd.Timedelta(days=ensemble_onset_day)
-
-            # Store result
-            result_mean = {
-                'init_time': init_time,
-                'lat': lat,
-                'lon': lon,
-                'onset_day': ensemble_onset_day,  # None if <50% members have onset
-                'onset_date': ensemble_onset_date.strftime('%Y-%m-%d') if ensemble_onset_date is not None else None,
-                'member_onset_count': onset_count,
-                'total_members': total_members,
-                'onset_percentage': onset_percentage,
-                'obs_onset_date': obs_onset_dt.strftime('%Y-%m-%d')  # Store observed onset for reference
-            }
-            results_mean_list.append(result_mean)
-
-
-    # Convert to DataFrame
-    onset_df = pd.DataFrame(results_list)
-    onset_mean_df = pd.DataFrame(results_mean_list)
-
-#    print("\n WWWWWWWWW onset_df = ", onset_df)
-    print(f"\nProcessing Summary:")
-    print(f"Total potential forecasts: {total_potential_forecasts}")
-    print(f"Skipped (no observed onset): {skipped_no_obs}")
-    print(f"Skipped (initialized after observed onset): {skipped_late_init}")
-    print(f"Valid forecasts processed: {valid_forecasts}")
-    print(f"Generated {len(onset_df)} member-forecast combinations")
-    print(f"Found onset in {onset_df['onset_day'].notna().sum()} cases")
-    print(f"Onset rate: {onset_df['onset_day'].notna().mean():.3f}")
-    print(f"Ensemble onsets found (≥50% members): {ensemble_onsets_found}")
-    print(f"Ensemble onset rate: {ensemble_onsets_found/valid_inits:.3f}" if valid_inits > 0 else "Ensemble onset rate: 0.000")
-
-
-    # Check for uniqueness
-    unique_combinations = onset_df.groupby(['init_time', 'lat', 'lon', 'member']).size()
-    if (unique_combinations > 1).any():
-        print(f"Warning: Found {(unique_combinations > 1).sum()} duplicate combinations!")
-    else:
-        print("✓ All init_time-lat-lon-member combinations are unique")
-    
-    return onset_df, onset_mean_df
-
-
-def _valid_vectorized_member_inputs(p_model, members):
-    expected_dims = {"init_time", "member", "step", "lat", "lon"}
-    if not expected_dims.issubset(set(p_model.dims)):
-        return False
-
-    if members:
-        model_members = set(p_model.member.values.tolist())
-        return set(members).issubset(model_members)
-
-    return True
-
-
-def _wet_spells_from_each_step(rain, wet_init, wet_spell):
-    """For the wet_spell days starting at each step: whether every day is wet, and their total rain.
-
-    rain has step as its last dim. Spells that would run past the last step
-    are not wet and have NaN rain, as are spells containing a missing day.
+# --------------------------------------------------------------------------- #
+# Shared forecast machinery
+# --------------------------------------------------------------------------- #
+def _forecast_onset_days(p_model, thresh_slice, rule, *, max_forecast_day, mok):
+    """Rule-based onset day per forecast (all non-step dims kept).
+
+    Candidate days are ``1..max_forecast_day``; with ``mok`` only forecast dates
+    on/after the MOK date count. Returns a float DataArray (NaN = no onset).
     """
-    values = rain.values
-    n_starts = max(values.shape[-1] - wet_spell + 1, 0)
-    spell_days = [values[..., day:day + n_starts] for day in range(wet_spell)]
+    max_steps_needed = max_forecast_day + rule.lookahead
+    full_steps = p_model.sizes["step"]
+    if full_steps < max_steps_needed:
+        raise ValueError(
+            f"Not enough forecast time steps: model steps {full_steps} < min steps required "
+            f"{max_steps_needed} (max_forecast_day={max_forecast_day} + rule lookahead={rule.lookahead}); "
+            f"reduce max_forecast_day or use a rule with a shorter lookahead"
+        )
 
-    all_wet = np.zeros(values.shape, dtype=bool)
-    all_wet[..., :n_starts] = np.logical_and.reduce([day >= wet_init for day in spell_days])
-    total = np.full(values.shape, np.nan, dtype=values.dtype)
-    total[..., :n_starts] = sum(spell_days[1:], spell_days[0].copy())
+    rain = p_model.sel(step=slice(1, max_steps_needed))
+    mask = rule(rain, thresh_slice, dim="step")
+    mask = mask.where(mask.step <= max_forecast_day, False)
 
-    return rain.copy(data=all_wet), rain.copy(data=total)
+    if mok:
+        init_times = pd.to_datetime(mask.init_time.values)
+        steps = mask.step.values.astype(int)
+        valid = np.zeros((len(init_times), len(steps)), dtype=bool)
+        for t_idx, init_date in enumerate(init_times):
+            mok_date = pd.Timestamp(datetime(init_date.year, *mok))
+            valid[t_idx, :] = (init_date + pd.to_timedelta(steps, unit="D")).date >= mok_date.date()
+        mask = mask & xr.DataArray(
+            valid, dims=("init_time", "step"), coords={"init_time": mask.init_time, "step": mask.step}
+        )
+
+    idx = first_onset_index(mask, "step")
+    steps = mask.step.values.astype(float)
+    days = np.where(idx.values >= 0, steps[np.clip(idx.values, 0, None)], np.nan)
+    return xr.DataArray(days, dims=idx.dims, coords=idx.coords, name="onset_day")
 
 
+def _valid_cases(onset_da, init_time_coord):
+    """(init_time, lat, lon) bool: observed onset exists and the forecast started before it."""
+    obs = onset_da.transpose("lat", "lon")
+    obs_values = obs.values.astype("datetime64[ns]")
+    init_values = init_time_coord.values.astype("datetime64[ns]")
+    valid = (~np.isnat(obs_values))[None, :, :] & (init_values[:, None, None] < obs_values[None, :, :])
+    return xr.DataArray(
+        valid,
+        dims=("init_time", "lat", "lon"),
+        coords={"init_time": init_time_coord, "lat": obs.lat, "lon": obs.lon},
+    ), obs
+
+
+def _require_dims(p_model, dims, what):
+    missing = set(dims) - set(p_model.dims)
+    if missing:
+        raise ValueError(f"{what}: p_model is missing dims {sorted(missing)}; has {p_model.dims}")
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic forecast
+# --------------------------------------------------------------------------- #
+def compute_onset_for_deterministic_model(
+    p_model,
+    thresh_slice,
+    onset_da,
+    *,
+    max_forecast_day,
+    mok,
+    end_date,
+    onset_rule=None,
+    onset_rule_params=None,
+    **kwargs,
+):
+    """Onset day/date per (init_time, lat, lon) for a deterministic forecast.
+
+    Only forecasts initialised before the observed onset at a cell with an
+    observed onset are returned (as in the original implementation).
+    """
+    _require_dims(p_model, ("init_time", "step", "lat", "lon"), "compute_onset_for_deterministic_model")
+    rule = _rule(onset_rule, onset_rule_params, kwargs)
+
+    print(
+        f"Processing {p_model.sizes['init_time']} init times x {p_model.sizes['lat']} lats x "
+        f"{p_model.sizes['lon']} lons with rule {rule.label()}..."
+    )
+
+    onset_day = _forecast_onset_days(
+        p_model.transpose("init_time", "lat", "lon", "step"), thresh_slice, rule,
+        max_forecast_day=max_forecast_day, mok=mok,
+    )
+    valid_case, obs = _valid_cases(onset_da, onset_day.init_time)
+    onset_day = onset_day.where(valid_case)
+
+    df = onset_day.to_dataframe().reset_index()
+    obs_b = obs.broadcast_like(valid_case)
+    df["obs_onset_date"] = obs_b.to_dataframe(name="obs_onset_date").reset_index()["obs_onset_date"]
+    df["valid"] = valid_case.to_dataframe(name="valid").reset_index()["valid"]
+    df = df[df["valid"]].drop(columns="valid").copy()
+
+    has = df["onset_day"].notna()
+    df["onset_date"] = None
+    if has.any():
+        dates = pd.to_datetime(df.loc[has, "init_time"]) + pd.to_timedelta(df.loc[has, "onset_day"].astype(int), unit="D")
+        df.loc[has, "onset_date"] = dates.dt.strftime("%Y-%m-%d")
+    df["obs_onset_date"] = pd.to_datetime(df["obs_onset_date"]).dt.strftime("%Y-%m-%d")
+    df["onset_day"] = df["onset_day"].astype(object).where(has, None)
+    df.loc[has, "onset_day"] = df.loc[has, "onset_day"].astype(int)
+
+    onset_df = df[["init_time", "lat", "lon", "onset_day", "onset_date", "obs_onset_date"]].reset_index(drop=True)
+
+    n_valid = len(onset_df)
+    n_found = int(has.sum())
+    print("\nProcessing Summary:")
+    print(f"Valid initializations processed: {n_valid}")
+    print(f"Onsets found: {n_found}")
+    print(f"Onset rate: {n_found / n_valid:.3f}" if n_valid else "Onset rate: 0.000")
+    return onset_df
+
+
+# --------------------------------------------------------------------------- #
+# Ensemble forecast
+# --------------------------------------------------------------------------- #
 def compute_onset_for_all_members_vectorized(
     p_model,
     thresh_slice,
     onset_da,
     *,
-    wet_init,
-    wet_spell,
-    dry_spell,
-    dry_threshold,
-    dry_extent,
     members,
     onset_percentage_threshold,
     max_forecast_day,
     mok,
     end_date,
+    onset_rule=None,
+    onset_rule_params=None,
     **kwargs,
 ):
-    """Vectorized onset detection for the common no-post-onset-dry-window case."""
+    """Per-member onset days and the ensemble consensus onset.
 
-    if dry_extent > wet_spell:
-        raise ValueError("vectorized onset detection supports only dry_extent <= wet_spell")
+    Returns ``(onset_df, onset_mean_df)``: one row per (init_time, lat, lon,
+    member) and one per (init_time, lat, lon) with the mean onset day of members
+    that found onset, kept only when at least ``onset_percentage_threshold`` of
+    members did.
+    """
+    _require_dims(p_model, ("init_time", "member", "step", "lat", "lon"), "compute_onset_for_all_members")
+    rule = _rule(onset_rule, onset_rule_params, kwargs)
 
     if not members:
         members = tuple(p_model.member.values.tolist())
     else:
         members = tuple(members)
+        missing = set(members) - set(p_model.member.values.tolist())
+        if missing:
+            raise ValueError(f"members {sorted(missing)} not present in p_model.member")
 
-    max_steps_needed = max_forecast_day + wet_spell - 1
-    full_steps = p_model.sizes["step"]
-    if full_steps < max_steps_needed:
-        raise ValueError(
-            f"Not enough forecast time steps: model steps {full_steps} "
-            f"< min steps required {max_steps_needed}, consider decrese dry_extent value"
-        )
+    p_model = p_model.sel(member=list(members)).transpose("init_time", "member", "lat", "lon", "step")
 
-    p_model = p_model.sel(member=list(members), step=slice(1, max_steps_needed))
-    rain = p_model.transpose("init_time", "member", "lat", "lon", "step")
-
-    wet_spell_ok, spell_rain = _wet_spells_from_each_step(rain, wet_init, wet_spell)
-    sum_ok = spell_rain > thresh_slice
-    onset_condition = wet_spell_ok & sum_ok
-    onset_condition = onset_condition.where(onset_condition.step <= max_forecast_day, False)
-
-    if mok:
-        init_times = pd.to_datetime(onset_condition.init_time.values)
-        step_values = onset_condition.step.values.astype(int)
-        valid_step = np.zeros((len(init_times), len(step_values)), dtype=bool)
-        for t_idx, init_date in enumerate(init_times):
-            mok_date = pd.Timestamp(datetime(init_date.year, *mok))
-            forecast_dates = init_date + pd.to_timedelta(step_values, unit="D")
-            valid_step[t_idx, :] = forecast_dates.date >= mok_date.date()
-        valid_step_da = xr.DataArray(
-            valid_step,
-            dims=("init_time", "step"),
-            coords={
-                "init_time": onset_condition.init_time,
-                "step": onset_condition.step,
-            },
-        )
-        onset_condition = onset_condition & valid_step_da
-
-    obs_onset = onset_da.transpose("lat", "lon")
-    obs_values = obs_onset.values.astype("datetime64[ns]")
-    obs_valid = ~np.isnat(obs_values)
-    init_values = onset_condition.init_time.values.astype("datetime64[ns]")
-    valid_case_values = obs_valid[None, :, :] & (init_values[:, None, None] < obs_values[None, :, :])
-    valid_case = xr.DataArray(
-        valid_case_values,
-        dims=("init_time", "lat", "lon"),
-        coords={
-            "init_time": onset_condition.init_time,
-            "lat": onset_condition.lat,
-            "lon": onset_condition.lon,
-        },
-    )
-
-    cond = onset_condition.fillna(False).values.astype(bool)
-    has_onset = cond.any(axis=-1)
-    first_idx = cond.argmax(axis=-1)
-    step_values = onset_condition.step.values.astype(float)
-    onset_day_values = np.where(has_onset, step_values[first_idx], np.nan)
-
-    onset_da_members = xr.DataArray(
-        onset_day_values,
-        dims=("init_time", "member", "lat", "lon"),
-        coords={
-            "init_time": onset_condition.init_time,
-            "member": onset_condition.member,
-            "lat": onset_condition.lat,
-            "lon": onset_condition.lon,
-        },
-        name="onset_day",
-    ).where(valid_case)
+    onset_da_members = _forecast_onset_days(p_model, thresh_slice, rule, max_forecast_day=max_forecast_day, mok=mok)
+    valid_case, obs_onset = _valid_cases(onset_da, onset_da_members.init_time)
+    onset_da_members = onset_da_members.where(valid_case)
 
     obs_onset_for_cases = obs_onset.broadcast_like(valid_case).where(valid_case)
     obs_onset_for_members = obs_onset_for_cases.broadcast_like(onset_da_members)
 
     onset_df = onset_da_members.to_dataframe().reset_index()
     onset_df["obs_onset_date"] = (
-        obs_onset_for_members.to_dataframe(name="obs_onset_date")
-        .reset_index()["obs_onset_date"]
+        obs_onset_for_members.to_dataframe(name="obs_onset_date").reset_index()["obs_onset_date"]
     )
     onset_df = onset_df[onset_df["obs_onset_date"].notna()].copy()
     onset_df["obs_onset_date"] = pd.to_datetime(onset_df["obs_onset_date"]).dt.strftime("%Y-%m-%d")
@@ -1015,21 +327,17 @@ def compute_onset_for_all_members_vectorized(
         ]
     ]
 
-    print(f"\nProcessing Summary:")
+    print("\nProcessing Summary:")
+    print(f"Rule: {rule.label()} (lookahead {rule.lookahead} d)")
     print(f"Generated {len(onset_df)} member-forecast combinations")
     print(f"Found onset in {onset_df['onset_day'].notna().sum()} cases")
-    print(f"Onset rate: {onset_df['onset_day'].notna().mean():.3f}")
+    print(f"Onset rate: {onset_df['onset_day'].notna().mean():.3f}" if len(onset_df) else "Onset rate: 0.000")
 
     return onset_df, onset_mean_df
 
 
-def compute_onset_for_all_members(p_model, thresh_slice, onset_da, *, wet_init, wet_spell,
-                                  dry_spell, dry_threshold, dry_extent, members, onset_percentage_threshold,
+def compute_onset_for_all_members(p_model, thresh_slice, onset_da, *, members, onset_percentage_threshold,
                                   max_forecast_day, mok, end_date, **kwargs):
-
+    """Public entry point; see :func:`compute_onset_for_all_members_vectorized`."""
     kwargs = restore_args(compute_onset_for_all_members, kwargs, locals())
-
-    if dry_extent <= wet_spell and _valid_vectorized_member_inputs(p_model, members):
-        return compute_onset_for_all_members_vectorized(p_model, thresh_slice, onset_da, **kwargs)
-
-    return _compute_onset_for_all_members_loop(p_model, thresh_slice, onset_da, **kwargs)
+    return compute_onset_for_all_members_vectorized(p_model, thresh_slice, onset_da, **kwargs)

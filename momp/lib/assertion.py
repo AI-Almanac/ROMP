@@ -123,9 +123,29 @@ class ROMPValidator:
                         ({max_v_day}) is smaller than largest day_bin ({max_bin_day}).")
 
     def _check_monsoon_logic(self):
-        if self.cfg.dry_extent > 0 and self.cfg.dry_extent < self.cfg.dry_spell:
-            self._add_error(f"Logic Conflict: \
-                    dry_extent ({self.cfg.dry_extent}) < dry_spell ({self.cfg.dry_spell})")
+        # Resolving the rule runs its bound and cross-field validation (for
+        # "legacy" this includes the dry_extent >= dry_spell constraint).
+        from momp.stats.onset_rule import resolve_rule
+
+        try:
+            rule = resolve_rule(
+                getattr(self.cfg, "onset_rule", None),
+                getattr(self.cfg, "onset_rule_params", None),
+                wet_init=getattr(self.cfg, "wet_init", None),
+                wet_spell=getattr(self.cfg, "wet_spell", None),
+                dry_spell=getattr(self.cfg, "dry_spell", None),
+                dry_extent=getattr(self.cfg, "dry_extent", None),
+            )
+        except (ValueError, TypeError) as e:
+            self._add_error(f"Invalid onset rule: {e}")
+        else:
+            max_day = getattr(self.cfg, "max_forecast_day", None)
+            if max_day is not None and rule.lookahead >= max_day:
+                self._add_error(
+                    f"Onset rule '{rule.label()}' needs {rule.lookahead} days of lookahead, which is "
+                    f">= max_forecast_day ({max_day}); forecasts must supply at least "
+                    f"{max_day + rule.lookahead} steps and few candidate days will be verifiable."
+                )
 
         if self.cfg.thresh_file and not os.path.exists(self.cfg.thresh_file):
             self._add_error(f"File missing: thresh_file not found at '{self.cfg.thresh_file}'")

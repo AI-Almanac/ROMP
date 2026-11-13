@@ -31,6 +31,12 @@ class Case:
     dry_spell: int = field(default=0)
     dry_extent: int = field(default=0)
 
+    # Onset definition: a registered momp.stats.onset_rule name plus its
+    # parameters. "legacy" (the default) reads wet_init/wet_spell/dry_spell/
+    # dry_extent above, so existing configs are unchanged.
+    onset_rule: str = field(default="legacy")
+    onset_rule_params: Optional[dict[str, Any]] = field(default=None)
+
     probabilistic: bool = field(default=False)
     members: Optional[tuple[int, ...]] = field(default=None)
 

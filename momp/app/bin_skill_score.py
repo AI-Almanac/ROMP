@@ -10,6 +10,7 @@ from momp.graphics.panel_bar_skill import panel_bar_bss_rpss_auc
 from momp.io.output import save_score_results
 from momp.lib.control import iter_list, make_case
 from momp.lib.convention import Case
+from momp.stats.onset_rule import resolve_rule
 #from momp.lib.loader import cfg, setting
 from momp.lib.loader import get_cfg, get_setting
 #from momp.io.output import set_nested
@@ -81,6 +82,14 @@ def skill_score_in_bins(cfg=None, setting=None):
             case.dry_spell,
             case.dry_threshold,
             case.dry_extent,
+            resolve_rule(
+                case.onset_rule,
+                case.onset_rule_params,
+                wet_init=case.wet_init,
+                wet_spell=case.wet_spell,
+                dry_spell=case.dry_spell,
+                dry_extent=case.dry_extent,
+            ).cache_key(),
             setting.fallback_date,
             case.mok,
             case.onset_percentage_threshold,
